@@ -1,0 +1,478 @@
+name: Boilerplate update
+
+on:
+  schedule:
+    # Weekly on Monday 03:00 UTC
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      target-version:
+        description: 'Specific template tag to update to (e.g. v0.8.9). Leave empty to use the latest release.'
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+
+concurrency:
+  group: boilerplate-update
+  cancel-in-progress: false
+
+jobs:
+  boilerplate-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TEMPLATE_REPO: fohte/generic-boilerplate
+    steps:
+      - name: Federate GitHub token via octo-sts
+        id: octo-sts
+        uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
+        with:
+          scope: ${{ github.repository }}
+          identity: ${{ github.event.repository.name }}-boilerplate-update
+          domain: octo-sts.fohte.net
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.octo-sts.outputs.token }}
+
+      - name: Capture current template version
+        id: current-version
+        run: |
+          set -euo pipefail
+          # `_commit:` is the copier-managed field recording the applied template tag.
+          # Strip surrounding quotes in case copier serializes the value as a YAML string.
+          from_version=$(awk '$1 == "_commit:" { print $2 }' .copier-answers.yml | tr -d "\"'")
+          if [ -z "${from_version}" ]; then
+            echo "Failed to read _commit from .copier-answers.yml" >&2
+            exit 1
+          fi
+          cp .copier-answers.yml "$RUNNER_TEMP/copier-answers-before-update.yml"
+          echo "version=${from_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Determine repo_id backfill data
+        id: repo-id-data
+        env:
+          REPO_ID: ${{ github.repository_id }}
+        run: |
+          set -euo pipefail
+          # `repo_id` is a normal copier.yml question (no `when: false`), so
+          # `copier update --defaults` reuses whatever value already sits in
+          # `.copier-answers.yml` instead of resetting it. Only pass `--data`
+          # while the key is still the empty default; an already-backfilled
+          # value is left as-is, and a missing key (pre-repo_id template
+          # versions) is a no-op here and picked up on a later run once
+          # copier adds it.
+          #
+          # This must NOT be committed to `.copier-answers.yml` before
+          # `copier update` runs: copier diffs against a render of the old
+          # template using the *current* `.copier-answers.yml`, so a
+          # pre-committed repo_id would already unlock the trust-policy
+          # files on the "old" side too, making the diff empty and
+          # generating nothing. Passing it only via `--data` keeps the old
+          # side unaware of repo_id, so the new side's trust policies show
+          # up as an addition.
+          if grep -q "^repo_id: ''$" .copier-answers.yml; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "extra-data=repo_id=${REPO_ID}" >> "$GITHUB_OUTPUT"
+            echo "Backfilling repo_id=${REPO_ID} via copier update --data" >&2
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "extra-data=" >> "$GITHUB_OUTPUT"
+            echo "repo_id already set or key not present; skipping backfill" >&2
+          fi
+
+      - name: Run copier-update-action
+        id: copier-update
+        uses: fohte/copier-update-action@67c40aba9180be12f8ddde7912a7284cecc0f4c8 # v0.1.6
+        with:
+          template-repo: ${{ env.TEMPLATE_REPO }}
+          target-version: ${{ github.event.inputs.target-version }}
+          github-token: ${{ steps.octo-sts.outputs.token }}
+          extra-data: ${{ steps.repo-id-data.outputs.extra-data }}
+
+      - name: Determine whether to proceed with a PR
+        id: should-update
+        env:
+          CHANGED: ${{ steps.copier-update.outputs.changed }}
+          FROM_VERSION: ${{ steps.current-version.outputs.version }}
+          TARGET_VERSION: ${{ steps.copier-update.outputs.target-version }}
+          # Only set when workflow_dispatch explicitly pins a target version.
+          MANUAL_TARGET_VERSION: ${{ github.event.inputs.target-version }}
+          BACKFILLED: ${{ steps.repo-id-data.outputs.needed }}
+        run: |
+          set -euo pipefail
+          if [ "${CHANGED}" != "true" ] && [ "${BACKFILLED}" != "true" ]; then
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          elif [ "${BACKFILLED}" != "true" ] && [ -z "${MANUAL_TARGET_VERSION}" ] && [ "${FROM_VERSION}" = "${TARGET_VERSION}" ]; then
+            # copier-update-action's `changed` output reflects any diff (e.g. YAML
+            # quote-style drift), not whether the template version itself moved.
+            # Skip the no-op case for scheduled/latest-release runs; an explicit
+            # manual target-version means the caller wants to re-apply regardless.
+            # A repo_id backfill is never skipped this way: this PR is the only
+            # path that lands it on the default branch.
+            echo "Template version unchanged (${FROM_VERSION}); skipping." >&2
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore executable bit on scripts/bootstrap
+        if: steps.should-update.outputs.value == 'true'
+        run: |
+          if [ -f scripts/bootstrap ]; then
+            chmod +x scripts/bootstrap
+          fi
+
+      # copier-update-action leaves conflict markers in the working tree when
+      # it can't cleanly 3-way-merge a file; a marker landing in a file
+      # pnpm/cargo parse directly (e.g. pnpm-workspace.yaml) crashes the sync
+      # outright, so lockfile sync must wait until conflicts are resolved.
+      - name: Determine whether lockfile sync is safe
+        if: steps.should-update.outputs.value == 'true'
+        id: can-sync-lockfiles
+        env:
+          UNRESOLVED_FILES: ${{ steps.copier-update.outputs.unresolved-files }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UNRESOLVED_FILES}" ]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # copier only rewrites version strings in package.json/Cargo.toml; the
+      # lockfiles are never touched, so they must be regenerated here or the
+      # PR ships a stale lockfile. continue-on-error below lets a sync failure
+      # (e.g. a bumped version that doesn't exist upstream, or mise/corepack
+      # itself failing) fall through to the PR step instead of killing the
+      # job before a PR exists.
+      - name: Set up mise
+        if: steps.can-sync-lockfiles.outputs.value == 'true' && hashFiles('**/pnpm-lock.yaml') != ''
+        continue-on-error: true
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.14
+
+      - name: Sync pnpm lockfiles
+        if: steps.can-sync-lockfiles.outputs.value == 'true' && hashFiles('**/pnpm-lock.yaml') != ''
+        id: sync-pnpm-lockfiles
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # corepack creates the pnpm executable inside mise's node install bin
+          # directory; reshim so the mise shims dir (which is on PATH) picks it up.
+          corepack enable
+          mise reshim
+          while IFS= read -r -d '' lockfile; do
+            dir=$(dirname "$lockfile")
+            echo "Updating ${lockfile}"
+            # --ignore-scripts: this job holds an OIDC token (id-token: write)
+            # and a checked-out repo with credentials; don't let an installed
+            # package's lifecycle script run with access to either.
+            (cd "$dir" && pnpm install --no-frozen-lockfile --ignore-scripts)
+          done < <(find . -name pnpm-lock.yaml -not -path '*/node_modules/*' -not -path '*/.git/*' -print0)
+
+      - name: Sync Cargo lockfiles
+        if: steps.can-sync-lockfiles.outputs.value == 'true' && hashFiles('**/Cargo.lock') != ''
+        id: sync-cargo-lockfiles
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' lockfile; do
+            dir=$(dirname "$lockfile")
+            echo "Updating ${lockfile}"
+            (cd "$dir" && rustup show && cargo generate-lockfile)
+          done < <(find . -name Cargo.lock -not -path '*/target/*' -not -path '*/.git/*' -print0)
+
+      - name: Create branch
+        if: steps.should-update.outputs.value == 'true'
+        id: branch
+        env:
+          BACKFILL_NEEDED: ${{ steps.repo-id-data.outputs.needed }}
+        run: |
+          set -euo pipefail
+          # Fixed per template repo (not per version) so repeated runs reuse the
+          # same branch/PR instead of piling up one per target version.
+          branch="copier-update/${TEMPLATE_REPO#*/}"
+          echo "name=${branch}" >> "$GITHUB_OUTPUT"
+          # copier-update-action leaves unmerged entries in the index when
+          # conflicts remain; stage everything so `git checkout -B` succeeds.
+          git add -A
+          if git diff --cached --quiet; then
+            has_changes=false
+          else
+            has_changes=true
+          fi
+          echo "has-changes=${has_changes}" >> "$GITHUB_OUTPUT"
+          # True only when a repo_id backfill was requested this run, something
+          # actually changed, and every changed/added path is one repo_id
+          # unlocks (`.copier-answers.yml` itself, or a newly-rendered trust
+          # policy under `.github/chainguard/`). Anything else in the same
+          # diff (a template version bump, unrelated formatting drift) means
+          # this run is a real update, not a pure backfill, and the title/PR
+          # body below should describe it as such instead.
+          if [ "${BACKFILL_NEEDED}" = "true" ] &&
+            [ "${has_changes}" = "true" ] &&
+            ! git diff --cached --name-only | grep -qvE '^(\.copier-answers\.yml|\.github/chainguard/.*\.sts\.yaml)$'; then
+            echo "is-backfill-only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-backfill-only=false" >> "$GITHUB_OUTPUT"
+          fi
+          git checkout -B "${branch}"
+
+      - name: Compose commit and PR title
+        if: steps.should-update.outputs.value == 'true'
+        id: title
+        env:
+          FROM_VERSION: ${{ steps.current-version.outputs.version }}
+          TARGET_VERSION: ${{ steps.copier-update.outputs.target-version }}
+          IS_BACKFILL_ONLY: ${{ steps.branch.outputs.is-backfill-only }}
+        run: |
+          set -euo pipefail
+          if [ "${IS_BACKFILL_ONLY}" = "true" ]; then
+            echo "value=chore: backfill repo_id in copier answers" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=chore: update ${TEMPLATE_REPO} from ${FROM_VERSION} to ${TARGET_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out content-loss detector
+        if: steps.should-update.outputs.value == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TEMPLATE_REPO }}
+          # Use master for the detector CLI so it stays independent from an
+          # explicitly pinned target-version; --from below still renders the
+          # pre-update template version the PR was based on.
+          ref: master
+          path: .content-loss-detector
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ steps.octo-sts.outputs.token }}
+
+      - name: Set up copier for content-loss check
+        if: steps.should-update.outputs.value == 'true'
+        run: |
+          set -euo pipefail
+          copier_venv="$RUNNER_TEMP/copier-content-loss"
+          copier_version=$(awk '$1 == "_min_copier_version:" { print $2 }' .content-loss-detector/copier.yml | tr -d "\"'")
+          if [ -z "${copier_version}" ]; then
+            echo "Failed to read _min_copier_version from .content-loss-detector/copier.yml" >&2
+            exit 1
+          fi
+          python3 -m venv "$copier_venv"
+          "$copier_venv/bin/python" -m pip install \
+            --disable-pip-version-check --quiet --only-binary=:all: \
+            "copier==${copier_version}"
+          echo "$copier_venv/bin" >> "$GITHUB_PATH"
+
+      - name: Disable auto-merge while validating update
+        if: steps.should-update.outputs.value == 'true'
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+        run: |
+          set -euo pipefail
+          existing_pr=$(gh pr list --head "${BRANCH}" --state open --json url --jq 'map(.url)[0] // ""')
+          if [ -z "${existing_pr}" ]; then
+            exit 0
+          fi
+
+          # A reused branch may still have an auto-merge request from an earlier
+          # run. Disarm it before pushing a new diff that has not been checked.
+          gh pr merge --disable-auto "${existing_pr}" || true
+          auto_merge=$(gh pr view "${existing_pr}" --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [ "${auto_merge}" = "true" ]; then
+            echo "Could not disable auto-merge for ${existing_pr}; stopping before push." >&2
+            exit 1
+          fi
+
+      - name: Commit and push changes
+        if: steps.should-update.outputs.value == 'true'
+        id: commit-and-push
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+          COMMIT_MESSAGE: ${{ steps.title.outputs.value }}
+          HAS_CHANGES: ${{ steps.branch.outputs.has-changes }}
+        run: |
+          set -euo pipefail
+          if [ "${HAS_CHANGES}" = "true" ]; then
+            git -c 'user.name=fohte-bot[bot]' \
+                -c 'user.email=139195068+fohte-bot[bot]@users.noreply.github.com' \
+                commit -m "${COMMIT_MESSAGE}"
+          fi
+          # Force-push so the remote branch always equals "default branch HEAD + this run's commits".
+          # Without this, commits on the branch (fixed per template repo, reused across
+          # versions) accumulate and the PR drifts from the default branch.
+          #
+          # --force (not --force-with-lease): actions/checkout does not populate
+          # refs/remotes/origin/<branch> for non-checked-out branches, so --force-with-lease
+          # would reject with "stale info" on a later run against the same branch.
+          git push --force origin "${BRANCH}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update pull request
+        if: steps.should-update.outputs.value == 'true'
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          TITLE: ${{ steps.title.outputs.value }}
+          FROM_VERSION: ${{ steps.current-version.outputs.version }}
+          TARGET_VERSION: ${{ steps.copier-update.outputs.target-version }}
+          UNRESOLVED_FILES: ${{ steps.copier-update.outputs.unresolved-files }}
+          LOCKFILE_SYNC_FAILED: ${{ steps.sync-pnpm-lockfiles.outcome == 'failure' || steps.sync-cargo-lockfiles.outcome == 'failure' }}
+          HAS_LOCKFILES: ${{ hashFiles('**/pnpm-lock.yaml', '**/Cargo.lock') != '' }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+          EXPECTED_SHA: ${{ steps.commit-and-push.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+          IS_BACKFILL_ONLY: ${{ steps.branch.outputs.is-backfill-only }}
+        run: |
+          set -euo pipefail
+
+          release_url="https://github.com/${TEMPLATE_REPO}/releases/tag/${TARGET_VERSION}"
+          if [ "${IS_BACKFILL_ONLY}" = "true" ]; then
+            summary="Backfill \`repo_id\` in \`.copier-answers.yml\` (template version unchanged at [\`${TARGET_VERSION}\`](${release_url}))."
+          else
+            summary="Update \`${TEMPLATE_REPO}\` from \`${FROM_VERSION}\` to [\`${TARGET_VERSION}\`](${release_url})."
+          fi
+
+          needs_review=false
+          body="${summary}"
+          if [ -n "${UNRESOLVED_FILES}" ]; then
+            needs_review=true
+            # Prefix each unresolved file with `> - ` so it stays inside the WARNING alert as a bullet.
+            unresolved_list=$(printf '%s\n' "${UNRESOLVED_FILES}" | sed 's/^/> - /')
+            body="${body}
+
+          > [!WARNING]
+          > Manual review required. Unresolved conflicts remain in:
+          >
+          ${unresolved_list}"
+            if [ "${HAS_LOCKFILES}" = "true" ]; then
+              body="${body}
+          >
+          > Lockfiles were not synced because conflicts remain. Resolve the conflicts above, then sync lockfiles manually (e.g. \`pnpm install\`, \`cargo generate-lockfile\`)."
+            fi
+          elif [ "${LOCKFILE_SYNC_FAILED}" = "true" ]; then
+            needs_review=true
+            body="${body}
+
+          > [!WARNING]
+          > Manual review required. Lockfile sync failed; see the [workflow run](${RUN_URL}) for the error.
+          >
+          > Lockfiles may be stale. Resolve the underlying issue, then sync lockfiles manually (e.g. \`pnpm install\`, \`cargo generate-lockfile\`)."
+          fi
+
+          body="${body}
+
+          ---
+          <sub>Generated by the [boilerplate-update workflow run](${RUN_URL}).</sub>"
+
+          create_args=(--title "${TITLE}" --body "${body}" --head "${BRANCH}")
+          if [ "${needs_review}" = "true" ]; then
+            create_args+=(--draft)
+          fi
+
+          existing_pr=$(gh pr list --head "${BRANCH}" --state open --json url --jq 'map(.url)[0] // ""')
+          if [ -n "${existing_pr}" ]; then
+            pr_url="${existing_pr}"
+            gh pr edit "${pr_url}" --title "${TITLE}" --body "${body}"
+            if [ "${needs_review}" = "true" ]; then
+              gh pr ready "${pr_url}" --undo
+            else
+              gh pr ready "${pr_url}"
+            fi
+          else
+            pr_url=$(gh pr create "${create_args[@]}")
+          fi
+
+          # GitHub updates a PR's head asynchronously after a push. Wait for
+          # the PR to point at the commit this run pushed before reading its
+          # diff; otherwise a reused branch could validate the previous diff.
+          pr_head_sha=""
+          for _ in $(seq 1 15); do
+            if pr_head_sha=$(gh pr view "${pr_url}" --json headRefOid --jq .headRefOid); then
+              if [ "${pr_head_sha}" = "${EXPECTED_SHA}" ]; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+          if [ "${pr_head_sha}" != "${EXPECTED_SHA}" ]; then
+            echo "PR head ${pr_head_sha:-unknown} did not reach pushed commit ${EXPECTED_SHA}; not arming auto-merge." >&2
+            exit 1
+          fi
+
+          content_loss_status=0
+          CONTENT_LOSS_OUTPUT=$(
+            .content-loss-detector/scripts/detect-content-loss \
+              --pr-url "${pr_url}" \
+              --from "${FROM_VERSION}" \
+              --data-file "$RUNNER_TEMP/copier-answers-before-update.yml" \
+              2>&1
+          ) || content_loss_status=$?
+          if [ "${content_loss_status}" -ne 0 ]; then
+            echo "${CONTENT_LOSS_OUTPUT}" >&2
+            content_loss_list=$(printf '%s\n' "${CONTENT_LOSS_OUTPUT}" | sed 's/^/> /')
+            body="${body}
+
+          > [!WARNING]
+          > Content-loss check failed; auto-merge was not enabled.
+          >
+          ${content_loss_list}"
+            gh pr edit "${pr_url}" --body "${body}"
+            # Exit 2 means content loss was confirmed and the PR hold succeeded.
+            if [ "${content_loss_status}" -eq 2 ]; then
+              echo "Content loss detected; leaving PR in draft without failing this job."
+              exit 0
+            fi
+            exit 1
+          fi
+          echo "${CONTENT_LOSS_OUTPUT}"
+
+          # `unresolved-files` only reflects copier's own 3-way merge; it says
+          # nothing about whether this branch can still merge into the base
+          # branch. GitHub computes mergeability asynchronously and reports it
+          # as "UNKNOWN" for a few seconds after a push, so poll for a
+          # definite answer before trusting it. A transient `gh pr view`
+          # failure is treated the same as an "UNKNOWN" reading and retried,
+          # rather than aborting the step outright.
+          should_disable_auto=false
+          if [ "${needs_review}" = "true" ]; then
+            should_disable_auto=true
+          else
+            mergeable=UNKNOWN
+            for _ in $(seq 1 10); do
+              if output=$(gh pr view "${pr_url}" --json mergeable --jq .mergeable); then
+                mergeable="${output}"
+                if [ "${mergeable}" != "UNKNOWN" ]; then
+                  break
+                fi
+              fi
+              sleep 2
+            done
+
+            if [ "${mergeable}" != "MERGEABLE" ]; then
+              echo "PR is not cleanly mergeable with the base branch (mergeable=${mergeable}); leaving it for manual review." >&2
+              should_disable_auto=true
+            fi
+          fi
+
+          if [ "${should_disable_auto}" = "true" ]; then
+            # Disable auto-merge in case a conflict-free earlier run of this
+            # same reused branch had already armed it.
+            gh pr merge --disable-auto "${pr_url}" || true
+          elif OUTPUT=$(gh pr merge --auto --squash "${pr_url}" 2>&1); then
+            echo "$OUTPUT"
+          elif echo "$OUTPUT" | grep -q "clean status"; then
+            echo "$OUTPUT"
+            gh pr merge --squash "${pr_url}" || echo "Direct merge failed. Leaving PR open."
+          elif echo "$OUTPUT" | grep -q "auto-merge is not enabled"; then
+            echo "$OUTPUT"
+            gh pr merge --squash "${pr_url}" || echo "Direct merge failed (likely due to pending checks). Leaving PR open."
+          else
+            echo "$OUTPUT"
+            exit 1
+          fi

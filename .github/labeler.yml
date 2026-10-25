@@ -1,0 +1,6 @@
+scope/frontend:
+  - changed-files:
+      - any-glob-to-any-file: frontend/**
+scope/backend:
+  - changed-files:
+      - any-glob-to-any-file: backend/**

@@ -1,0 +1,16 @@
+{
+  "name": "frontend",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "conc pnpm:test:type pnpm:test:unit",
+    "test:type": "tsc --noEmit",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "neverthrow": "8.2.0"
+  }
+}

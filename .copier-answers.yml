@@ -1,0 +1,18 @@
+# Changes here will be overwritten by Copier
+_commit: v0.11.12
+_src_path: https://github.com/fohte/generic-boilerplate
+description: '@fohte''s personal blog writing tool'
+is_public: true
+monorepo_node_workspace: true
+pr_title_check: false
+project_name: blog-writer
+repo_id: '1433400893'
+repo_language: en
+subpackages:
+-   name: frontend
+    type: node
+-   name: backend
+    type: rust
+type: base
+use_coverage: false
+use_release_please: false
