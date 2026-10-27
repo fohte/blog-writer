@@ -10,6 +10,7 @@ repo_id: '1433400893'
 repo_language: en
 subpackages:
 -   name: frontend
+    spa: true
     type: node
 -   name: backend
     type: rust

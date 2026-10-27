@@ -4,7 +4,9 @@
   "workspaces": {
     ".": {
       "ignoreDependencies": ["@commitlint/cli"],
-      "ignore": ["commitlint-plugin-no-external-refs.cjs"]
-    }
+      "ignore": ["commitlint-plugin-no-external-refs.cjs"],
+      "ignoreBinaries": ["playwright"]
+    },
+    "frontend": {}
   }
 }

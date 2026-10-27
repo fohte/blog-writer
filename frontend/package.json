@@ -3,14 +3,55 @@
   "private": true,
   "type": "module",
   "imports": {
-    "#*": "./src/*.ts"
+    "#*": {
+      "types": [
+        "./src/*.tsx",
+        "./src/*.ts",
+        "./src/*"
+      ],
+      "default": "./src/*"
+    }
   },
   "scripts": {
     "test": "conc pnpm:test:type pnpm:test:unit",
     "test:type": "tsc --noEmit",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run --passWithNoTests",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "storybook": "storybook dev -p 6006",
+    "storybook:build": "storybook build"
   },
   "dependencies": {
-    "neverthrow": "8.2.0"
+    "clsx": "2.1.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "shadcn": "4.21.0",
+    "tailwind-merge": "3.6.0"
+  },
+  "devDependencies": {
+    "@fohte/storybook-addon": "0.2.0",
+    "@storybook/addon-docs": "10.6.0",
+    "@storybook/addon-themes": "10.6.0",
+    "@storybook/addon-vitest": "10.6.0",
+    "@storybook/react-vite": "10.6.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "@vitest/browser": "4.1.11",
+    "@vitest/browser-playwright": "4.1.11",
+    "msw": "2.15.0",
+    "msw-storybook-addon": "3.0.3",
+    "playwright": "1.63.0",
+    "storybook": "10.6.0",
+    "tailwindcss": "4.3.3",
+    "tw-animate-css": "1.4.0",
+    "vite": "8.3.1"
+  },
+  "msw": {
+    "workerDirectory": [
+      "public"
+    ]
   }
 }
