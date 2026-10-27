@@ -22,6 +22,8 @@
     "@types/node": "24.19.2",
     "concurrently": "10.0.6",
     "eslint": "10.11.0",
+    "eslint-plugin-storybook": "10.6.0",
+    "eslint-plugin-tailwindcss": "4.4.0",
     "knip": "6.42.1",
     "prettier": "3.9.10",
     "typescript": "6.0.3",
