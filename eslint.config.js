@@ -24,6 +24,8 @@ export default config(
       'frontend/.storybook/vitest.setup.ts',
       'frontend/vite.config.ts',
       'frontend/vitest.config.ts',
+      'frontend/.storybook/vitest.setup.screenshot.ts',
+      'frontend/vitest.screenshot.config.ts',
     ],
     rules: { 'no-restricted-imports': 'off' },
   },

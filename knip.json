@@ -7,6 +7,12 @@
       "ignore": ["commitlint-plugin-no-external-refs.cjs"],
       "ignoreBinaries": ["playwright"]
     },
-    "frontend": {}
+    "frontend": {
+      "ignoreDependencies": [
+        "reg-suit",
+        "reg-publish-s3-plugin",
+        "reg-simple-keygen-plugin"
+      ]
+    }
   }
 }
