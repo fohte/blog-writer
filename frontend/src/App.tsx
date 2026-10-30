@@ -1,76 +1,9 @@
-import { useEffect, useState } from 'react'
-
 import { SyncStatus } from '#components/sync-status'
-import type { Article, SyncClientApi, SyncState } from '#lib/sync-client'
-import { createSyncClient } from '#lib/sync-client'
-
-type SyncClient = SyncClientApi
+import { useSyncClient } from '#lib/use-sync-client'
 
 export function App() {
-  const [client, setClient] = useState<SyncClient>()
-  const [articles, setArticles] = useState<Article[]>([])
-  const [statuses, setStatuses] = useState<Record<string, SyncState>>({})
-  const [ready, setReady] = useState(false)
-  const [error, setError] = useState<string>()
-
-  useEffect(() => {
-    let active = true
-    let syncClient: SyncClient | undefined
-    let unsubscribe = () => {}
-
-    createSyncClient().match(
-      (createdClient) => {
-        syncClient = createdClient
-        if (!active) return
-        setClient(createdClient)
-        const refresh = () => {
-          const nextArticles = createdClient.listArticles()
-          setArticles(nextArticles)
-          setStatuses(
-            Object.fromEntries(
-              nextArticles.map(({ id }) => [
-                id,
-                createdClient.getStatus(id) ?? 'saved',
-              ]),
-            ),
-          )
-        }
-        unsubscribe = createdClient.subscribe(refresh)
-        refresh()
-        void createdClient.start().match(
-          () => {
-            if (!active) return
-            refresh()
-            setReady(true)
-          },
-          (startError) => {
-            if (!active) return
-            setError(startError.message)
-            setReady(true)
-          },
-        )
-      },
-      (createError) => {
-        setError(createError.message)
-        setReady(true)
-      },
-    )
-
-    return () => {
-      active = false
-      unsubscribe()
-      syncClient?.destroy()
-    }
-  }, [])
-
-  const createArticle = () => {
-    client?.createArticle().match(
-      () => {},
-      (createError) => {
-        setError(createError.message)
-      },
-    )
-  }
+  const { articles, statuses, canCreate, error, createArticle } =
+    useSyncClient()
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
@@ -91,7 +24,7 @@ export function App() {
           </h2>
           <button
             className="rounded-md bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50"
-            disabled={!ready || !client}
+            disabled={!canCreate}
             onClick={createArticle}
             type="button"
           >
