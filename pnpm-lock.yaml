@@ -223,15 +223,12 @@ importers:
       '@fontsource/ibm-plex-mono':
         specifier: 5.3.0
         version: 5.3.0
-      clsx:
-        specifier: 2.1.1
-        version: 2.1.1
-      neverthrow:
-        specifier: 8.2.0
-        version: 8.2.0
       lucide-react:
         specifier: 0.577.0
         version: 0.577.0(react@19.2.8)
+      neverthrow:
+        specifier: 8.2.0
+        version: 8.2.0
       react:
         specifier: 19.2.8
         version: 19.2.8
@@ -241,9 +238,6 @@ importers:
       shadcn:
         specifier: 4.21.0
         version: 4.21.0(supports-color@10.2.2)(typescript@6.0.3)
-      tailwind-merge:
-        specifier: 3.6.0
-        version: 3.6.0
       uuid:
         specifier: 14.0.3
         version: 14.0.3
@@ -4041,9 +4035,6 @@ packages:
 
   tailwind-merge@3.5.0:
     resolution: {integrity: sha512-I8K9wewnVDkL1NTGoqWmVEIlUcB9gFriAEkXkfCjX5ib8ezGxtR3xD7iZIxrfArjEsH7F1CHD4RFUtxefdqV/A==}
-
-  tailwind-merge@3.6.0:
-    resolution: {integrity: sha512-uxL7qAVQriqRQPAyK3pj66VqskWqoZ37PW94jwOTwNfq/z9oyu1V+eqrZqtR2+fCiXdYOZe/Modt8GtvqNzu+w==}
 
   tailwindcss@4.3.3:
     resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
@@ -7976,8 +7967,6 @@ snapshots:
       tailwindcss: 4.3.3
 
   tailwind-merge@3.5.0: {}
-
-  tailwind-merge@3.6.0: {}
 
   tailwindcss@4.3.3: {}
 
