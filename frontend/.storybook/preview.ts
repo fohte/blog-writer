@@ -7,12 +7,12 @@ import {
   parameters,
   reportUnhandledApiRequest,
 } from '@fohte/storybook-addon/preview'
-import { withThemeByClassName } from '@storybook/addon-themes'
 import type { Preview } from '@storybook/react-vite'
 import { setupWorker } from 'msw/browser'
 import { mswLoader } from 'msw-storybook-addon/csf3'
 
 configureUnhandledApiRequestCheck({ pathPrefixes: ['/api/'] })
+document.documentElement.classList.add('dark')
 
 // @fohte/storybook-addon publishes only a `./preview` subpath export (no
 // preset/manager entry), so listing it in main.ts's `addons` never wires its
@@ -22,15 +22,6 @@ const preview: Preview = {
   parameters,
   beforeEach,
   afterEach,
-  decorators: [
-    withThemeByClassName({
-      themes: {
-        light: '',
-        dark: 'dark',
-      },
-      defaultTheme: 'light',
-    }),
-  ],
   loaders: [
     mswLoader(async () => {
       const worker = setupWorker()
