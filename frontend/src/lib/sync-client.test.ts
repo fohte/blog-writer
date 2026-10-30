@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
+import type { SyncClientOptions } from '#lib/sync-client'
 import { createSyncClient } from '#lib/sync-client'
 
 class FakePersistence {
@@ -79,6 +80,9 @@ class FakeWebsocketProvider {
 const createFixture = (
   savedDocuments = new Map<string, Uint8Array>(),
   unavailableDocIds = new Set<string>(),
+  options: Pick<SyncClientOptions, 'checkAccessRedirect'> = {
+    checkAccessRedirect: () => Promise.resolve('unreachable'),
+  },
 ) => {
   const providers: FakeWebsocketProvider[] = []
   const docs: Y.Doc[] = []
@@ -100,6 +104,7 @@ const createFixture = (
     },
     createArticleId: () => articleId,
     now: () => now,
+    ...options,
   })
 
   return {
@@ -219,7 +224,7 @@ describe('createSyncClient', () => {
       'syncing',
       'synced',
       'unsynced',
-      'syncing',
+      'unsynced',
       'unsynced',
     ])
     client.destroy()
@@ -237,6 +242,182 @@ describe('createSyncClient', () => {
     states.push(client.getStatus(created.id))
 
     expect(states).toEqual(['syncing', 'unsynced'])
+    client.destroy()
+  })
+
+  const opaqueRedirectResponse = () => {
+    const response = new Response()
+    Object.defineProperties(response, {
+      type: { value: 'opaqueredirect' },
+      status: { value: 0 },
+    })
+    return response
+  }
+
+  const responseWithRedirectMetadata = () => {
+    const response = new Response(null, { status: 302 })
+    Object.defineProperty(response, 'redirected', { value: true })
+    return response
+  }
+
+  it.each([
+    {
+      scenario: 'Access redirects to its login page',
+      response: opaqueRedirectResponse(),
+      expectedAuthentication: true,
+    },
+    {
+      scenario: 'a visible redirect status is not an opaque redirect',
+      response: responseWithRedirectMetadata(),
+      expectedAuthentication: false,
+    },
+    {
+      scenario: 'the network request cannot reach the server',
+      response: undefined,
+      expectedAuthentication: false,
+    },
+  ])(
+    'distinguishes login expiry when $scenario',
+    async ({ response, expectedAuthentication }) => {
+      const requests: { url: string; options: RequestInit | undefined }[] = []
+      const fetchMock = vi.fn((input: URL, init?: RequestInit) => {
+        requests.push({ url: input.href, options: init })
+        return response === undefined
+          ? Promise.reject(new TypeError('offline'))
+          : Promise.resolve(response)
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      const { client, providers } = createFixture(new Map(), new Set(), {})
+      await client.start()
+      const article = client.createArticle()._unsafeUnwrap()
+      const provider = providers.find(({ docId }) => docId === article.id)
+
+      provider?.emitConnectionClose()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      const readAuthenticationOutput = () => ({
+        requiresAuthentication: client.requiresAuthentication(),
+        status: client.getStatus(article.id),
+        request: requests[0],
+      })
+
+      expect(readAuthenticationOutput()).toEqual({
+        requiresAuthentication: expectedAuthentication,
+        status: 'unsynced',
+        request: {
+          url: 'http://localhost/',
+          options: { cache: 'no-store', redirect: 'manual' },
+        },
+      })
+      client.destroy()
+    },
+  )
+
+  it.each([
+    { scenario: 'the app is reachable', result: 'reachable' as const },
+    { scenario: 'the app is unreachable', result: 'unreachable' as const },
+  ])('clears the login prompt when $scenario', async ({ result }) => {
+    const results: ('redirected' | 'reachable' | 'unreachable')[] = [
+      'redirected',
+      result,
+    ]
+    const checkAccessRedirect = vi.fn(() =>
+      Promise.resolve(results.shift() ?? 'unreachable'),
+    )
+    const { client, providers } = createFixture(new Map(), new Set(), {
+      checkAccessRedirect,
+    })
+    await client.start()
+    const article = client.createArticle()._unsafeUnwrap()
+    const provider = providers.find(({ docId }) => docId === article.id)
+
+    provider?.emitConnectionClose()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const initiallyRequired = client.requiresAuthentication()
+    provider?.emitConnectionClose()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const readAuthenticationOutput = () => ({
+      initiallyRequired,
+      requiresAuthentication: client.requiresAuthentication(),
+      status: client.getStatus(article.id),
+      checks: checkAccessRedirect.mock.calls.length,
+    })
+
+    expect(readAuthenticationOutput()).toEqual({
+      initiallyRequired: true,
+      requiresAuthentication: false,
+      status: 'unsynced',
+      checks: 2,
+    })
+    client.destroy()
+  })
+
+  it('clears the login prompt when the websocket reconnects', async () => {
+    const checkAccessRedirect = vi.fn(() =>
+      Promise.resolve('redirected' as const),
+    )
+    const { client, providers } = createFixture(new Map(), new Set(), {
+      checkAccessRedirect,
+    })
+    await client.start()
+    const article = client.createArticle()._unsafeUnwrap()
+    const provider = providers.find(({ docId }) => docId === article.id)
+
+    provider?.emitConnectionClose()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const initiallyRequired = client.requiresAuthentication()
+    provider?.emitStatus('connected')
+
+    const readAuthenticationOutput = () => ({
+      initiallyRequired,
+      requiresAuthentication: client.requiresAuthentication(),
+      status: client.getStatus(article.id),
+      checks: checkAccessRedirect.mock.calls.length,
+    })
+
+    expect(readAuthenticationOutput()).toEqual({
+      initiallyRequired: true,
+      requiresAuthentication: false,
+      status: 'syncing',
+      checks: 1,
+    })
+    client.destroy()
+  })
+
+  it('runs only one authentication check for simultaneous document failures', async () => {
+    const checkAccessRedirect = vi.fn(() =>
+      Promise.resolve('unreachable' as const),
+    )
+    const { client, providers, setArticleId } = createFixture(
+      new Map(),
+      new Set(),
+      { checkAccessRedirect },
+    )
+    await client.start()
+    const firstArticle = client.createArticle()._unsafeUnwrap()
+    setArticleId('018f0000-0000-7000-8000-000000000006')
+    const secondArticle = client.createArticle()._unsafeUnwrap()
+    const articles = [firstArticle, secondArticle]
+    const articleProviders = articles.map(({ id }) =>
+      providers.find(({ docId }) => docId === id),
+    )
+
+    articleProviders[0]?.emitConnectionClose()
+    articleProviders[1]?.emitConnectionClose()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const readAuthenticationOutput = () => ({
+      requiresAuthentication: client.requiresAuthentication(),
+      statuses: articles.map(({ id }) => client.getStatus(id)),
+      checks: checkAccessRedirect.mock.calls.length,
+    })
+
+    expect(readAuthenticationOutput()).toEqual({
+      requiresAuthentication: false,
+      statuses: ['unsynced', 'unsynced'],
+      checks: 1,
+    })
     client.destroy()
   })
 

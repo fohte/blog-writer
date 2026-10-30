@@ -9,6 +9,7 @@ export function useSyncClient() {
   const [statuses, setStatuses] = useState<Record<string, SyncState>>({})
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string>()
+  const [requiresAuthentication, setRequiresAuthentication] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -24,6 +25,7 @@ export function useSyncClient() {
           const nextArticles = createdClient.listArticles()
           setArticles(nextArticles)
           setError(createdClient.getError()?.message)
+          setRequiresAuthentication(createdClient.requiresAuthentication())
           setStatuses(
             Object.fromEntries(
               nextArticles.map(({ id }) => [
@@ -75,6 +77,7 @@ export function useSyncClient() {
     statuses,
     ready,
     error,
+    requiresAuthentication,
     canCreate: client !== undefined && ready,
     createArticle,
   }
