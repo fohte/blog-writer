@@ -71,6 +71,12 @@ For a state that would otherwise take interaction to reach — an open menu/popo
 
 When you need to check how a component looks in a given state, write or update its story and view it via the `storybook` script (`storybook dev`) before starting a dev server and driving a browser manually.
 
+## UI
+
+- Use components from `@fohte/ui` for shared UI.
+- Do not redefine `@fohte/ui` design tokens in `frontend/src/index.css`. Define an app-specific alias when a value needs to differ.
+- Add missing generic components to the `fohte/ui` repository. Keep blog-writer-specific compositions in `frontend/src/components/`.
+
 ## Test code rules
 
 ### Assert on the whole output with a single equality check
