@@ -29,6 +29,7 @@ class FakeWebsocketProvider {
   private readonly statusListeners = new Set<
     (event: { status: 'connected' | 'connecting' | 'disconnected' }) => void
   >()
+  private readonly connectionCloseListeners = new Set<() => void>()
   private readonly syncListeners = new Set<(isSynced: boolean) => void>()
 
   constructor(
@@ -44,6 +45,10 @@ class FakeWebsocketProvider {
     this.statusListeners.add(listener)
   }
 
+  onConnectionClose(listener: () => void) {
+    this.connectionCloseListeners.add(listener)
+  }
+
   onSync(listener: (isSynced: boolean) => void) {
     this.syncListeners.add(listener)
   }
@@ -57,6 +62,15 @@ class FakeWebsocketProvider {
   emitSync(isSynced: boolean) {
     this.synced = isSynced
     for (const listener of this.syncListeners) listener(isSynced)
+  }
+
+  emitConnectionClose() {
+    for (const listener of this.connectionCloseListeners) listener()
+    this.wsconnecting = false
+    if (this.wsconnected) {
+      this.synced = false
+      this.emitStatus('disconnected')
+    }
   }
 
   destroy() {}
@@ -180,7 +194,7 @@ describe('createSyncClient', () => {
     restored.client.destroy()
   })
 
-  it('updates document status as the websocket connects and disconnects', async () => {
+  it('updates document status across a connection and failed reconnect', async () => {
     const { client, providers } = createFixture()
     await client.start()
     const created = client.createArticle()._unsafeUnwrap()
@@ -193,10 +207,36 @@ describe('createSyncClient', () => {
     provider?.emitStatus('connected')
     provider?.emitSync(true)
     states.push(client.getStatus(created.id))
-    provider?.emitStatus('disconnected')
+    provider?.emitConnectionClose()
+    states.push(client.getStatus(created.id))
+    provider?.emitStatus('connecting')
+    states.push(client.getStatus(created.id))
+    provider?.emitConnectionClose()
     states.push(client.getStatus(created.id))
 
-    expect(states).toEqual(['saved', 'syncing', 'synced', 'unsynced'])
+    expect(states).toEqual([
+      'saved',
+      'syncing',
+      'synced',
+      'unsynced',
+      'syncing',
+      'unsynced',
+    ])
+    client.destroy()
+  })
+
+  it('marks a document unsynced when its first connection attempt closes', async () => {
+    const { client, providers } = createFixture()
+    await client.start()
+    const created = client.createArticle()._unsafeUnwrap()
+    const provider = providers.find(({ docId }) => docId === created.id)
+
+    await Promise.resolve()
+    const states = [client.getStatus(created.id)]
+    provider?.emitConnectionClose()
+    states.push(client.getStatus(created.id))
+
+    expect(states).toEqual(['syncing', 'unsynced'])
     client.destroy()
   })
 

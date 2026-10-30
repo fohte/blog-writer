@@ -29,6 +29,7 @@ interface WebsocketConnection {
   synced: boolean
   wsconnected: boolean
   wsconnecting: boolean
+  onConnectionClose(listener: () => void): void
   onStatus(
     listener: (event: {
       status: 'connected' | 'connecting' | 'disconnected'
@@ -84,6 +85,8 @@ const defaultOptions: SyncClientOptions = {
       get wsconnecting() {
         return provider.wsconnecting
       },
+      onConnectionClose: (listener) =>
+        provider.on('connection-close', listener),
       onStatus: (listener) => provider.on('status', listener),
       onSync: (listener) => provider.on('sync', listener),
       destroy: () => {
@@ -302,7 +305,6 @@ const makeSyncDocument = (
       : provider.wsconnecting
         ? 'connecting'
         : 'disconnected'
-  let hasConnected = provider.wsconnected
   let isSynced = provider.synced
   const listeners = new Set<(status: SyncState) => void>()
 
@@ -325,7 +327,7 @@ const makeSyncDocument = (
       setStatus(isSynced ? 'synced' : 'syncing')
       return
     }
-    setStatus(hasConnected ? 'unsynced' : 'saved')
+    setStatus('unsynced')
   }
 
   persistence.on('synced', () => {
@@ -334,7 +336,10 @@ const makeSyncDocument = (
   })
   provider.onStatus(({ status: next }) => {
     connectionStatus = next
-    if (next === 'connected') hasConnected = true
+    refreshStatus()
+  })
+  provider.onConnectionClose(() => {
+    connectionStatus = 'disconnected'
     refreshStatus()
   })
   provider.onSync((synced) => {
