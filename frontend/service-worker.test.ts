@@ -41,6 +41,11 @@ const createWorker = (
 ) => {
   const listeners = new Map<string, (event: WorkerEvent) => void>()
   const cacheEntries = new Map<string, unknown>()
+  const fetchInputs: unknown[] = []
+  const workerFetch = (input: unknown) => {
+    fetchInputs.push(input)
+    return fetchImpl(input)
+  }
   const cache = {
     put: vi.fn((request: string, response: unknown) => {
       events.push(`put:${request}`)
@@ -79,12 +84,41 @@ const createWorker = (
 
   runInNewContext(source, {
     caches: cacheStorage,
-    fetch: fetchImpl,
+    fetch: workerFetch,
     self: workerSelf,
     URL,
   })
 
-  return { cache, cacheEntries, cacheStorage, events, listeners, workerSelf }
+  return {
+    cache,
+    cacheEntries,
+    cacheStorage,
+    events,
+    fetchInputs,
+    listeners,
+    workerSelf,
+  }
+}
+
+const dispatchInstall = async (worker: ReturnType<typeof createWorker>) => {
+  let installationPromise: Promise<unknown> | undefined
+  worker.listeners.get('install')?.({
+    waitUntil: (promise) => {
+      installationPromise = promise
+    },
+  })
+
+  const installation = await installationPromise?.then(
+    () => 'installed' as const,
+    () => 'rejected' as const,
+  )
+
+  return {
+    installation: installation ?? 'not-started',
+    cachedUrls: [...worker.cacheEntries.keys()],
+    events: [...worker.events],
+    skipWaitingCalls: worker.workerSelf.skipWaiting.mock.calls.length,
+  }
 }
 
 const dispatchFetch = async (
@@ -99,43 +133,50 @@ const dispatchFetch = async (
     },
   })
 
+  const response = await responsePromise
+
   return {
     handled: responsePromise !== undefined,
-    response: await responsePromise,
+    response,
+    fetchInputs: [...worker.fetchInputs],
+    cacheEntries: [...worker.cacheEntries.entries()],
+    events: [...worker.events],
   }
 }
 
+const navigateRequest = (path: string): WorkerRequest => ({
+  url: new URL(path, 'https://site.example.test').href,
+  method: 'GET',
+  mode: 'navigate',
+})
+
 describe('service worker', () => {
-  it('rejects installation when an app shell precache request redirects', async () => {
-    const events: string[] = []
-    const fetchMock = vi.fn((input: unknown) => {
-      events.push(`fetch:${String(input)}`)
-      return Promise.resolve(createResponse({ redirected: true }))
-    })
-    const worker = createWorker(['/index.html'], fetchMock, events)
-    const installPromises: Promise<unknown>[] = []
-    worker.listeners.get('install')?.({
-      waitUntil: (promise) => installPromises.push(promise),
-    })
-    const installation = await Promise.all(installPromises).then(
-      () => 'installed',
-      () => 'rejected',
-    )
-
-    const readInstallationOutput = () => ({
-      installation,
-      cachedUrls: [...worker.cacheEntries.keys()],
-      events,
-      skipWaitingCalls: worker.workerSelf.skipWaiting.mock.calls.length,
-    })
-
-    expect(readInstallationOutput()).toEqual({
-      installation: 'rejected',
-      cachedUrls: [],
-      events: ['open', 'fetch:/index.html'],
-      skipWaitingCalls: 0,
-    })
-  })
+  it.each([
+    {
+      scenario: 'redirects',
+      response: createResponse({ redirected: true }),
+    },
+    {
+      scenario: 'returns a non-ok response',
+      response: createResponse({ ok: false }),
+    },
+  ])(
+    'rejects installation when a precache request $scenario',
+    async ({ response }) => {
+      const events: string[] = []
+      const fetchMock = vi.fn((input: unknown) => {
+        events.push(`fetch:${String(input)}`)
+        return Promise.resolve(response)
+      })
+      const worker = createWorker(['/index.html'], fetchMock, events)
+      expect(await dispatchInstall(worker)).toEqual({
+        installation: 'rejected',
+        cachedUrls: [],
+        events: ['open', 'fetch:/index.html'],
+        skipWaitingCalls: 0,
+      })
+    },
+  )
 
   it('precaches successful app shell responses before activation', async () => {
     const events: string[] = []
@@ -148,19 +189,8 @@ describe('service worker', () => {
       fetchMock,
       events,
     )
-    const installPromises: Promise<unknown>[] = []
-    worker.listeners.get('install')?.({
-      waitUntil: (promise) => installPromises.push(promise),
-    })
-    await Promise.all(installPromises)
-
-    const readInstallationOutput = () => ({
-      cachedUrls: [...worker.cacheEntries.keys()],
-      events,
-      skipWaitingCalls: worker.workerSelf.skipWaiting.mock.calls.length,
-    })
-
-    expect(readInstallationOutput()).toEqual({
+    expect(await dispatchInstall(worker)).toEqual({
+      installation: 'installed',
       cachedUrls: ['/index.html', '/assets/app.js'],
       events: [
         'open',
@@ -176,36 +206,20 @@ describe('service worker', () => {
 
   it('returns the network navigation and caches it before using the app shell', async () => {
     const events: string[] = []
-    const fetchedInputs: unknown[] = []
     const networkResponse = createResponse({ cloneValue: 'network page copy' })
-    const fetchMock = vi.fn((input: unknown) => {
-      fetchedInputs.push(input)
+    const fetchMock = vi.fn(() => {
       events.push('fetch')
       return Promise.resolve(networkResponse)
     })
     const worker = createWorker([], fetchMock, events)
-    const request = {
-      url: 'https://site.example.test/articles/sample',
-      method: 'GET',
-      mode: 'navigate',
-    }
+    const request = navigateRequest('/articles/sample')
     const result = await dispatchFetch(worker, request)
 
-    const readNavigationOutput = () => ({
-      handled: result.handled,
-      returnedNetworkResponse: result.response === networkResponse,
-      fetchedOriginalRequest: fetchedInputs[0] === request,
-      cachedUrls: [...worker.cacheEntries.keys()],
-      cachedPage: worker.cacheEntries.get('/index.html'),
-      events,
-    })
-
-    expect(readNavigationOutput()).toEqual({
+    expect(result).toEqual({
       handled: true,
-      returnedNetworkResponse: true,
-      fetchedOriginalRequest: true,
-      cachedUrls: ['/index.html'],
-      cachedPage: 'network page copy',
+      response: networkResponse,
+      fetchInputs: [request],
+      cacheEntries: [['/index.html', 'network page copy']],
       events: ['fetch', 'open', 'put:/index.html'],
     })
   })
@@ -218,23 +232,14 @@ describe('service worker', () => {
       return Promise.resolve(redirectedResponse)
     })
     const worker = createWorker([], fetchMock, events)
-    const result = await dispatchFetch(worker, {
-      url: 'https://site.example.test/',
-      method: 'GET',
-      mode: 'navigate',
-    })
+    const request = navigateRequest('/')
+    const result = await dispatchFetch(worker, request)
 
-    const readNavigationOutput = () => ({
-      handled: result.handled,
-      returnedNetworkResponse: result.response === redirectedResponse,
-      cachedUrls: [...worker.cacheEntries.keys()],
-      events,
-    })
-
-    expect(readNavigationOutput()).toEqual({
+    expect(result).toEqual({
       handled: true,
-      returnedNetworkResponse: true,
-      cachedUrls: [],
+      response: redirectedResponse,
+      fetchInputs: [request],
+      cacheEntries: [],
       events: ['fetch'],
     })
   })
@@ -247,21 +252,14 @@ describe('service worker', () => {
     })
     const worker = createWorker([], fetchMock, events)
     worker.cacheEntries.set('/index.html', 'cached app shell')
-    const result = await dispatchFetch(worker, {
-      url: 'https://site.example.test/articles/sample',
-      method: 'GET',
-      mode: 'navigate',
-    })
+    const request = navigateRequest('/articles/sample')
+    const result = await dispatchFetch(worker, request)
 
-    const readNavigationOutput = () => ({
-      handled: result.handled,
-      response: result.response,
-      events,
-    })
-
-    expect(readNavigationOutput()).toEqual({
+    expect(result).toEqual({
       handled: true,
       response: 'cached app shell',
+      fetchInputs: [request],
+      cacheEntries: [['/index.html', 'cached app shell']],
       events: ['fetch', 'match:/index.html'],
     })
   })
@@ -275,21 +273,14 @@ describe('service worker', () => {
     })
     const worker = createWorker([], fetchMock, events)
     worker.cache.put.mockRejectedValueOnce(new TypeError('cache unavailable'))
-    const result = await dispatchFetch(worker, {
-      url: 'https://site.example.test/articles/sample',
-      method: 'GET',
-      mode: 'navigate',
-    })
+    const request = navigateRequest('/articles/sample')
+    const result = await dispatchFetch(worker, request)
 
-    const readNavigationOutput = () => ({
-      handled: result.handled,
-      returnedNetworkResponse: result.response === networkResponse,
-      events,
-    })
-
-    expect(readNavigationOutput()).toEqual({
+    expect(result).toEqual({
       handled: true,
-      returnedNetworkResponse: true,
+      response: networkResponse,
+      fetchInputs: [request],
+      cacheEntries: [],
       events: ['fetch', 'open'],
     })
   })
@@ -301,29 +292,32 @@ describe('service worker', () => {
       return Promise.resolve(createResponse())
     })
     const worker = createWorker([], fetchMock, events)
-    const apiRequest = await dispatchFetch(worker, {
+    const apiRequest = dispatchFetch(worker, {
       url: 'https://site.example.test/api/sync/document',
       method: 'GET',
       mode: 'cors',
     })
-    const websocketRequest = await dispatchFetch(worker, {
+    const websocketRequest = dispatchFetch(worker, {
       url: 'wss://site.example.test/api/sync/document',
       method: 'GET',
       mode: 'websocket',
     })
 
-    const readIgnoredRequestOutput = () => ({
-      apiRequest,
-      websocketRequest,
-      networkFetches: fetchMock.mock.calls.length,
-      events,
-    })
-
-    expect(readIgnoredRequestOutput()).toEqual({
-      apiRequest: { handled: false, response: undefined },
-      websocketRequest: { handled: false, response: undefined },
-      networkFetches: 0,
-      events: [],
-    })
+    expect(await Promise.all([apiRequest, websocketRequest])).toEqual([
+      {
+        handled: false,
+        response: undefined,
+        fetchInputs: [],
+        cacheEntries: [],
+        events: [],
+      },
+      {
+        handled: false,
+        response: undefined,
+        fetchInputs: [],
+        cacheEntries: [],
+        events: [],
+      },
+    ])
   })
 })
