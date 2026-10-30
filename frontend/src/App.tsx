@@ -2,12 +2,19 @@ import { Button } from '@fohte/ui/button'
 import { List } from '@fohte/ui/list'
 import { Panel } from '@fohte/ui/panel'
 
+import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
 import { SyncStatus } from '#components/sync-status'
 import { useSyncClient } from '#lib/use-sync-client'
 
 export function App() {
-  const { articles, statuses, canCreate, error, createArticle } =
-    useSyncClient()
+  const {
+    articles,
+    statuses,
+    canCreate,
+    error,
+    requiresAuthentication,
+    createArticle,
+  } = useSyncClient()
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
@@ -32,6 +39,14 @@ export function App() {
         </div>
 
         {error !== undefined ? <p role="alert">{error}</p> : null}
+
+        {requiresAuthentication ? (
+          <ReauthenticationPrompt
+            onLoginAgain={() => {
+              window.location.reload()
+            }}
+          />
+        ) : null}
 
         {articles.length === 0 ? (
           <p className="text-muted-foreground">No articles yet.</p>

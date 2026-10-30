@@ -79,6 +79,9 @@ class FakeWebsocketProvider {
 const createFixture = (
   savedDocuments = new Map<string, Uint8Array>(),
   unavailableDocIds = new Set<string>(),
+  checkAccessRedirect:
+    (() => Promise<'redirected' | 'reachable' | 'unreachable'>) | null = () =>
+    Promise.resolve('unreachable'),
 ) => {
   const providers: FakeWebsocketProvider[] = []
   const docs: Y.Doc[] = []
@@ -100,6 +103,7 @@ const createFixture = (
     },
     createArticleId: () => articleId,
     now: () => now,
+    ...(checkAccessRedirect === null ? {} : { checkAccessRedirect }),
   })
 
   return {
@@ -219,7 +223,7 @@ describe('createSyncClient', () => {
       'syncing',
       'synced',
       'unsynced',
-      'syncing',
+      'unsynced',
       'unsynced',
     ])
     client.destroy()
@@ -239,6 +243,63 @@ describe('createSyncClient', () => {
     expect(states).toEqual(['syncing', 'unsynced'])
     client.destroy()
   })
+
+  const opaqueRedirectResponse = () => {
+    const response = new Response()
+    Object.defineProperties(response, {
+      type: { value: 'opaqueredirect' },
+      status: { value: 0 },
+    })
+    return response
+  }
+
+  it.each([
+    {
+      scenario: 'Access redirects to its login page',
+      response: opaqueRedirectResponse(),
+      expectedAuthentication: true,
+    },
+    {
+      scenario: 'the network request cannot reach the server',
+      response: undefined,
+      expectedAuthentication: false,
+    },
+  ])(
+    'distinguishes login expiry when $scenario',
+    async ({ response, expectedAuthentication }) => {
+      const requests: { url: string; options: RequestInit | undefined }[] = []
+      const fetchMock = vi.fn((input: URL, init?: RequestInit) => {
+        requests.push({ url: input.href, options: init })
+        return response === undefined
+          ? Promise.reject(new TypeError('offline'))
+          : Promise.resolve(response)
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      const { client, providers } = createFixture(new Map(), new Set(), null)
+      await client.start()
+      const article = client.createArticle()._unsafeUnwrap()
+      const provider = providers.find(({ docId }) => docId === article.id)
+
+      provider?.emitConnectionClose()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      const readAuthenticationOutput = () => ({
+        requiresAuthentication: client.requiresAuthentication(),
+        status: client.getStatus(article.id),
+        request: requests[0],
+      })
+
+      expect(readAuthenticationOutput()).toEqual({
+        requiresAuthentication: expectedAuthentication,
+        status: 'unsynced',
+        request: {
+          url: 'http://localhost/',
+          options: { cache: 'no-store', redirect: 'manual' },
+        },
+      })
+      client.destroy()
+    },
+  )
 
   it('opens an article added to the index after startup', async () => {
     const { client, docs, providers } = createFixture()

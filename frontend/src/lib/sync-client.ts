@@ -7,6 +7,7 @@ import * as Y from 'yjs'
 const ARTICLE_INDEX_DOC_ID = 'article-index'
 
 export type SyncState = 'saved' | 'unsynced' | 'syncing' | 'synced'
+export type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'
 
 export type Article = {
   id: string
@@ -49,6 +50,7 @@ export type SyncClientOptions = {
   ) => WebsocketConnection
   createArticleId: () => string
   now: () => number
+  checkAccessRedirect?: () => Promise<AccessCheckResult>
 }
 
 export interface SyncClientApi {
@@ -58,6 +60,7 @@ export interface SyncClientApi {
   listArticles(): Article[]
   getStatus(docId: string): SyncState | undefined
   getError(): SyncClientError | undefined
+  requiresAuthentication(): boolean
   subscribe(listener: () => void): () => void
   destroy(): void
 }
@@ -67,8 +70,10 @@ type SyncDocument = {
   persistence: LocalPersistence
   provider: WebsocketConnection
   status: SyncState
-  subscribe: (listener: (status: SyncState) => void) => () => void
+  subscribe: (listener: (event: SyncDocumentEvent) => void) => () => void
 }
+
+type SyncDocumentEvent = 'status' | 'connection-close' | 'connected'
 
 const defaultOptions: SyncClientOptions = {
   createDoc: () => new Y.Doc(),
@@ -114,6 +119,23 @@ const createWebsocketUrl = () => {
   return url.toString()
 }
 
+const checkAccessRedirect = () => {
+  const pageUrl =
+    typeof window === 'undefined' ? 'http://localhost/' : window.location.href
+  return ResultAsync.fromPromise(
+    fetch(new URL('/', pageUrl), { cache: 'no-store', redirect: 'manual' }),
+    toSyncClientError,
+  ).match(
+    (response) =>
+      response.type === 'opaqueredirect' ||
+      response.redirected ||
+      (response.status >= 300 && response.status < 400)
+        ? 'redirected'
+        : 'reachable',
+    () => 'unreachable',
+  )
+}
+
 const buildSyncDocument = (options: SyncClientOptions, docId: string) =>
   Result.fromThrowable(() => options.createDoc(), toSyncClientError)().andThen(
     (doc) => {
@@ -153,12 +175,17 @@ class SyncClient implements SyncClientApi {
   private started = false
   private destroyed = false
   private syncError: SyncClientError | undefined
+  private accessRequired = false
+  private connectionEpoch = 0
+  private authenticationCheck:
+    { epoch: number; promise: Promise<void> } | undefined
 
   private constructor(
     private readonly options: SyncClientOptions,
     private readonly index: SyncDocument,
   ) {
     this.documents.set(ARTICLE_INDEX_DOC_ID, index)
+    this.subscribeToDocument(index)
     this.index.doc.on('update', () => {
       this.emitChange()
       if (!this.started || this.destroyed) return
@@ -199,9 +226,7 @@ class SyncClient implements SyncClientApi {
 
     return buildSyncDocument(this.options, docId).andThen((document) =>
       Result.fromThrowable(() => {
-        document.subscribe(() => {
-          this.emitChange()
-        })
+        this.subscribeToDocument(document)
         this.documents.set(docId, document)
         this.emitChange()
         return document.doc
@@ -248,6 +273,10 @@ class SyncClient implements SyncClientApi {
     return this.syncError
   }
 
+  requiresAuthentication() {
+    return this.accessRequired
+  }
+
   subscribe(listener: () => void) {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -266,6 +295,48 @@ class SyncClient implements SyncClientApi {
 
   private emitChange() {
     for (const listener of this.listeners) listener()
+  }
+
+  private subscribeToDocument(document: SyncDocument) {
+    document.subscribe((event) => {
+      if (event === 'connection-close') {
+        this.emitChange()
+        this.checkAuthentication()
+        return
+      }
+
+      if (event === 'connected') {
+        this.connectionEpoch += 1
+        this.accessRequired = false
+      }
+
+      this.emitChange()
+    })
+  }
+
+  private checkAuthentication() {
+    if (this.authenticationCheck?.epoch === this.connectionEpoch) return
+    const currentEpoch = this.connectionEpoch
+    const check = this.options.checkAccessRedirect ?? checkAccessRedirect
+    const promise = ResultAsync.fromPromise(
+      Promise.resolve().then(check),
+      toSyncClientError,
+    )
+      .match(
+        (result) => {
+          if (this.destroyed || currentEpoch !== this.connectionEpoch) return
+          if (result === 'redirected') this.accessRequired = true
+          if (result === 'reachable') this.accessRequired = false
+          this.emitChange()
+        },
+        () => undefined,
+      )
+      .finally(() => {
+        if (this.authenticationCheck?.epoch === currentEpoch) {
+          this.authenticationCheck = undefined
+        }
+      })
+    this.authenticationCheck = { epoch: currentEpoch, promise }
   }
 
   private openIndexedArticles() {
@@ -306,12 +377,17 @@ const makeSyncDocument = (
         ? 'connecting'
         : 'disconnected'
   let isSynced = provider.synced
-  const listeners = new Set<(status: SyncState) => void>()
+  let connectionHasFailed = false
+  const listeners = new Set<(event: SyncDocumentEvent) => void>()
+
+  const emit = (event: SyncDocumentEvent) => {
+    for (const listener of listeners) listener(event)
+  }
 
   const setStatus = (next: SyncState) => {
     if (status === next) return
     status = next
-    for (const listener of listeners) listener(status)
+    emit('status')
   }
 
   const refreshStatus = () => {
@@ -320,7 +396,7 @@ const makeSyncDocument = (
       return
     }
     if (connectionStatus === 'connecting') {
-      setStatus('syncing')
+      setStatus(connectionHasFailed ? 'unsynced' : 'syncing')
       return
     }
     if (connectionStatus === 'connected') {
@@ -336,11 +412,14 @@ const makeSyncDocument = (
   })
   provider.onStatus(({ status: next }) => {
     connectionStatus = next
+    if (next === 'connected') emit('connected')
     refreshStatus()
   })
   provider.onConnectionClose(() => {
     connectionStatus = 'disconnected'
+    connectionHasFailed = true
     refreshStatus()
+    emit('connection-close')
   })
   provider.onSync((synced) => {
     isSynced = synced
