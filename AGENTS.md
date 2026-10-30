@@ -87,6 +87,12 @@ The `vrt` CI check renders Storybook stories to screenshots and compares them ag
 
 The `vrt-approval` workflow treats the `vrt-approved` label as confirmation that a human reviewed the diff images and approved them. Only a human can make that visual judgment, so after inspecting the diff, ask the user to review it and add the label themselves — do not add it yourself even if the diff looks correct.
 
+## UI
+
+- Use components from `@fohte/ui` for shared UI.
+- Do not redefine `@fohte/ui` design tokens in `frontend/src/index.css`. Define an app-specific alias when a value needs to differ.
+- Add missing generic components to the `fohte/ui` repository. Keep blog-writer-specific compositions in `frontend/src/components/`.
+
 ## Test code rules
 
 ### Assert on the whole output with a single equality check
