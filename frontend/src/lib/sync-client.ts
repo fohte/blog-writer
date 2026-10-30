@@ -127,11 +127,7 @@ const checkAccessRedirect = () => {
     toSyncClientError,
   ).match(
     (response) =>
-      response.type === 'opaqueredirect' ||
-      response.redirected ||
-      (response.status >= 300 && response.status < 400)
-        ? 'redirected'
-        : 'reachable',
+      response.type === 'opaqueredirect' ? 'redirected' : 'reachable',
     () => 'unreachable',
   )
 }
@@ -325,8 +321,7 @@ class SyncClient implements SyncClientApi {
       .match(
         (result) => {
           if (this.destroyed || currentEpoch !== this.connectionEpoch) return
-          if (result === 'redirected') this.accessRequired = true
-          if (result === 'reachable') this.accessRequired = false
+          this.accessRequired = result === 'redirected'
           this.emitChange()
         },
         () => undefined,

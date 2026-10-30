@@ -3,11 +3,23 @@
 const CACHE_NAME = '__CACHE_NAME__'
 const PRECACHE_URLS = '__PRECACHE_URLS__'
 
+const precache = (cache) =>
+  Promise.all(
+    PRECACHE_URLS.map((url) =>
+      fetch(url).then((response) => {
+        if (response.redirected || !response.ok) {
+          return Promise.reject(new TypeError(`Failed to precache ${url}`))
+        }
+        return cache.put(url, response)
+      }),
+    ),
+  )
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .then(precache)
       .then(() => self.skipWaiting()),
   )
 })
@@ -46,6 +58,10 @@ self.addEventListener('fetch', (event) => {
             .open(CACHE_NAME)
             .then((cache) =>
               cache.put('/index.html', response.clone()).then(() => response),
+            )
+            .then(
+              () => response,
+              () => response,
             )
         })
         .catch(() => caches.match('/index.html')),

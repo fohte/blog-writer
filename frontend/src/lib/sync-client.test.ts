@@ -254,11 +254,22 @@ describe('createSyncClient', () => {
     return response
   }
 
+  const responseWithRedirectMetadata = () => {
+    const response = new Response(null, { status: 302 })
+    Object.defineProperty(response, 'redirected', { value: true })
+    return response
+  }
+
   it.each([
     {
       scenario: 'Access redirects to its login page',
       response: opaqueRedirectResponse(),
       expectedAuthentication: true,
+    },
+    {
+      scenario: 'a visible redirect status is not an opaque redirect',
+      response: responseWithRedirectMetadata(),
+      expectedAuthentication: false,
     },
     {
       scenario: 'the network request cannot reach the server',
@@ -302,10 +313,13 @@ describe('createSyncClient', () => {
     },
   )
 
-  it('clears the login prompt when a later check reaches the app', async () => {
+  it.each([
+    { scenario: 'the app is reachable', result: 'reachable' as const },
+    { scenario: 'the app is unreachable', result: 'unreachable' as const },
+  ])('clears the login prompt when $scenario', async ({ result }) => {
     const results: ('redirected' | 'reachable' | 'unreachable')[] = [
       'redirected',
-      'reachable',
+      result,
     ]
     const checkAccessRedirect = vi.fn(() =>
       Promise.resolve(results.shift() ?? 'unreachable'),
