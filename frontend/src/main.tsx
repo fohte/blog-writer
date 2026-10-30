@@ -6,6 +6,18 @@ import { createRoot } from 'react-dom/client'
 
 import { App } from '#App'
 
+const runBestEffort = (operation: Promise<unknown>, message: string) => {
+  void ResultAsync.fromPromise(
+    operation,
+    (cause) => new Error(message, { cause }),
+  ).match(
+    () => undefined,
+    (error) => {
+      console.warn(error)
+    },
+  )
+}
+
 const requestPersistentStorage = () => {
   if (
     !('storage' in navigator) ||
@@ -14,24 +26,18 @@ const requestPersistentStorage = () => {
     return
   }
 
-  void ResultAsync.fromPromise(
+  runBestEffort(
     navigator.storage.persist(),
-    (cause) => new Error('Failed to request persistent storage', { cause }),
-  ).match(
-    () => undefined,
-    () => undefined,
+    'Failed to request persistent storage',
   )
 }
 
 const registerServiceWorker = () => {
   if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return
 
-  void ResultAsync.fromPromise(
+  runBestEffort(
     navigator.serviceWorker.register('/sw.js'),
-    (cause) => new Error('Failed to register the service worker', { cause }),
-  ).match(
-    () => undefined,
-    () => undefined,
+    'Failed to register the service worker',
   )
 }
 

@@ -7,7 +7,7 @@ import * as Y from 'yjs'
 const ARTICLE_INDEX_DOC_ID = 'article-index'
 
 export type SyncState = 'saved' | 'unsynced' | 'syncing' | 'synced'
-export type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'
+type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'
 
 export type Article = {
   id: string
@@ -177,8 +177,7 @@ class SyncClient implements SyncClientApi {
   private syncError: SyncClientError | undefined
   private accessRequired = false
   private connectionEpoch = 0
-  private authenticationCheck:
-    { epoch: number; promise: Promise<void> } | undefined
+  private authenticationCheckEpoch: number | undefined
 
   private constructor(
     private readonly options: SyncClientOptions,
@@ -315,10 +314,11 @@ class SyncClient implements SyncClientApi {
   }
 
   private checkAuthentication() {
-    if (this.authenticationCheck?.epoch === this.connectionEpoch) return
+    if (this.authenticationCheckEpoch === this.connectionEpoch) return
     const currentEpoch = this.connectionEpoch
     const check = this.options.checkAccessRedirect ?? checkAccessRedirect
-    const promise = ResultAsync.fromPromise(
+    this.authenticationCheckEpoch = currentEpoch
+    void ResultAsync.fromPromise(
       Promise.resolve().then(check),
       toSyncClientError,
     )
@@ -332,11 +332,10 @@ class SyncClient implements SyncClientApi {
         () => undefined,
       )
       .finally(() => {
-        if (this.authenticationCheck?.epoch === currentEpoch) {
-          this.authenticationCheck = undefined
+        if (this.authenticationCheckEpoch === currentEpoch) {
+          this.authenticationCheckEpoch = undefined
         }
       })
-    this.authenticationCheck = { epoch: currentEpoch, promise }
   }
 
   private openIndexedArticles() {

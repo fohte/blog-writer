@@ -1,7 +1,7 @@
 /* global caches, fetch, self -- This file runs in the service worker global scope. */
 
-const CACHE_NAME = 'blog-writer-app-shell-v1'
-const PRECACHE_URLS = __PRECACHE_URLS__
+const CACHE_NAME = '__CACHE_NAME__'
+const PRECACHE_URLS = '__PRECACHE_URLS__'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
