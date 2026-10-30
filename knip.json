@@ -8,6 +8,7 @@
       "ignoreBinaries": ["playwright"]
     },
     "frontend": {
+      "entry": ["src/lib/utils.ts!"],
       "ignoreDependencies": [
         "reg-suit",
         "reg-publish-s3-plugin",
