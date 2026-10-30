@@ -7,6 +7,8 @@
       "ignore": ["commitlint-plugin-no-external-refs.cjs"],
       "ignoreBinaries": ["playwright"]
     },
-    "frontend": {}
+    "frontend": {
+      "entry": ["src/lib/utils.ts!"]
+    }
   }
 }
