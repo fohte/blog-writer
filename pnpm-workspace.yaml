@@ -17,3 +17,5 @@ minimumReleaseAge: 10080
 # First-party scopes: publisher account is trusted, so skip the release-age delay.
 minimumReleaseAgeExclude:
   - '@fohte/*'
+  # Renovate security update: storybook@10.6.2
+  - storybook@10.6.2
