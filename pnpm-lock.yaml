@@ -239,8 +239,8 @@ importers:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
       shadcn:
-        specifier: 4.21.0
-        version: 4.21.0(supports-color@10.2.2)(typescript@6.0.3)
+        specifier: 4.22.1
+        version: 4.22.1(supports-color@10.2.2)
       tailwind-merge:
         specifier: 3.6.0
         version: 3.6.0
@@ -1710,6 +1710,10 @@ packages:
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
 
+  '@shadcn/registry@0.2.0':
+    resolution: {integrity: sha512-m3TeqU/+av2kgOLfESHkWzsmhuQuY4NXZd5Y1Rd4lzy4IX3JJ5+k2mYfkq6OT8oMuk2W4GQPAkO7+CC7KlpSbw==}
+    engines: {node: '>=20.18.1'}
+
   '@simple-libs/child-process-utils@2.0.0':
     resolution: {integrity: sha512-dvNoRKLijXnD0XoJAz94pbNuB5GQgDr55UhpSPhffDkTT0Cmcqh9jSCOtwfT2d4H6MI9E7c4SgtMuJXZ6F3c6A==}
     engines: {node: '>=22'}
@@ -2335,9 +2339,19 @@ packages:
 
   ajv-formats@2.1.1:
     resolution: {integrity: sha512-Wx0Kx52hxE7C18hkMEggYlEifqWZtYaRgouJor+WMdPnQyEK13vgEWyVNup7SoeeoLMsr4kf5h6dOW11I15MUA==}
+    peerDependencies:
+      ajv: ^8.0.0
+    peerDependenciesMeta:
+      ajv:
+        optional: true
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
+    peerDependencies:
+      ajv: ^8.0.0
+    peerDependenciesMeta:
+      ajv:
+        optional: true
 
   ajv@6.15.0:
     resolution: {integrity: sha512-fgFx7Hfoq60ytK2c7DhnF8jIvzYgOMxfugjLOSMHjLIPgenqa7S7oaagATUq99mV6IYvN2tRmC0wnTYX6iPbMw==}
@@ -4394,8 +4408,8 @@ packages:
   setprototypeof@1.2.0:
     resolution: {integrity: sha512-E5LDX7Wrp85Kil5bhZv46j8jOeboKq5JMmYM3gVGdGH8xFpPWXUMsNrlODCrkoxMEeNi/XZIwuRvY4XNwYMJpw==}
 
-  shadcn@4.21.0:
-    resolution: {integrity: sha512-UU2mFNusW8C5rvadKdH69vERYZqUlOOlXBcf0MYhYLdTGP6DPti7X4qovCu+RTfCqsAgq/T+YfE0Vnttxh9aiw==}
+  shadcn@4.22.1:
+    resolution: {integrity: sha512-LbB4Lro+b0qSVki/tgL5edtKylEnXe1ppxMJC12d7NHPgaT+eSgJGMQULwP72V7X9tbiUq7xfx3VDAfB7jdGoA==}
     engines: {node: '>=20.18.1'}
     hasBin: true
 
@@ -4729,6 +4743,10 @@ packages:
     resolution: {integrity: sha512-4dbzIzqvjtgiM5rw1k5rEHtBANKmdudhGyBEajN01fEyhaAIhsoKNy6y7+IN93IfpFtwY9iqi7kD+xwKhQsNJA==}
     engines: {node: '>=8'}
 
+  type-fest@4.41.0:
+    resolution: {integrity: sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==}
+    engines: {node: '>=16'}
+
   type-fest@5.10.0:
     resolution: {integrity: sha512-NoSdpq/WEiAg5sjmBkmV/hfxv6HJH4NqPNrqjtSO5CwRmpsDfaf4begxW34KdJykH/l1yHtwBWQkCRdoXO8mPA==}
     engines: {node: '>=20'}
@@ -5059,9 +5077,6 @@ packages:
     resolution: {integrity: sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==}
     peerDependencies:
       zod: ^3.25.28 || ^4
-
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
@@ -5937,7 +5952,7 @@ snapshots:
       '@types/react': 19.3.0
       react: 19.2.8
 
-  '@modelcontextprotocol/sdk@1.32.1(supports-color@10.2.2)(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.32.1(supports-color@10.2.2)(zod@4.6.7)':
     dependencies:
       '@hono/node-server': 2.1.5(hono@4.13.13)
       ajv: 8.20.0
@@ -5954,8 +5969,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
+      zod: 4.6.7
+      zod-to-json-schema: 3.25.2(zod@4.6.7)
     transitivePeerDependencies:
       - supports-color
 
@@ -6356,6 +6371,34 @@ snapshots:
     optional: true
 
   '@sec-ant/readable-stream@0.4.1': {}
+
+  '@shadcn/registry@0.2.0(supports-color@10.2.2)':
+    dependencies:
+      '@babel/core': 7.29.7(supports-color@10.2.2)
+      '@babel/parser': 7.29.9
+      '@babel/plugin-transform-typescript': 7.29.9(@babel/core@7.29.7(supports-color@10.2.2))(supports-color@10.2.2)
+      '@babel/preset-typescript': 7.29.7(@babel/core@7.29.7(supports-color@10.2.2))(supports-color@10.2.2)
+      '@dotenvx/dotenvx': 1.75.1
+      cn: 0.2.6
+      code-block-writer: 13.0.3
+      deepmerge: 4.3.1
+      execa: 9.6.1
+      fast-glob: 3.3.3
+      fs-extra: 11.4.1
+      fuzzysort: 3.1.0
+      kleur: 4.1.5
+      ora: 8.2.0
+      postcss: 8.5.30
+      prompts: 2.4.2
+      recast: 0.23.21
+      socks: 2.8.10
+      stringify-object: 5.0.0
+      tsconfig-paths: 4.2.0
+      type-fest: 4.41.0
+      undici: 7.30.1
+      zod: 4.6.7
+    transitivePeerDependencies:
+      - supports-color
 
   '@simple-libs/child-process-utils@2.0.0':
     dependencies:
@@ -9094,19 +9137,19 @@ snapshots:
 
   setprototypeof@1.2.0: {}
 
-  shadcn@4.21.0(supports-color@10.2.2)(typescript@6.0.3):
+  shadcn@4.22.1(supports-color@10.2.2):
     dependencies:
       '@babel/core': 7.29.7(supports-color@10.2.2)
       '@babel/parser': 7.29.9
       '@babel/plugin-transform-typescript': 7.29.9(@babel/core@7.29.7(supports-color@10.2.2))(supports-color@10.2.2)
       '@babel/preset-typescript': 7.29.7(@babel/core@7.29.7(supports-color@10.2.2))(supports-color@10.2.2)
       '@dotenvx/dotenvx': 1.75.1
-      '@modelcontextprotocol/sdk': 1.32.1(supports-color@10.2.2)(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.32.1(supports-color@10.2.2)(zod@4.6.7)
+      '@shadcn/registry': 0.2.0(supports-color@10.2.2)
       '@types/validate-npm-package-name': 4.0.2
       browserslist: 4.29.4
       cn: 0.2.6
       commander: 14.0.3
-      cosmiconfig: 9.0.2(typescript@6.0.3)
       dedent: 1.7.2
       deepmerge: 4.3.1
       diff: 8.0.4
@@ -9127,13 +9170,11 @@ snapshots:
       tsconfig-paths: 4.2.0
       undici: 7.30.1
       validate-npm-package-name: 7.0.2
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
+      zod: 4.6.7
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - babel-plugin-macros
       - supports-color
-      - typescript
 
   shebang-command@2.0.0:
     dependencies:
@@ -9421,6 +9462,8 @@ snapshots:
 
   type-fest@0.8.1: {}
 
+  type-fest@4.41.0: {}
+
   type-fest@5.10.0:
     dependencies:
       tagged-tag: 1.0.0
@@ -9705,10 +9748,8 @@ snapshots:
 
   yoctocolors@2.2.0: {}
 
-  zod-to-json-schema@3.25.2(zod@3.25.76):
+  zod-to-json-schema@3.25.2(zod@4.6.7):
     dependencies:
-      zod: 3.25.76
-
-  zod@3.25.76: {}
+      zod: 4.6.7
 
   zod@4.6.7: {}
