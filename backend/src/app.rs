@@ -75,21 +75,23 @@ mod tests {
         http::{HeaderValue, Request, StatusCode, header::ALLOW, header::CONTENT_TYPE},
         routing::get,
     };
-    use rstest::rstest;
+    use rstest::{fixture, rstest};
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
     use super::{AppState, router, router_with_frontend_fallback};
     use crate::host_origin::HostOriginPolicy;
 
-    fn test_router() -> axum::Router {
-        router(
-            AppState::default(),
-            HostOriginPolicy::new(
-                vec!["localhost:3000".to_owned()],
-                vec!["http://localhost:3000".to_owned()],
-            ),
+    #[fixture]
+    fn policy() -> HostOriginPolicy {
+        HostOriginPolicy::new(
+            vec!["localhost:3000".to_owned()],
+            vec!["http://localhost:3000".to_owned()],
         )
+    }
+
+    fn test_router(policy: HostOriginPolicy) -> axum::Router {
+        router(AppState::default(), policy)
     }
 
     #[rstest]
@@ -120,13 +122,14 @@ mod tests {
         json!({"error": "Method Not Allowed"})
     )]
     async fn applies_host_policy_to_router_requests(
+        policy: HostOriginPolicy,
         #[case] path: &'static str,
         #[case] method: &'static str,
         #[case] host: &'static str,
         #[case] status: u16,
         #[case] expected: Value,
     ) {
-        let response = test_router()
+        let response = test_router(policy)
             .oneshot(
                 Request::builder()
                     .method(method)
@@ -169,6 +172,7 @@ mod tests {
     )]
     #[test_attr(tokio::test)]
     async fn routes_frontend_fallback_methods(
+        policy: HostOriginPolicy,
         #[case] method: &'static str,
         #[case] expected_status: StatusCode,
         #[case] expected_allow: Option<HeaderValue>,
@@ -178,10 +182,7 @@ mod tests {
         let response = router_with_frontend_fallback(
             AppState::default(),
             get(|| async { "frontend shell" }),
-            HostOriginPolicy::new(
-                vec!["localhost:3000".to_owned()],
-                vec!["http://localhost:3000".to_owned()],
-            ),
+            policy,
         )
         .oneshot(
             Request::builder()
