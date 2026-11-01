@@ -4,7 +4,7 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::{
     error::{AppError, ErrorResponse},
-    health,
+    frontend, health,
 };
 
 #[derive(OpenApi)]
@@ -36,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api", any(api_not_found))
         .route("/api/", any(api_not_found))
         .nest("/api", api_router)
+        .fallback(frontend::serve)
         .with_state(state)
 }
 
