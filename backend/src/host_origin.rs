@@ -22,48 +22,56 @@ impl HostOriginPolicy {
     }
 
     fn allows(&self, headers: &HeaderMap, uri: &axum::http::Uri) -> bool {
-        let mut host_values = headers.get_all(HOST).iter();
-        let host_header = host_values.next();
-        if host_values.next().is_some() {
+        let Some(host) = request_host(headers, uri) else {
             return false;
-        }
-        let host_header = match host_header.map(|value| value.to_str()) {
-            Some(Ok(host)) => Some(host),
-            Some(Err(_)) => return false,
-            None => None,
         };
-        let uri_authority = uri.authority().map(|authority| authority.as_str());
-        let host = match (host_header, uri_authority) {
-            (Some(header), Some(authority)) if !header.eq_ignore_ascii_case(authority) => {
-                return false;
-            }
-            (Some(header), _) => header,
-            (None, Some(authority)) => authority,
-            (None, None) => return false,
-        };
-        if !self
-            .allowed_hosts
-            .iter()
-            .any(|allowed| allowed == &host.to_ascii_lowercase())
-        {
+        if !self.allowed_hosts.iter().any(|allowed| allowed == &host) {
             return false;
         }
 
-        let mut origin_values = headers.get_all(axum::http::header::ORIGIN).iter();
-        let Some(origin_header) = origin_values.next() else {
-            return true;
-        };
-        if origin_values.next().is_some() {
-            return false;
-        }
-        let Ok(origin) = origin_header.to_str() else {
-            return false;
-        };
-
-        self.allowed_origins
-            .iter()
-            .any(|allowed| allowed == &origin.to_ascii_lowercase())
+        origin_allowed(headers, &self.allowed_origins)
     }
+}
+
+fn request_host(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
+    let mut host_values = headers.get_all(HOST).iter();
+    let host_header = host_values.next();
+    if host_values.next().is_some() {
+        return None;
+    }
+    let host_header = match host_header.map(|value| value.to_str()) {
+        Some(Ok(host)) => Some(host),
+        Some(Err(_)) => return None,
+        None => None,
+    };
+    let uri_authority = uri.authority().map(|authority| authority.as_str());
+    let host = match (host_header, uri_authority) {
+        (Some(header), Some(authority)) if !header.eq_ignore_ascii_case(authority) => {
+            return None;
+        }
+        (Some(header), _) => header,
+        (None, Some(authority)) => authority,
+        (None, None) => return None,
+    };
+
+    Some(host.to_ascii_lowercase())
+}
+
+fn origin_allowed(headers: &HeaderMap, allowed_origins: &[String]) -> bool {
+    let mut origin_values = headers.get_all(axum::http::header::ORIGIN).iter();
+    let Some(origin_header) = origin_values.next() else {
+        return true;
+    };
+    if origin_values.next().is_some() {
+        return false;
+    }
+    let Ok(origin) = origin_header.to_str() else {
+        return false;
+    };
+
+    allowed_origins
+        .iter()
+        .any(|allowed| allowed == &origin.to_ascii_lowercase())
 }
 
 fn normalize(values: Vec<String>) -> Vec<String> {
@@ -81,6 +89,11 @@ pub async fn enforce_host_origin(
     if policy.allows(request.headers(), request.uri()) {
         next.run(request).await
     } else {
+        tracing::warn!(
+            host = ?request.headers().get(HOST),
+            origin = ?request.headers().get(axum::http::header::ORIGIN),
+            "rejected request with untrusted host or origin"
+        );
         AppError::Client {
             status: StatusCode::FORBIDDEN,
             message: "Forbidden".to_owned(),
@@ -109,73 +122,114 @@ mod tests {
         );
         Router::new()
             .route("/api/health", get(health))
+            .route("/api/sync/{doc_id}", get(health))
             .layer(middleware::from_fn_with_state(policy, enforce_host_origin))
     }
 
     #[rstest]
     #[test_attr(tokio::test)]
     #[case::allowed_host_and_origin(
-        Some("localhost:3000"),
-        Some("http://localhost:3000"),
+        "/api/health",
+        &["localhost:3000"],
+        &["http://localhost:3000"],
         false,
         200,
         json!({"status": "ok"})
     )]
     #[case::case_insensitive_host_and_origin(
-        Some("LOCALHOST:3000"),
-        Some("HTTP://LOCALHOST:3000"),
+        "/api/health",
+        &["LOCALHOST:3000"],
+        &["HTTP://LOCALHOST:3000"],
+        false,
+        200,
+        json!({"status": "ok"})
+    )]
+    #[case::authority_without_host_header(
+        "http://localhost:3000/api/health",
+        &[],
+        &["http://localhost:3000"],
         false,
         200,
         json!({"status": "ok"})
     )]
     #[case::missing_origin(
-        Some("localhost:3000"),
-        None,
+        "/api/health",
+        &["localhost:3000"],
+        &[],
         false,
         200,
         json!({"status": "ok"})
     )]
     #[case::host_not_allowed(
-        Some("attacker.example"),
-        Some("http://localhost:3000"),
+        "/api/health",
+        &["attacker.example"],
+        &["http://localhost:3000"],
         false,
         403,
         json!({"error": "Forbidden"})
     )]
     #[case::origin_not_allowed(
-        Some("localhost:3000"),
-        Some("https://attacker.example"),
+        "/api/health",
+        &["localhost:3000"],
+        &["https://attacker.example"],
+        false,
+        403,
+        json!({"error": "Forbidden"})
+    )]
+    #[case::duplicate_host_headers(
+        "/api/health",
+        &["localhost:3000", "attacker.example"],
+        &["http://localhost:3000"],
+        false,
+        403,
+        json!({"error": "Forbidden"})
+    )]
+    #[case::uri_authority_mismatch(
+        "http://attacker.example/api/health",
+        &["localhost:3000"],
+        &["http://localhost:3000"],
+        false,
+        403,
+        json!({"error": "Forbidden"})
+    )]
+    #[case::duplicate_origin_headers(
+        "/api/health",
+        &["localhost:3000"],
+        &["http://localhost:3000", "https://attacker.example"],
         false,
         403,
         json!({"error": "Forbidden"})
     )]
     #[case::websocket_origin_not_allowed(
-        Some("localhost:3000"),
-        Some("https://attacker.example"),
+        "/api/sync/document",
+        &["localhost:3000"],
+        &["https://attacker.example"],
         true,
         403,
         json!({"error": "Forbidden"})
     )]
     #[case::missing_host(
-        None,
-        Some("http://localhost:3000"),
+        "/api/health",
+        &[],
+        &["http://localhost:3000"],
         false,
         403,
         json!({"error": "Forbidden"})
     )]
     async fn checks_host_and_origin(
-        #[case] host: Option<&'static str>,
-        #[case] origin: Option<&'static str>,
+        #[case] uri: &'static str,
+        #[case] hosts: &'static [&'static str],
+        #[case] origins: &'static [&'static str],
         #[case] websocket: bool,
         #[case] status: u16,
         #[case] expected: Value,
     ) {
-        let mut request = Request::builder().uri("/api/health");
-        if let Some(host) = host {
-            request = request.header("host", host);
+        let mut request = Request::builder().uri(uri);
+        for host in hosts {
+            request = request.header("host", *host);
         }
-        if let Some(origin) = origin {
-            request = request.header("origin", origin);
+        for origin in origins {
+            request = request.header("origin", *origin);
         }
         if websocket {
             request = request

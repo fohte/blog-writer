@@ -39,18 +39,22 @@ impl Config {
         let allowed_hosts = read_env(ALLOWED_HOSTS_ENV, ConfigError::NonUnicodeAllowedHosts)?;
         let allowed_origins = read_env(ALLOWED_ORIGINS_ENV, ConfigError::NonUnicodeAllowedOrigins)?;
 
-        Self::from_values(
-            value.as_deref(),
-            allowed_hosts.as_deref(),
-            allowed_origins.as_deref(),
-        )
+        let mut config = Self::from_bind_addr(value.as_deref())?;
+        if let Some(allowed_hosts) = allowed_hosts {
+            config.allowed_hosts = parse_list(&allowed_hosts);
+        }
+        if let Some(allowed_origins) = allowed_origins {
+            config.allowed_origins = parse_list(&allowed_origins);
+        }
+
+        Ok(config)
     }
 
     pub fn from_bind_addr(value: Option<&str>) -> Result<Self, ConfigError> {
         Self::from_values(value, None, None)
     }
 
-    pub fn from_values(
+    fn from_values(
         bind_addr: Option<&str>,
         allowed_hosts: Option<&str>,
         allowed_origins: Option<&str>,
@@ -84,7 +88,7 @@ fn parse_list(value: &str) -> Vec<String> {
         .split(',')
         .map(str::trim)
         .filter(|item| !item.is_empty())
-        .map(str::to_ascii_lowercase)
+        .map(str::to_owned)
         .collect()
 }
 
@@ -134,7 +138,7 @@ mod tests {
         #[case] value: Option<&str>,
         #[case] expected: Result<Config, ConfigError>,
     ) {
-        let actual = Config::from_bind_addr(value);
+        let actual = Config::from_values(value, None, None);
 
         assert_eq!(actual, expected);
     }
@@ -146,9 +150,9 @@ mod tests {
         Some("https://Editor.Example, http://preview.example:4312"),
         Ok(Config {
             bind_addr: "127.0.0.1:4312".parse::<SocketAddr>().unwrap(),
-            allowed_hosts: vec!["editor.example".to_owned(), "preview.example:4312".to_owned()],
+            allowed_hosts: vec!["Editor.Example".to_owned(), "preview.example:4312".to_owned()],
             allowed_origins: vec![
-                "https://editor.example".to_owned(),
+                "https://Editor.Example".to_owned(),
                 "http://preview.example:4312".to_owned(),
             ],
         })
