@@ -80,6 +80,15 @@ pre-commit:
       stage_fixed: true
       priority: 1
 
+    generate-api-types:
+      glob: '*.rs'
+      root: 'backend/'
+      run: |
+        pnpm --dir ../frontend run api:generate &&
+        pnpm --dir .. exec prettier --write frontend/src/lib/api/schema.gen.d.ts &&
+        git -C .. add -- frontend/src/lib/api/schema.gen.d.ts
+      priority: 2
+
     # Using glob instead of file_types because text/x-rust is not supported
     # by the mimetype library used by lefthook.
     # See: https://github.com/gabriel-vasile/mimetype/blob/master/supported_mimes.md

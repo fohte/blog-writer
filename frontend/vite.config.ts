@@ -62,6 +62,14 @@ const offlineShell = (): Plugin => ({
 
 export default defineConfig({
   plugins: [tailwindcss(), react(), offlineShell()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:3000',
+        ws: true,
+      },
+    },
+  },
   optimizeDeps: {
     include: [
       '@base-ui/react/button',
