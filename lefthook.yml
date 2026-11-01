@@ -71,7 +71,12 @@ pre-commit:
 
     dump-openapi:
       glob: '*.rs'
-      run: openapi=$(cargo run --manifest-path backend/Cargo.toml -- --dump-openapi) && printf '%s\n' "$openapi" > backend/openapi.json && git add -- backend/openapi.json
+      root: 'backend/'
+      run: |
+        openapi=$(cargo run -- --dump-openapi) &&
+        printf '%s\n' "$openapi" > openapi.json &&
+        nlx prettier --write openapi.json &&
+        git -C .. add -- backend/openapi.json
       stage_fixed: true
       priority: 1
 

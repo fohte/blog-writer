@@ -50,14 +50,24 @@ mod tests {
     use super::{Config, ConfigError};
 
     #[rstest]
-    #[case::default(None, Ok("127.0.0.1:3000".parse::<SocketAddr>().unwrap()))]
-    #[case::configured(Some("0.0.0.0:8080"), Ok("0.0.0.0:8080".parse::<SocketAddr>().unwrap()))]
+    #[case::default(
+        None,
+        Ok(Config {
+            bind_addr: "127.0.0.1:3000".parse::<SocketAddr>().unwrap()
+        })
+    )]
+    #[case::configured(
+        Some("0.0.0.0:8080"),
+        Ok(Config {
+            bind_addr: "0.0.0.0:8080".parse::<SocketAddr>().unwrap()
+        })
+    )]
     #[case::invalid(Some("not-an-address"), Err(ConfigError::InvalidBindAddress))]
     fn parses_bind_address(
         #[case] value: Option<&str>,
-        #[case] expected: Result<SocketAddr, ConfigError>,
+        #[case] expected: Result<Config, ConfigError>,
     ) {
-        let actual = Config::from_bind_addr(value).map(|config| config.bind_addr);
+        let actual = Config::from_bind_addr(value);
 
         assert_eq!(actual, expected);
     }

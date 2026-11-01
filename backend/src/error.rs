@@ -12,8 +12,10 @@ use utoipa::ToSchema;
 pub enum AppError {
     #[error("Not Found")]
     NotFound,
-    #[error("{0}")]
-    BadRequest(String),
+    #[error("Method Not Allowed")]
+    MethodNotAllowed,
+    #[error("{message}")]
+    Client { status: StatusCode, message: String },
     #[error("{0}")]
     Internal(String),
 }
@@ -43,10 +45,14 @@ where
 
 impl From<JsonRejection> for AppError {
     fn from(rejection: JsonRejection) -> Self {
-        if rejection.status().is_server_error() {
+        let status = rejection.status();
+        if status.is_server_error() {
             Self::Internal(rejection.body_text())
         } else {
-            Self::BadRequest("Invalid request body".to_owned())
+            Self::Client {
+                status,
+                message: "Invalid request body".to_owned(),
+            }
         }
     }
 }
@@ -55,7 +61,11 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::NotFound => (StatusCode::NOT_FOUND, "Not Found".to_owned()),
-            Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            Self::MethodNotAllowed => (
+                StatusCode::METHOD_NOT_ALLOWED,
+                "Method Not Allowed".to_owned(),
+            ),
+            Self::Client { status, message } => (status, message),
             Self::Internal(message) => {
                 tracing::error!(error = %message, "request failed");
                 (
@@ -73,6 +83,7 @@ impl IntoResponse for AppError {
 mod tests {
     use axum::{Json, Router, routing::post};
     use rstest::rstest;
+    use serde::Deserialize;
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
@@ -82,6 +93,15 @@ mod tests {
         Json(value)
     }
 
+    #[derive(Deserialize)]
+    struct Payload {
+        value: String,
+    }
+
+    async fn echo_payload(ApiJson(payload): ApiJson<Payload>) -> Json<String> {
+        Json(payload.value)
+    }
+
     async fn fail() -> AppError {
         AppError::Internal("private failure detail".to_owned())
     }
@@ -89,33 +109,53 @@ mod tests {
     fn test_router() -> Router {
         Router::new()
             .route("/echo", post(echo))
+            .route("/typed", post(echo_payload))
             .route("/fail", post(fail))
     }
 
     #[rstest]
     #[test_attr(tokio::test)]
-    #[case::malformed_json(br#"{"#, "/echo", 400, json!({"error": "Invalid request body"}))]
+    #[case::malformed_json(
+        br#"{"#,
+        "/echo",
+        Some("application/json"),
+        400,
+        json!({"error": "Invalid request body"})
+    )]
+    #[case::missing_content_type(
+        br#"{}"#,
+        "/echo",
+        None,
+        415,
+        json!({"error": "Invalid request body"})
+    )]
+    #[case::type_mismatch(
+        br#"{"value":1}"#,
+        "/typed",
+        Some("application/json"),
+        422,
+        json!({"error": "Invalid request body"})
+    )]
     #[case::server_error(
         br#"{}"#,
         "/fail",
+        Some("application/json"),
         500,
         json!({"error": "Internal server error"})
     )]
     async fn returns_json_error_shape(
         #[case] body: &'static [u8],
         #[case] path: &'static str,
+        #[case] content_type: Option<&'static str>,
         #[case] status: u16,
         #[case] expected: Value,
     ) {
+        let mut request = axum::http::Request::builder().method("POST").uri(path);
+        if let Some(content_type) = content_type {
+            request = request.header("content-type", content_type);
+        }
         let response = test_router()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("POST")
-                    .uri(path)
-                    .header("content-type", "application/json")
-                    .body(axum::body::Body::from(body))
-                    .unwrap(),
-            )
+            .oneshot(request.body(axum::body::Body::from(body)).unwrap())
             .await
             .unwrap();
         let actual_status = response.status().as_u16();
