@@ -1,10 +1,11 @@
-use axum::{Router, routing::any};
+use axum::{Router, middleware, routing::any};
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::{
     error::{AppError, ErrorResponse},
     health,
+    host_origin::{HostOriginPolicy, enforce_host_origin},
 };
 
 #[derive(OpenApi)]
@@ -26,7 +27,7 @@ pub fn openapi() -> ApiDocument {
     openapi
 }
 
-pub fn router(state: AppState) -> Router {
+pub fn router(state: AppState, host_origin_policy: HostOriginPolicy) -> Router {
     let (api_router, _) = api_routes().split_for_parts();
     let api_router = api_router
         .fallback(api_not_found)
@@ -37,6 +38,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/", any(api_not_found))
         .nest("/api", api_router)
         .with_state(state)
+        .layer(middleware::from_fn_with_state(
+            host_origin_policy,
+            enforce_host_origin,
+        ))
 }
 
 fn api_routes() -> OpenApiRouter<AppState> {
@@ -62,6 +67,17 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{AppState, router};
+    use crate::host_origin::HostOriginPolicy;
+
+    fn test_router() -> axum::Router {
+        router(
+            AppState::default(),
+            HostOriginPolicy::new(
+                vec!["localhost:3000".to_owned()],
+                vec!["http://localhost:3000".to_owned()],
+            ),
+        )
+    }
 
     #[rstest]
     #[test_attr(tokio::test)]
@@ -81,11 +97,12 @@ mod tests {
         #[case] status: u16,
         #[case] expected: Value,
     ) {
-        let response = router(AppState::default())
+        let response = test_router()
             .oneshot(
                 Request::builder()
                     .method(method)
                     .uri(path)
+                    .header("host", "localhost:3000")
                     .body(Body::empty())
                     .unwrap(),
             )

@@ -2,6 +2,7 @@ pub mod app;
 pub mod config;
 pub mod error;
 pub mod health;
+pub mod host_origin;
 
 use std::error::Error;
 use tokio::net::TcpListener;
@@ -15,7 +16,9 @@ pub fn dump_openapi() -> Result<String, serde_json::Error> {
 
 pub async fn serve(config: Config) -> Result<(), Box<dyn Error + Send + Sync>> {
     let state = AppState::default();
-    let app = app::router(state);
+    let host_origin_policy =
+        host_origin::HostOriginPolicy::new(config.allowed_hosts, config.allowed_origins);
+    let app = app::router(state, host_origin_policy);
     let listener = TcpListener::bind(config.bind_addr).await?;
 
     tracing::info!(address = %config.bind_addr, "backend listening");
