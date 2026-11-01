@@ -5,7 +5,7 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 (
   cd "$repo_root/frontend"
-  nr build
+  pnpm run build
 )
 
 if [[ ! -f "$repo_root/frontend/dist/index.html" ]]; then
