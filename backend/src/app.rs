@@ -18,7 +18,7 @@ struct ApiDefinition;
 pub struct AppState {}
 
 pub fn api() -> OpenApiRouter<AppState> {
-    OpenApiRouter::with_openapi(ApiDefinition::openapi()).nest("/api", health::router())
+    OpenApiRouter::with_openapi(ApiDefinition::openapi()).nest("/api", api_routes())
 }
 
 pub fn openapi() -> ApiDocument {
@@ -27,7 +27,7 @@ pub fn openapi() -> ApiDocument {
 }
 
 pub fn router(state: AppState) -> Router {
-    let (api_router, _) = health::router().split_for_parts();
+    let (api_router, _) = api_routes().split_for_parts();
     let api_router = api_router
         .fallback(api_not_found)
         .method_not_allowed_fallback(api_method_not_allowed);
@@ -37,6 +37,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/", any(api_not_found))
         .nest("/api", api_router)
         .with_state(state)
+}
+
+fn api_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().merge(health::router())
 }
 
 async fn api_not_found() -> AppError {
