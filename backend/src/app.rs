@@ -81,19 +81,28 @@ mod tests {
 
     #[rstest]
     #[test_attr(tokio::test)]
-    #[case::health("/api/health", "GET", 200, json!({"status": "ok"}))]
-    #[case::api_root("/api", "GET", 404, json!({"error": "Not Found"}))]
-    #[case::api_root_slash("/api/", "GET", 404, json!({"error": "Not Found"}))]
-    #[case::unknown_api("/api/unknown", "GET", 404, json!({"error": "Not Found"}))]
+    #[case::health("/api/health", "GET", "localhost:3000", 200, json!({"status": "ok"}))]
+    #[case::api_root("/api", "GET", "localhost:3000", 404, json!({"error": "Not Found"}))]
+    #[case::api_root_slash("/api/", "GET", "localhost:3000", 404, json!({"error": "Not Found"}))]
+    #[case::unknown_api("/api/unknown", "GET", "localhost:3000", 404, json!({"error": "Not Found"}))]
+    #[case::untrusted_host_on_router_fallback(
+        "/unmatched",
+        "GET",
+        "untrusted.example",
+        403,
+        json!({"error": "Forbidden"})
+    )]
     #[case::method_not_allowed(
         "/api/health",
         "POST",
+        "localhost:3000",
         405,
         json!({"error": "Method Not Allowed"})
     )]
-    async fn responds_to_api_requests(
+    async fn responds_to_api_requests_with_host_policy(
         #[case] path: &'static str,
         #[case] method: &'static str,
+        #[case] host: &'static str,
         #[case] status: u16,
         #[case] expected: Value,
     ) {
@@ -102,7 +111,7 @@ mod tests {
                 Request::builder()
                     .method(method)
                     .uri(path)
-                    .header("host", "localhost:3000")
+                    .header("host", host)
                     .body(Body::empty())
                     .unwrap(),
             )
