@@ -1,4 +1,7 @@
-use axum::{Router, routing::any};
+use axum::{
+    Router,
+    routing::{any, get},
+};
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
 use utoipa_axum::router::OpenApiRouter;
 
@@ -36,7 +39,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api", any(api_not_found))
         .route("/api/", any(api_not_found))
         .nest("/api", api_router)
-        .fallback(frontend::serve)
+        .fallback_service(get(frontend::serve))
         .with_state(state)
 }
 
@@ -56,7 +59,7 @@ async fn api_method_not_allowed() -> AppError {
 mod tests {
     use axum::{
         body::{Body, to_bytes},
-        http::Request,
+        http::{HeaderValue, Request, StatusCode, header::ALLOW},
     };
     use rstest::rstest;
     use serde_json::{Value, json};
@@ -98,5 +101,40 @@ mod tests {
                 .unwrap();
 
         assert_eq!((actual_status, actual_body), (status, expected));
+    }
+
+    #[rstest]
+    #[case::head("HEAD", StatusCode::NOT_FOUND, None)]
+    #[case::unsupported_method(
+        "POST",
+        StatusCode::METHOD_NOT_ALLOWED,
+        Some(HeaderValue::from_static("GET,HEAD"))
+    )]
+    #[test_attr(tokio::test)]
+    async fn routes_frontend_fallback_methods(
+        #[case] method: &'static str,
+        #[case] expected_status: StatusCode,
+        #[case] expected_allow: Option<HeaderValue>,
+    ) {
+        let response = router(AppState::default())
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual = (
+            response.status(),
+            response.headers().get(ALLOW).cloned(),
+            to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        );
+
+        assert_eq!(
+            actual,
+            (expected_status, expected_allow, Vec::<u8>::new().into())
+        );
     }
 }

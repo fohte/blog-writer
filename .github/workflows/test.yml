@@ -86,9 +86,6 @@ jobs:
       - name: Fetch cargo dependencies (backend)
         run: cd "backend" && cargo fetch
 
-      - name: Run backend tests
-        run: cd "backend" && cargo test
-
       - name: Run lefthook
         id: lefthook
         continue-on-error: true

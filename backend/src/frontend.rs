@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::OriginalUri,
-    http::{HeaderValue, Method, StatusCode, header::CONTENT_TYPE},
+    http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
 use rust_embed::Embed;
@@ -12,11 +12,7 @@ use std::borrow::Cow;
 #[allow_missing = true]
 struct FrontendAssets;
 
-pub(crate) async fn serve(method: Method, OriginalUri(uri): OriginalUri) -> Response {
-    if method != Method::GET {
-        return StatusCode::METHOD_NOT_ALLOWED.into_response();
-    }
-
+pub(crate) async fn serve(OriginalUri(uri): OriginalUri) -> Response {
     let Some((_asset_path, asset)) = select_asset(uri.path(), FrontendAssets::get) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -54,12 +50,11 @@ mod tests {
 
     use axum::{
         body::to_bytes,
-        extract::OriginalUri,
-        http::{HeaderValue, Method, StatusCode, Uri, header::CONTENT_TYPE},
+        http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
     };
     use rstest::rstest;
 
-    use super::{asset_response, select_asset, serve};
+    use super::{asset_response, select_asset};
 
     #[derive(Debug, PartialEq, Eq)]
     struct TestAsset {
@@ -122,16 +117,5 @@ mod tests {
                 expected_body.as_bytes().to_vec().into(),
             )
         );
-    }
-
-    #[tokio::test]
-    async fn rejects_non_get_requests() {
-        let response = serve(Method::POST, OriginalUri(Uri::from_static("/settings"))).await;
-        let actual = (
-            response.status(),
-            to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-        );
-
-        assert_eq!(actual, (StatusCode::METHOD_NOT_ALLOWED, Vec::new().into()));
     }
 }

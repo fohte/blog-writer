@@ -13,4 +13,7 @@ if [[ ! -f "$repo_root/frontend/dist/index.html" ]]; then
   exit 1
 fi
 
+# rust-embed discovers assets during compilation, so Cargo may otherwise reuse an artifact built before dist existed.
+touch "$repo_root/backend/src/frontend.rs"
+
 exec cargo build --manifest-path "$repo_root/backend/Cargo.toml" --release "$@"
