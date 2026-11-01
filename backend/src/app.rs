@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    routing::{any, get},
+    routing::{MethodRouter, any, get},
 };
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
 use utoipa_axum::router::OpenApiRouter;
@@ -30,6 +30,10 @@ pub fn openapi() -> ApiDocument {
 }
 
 pub fn router(state: AppState) -> Router {
+    router_with_frontend_fallback(state, get(frontend::serve))
+}
+
+fn router_with_frontend_fallback(state: AppState, frontend_fallback: MethodRouter) -> Router {
     let (api_router, _) = api_routes().split_for_parts();
     let api_router = api_router
         .fallback(api_not_found)
@@ -39,7 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api", any(api_not_found))
         .route("/api/", any(api_not_found))
         .nest("/api", api_router)
-        .fallback_service(get(frontend::serve))
+        .fallback_service(frontend_fallback)
         .with_state(state)
 }
 
@@ -59,13 +63,14 @@ async fn api_method_not_allowed() -> AppError {
 mod tests {
     use axum::{
         body::{Body, to_bytes},
-        http::{HeaderValue, Request, StatusCode, header::ALLOW},
+        http::{HeaderValue, Request, StatusCode, header::ALLOW, header::CONTENT_TYPE},
+        routing::get,
     };
     use rstest::rstest;
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
-    use super::{AppState, router};
+    use super::{AppState, router, router_with_frontend_fallback};
 
     #[rstest]
     #[test_attr(tokio::test)]
@@ -104,37 +109,64 @@ mod tests {
     }
 
     #[rstest]
-    #[case::head("HEAD", StatusCode::NOT_FOUND, None)]
+    #[case::get(
+        "GET",
+        StatusCode::OK,
+        None,
+        Some(HeaderValue::from_static("text/plain; charset=utf-8")),
+        "frontend shell"
+    )]
+    #[case::head(
+        "HEAD",
+        StatusCode::OK,
+        None,
+        Some(HeaderValue::from_static("text/plain; charset=utf-8")),
+        ""
+    )]
     #[case::unsupported_method(
         "POST",
         StatusCode::METHOD_NOT_ALLOWED,
-        Some(HeaderValue::from_static("GET,HEAD"))
+        Some(HeaderValue::from_static("GET,HEAD")),
+        None,
+        ""
     )]
     #[test_attr(tokio::test)]
     async fn routes_frontend_fallback_methods(
         #[case] method: &'static str,
         #[case] expected_status: StatusCode,
         #[case] expected_allow: Option<HeaderValue>,
+        #[case] expected_content_type: Option<HeaderValue>,
+        #[case] expected_body: &str,
     ) {
-        let response = router(AppState::default())
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri("/")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response =
+            router_with_frontend_fallback(AppState::default(), get(|| async { "frontend shell" }))
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri("/")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
         let actual = (
             response.status(),
             response.headers().get(ALLOW).cloned(),
-            to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            response.headers().get(CONTENT_TYPE).cloned(),
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
         );
 
         assert_eq!(
             actual,
-            (expected_status, expected_allow, Vec::<u8>::new().into())
+            (
+                expected_status,
+                expected_allow,
+                expected_content_type,
+                expected_body.as_bytes().to_vec(),
+            )
         );
     }
 }
