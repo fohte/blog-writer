@@ -68,6 +68,18 @@ pre-commit:
     ast-grep:
       glob: '*.{js,ts,jsx,tsx,mjs,cjs,mts,cts,rs}'
       run: ast-grep scan {staged_files}
+
+    dump-openapi:
+      glob: '*.rs'
+      root: 'backend/'
+      run: |
+        openapi=$(cargo run -- --dump-openapi) &&
+        printf '%s\n' "$openapi" > openapi.json &&
+        pnpm --dir .. exec prettier --write backend/openapi.json &&
+        git -C .. add -- backend/openapi.json
+      stage_fixed: true
+      priority: 1
+
     # Using glob instead of file_types because text/x-rust is not supported
     # by the mimetype library used by lefthook.
     # See: https://github.com/gabriel-vasile/mimetype/blob/master/supported_mimes.md

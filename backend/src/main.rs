@@ -1,13 +1,18 @@
-fn main() {
-    println!("Hello, world!");
-}
+use std::{error::Error, ffi::OsString};
 
-#[cfg(test)]
-mod tests {
-    use rstest::rstest;
+use backend::{config::Config, dump_openapi, init_tracing, serve};
 
-    #[rstest]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if args.as_slice() == ["--dump-openapi"] {
+        println!("{}", dump_openapi()?);
+        return Ok(());
     }
+    if !args.is_empty() {
+        return Err("unsupported command line argument".into());
+    }
+
+    init_tracing()?;
+    serve(Config::from_env()?).await
 }
