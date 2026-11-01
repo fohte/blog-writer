@@ -7,6 +7,12 @@ use axum::{
 
 use crate::error::AppError;
 
+enum SingleHeaderValue<'a> {
+    Missing,
+    Present(&'a str),
+    Invalid,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostOriginPolicy {
     allowed_hosts: Vec<String>,
@@ -34,15 +40,10 @@ impl HostOriginPolicy {
 }
 
 fn request_host(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
-    let mut host_values = headers.get_all(HOST).iter();
-    let host_header = host_values.next();
-    if host_values.next().is_some() {
-        return None;
-    }
-    let host_header = match host_header.map(|value| value.to_str()) {
-        Some(Ok(host)) => Some(host),
-        Some(Err(_)) => return None,
-        None => None,
+    let host_header = match single_header_value(headers, HOST.as_str()) {
+        SingleHeaderValue::Missing => None,
+        SingleHeaderValue::Present(host) => Some(host),
+        SingleHeaderValue::Invalid => return None,
     };
     let uri_authority = uri.authority().map(|authority| authority.as_str());
     let host = match (host_header, uri_authority) {
@@ -58,15 +59,10 @@ fn request_host(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
 }
 
 fn origin_allowed(headers: &HeaderMap, allowed_origins: &[String]) -> bool {
-    let mut origin_values = headers.get_all(axum::http::header::ORIGIN).iter();
-    let Some(origin_header) = origin_values.next() else {
-        return fetch_site_allows_originless_request(headers);
-    };
-    if origin_values.next().is_some() {
-        return false;
-    }
-    let Ok(origin) = origin_header.to_str() else {
-        return false;
+    let origin = match single_header_value(headers, axum::http::header::ORIGIN.as_str()) {
+        SingleHeaderValue::Present(origin) => origin,
+        SingleHeaderValue::Missing => return fetch_site_allows_originless_request(headers),
+        SingleHeaderValue::Invalid => return false,
     };
 
     allowed_origins
@@ -75,18 +71,26 @@ fn origin_allowed(headers: &HeaderMap, allowed_origins: &[String]) -> bool {
 }
 
 fn fetch_site_allows_originless_request(headers: &HeaderMap) -> bool {
-    let mut fetch_site_values = headers.get_all("sec-fetch-site").iter();
-    let Some(fetch_site) = fetch_site_values.next() else {
-        return true;
-    };
-    if fetch_site_values.next().is_some() {
-        return false;
+    match single_header_value(headers, "sec-fetch-site") {
+        SingleHeaderValue::Missing => true,
+        SingleHeaderValue::Present(fetch_site) => matches!(fetch_site, "same-origin" | "none"),
+        SingleHeaderValue::Invalid => false,
     }
-    let Ok(fetch_site) = fetch_site.to_str() else {
-        return false;
-    };
+}
 
-    matches!(fetch_site, "same-origin" | "none")
+fn single_header_value<'a>(headers: &'a HeaderMap, name: &str) -> SingleHeaderValue<'a> {
+    let mut values = headers.get_all(name).iter();
+    let Some(value) = values.next() else {
+        return SingleHeaderValue::Missing;
+    };
+    if values.next().is_some() {
+        return SingleHeaderValue::Invalid;
+    }
+
+    match value.to_str() {
+        Ok(value) => SingleHeaderValue::Present(value),
+        Err(_) => SingleHeaderValue::Invalid,
+    }
 }
 
 fn normalize(values: Vec<String>) -> Vec<String> {
@@ -142,93 +146,44 @@ mod tests {
             .layer(middleware::from_fn_with_state(policy, enforce_host_origin))
     }
 
+    async fn response(router: Router, request: Request<Body>) -> (u16, Value) {
+        let response = router.oneshot(request).await.unwrap();
+        let status = response.status().as_u16();
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+
+        (status, body)
+    }
+
     #[rstest]
     #[test_attr(tokio::test)]
-    #[case::same_origin_request("same-origin", 200, json!({"status": "ok"}))]
-    #[case::user_initiated_request("none", 200, json!({"status": "ok"}))]
-    #[case::same_site_request("same-site", 403, json!({"error": "Forbidden"}))]
-    #[case::cross_site_request("cross-site", 403, json!({"error": "Forbidden"}))]
-    #[case::unknown_fetch_site("unknown", 403, json!({"error": "Forbidden"}))]
-    async fn checks_fetch_site_for_requests_without_origin(
+    #[case::same_origin_request(&[("sec-fetch-site", "same-origin")], 200, json!({"status": "ok"}))]
+    #[case::user_initiated_request(&[("sec-fetch-site", "none")], 200, json!({"status": "ok"}))]
+    #[case::same_site_request(&[("sec-fetch-site", "same-site")], 403, json!({"error": "Forbidden"}))]
+    #[case::cross_site_request(&[("sec-fetch-site", "cross-site")], 403, json!({"error": "Forbidden"}))]
+    #[case::unknown_fetch_site(&[("sec-fetch-site", "unknown")], 403, json!({"error": "Forbidden"}))]
+    #[case::configured_origin_allows_cross_site_metadata(&[("origin", "http://localhost:3000"), ("sec-fetch-site", "cross-site")], 200, json!({"status": "ok"}))]
+    #[case::duplicate_fetch_site_is_rejected(&[("sec-fetch-site", "same-origin"), ("sec-fetch-site", "cross-site")], 403, json!({"error": "Forbidden"}))]
+    async fn checks_fetch_site_and_origin_headers(
         test_router: Router,
-        #[case] fetch_site: &'static str,
+        #[case] headers: &'static [(&'static str, &'static str)],
         #[case] status: u16,
         #[case] expected: Value,
     ) {
-        let response = test_router
-            .oneshot(
-                Request::builder()
-                    .uri("/api/health")
-                    .header("host", "localhost:3000")
-                    .header("sec-fetch-site", fetch_site)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let actual_status = response.status().as_u16();
-        let actual_body: Value = serde_json::from_slice(
-            &axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-
-        assert_eq!((actual_status, actual_body), (status, expected));
-    }
-
-    #[rstest]
-    #[test_attr(tokio::test)]
-    async fn allows_configured_origin_with_cross_site_fetch_metadata(test_router: Router) {
-        let response = test_router
-            .oneshot(
-                Request::builder()
-                    .uri("/api/health")
-                    .header("host", "localhost:3000")
-                    .header("origin", "http://localhost:3000")
-                    .header("sec-fetch-site", "cross-site")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let actual_status = response.status().as_u16();
-        let actual_body: Value = serde_json::from_slice(
-            &axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-
-        assert_eq!((actual_status, actual_body), (200, json!({"status": "ok"})));
-    }
-
-    #[rstest]
-    #[test_attr(tokio::test)]
-    async fn rejects_duplicate_fetch_site_headers(test_router: Router) {
-        let response = test_router
-            .oneshot(
-                Request::builder()
-                    .uri("/api/health")
-                    .header("host", "localhost:3000")
-                    .header("sec-fetch-site", "same-origin")
-                    .header("sec-fetch-site", "cross-site")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let actual_status = response.status().as_u16();
-        let actual_body: Value = serde_json::from_slice(
-            &axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap(),
-        )
-        .unwrap();
+        let mut request = Request::builder()
+            .uri("/api/health")
+            .header("host", "localhost:3000");
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
 
         assert_eq!(
-            (actual_status, actual_body),
-            (403, json!({"error": "Forbidden"}))
+            response(test_router, request.body(Body::empty()).unwrap()).await,
+            (status, expected)
         );
     }
 
@@ -345,18 +300,9 @@ mod tests {
                 .header("sec-websocket-version", "13");
         }
 
-        let response = test_router
-            .oneshot(request.body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        let actual_status = response.status().as_u16();
-        let actual_body: Value = serde_json::from_slice(
-            &axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-
-        assert_eq!((actual_status, actual_body), (status, expected));
+        assert_eq!(
+            response(test_router, request.body(Body::empty()).unwrap()).await,
+            (status, expected)
+        );
     }
 }
