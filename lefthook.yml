@@ -72,7 +72,7 @@ pre-commit:
     dump-openapi:
       glob: '*.rs'
       root: 'backend/'
-      run: cargo run -- --dump-openapi > openapi.json
+      run: openapi=$(cargo run -- --dump-openapi) && printf '%s\n' "$openapi" > openapi.json && git add -- openapi.json
       stage_fixed: true
       priority: 1
 

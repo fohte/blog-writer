@@ -20,15 +20,15 @@ pub enum ConfigError {
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
-        match env::var_os(BIND_ADDR_ENV) {
-            Some(value) => {
-                let value = value
+        let value = env::var_os(BIND_ADDR_ENV)
+            .map(|value| {
+                value
                     .into_string()
-                    .map_err(|_| ConfigError::NonUnicodeBindAddress)?;
-                Self::from_bind_addr(Some(&value))
-            }
-            None => Self::from_bind_addr(None),
-        }
+                    .map_err(|_| ConfigError::NonUnicodeBindAddress)
+            })
+            .transpose()?;
+
+        Self::from_bind_addr(value.as_deref())
     }
 
     pub fn from_bind_addr(value: Option<&str>) -> Result<Self, ConfigError> {
