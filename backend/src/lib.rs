@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod error;
+mod frontend;
 pub mod health;
 pub mod host_origin;
 
