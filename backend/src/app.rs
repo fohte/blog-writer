@@ -1,5 +1,5 @@
 use axum::{
-    Router,
+    Router, middleware,
     routing::{MethodRouter, any, get},
 };
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
@@ -8,6 +8,7 @@ use utoipa_axum::router::OpenApiRouter;
 use crate::{
     error::{AppError, ErrorResponse},
     frontend, health,
+    host_origin::{HostOriginPolicy, enforce_host_origin},
 };
 
 #[derive(OpenApi)]
@@ -29,11 +30,15 @@ pub fn openapi() -> ApiDocument {
     openapi
 }
 
-pub fn router(state: AppState) -> Router {
-    router_with_frontend_fallback(state, get(frontend::serve))
+pub fn router(state: AppState, host_origin_policy: HostOriginPolicy) -> Router {
+    router_with_frontend_fallback(state, get(frontend::serve), host_origin_policy)
 }
 
-fn router_with_frontend_fallback(state: AppState, frontend_fallback: MethodRouter) -> Router {
+fn router_with_frontend_fallback(
+    state: AppState,
+    frontend_fallback: MethodRouter,
+    host_origin_policy: HostOriginPolicy,
+) -> Router {
     let (api_router, _) = api_routes().split_for_parts();
     let api_router = api_router
         .fallback(api_not_found)
@@ -45,6 +50,10 @@ fn router_with_frontend_fallback(state: AppState, frontend_fallback: MethodRoute
         .nest("/api", api_router)
         .fallback_service(frontend_fallback)
         .with_state(state)
+        .layer(middleware::from_fn_with_state(
+            host_origin_policy,
+            enforce_host_origin,
+        ))
 }
 
 fn api_routes() -> OpenApiRouter<AppState> {
@@ -66,35 +75,66 @@ mod tests {
         http::{HeaderValue, Request, StatusCode, header::ALLOW, header::CONTENT_TYPE},
         routing::get,
     };
-    use rstest::rstest;
+    use rstest::{fixture, rstest};
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
     use super::{AppState, router, router_with_frontend_fallback};
+    use crate::host_origin::HostOriginPolicy;
+
+    #[fixture]
+    fn policy() -> HostOriginPolicy {
+        HostOriginPolicy::new(
+            vec!["localhost:3000".to_owned()],
+            vec!["http://localhost:3000".to_owned()],
+        )
+    }
+
+    fn test_router(policy: HostOriginPolicy) -> axum::Router {
+        router(AppState::default(), policy)
+    }
 
     #[rstest]
     #[test_attr(tokio::test)]
-    #[case::health("/api/health", "GET", 200, json!({"status": "ok"}))]
-    #[case::api_root("/api", "GET", 404, json!({"error": "Not Found"}))]
-    #[case::api_root_slash("/api/", "GET", 404, json!({"error": "Not Found"}))]
-    #[case::unknown_api("/api/unknown", "GET", 404, json!({"error": "Not Found"}))]
+    #[case::health("/api/health", "GET", "localhost:3000", 200, json!({"status": "ok"}))]
+    #[case::api_root("/api", "GET", "localhost:3000", 404, json!({"error": "Not Found"}))]
+    #[case::api_root_slash("/api/", "GET", "localhost:3000", 404, json!({"error": "Not Found"}))]
+    #[case::unknown_api("/api/unknown", "GET", "localhost:3000", 404, json!({"error": "Not Found"}))]
+    #[case::untrusted_host_on_api(
+        "/api/health",
+        "GET",
+        "untrusted.example",
+        403,
+        json!({"error": "Forbidden"})
+    )]
+    #[case::untrusted_host_on_frontend(
+        "/index.html",
+        "GET",
+        "untrusted.example",
+        403,
+        json!({"error": "Forbidden"})
+    )]
     #[case::method_not_allowed(
         "/api/health",
         "POST",
+        "localhost:3000",
         405,
         json!({"error": "Method Not Allowed"})
     )]
-    async fn responds_to_api_requests(
+    async fn applies_host_policy_to_router_requests(
+        policy: HostOriginPolicy,
         #[case] path: &'static str,
         #[case] method: &'static str,
+        #[case] host: &'static str,
         #[case] status: u16,
         #[case] expected: Value,
     ) {
-        let response = router(AppState::default())
+        let response = test_router(policy)
             .oneshot(
                 Request::builder()
                     .method(method)
                     .uri(path)
+                    .header("host", host)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -132,23 +172,28 @@ mod tests {
     )]
     #[test_attr(tokio::test)]
     async fn routes_frontend_fallback_methods(
+        policy: HostOriginPolicy,
         #[case] method: &'static str,
         #[case] expected_status: StatusCode,
         #[case] expected_allow: Option<HeaderValue>,
         #[case] expected_content_type: Option<HeaderValue>,
         #[case] expected_body: &str,
     ) {
-        let response =
-            router_with_frontend_fallback(AppState::default(), get(|| async { "frontend shell" }))
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri("/")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+        let response = router_with_frontend_fallback(
+            AppState::default(),
+            get(|| async { "frontend shell" }),
+            policy,
+        )
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri("/")
+                .header("host", "localhost:3000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
         let actual = (
             response.status(),
             response.headers().get(ALLOW).cloned(),
