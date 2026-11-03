@@ -9,6 +9,7 @@ use crate::config::ProviderName;
 pub(crate) struct LlmStatusResponse {
     pub provider: ProviderName,
     pub locked: bool,
+    pub web_search: bool,
 }
 
 #[utoipa::path(
@@ -21,5 +22,6 @@ pub async fn status(State(state): State<LlmState>) -> Json<LlmStatusResponse> {
     Json(LlmStatusResponse {
         provider: state.provider_name(),
         locked: state.is_locked(),
+        web_search: state.supports_web_search(),
     })
 }

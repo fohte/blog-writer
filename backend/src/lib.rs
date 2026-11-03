@@ -7,7 +7,7 @@ mod frontend;
 pub mod health;
 pub mod host_origin;
 pub(crate) mod html;
-#[expect(dead_code, reason = "call_to_sse has no production caller")]
+#[expect(dead_code, reason = "LLM call helpers have no production callers yet")]
 mod llm;
 pub mod llm_context;
 pub mod ogp;

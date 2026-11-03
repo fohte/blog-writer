@@ -214,6 +214,11 @@ export interface components {
     }
     LlmEvent:
       | {
+          data: components['schemas']['LlmProgress']
+          /** @enum {string} */
+          event: 'progress'
+        }
+      | {
           data: unknown
           /** @enum {string} */
           event: 'result'
@@ -223,9 +228,13 @@ export interface components {
           /** @enum {string} */
           event: 'error'
         }
+    LlmProgress: {
+      query: string
+    }
     LlmStatusResponse: {
       locked: boolean
       provider: components['schemas']['ProviderName']
+      web_search: boolean
     }
     OgpResponse: {
       available: boolean

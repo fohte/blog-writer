@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
+use tokio::sync::mpsc;
 use utoipa::ToSchema;
 
 use crate::config::{LlmConfig, ProviderName};
@@ -30,6 +31,19 @@ trait LlmProvider: Send + Sync {
         prompt: String,
         schema: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, LlmError>> + Send + 'a>>;
+
+    fn web_search<'a>(
+        &'a self,
+        system_prompt: String,
+        prompt: String,
+        progress: mpsc::UnboundedSender<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<WebSearchResult, LlmError>> + Send + 'a>>;
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize, ToSchema)]
+pub(crate) struct WebSearchResult {
+    pub text: String,
+    pub citations: Vec<String>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -55,8 +69,14 @@ pub(crate) enum LlmError {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub(crate) enum LlmEvent {
+    Progress(LlmProgress),
     Result(Value),
     Error(LlmErrorPayload),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct LlmProgress {
+    pub query: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -121,6 +141,10 @@ impl LlmState {
         self.locked
     }
 
+    pub(crate) fn supports_web_search(&self) -> bool {
+        true
+    }
+
     #[cfg(test)]
     fn with_provider(
         provider: impl LlmProvider + 'static,
@@ -181,6 +205,118 @@ where
     T: DeserializeOwned + JsonSchema + Serialize + Send + 'static,
 {
     call_to_sse_with::<T, T, _>(state, system_prompt, prompt, Ok)
+}
+
+pub(crate) async fn call_web_search_with(
+    state: LlmState,
+    system_prompt: String,
+    prompt: String,
+    mut on_progress: impl FnMut(String),
+) -> Result<WebSearchResult, LlmError> {
+    let (progress_sender, mut progress_receiver) = mpsc::unbounded_channel();
+    let search = state
+        .provider
+        .web_search(system_prompt, prompt, progress_sender);
+    tokio::time::timeout(state.timeout, async move {
+        tokio::pin!(search);
+        loop {
+            tokio::select! {
+                biased;
+                Some(query) = progress_receiver.recv() => on_progress(query),
+                result = &mut search => {
+                    while let Ok(query) = progress_receiver.try_recv() {
+                        on_progress(query);
+                    }
+                    return result;
+                },
+            }
+        }
+    })
+    .await
+    .map_err(|_| LlmError::Timeout)?
+}
+
+pub(crate) fn call_web_search_to_sse(
+    state: LlmState,
+    system_prompt: String,
+    prompt: String,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let keep_alive_interval = state.keep_alive_interval;
+    let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
+    let provider = state.provider.clone();
+    let search = Box::pin(async move {
+        provider
+            .web_search(system_prompt, prompt, progress_sender)
+            .await
+    });
+    let timeout = state.timeout;
+    let search: Pin<Box<dyn Future<Output = Result<WebSearchResult, LlmError>> + Send>> =
+        Box::pin(async move {
+            tokio::time::timeout(timeout, search)
+                .await
+                .unwrap_or(Err(LlmError::Timeout))
+        });
+    let stream = stream::unfold(
+        (Some(search), progress_receiver, None::<LlmEvent>, false),
+        |(mut search, mut progress_receiver, mut result_event, finished)| async move {
+            if finished {
+                return None;
+            }
+            if let Ok(query) = progress_receiver.try_recv() {
+                return Some((
+                    Ok(LlmEvent::Progress(LlmProgress { query }).into_sse_event()),
+                    (search, progress_receiver, result_event, false),
+                ));
+            }
+            if let Some(event) = result_event.take() {
+                return Some((
+                    Ok(event.into_sse_event()),
+                    (search, progress_receiver, None, true),
+                ));
+            }
+            let search_future = search.as_mut()?;
+            tokio::select! {
+                biased;
+                Some(query) = progress_receiver.recv() => Some((
+                    Ok(LlmEvent::Progress(LlmProgress { query }).into_sse_event()),
+                    (search, progress_receiver, result_event, false),
+                )),
+                result = search_future => {
+                    search = None;
+                    let event = match result {
+                        Ok(result) => match serde_json::to_value(result) {
+                            Ok(result) => LlmEvent::Result(result),
+                            Err(error) => {
+                                tracing::warn!(error_kind = ?LlmError::SerializeResult, %error, "failed to serialize web search result");
+                                LlmEvent::Error(LlmErrorPayload {
+                                    message: LlmError::SerializeResult.to_string(),
+                                })
+                            }
+                        },
+                        Err(error) => {
+                            tracing::warn!(error_kind = ?error, "LLM web search failed");
+                            LlmEvent::Error(LlmErrorPayload { message: error.to_string() })
+                        }
+                    };
+                    if let Ok(query) = progress_receiver.try_recv() {
+                        result_event = Some(event);
+                        Some((
+                            Ok(LlmEvent::Progress(LlmProgress { query }).into_sse_event()),
+                            (search, progress_receiver, result_event, false),
+                        ))
+                    } else {
+                        Some((Ok(event.into_sse_event()), (search, progress_receiver, None, true)))
+                    }
+                }
+            }
+        },
+    );
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(keep_alive_interval)
+            .text("keep-alive"),
+    )
 }
 
 pub(crate) fn call_to_sse_with<Input, Output, Transform>(

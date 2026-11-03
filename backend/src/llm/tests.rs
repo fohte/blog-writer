@@ -20,7 +20,10 @@ use wiremock::{
 };
 
 use super::claude_code::ClaudeCodeProvider;
-use super::{CALL_TIMEOUT, LlmEvent, LlmProvider, LlmState, call_to_sse};
+use super::{
+    CALL_TIMEOUT, LlmEvent, LlmProvider, LlmState, call_to_sse, call_web_search_to_sse,
+    call_web_search_with,
+};
 use crate::config::{OpenAiCompatibleConfig, ProviderName};
 
 mod research_key_points;
@@ -73,6 +76,15 @@ async fn sse_state_body(state: LlmState, system_prompt: &str, prompt: &str) -> S
     String::from_utf8(body.to_vec()).expect("SSE body is UTF-8")
 }
 
+async fn web_search_sse_body(state: LlmState, system_prompt: &str, prompt: &str) -> String {
+    let response =
+        call_web_search_to_sse(state, system_prompt.to_owned(), prompt.to_owned()).into_response();
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("SSE body is readable");
+    String::from_utf8(body.to_vec()).expect("SSE body is UTF-8")
+}
+
 async fn run_openai_compatible_call(
     status: u16,
     body: &str,
@@ -104,6 +116,41 @@ async fn run_openai_compatible_call(
     )
     .await;
     (server, actual)
+}
+
+async fn run_openai_compatible_web_search(
+    body: &str,
+) -> (MockServer, super::WebSearchResult, Vec<String>) {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/openai/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let state = LlmState::new(crate::config::LlmConfig {
+        provider: ProviderName::OpenAiCompatible,
+        openai_compatible: OpenAiCompatibleConfig {
+            base_url: Some(format!("{}/openai", server.uri())),
+            api_key: None,
+            model: Some("example-model".to_owned()),
+        },
+        ..crate::config::LlmConfig::default()
+    });
+    let mut progress = Vec::new();
+    let result = call_web_search_with(
+        state,
+        "system instruction".to_owned(),
+        "user request".to_owned(),
+        |query| progress.push(query),
+    )
+    .await
+    .expect("provider returns a web search result");
+    (server, result, progress)
 }
 
 fn parse_sse_body(body: &str) -> Vec<SseFrame> {
@@ -210,6 +257,51 @@ async fn openai_compatible_provider_sends_a_streaming_function_tool_request() {
                     SseLine::Raw(String::new()),
                 ],
             }],
+        )
+    );
+}
+
+#[tokio::test]
+async fn openai_compatible_web_search_returns_annotations_and_streams_search_progress() {
+    let body = indoc! {r#"
+        data: {"choices":[{"delta":{"web_search_call":{"search_queries":[{"search_query":"example query"}]}}}]}
+
+        data: {"choices":[{"delta":{"content":"An answer mentioning https://body.example.invalid/page.","annotations":[{"type":"url_citation","url_citation":{"url":"https://source.example.invalid/first"}}]}}]}
+
+        data: {"choices":[{"delta":{"annotations":[{"type":"url_citation","url_citation":{"url":"https://source.example.invalid/first"}},{"type":"url_citation","url_citation":{"url":"https://source.example.invalid/second"}}]}}]}
+
+        data: [DONE]
+    "#}
+    .replace('\n', "\r\n");
+    let (server, result, progress) = run_openai_compatible_web_search(&body).await;
+    let requests = server
+        .received_requests()
+        .await
+        .expect("provider request was received");
+    let request_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("provider request is JSON");
+
+    assert_eq!(
+        (requests.len(), request_body, result, progress),
+        (
+            1,
+            serde_json::json!({
+                "model": "example-model",
+                "stream": true,
+                "web_search_options": {},
+                "messages": [
+                    {"role": "system", "content": "system instruction"},
+                    {"role": "user", "content": "user request"}
+                ]
+            }),
+            super::WebSearchResult {
+                text: "An answer mentioning https://body.example.invalid/page.".to_owned(),
+                citations: vec![
+                    "https://source.example.invalid/first".to_owned(),
+                    "https://source.example.invalid/second".to_owned(),
+                ],
+            },
+            vec!["example query".to_owned()],
         )
     );
 }
@@ -425,6 +517,89 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
                 String::new(),
             ],
             expected_schema,
+        )
+    );
+}
+
+#[tokio::test]
+async fn claude_code_web_search_streams_progress_and_only_search_result_citations() {
+    let directory = TempDir::new().expect("temporary directory is available");
+    let executable = fake_claude(
+        &directory,
+        indoc! {r#"
+            printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebSearch","input":{"query":"example query"}}]}}'
+            printf '%s\n' '{"type":"user","tool_use_result":{"results":[{"title":"First","url":"https://source.example.invalid/first"},{"title":"Second","url":"https://source.example.invalid/second"},{"title":"Repeat","url":"https://source.example.invalid/first"}]},"message":{"content":[{"type":"tool_result","content":"Links: https://source.example.invalid/first"}]}}'
+            printf '%s\n' '{"type":"result","result":"Answer mentioning https://body.example.invalid/page."}'
+            printf '%s\n' "$@" > "$0.args"
+            cat > "$0.input"
+        "#},
+    );
+    let system_prompt = "Use web search and summarize results.";
+    let prompt = "Find the relevant information.";
+    let state = LlmState::with_provider(
+        ClaudeCodeProvider::new(executable.clone().into_os_string()),
+        ProviderName::ClaudeCode,
+        Duration::from_secs(5),
+    );
+    let actual = web_search_sse_body(state, system_prompt, prompt).await;
+    let input = fs::read_to_string(format!("{}.input", executable.display()))
+        .expect("prompt was sent to stdin");
+    let args = fs::read_to_string(format!("{}.args", executable.display()))
+        .expect("provider arguments were passed to the command")
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        (parse_sse_body(&actual), input, args),
+        (
+            vec![
+                SseFrame {
+                    lines: vec![
+                        SseLine::Raw("event: progress".to_owned()),
+                        SseLine::Data {
+                            prefix: "data: ".to_owned(),
+                            value: serde_json::json!({
+                                "event": "progress",
+                                "data": {"query": "example query"}
+                            }),
+                        },
+                        SseLine::Raw(String::new()),
+                    ],
+                },
+                SseFrame {
+                    lines: vec![
+                        SseLine::Raw("event: result".to_owned()),
+                        SseLine::Data {
+                            prefix: "data: ".to_owned(),
+                            value: serde_json::json!({
+                                "event": "result",
+                                "data": {
+                                    "text": "Answer mentioning https://body.example.invalid/page.",
+                                    "citations": [
+                                        "https://source.example.invalid/first",
+                                        "https://source.example.invalid/second"
+                                    ]
+                                }
+                            }),
+                        },
+                        SseLine::Raw(String::new()),
+                    ],
+                },
+            ],
+            prompt.to_owned(),
+            vec![
+                "-p".to_owned(),
+                "--system-prompt".to_owned(),
+                system_prompt.to_owned(),
+                "--output-format".to_owned(),
+                "stream-json".to_owned(),
+                "--verbose".to_owned(),
+                "--safe-mode".to_owned(),
+                "--no-session-persistence".to_owned(),
+                "--tools".to_owned(),
+                "WebSearch".to_owned(),
+            ],
         )
     );
 }

@@ -1,10 +1,12 @@
+use std::collections::HashSet;
+
 use futures_util::StreamExt;
 use reqwest::{Client, Response, StatusCode, Url};
 use serde_json::{Value, json};
 
 use crate::config::OpenAiCompatibleConfig;
 
-use super::{LlmError, LlmProvider};
+use super::{LlmError, LlmProvider, WebSearchResult};
 
 const TOOL_NAME: &str = "structured_output";
 
@@ -53,6 +55,40 @@ impl OpenAiCompatibleProvider {
         let tool_call = read_tool_call(response).await?;
         structured_output(tool_call)
     }
+
+    async fn web_search_inner(
+        &self,
+        system_prompt: String,
+        prompt: String,
+        progress: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Result<WebSearchResult, LlmError> {
+        let Some(base_url) = self.config.base_url.as_deref() else {
+            tracing::warn!("LLM_BASE_URL is required for the OpenAI-compatible provider");
+            return Err(LlmError::Provider);
+        };
+        let Some(model) = self.config.model.as_deref() else {
+            tracing::warn!("LLM_MODEL is required for the OpenAI-compatible provider");
+            return Err(LlmError::Provider);
+        };
+        let endpoint = endpoint(base_url)?;
+        let client = self.client.as_ref().map_err(|error| {
+            tracing::warn!(%error, "failed to create OpenAI-compatible HTTP client");
+            LlmError::Provider
+        })?;
+        let mut request = client.post(endpoint).json(&build_web_search_request_body(
+            model,
+            system_prompt,
+            prompt,
+        ));
+        if let Some(api_key) = self.config.api_key.as_deref() {
+            request = request.bearer_auth(api_key);
+        }
+        let response = request.send().await.map_err(|error| {
+            tracing::warn!(%error, "OpenAI-compatible request failed");
+            LlmError::Provider
+        })?;
+        read_web_search(response, progress).await
+    }
 }
 
 fn endpoint(base_url: &str) -> Result<Url, LlmError> {
@@ -86,6 +122,18 @@ fn build_request_body(model: &str, system_prompt: String, prompt: String, schema
             },
         }],
         "tool_choice": {"type": "function", "function": {"name": TOOL_NAME}},
+    })
+}
+
+fn build_web_search_request_body(model: &str, system_prompt: String, prompt: String) -> Value {
+    json!({
+        "model": model,
+        "stream": true,
+        "web_search_options": {},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
     })
 }
 
@@ -152,6 +200,170 @@ impl LlmProvider for OpenAiCompatibleProvider {
     {
         Box::pin(self.generate_inner(system_prompt, prompt, schema))
     }
+
+    fn web_search<'a>(
+        &'a self,
+        system_prompt: String,
+        prompt: String,
+        progress: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<WebSearchResult, LlmError>> + Send + 'a>,
+    > {
+        Box::pin(self.web_search_inner(system_prompt, prompt, progress))
+    }
+}
+
+async fn read_web_search(
+    response: Response,
+    progress: tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<WebSearchResult, LlmError> {
+    if response.status() == StatusCode::TOO_MANY_REQUESTS {
+        tracing::warn!(
+            "OpenAI-compatible provider rejected the request because its usage limit was reached"
+        );
+        return Err(LlmError::UsageLimit);
+    }
+    if !response.status().is_success() {
+        tracing::warn!(status = %response.status(), "OpenAI-compatible provider returned an unsuccessful status");
+        return Err(LlmError::Provider);
+    }
+
+    let mut response_stream = response.bytes_stream();
+    let mut line_buffer = Vec::new();
+    let mut event_data = Vec::new();
+    let mut result = WebSearchResult {
+        text: String::new(),
+        citations: Vec::new(),
+    };
+    let mut seen_citations = HashSet::new();
+    while let Some(chunk) = response_stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            tracing::warn!(%error, "failed to read OpenAI-compatible response stream");
+            LlmError::Provider
+        })?;
+        line_buffer.extend_from_slice(&chunk);
+        while let Some(newline) = line_buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line: Vec<u8> = line_buffer.drain(..=newline).collect();
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            process_web_search_line(
+                &line,
+                &mut event_data,
+                &mut result,
+                &mut seen_citations,
+                &progress,
+            )?;
+        }
+    }
+    if !line_buffer.is_empty() {
+        process_web_search_line(
+            &line_buffer,
+            &mut event_data,
+            &mut result,
+            &mut seen_citations,
+            &progress,
+        )?;
+    }
+    process_web_search_event(&mut event_data, &mut result, &mut seen_citations, &progress)?;
+    Ok(result)
+}
+
+fn process_web_search_line(
+    line: &[u8],
+    event_data: &mut Vec<String>,
+    result: &mut WebSearchResult,
+    seen_citations: &mut HashSet<String>,
+    progress: &tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<(), LlmError> {
+    if line.is_empty() {
+        return process_web_search_event(event_data, result, seen_citations, progress);
+    }
+    let Some(data) = line.strip_prefix(b"data:") else {
+        return Ok(());
+    };
+    let data = data.strip_prefix(b" ").unwrap_or(data);
+    let data = std::str::from_utf8(data).map_err(|error| {
+        tracing::warn!(%error, "OpenAI-compatible provider emitted non-UTF-8 SSE data");
+        LlmError::InvalidOutput
+    })?;
+    event_data.push(data.to_owned());
+    Ok(())
+}
+
+fn process_web_search_event(
+    event_data: &mut Vec<String>,
+    result: &mut WebSearchResult,
+    seen_citations: &mut HashSet<String>,
+    progress: &tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<(), LlmError> {
+    if event_data.is_empty() {
+        return Ok(());
+    }
+    let data = event_data.join("\n");
+    event_data.clear();
+    if data == "[DONE]" {
+        return Ok(());
+    }
+    let event: Value = serde_json::from_str(&data).map_err(|error| {
+        tracing::warn!(%error, "OpenAI-compatible provider emitted invalid SSE JSON");
+        LlmError::InvalidOutput
+    })?;
+    if event.get("error").is_some() {
+        tracing::warn!("OpenAI-compatible provider emitted an error event");
+        return Err(LlmError::Provider);
+    }
+    let Some(choices) = event.get("choices").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for choice in choices {
+        let Some(delta) = choice.get("delta") else {
+            continue;
+        };
+        if let Some(content) = delta.get("content").and_then(Value::as_str) {
+            result.text.push_str(content);
+        }
+        for annotation in delta
+            .get("annotations")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(url) = annotation
+                .pointer("/url_citation/url")
+                .and_then(Value::as_str)
+                && seen_citations.insert(url.to_owned())
+            {
+                result.citations.push(url.to_owned());
+            }
+        }
+        for query in search_queries(delta) {
+            let _ = progress.send(query);
+        }
+    }
+    Ok(())
+}
+
+fn search_queries(delta: &Value) -> Vec<String> {
+    let mut queries = Vec::new();
+    let candidates = [
+        delta.pointer("/web_search_call/search_queries"),
+        delta.get("search_queries"),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        if let Some(values) = candidate.as_array() {
+            for value in values {
+                let query = value
+                    .as_str()
+                    .or_else(|| value.get("search_query").and_then(Value::as_str));
+                if let Some(query) = query {
+                    queries.push(query.to_owned());
+                }
+            }
+        }
+    }
+    queries
 }
 
 #[derive(Default)]

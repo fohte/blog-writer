@@ -1,4 +1,4 @@
-use std::{ffi::OsString, fmt::Display, io::ErrorKind, process::Stdio};
+use std::{collections::HashSet, ffi::OsString, fmt::Display, io::ErrorKind, process::Stdio};
 
 use serde_json::Value;
 use tempfile::TempDir;
@@ -7,7 +7,7 @@ use tokio::{
     process::Command,
 };
 
-use super::{LlmError, LlmProvider};
+use super::{LlmError, LlmProvider, WebSearchResult};
 
 enum EventOutcome {
     Ignore,
@@ -97,29 +97,66 @@ impl ClaudeCodeProvider {
         prompt: String,
         schema: Value,
     ) -> Result<Value, LlmError> {
+        match self
+            .invoke(system_prompt, prompt, Some(schema), None)
+            .await?
+        {
+            ClaudeOutput::Structured(output) => Ok(output),
+            ClaudeOutput::WebSearch(_) => Err(LlmError::InvalidOutput),
+        }
+    }
+
+    async fn web_search_inner(
+        &self,
+        system_prompt: String,
+        prompt: String,
+        progress: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Result<WebSearchResult, LlmError> {
+        match self
+            .invoke(system_prompt, prompt, None, Some(progress))
+            .await?
+        {
+            ClaudeOutput::WebSearch(result) => Ok(result),
+            ClaudeOutput::Structured(_) => Err(LlmError::InvalidOutput),
+        }
+    }
+
+    async fn invoke(
+        &self,
+        system_prompt: String,
+        prompt: String,
+        schema: Option<Value>,
+        progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    ) -> Result<ClaudeOutput, LlmError> {
         // A fresh working directory keeps checkout-specific CLAUDE.md and MCP configuration out of the call.
         let working_directory = TempDir::new()
             .map_err(|error| log_provider_error(error, "create working directory"))?;
-        let schema = schema.to_string();
+        let mut args = vec![
+            OsString::from("-p"),
+            // Replaces Claude Code's default coding-agent instructions for this call.
+            OsString::from("--system-prompt"),
+            OsString::from(system_prompt),
+            OsString::from("--output-format"),
+            OsString::from("stream-json"),
+            // stream-json requires verbose mode to include the event stream.
+            OsString::from("--verbose"),
+            // Safe mode prevents configured hooks from influencing generation.
+            OsString::from("--safe-mode"),
+            OsString::from("--no-session-persistence"),
+        ];
+        if let Some(schema) = schema {
+            args.push(OsString::from("--json-schema"));
+            args.push(OsString::from(schema.to_string()));
+        }
+        args.push(OsString::from("--tools"));
+        args.push(if progress.is_some() {
+            OsString::from("WebSearch")
+        } else {
+            // Structured output needs no tool calls.
+            OsString::new()
+        });
         let mut child = Command::new(&self.executable)
-            .args([
-                OsString::from("-p"),
-                // Replaces Claude Code's default coding-agent instructions for this call.
-                OsString::from("--system-prompt"),
-                OsString::from(system_prompt),
-                OsString::from("--output-format"),
-                OsString::from("stream-json"),
-                // stream-json requires verbose mode to include the event stream.
-                OsString::from("--verbose"),
-                // Safe mode prevents configured hooks from influencing generation.
-                OsString::from("--safe-mode"),
-                OsString::from("--no-session-persistence"),
-                OsString::from("--json-schema"),
-                OsString::from(schema),
-                OsString::from("--tools"),
-                // Structured output needs no tool calls.
-                OsString::new(),
-            ])
+            .args(args)
             .current_dir(working_directory.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -151,6 +188,9 @@ impl ClaudeCodeProvider {
             .ok_or_else(|| log_missing_pipe("stdout"))?;
         let mut lines = BufReader::new(stdout).lines();
         let mut structured_output = None;
+        let mut search_text = String::new();
+        let mut search_citations = Vec::new();
+        let mut seen_citations = HashSet::new();
         let mut result_error = None;
         while let Some(line) = lines
             .next_line()
@@ -165,6 +205,15 @@ impl ClaudeCodeProvider {
                 EventOutcome::Ignore => {}
                 EventOutcome::Error(error) => record_event_error(&mut result_error, error),
                 EventOutcome::StructuredOutput(output) => structured_output = Some(output),
+            }
+            if let Some(progress) = &progress {
+                process_web_search_event(
+                    &event,
+                    progress,
+                    &mut search_text,
+                    &mut search_citations,
+                    &mut seen_citations,
+                );
             }
         }
 
@@ -182,12 +231,25 @@ impl ClaudeCodeProvider {
         if let Some(error) = result_error {
             return Err(error);
         }
-        if structured_output.is_none() {
-            tracing::warn!("Claude Code did not return structured output");
+        if progress.is_some() {
+            Ok(ClaudeOutput::WebSearch(WebSearchResult {
+                text: search_text,
+                citations: search_citations,
+            }))
+        } else {
+            if structured_output.is_none() {
+                tracing::warn!("Claude Code did not return structured output");
+            }
+            structured_output
+                .map(ClaudeOutput::Structured)
+                .ok_or(LlmError::MissingStructuredOutput)
         }
-
-        structured_output.ok_or(LlmError::MissingStructuredOutput)
     }
+}
+
+enum ClaudeOutput {
+    Structured(Value),
+    WebSearch(WebSearchResult),
 }
 
 impl LlmProvider for ClaudeCodeProvider {
@@ -200,4 +262,81 @@ impl LlmProvider for ClaudeCodeProvider {
     {
         Box::pin(self.generate_inner(system_prompt, prompt, schema))
     }
+
+    fn web_search<'a>(
+        &'a self,
+        system_prompt: String,
+        prompt: String,
+        progress: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<WebSearchResult, LlmError>> + Send + 'a>,
+    > {
+        Box::pin(self.web_search_inner(system_prompt, prompt, progress))
+    }
+}
+
+fn process_web_search_event(
+    event: &Value,
+    progress: &tokio::sync::mpsc::UnboundedSender<String>,
+    text: &mut String,
+    citations: &mut Vec<String>,
+    seen_citations: &mut HashSet<String>,
+) {
+    if let Some(content) = event.pointer("/message/content").and_then(Value::as_array) {
+        for block in content {
+            let block_type = block.get("type").and_then(Value::as_str);
+            let name = block.get("name").and_then(Value::as_str);
+            if matches!(block_type, Some("tool_use" | "server_tool_use"))
+                && matches!(name, Some("WebSearch" | "web_search"))
+                && let Some(query) = block.pointer("/input/query").and_then(Value::as_str)
+            {
+                let _ = progress.send(query.to_owned());
+            }
+        }
+    }
+
+    if event.get("type").and_then(Value::as_str) == Some("result")
+        && let Some(result) = event.get("result").and_then(Value::as_str)
+    {
+        *text = result.to_owned();
+    }
+
+    if let Some(results) = event
+        .pointer("/tool_use_result/results")
+        .and_then(Value::as_array)
+    {
+        for result in results {
+            if let Some(url) = result.get("url").and_then(Value::as_str) {
+                add_citation(url, citations, seen_citations);
+            }
+        }
+    }
+
+    if let Some(content) = event.pointer("/message/content").and_then(Value::as_array) {
+        for block in content {
+            if block.get("type").and_then(Value::as_str) == Some("tool_result")
+                && let Some(result_text) = block.get("content").and_then(Value::as_str)
+            {
+                for url in urls_in_text(result_text) {
+                    add_citation(&url, citations, seen_citations);
+                }
+            }
+        }
+    }
+}
+
+fn add_citation(url: &str, citations: &mut Vec<String>, seen: &mut HashSet<String>) {
+    if (url.starts_with("https://") || url.starts_with("http://")) && seen.insert(url.to_owned()) {
+        citations.push(url.to_owned());
+    }
+}
+
+fn urls_in_text(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .filter_map(|part| {
+            let start = part.find("https://").or_else(|| part.find("http://"))?;
+            let url = part[start..].trim_end_matches(['.', ',', ';', ')', ']', '}', '"', '\'']);
+            Some(url.to_owned())
+        })
+        .collect()
 }
