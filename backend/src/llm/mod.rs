@@ -22,7 +22,7 @@ mod tests;
 const CALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
-pub(crate) trait LlmProvider: Send + Sync {
+trait LlmProvider: Send + Sync {
     fn generate<'a>(
         &'a self,
         system_prompt: String,
@@ -32,7 +32,7 @@ pub(crate) trait LlmProvider: Send + Sync {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub(crate) enum LlmError {
+enum LlmError {
     #[error("failed to start or communicate with the LLM provider")]
     Provider,
     #[error("LLM provider returned invalid output")]
@@ -113,7 +113,7 @@ impl LlmState {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_provider(provider: impl LlmProvider + 'static, timeout: Duration) -> Self {
+    fn with_provider(provider: impl LlmProvider + 'static, timeout: Duration) -> Self {
         Self {
             provider: Arc::new(provider),
             provider_name: ProviderName::ClaudeCode,
