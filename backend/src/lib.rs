@@ -5,6 +5,7 @@ mod export;
 mod frontend;
 pub mod health;
 pub mod host_origin;
+pub mod llm_context;
 
 use std::error::Error;
 use tokio::net::TcpListener;
