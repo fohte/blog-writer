@@ -287,10 +287,19 @@ mod tests {
     }
 
     #[rstest]
-    #[case::write_from_key_points("/api/write-from-key-points")]
-    #[case::research_key_points("/api/research/key-points")]
+    #[case::write_from_key_points(
+        "/api/write-from-key-points",
+        r#"{"error":"Invalid request body"}"#
+    )]
+    #[case::research_key_points(
+        "/api/research/key-points",
+        "Failed to parse the request body as JSON: EOF while parsing a value at line 1 column 0"
+    )]
     #[test_attr(tokio::test)]
-    async fn includes_llm_use_case_routes_in_api_only_mode(#[case] uri: &'static str) {
+    async fn includes_llm_use_case_routes_in_api_only_mode(
+        #[case] uri: &'static str,
+        #[case] expected_body: &'static str,
+    ) {
         let response = test_llm_api_router(policy())
             .oneshot(
                 Request::builder()
@@ -303,7 +312,18 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let actual = (
+            response.status(),
+            String::from_utf8(
+                to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap(),
+        );
+
+        assert_eq!(actual, (StatusCode::BAD_REQUEST, expected_body.to_owned()));
     }
 
     #[rstest]
