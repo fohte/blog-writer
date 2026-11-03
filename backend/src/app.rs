@@ -19,6 +19,7 @@ use crate::{
     llm::{self, LlmEvent, LlmState},
     ogp,
     safe_fetch::{SafeFetchService, SafeFetcher},
+    source_bodies,
 };
 
 #[derive(OpenApi)]
@@ -109,6 +110,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(export::router())
         .merge(llm::router())
         .merge(ogp::router())
+        .merge(source_bodies::router())
 }
 
 async fn api_not_found() -> AppError {

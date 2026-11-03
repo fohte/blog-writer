@@ -11,6 +11,7 @@ mod llm;
 pub mod llm_context;
 pub mod ogp;
 pub mod safe_fetch;
+pub mod source_bodies;
 
 use std::error::Error;
 use tokio::net::TcpListener;

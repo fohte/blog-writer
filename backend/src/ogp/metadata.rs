@@ -4,7 +4,7 @@ use scraper::{Html, Selector};
 
 use crate::ogp::OgpResponse;
 
-pub(super) fn is_html_content_type(content_type: Option<&str>) -> bool {
+pub(crate) fn is_html_content_type(content_type: Option<&str>) -> bool {
     content_type
         .and_then(|value| value.split(';').next())
         .is_some_and(|media_type| {
@@ -14,7 +14,7 @@ pub(super) fn is_html_content_type(content_type: Option<&str>) -> bool {
         })
 }
 
-pub(super) fn decode_html(bytes: &[u8], content_type: Option<&str>) -> String {
+pub(crate) fn decode_html(bytes: &[u8], content_type: Option<&str>) -> String {
     let (encoding, bom_len) = Encoding::for_bom(bytes)
         .or_else(|| charset_from_content_type(content_type).map(|encoding| (encoding, 0)))
         .or_else(|| charset_from_meta(bytes).map(|encoding| (encoding, 0)))

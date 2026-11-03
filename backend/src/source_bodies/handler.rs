@@ -1,0 +1,356 @@
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use crate::{
+    app::AppState,
+    error::{ApiJson, AppError, ErrorResponse},
+    ogp::metadata,
+};
+
+use super::{extractor, storage};
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct FetchSourceBodyRequest {
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SaveSourceBodyRequest {
+    pub body: String,
+}
+
+#[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
+pub struct FetchSourceBodyResponse {
+    pub source_id: String,
+    pub title: String,
+    pub final_url: String,
+}
+
+#[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
+pub struct SourceBodyResponse {
+    pub source_id: String,
+    pub article_id: String,
+    pub body: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/articles/{article_id}/source-bodies/{source_id}/url",
+    params(
+        ("article_id" = String, Path, description = "Article ID"),
+        ("source_id" = String, Path, description = "Source ID")
+    ),
+    request_body = FetchSourceBodyRequest,
+    responses(
+        (status = 200, description = "Extracted title and final URL; the Markdown body is stored", body = FetchSourceBodyResponse),
+        (status = 400, description = "Invalid request body", body = ErrorResponse),
+        (status = 415, description = "The fetched page is not HTML", body = ErrorResponse),
+        (status = 422, description = "The page does not contain readable article content", body = ErrorResponse),
+        (status = 502, description = "The source URL could not be fetched", body = ErrorResponse),
+        (status = 503, description = "Source body storage is not configured", body = ErrorResponse)
+    )
+)]
+pub async fn fetch_from_url(
+    State(state): State<AppState>,
+    Path((article_id, source_id)): Path<(String, String)>,
+    ApiJson(request): ApiJson<FetchSourceBodyRequest>,
+) -> Result<Json<FetchSourceBodyResponse>, AppError> {
+    let pool = database(&state)?;
+    let response = state
+        .safe_fetch
+        .fetch(&request.url)
+        .await
+        .map_err(|error| {
+            tracing::warn!(reason = error.code(), "source URL fetch failed");
+            AppError::Client {
+                status: StatusCode::BAD_GATEWAY,
+                message: "Source URL could not be fetched".to_owned(),
+            }
+        })?;
+    if !metadata::is_html_content_type(response.content_type.as_deref()) {
+        return Err(AppError::Client {
+            status: StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            message: "Source URL did not return HTML".to_owned(),
+        });
+    }
+
+    let final_url = response.final_url.to_string();
+    let html = metadata::decode_html(&response.body, response.content_type.as_deref());
+    let extracted = extractor::extract(&html, &final_url).map_err(|_| AppError::Client {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        message: "Readable article content could not be extracted".to_owned(),
+    })?;
+
+    store_body(pool, &source_id, &article_id, &extracted.body).await?;
+    Ok(Json(FetchSourceBodyResponse {
+        source_id,
+        title: extracted.title,
+        final_url,
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/articles/{article_id}/source-bodies/{source_id}",
+    params(
+        ("article_id" = String, Path, description = "Article ID"),
+        ("source_id" = String, Path, description = "Source ID")
+    ),
+    request_body = SaveSourceBodyRequest,
+    responses(
+        (status = 204, description = "Source body stored"),
+        (status = 400, description = "Invalid request body", body = ErrorResponse),
+        (status = 503, description = "Source body storage is not configured", body = ErrorResponse)
+    )
+)]
+pub async fn save_body(
+    State(state): State<AppState>,
+    Path((article_id, source_id)): Path<(String, String)>,
+    ApiJson(request): ApiJson<SaveSourceBodyRequest>,
+) -> Result<StatusCode, AppError> {
+    store_body(database(&state)?, &source_id, &article_id, &request.body).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    get,
+    path = "/articles/{article_id}/source-bodies/{source_id}",
+    params(
+        ("article_id" = String, Path, description = "Article ID"),
+        ("source_id" = String, Path, description = "Source ID")
+    ),
+    responses(
+        (status = 200, description = "Stored Markdown source body", body = SourceBodyResponse),
+        (status = 404, description = "Source body not found", body = ErrorResponse),
+        (status = 503, description = "Source body storage is not configured", body = ErrorResponse)
+    )
+)]
+pub async fn get_body(
+    State(state): State<AppState>,
+    Path((article_id, source_id)): Path<(String, String)>,
+) -> Result<Json<SourceBodyResponse>, AppError> {
+    storage::get(database(&state)?, &source_id, &article_id)
+        .await
+        .map_err(storage_error)?
+        .map(Json)
+        .ok_or(AppError::NotFound)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/articles/{article_id}/source-bodies/{source_id}",
+    params(
+        ("article_id" = String, Path, description = "Article ID"),
+        ("source_id" = String, Path, description = "Source ID")
+    ),
+    responses(
+        (status = 204, description = "Source body deleted"),
+        (status = 404, description = "Source body not found", body = ErrorResponse),
+        (status = 503, description = "Source body storage is not configured", body = ErrorResponse)
+    )
+)]
+pub async fn delete_body(
+    State(state): State<AppState>,
+    Path((article_id, source_id)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    if !storage::delete(database(&state)?, &source_id, &article_id)
+        .await
+        .map_err(storage_error)?
+    {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn database(state: &AppState) -> Result<&sqlx::AnyPool, AppError> {
+    state
+        .database
+        .as_ref()
+        .ok_or(AppError::SourceBodyStorageUnavailable)
+}
+
+async fn store_body(
+    pool: &sqlx::AnyPool,
+    source_id: &str,
+    article_id: &str,
+    body: &str,
+) -> Result<(), AppError> {
+    storage::upsert(pool, source_id, article_id, body)
+        .await
+        .map_err(storage_error)
+}
+
+fn storage_error(error: sqlx::Error) -> AppError {
+    tracing::error!(error = %error, "source body storage failed");
+    AppError::Internal("Source body storage failed".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::{Router, body::Body, http::Request};
+    use indoc::indoc;
+    use reqwest::Url;
+    use serde_json::{Value, json};
+    use sqlx::{ConnectOptions, postgres::PgPool, sqlite::SqlitePool};
+    use tower::ServiceExt;
+
+    use crate::{
+        app::AppState,
+        db::initialize,
+        safe_fetch::{FetchResponse, SafeFetchError, SafeFetchFuture, SafeFetchService},
+        source_bodies::router,
+    };
+
+    struct TestFetcher(Option<FetchResponse>);
+
+    impl SafeFetchService for TestFetcher {
+        fn fetch<'a>(&'a self, _url: &'a str) -> SafeFetchFuture<'a> {
+            let response = self.0.clone().ok_or(SafeFetchError::DisallowedAddress);
+            Box::pin(async move { response })
+        }
+    }
+
+    #[sqlx::test]
+    async fn source_body_api_persists_and_reads_with_postgres(
+        pool: PgPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let url = pool.connect_options().to_url_lossy().to_string();
+        verify_source_body_api(&url).await
+    }
+
+    #[sqlx::test]
+    async fn source_body_api_persists_and_reads_with_sqlite(
+        pool: SqlitePool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let url = pool.connect_options().to_url_lossy().to_string();
+        verify_source_body_api(&url).await
+    }
+
+    async fn verify_source_body_api(database_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let pool = initialize(Some(database_url)).await?;
+        let state = AppState {
+            database: Some(pool),
+            safe_fetch: Arc::new(TestFetcher(Some(FetchResponse {
+                final_url: Url::parse("https://example.test/articles/sample")?,
+                body: br#"<html><head><title>Sample article</title></head><body><article><h1>Sample article</h1><p>This is the first paragraph with enough text for the reader extraction to identify the main article content.</p><p>Read the <a href="/guide">reference guide</a> for the complete explanation of this example.</p></article></body></html>"#.to_vec(),
+                content_type: Some("text/html; charset=utf-8".to_owned()),
+            }))),
+            ..AppState::default()
+        };
+        let api: Router = router().split_for_parts().0.with_state(state);
+
+        let actual = vec![
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-test/url")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"url":"https://example.test/articles/sample"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("PUT")
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"body":"Pasted Markdown body"}"#))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api,
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+        ];
+
+        assert_eq!(
+            actual,
+            vec![
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "title": "Sample article",
+                        "final_url": "https://example.test/articles/sample"
+                    })
+                ),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-test",
+                        "body": indoc! {"
+                            This is the first paragraph with enough text for the reader extraction to identify the main article content.
+
+                            Read the [reference guide](https://example.test/guide) for the complete explanation of this example.
+                        "}
+                        .trim_end()
+                    })
+                ),
+                (204, Value::Null),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-test",
+                        "body": "Pasted Markdown body"
+                    })
+                ),
+                (204, Value::Null),
+                (404, json!({"error": "Not Found"})),
+            ]
+        );
+
+        Ok(())
+    }
+
+    async fn call_json(
+        api: Router,
+        request: Request<Body>,
+    ) -> Result<(u16, Value), Box<dyn std::error::Error>> {
+        let response = api.oneshot(request).await?;
+        let status = response.status().as_u16();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let body = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes)?
+        };
+        Ok((status, body))
+    }
+}

@@ -1,0 +1,11 @@
+use utoipa_axum::{router::OpenApiRouter, routes};
+
+use crate::{app::AppState, source_bodies::handler};
+
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(handler::fetch_from_url))
+        .routes(routes!(handler::save_body))
+        .routes(routes!(handler::get_body))
+        .routes(routes!(handler::delete_body))
+}
