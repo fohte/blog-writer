@@ -20,6 +20,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/articles/{article_id}/source-bodies/{source_id}/file': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['import_file']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/articles/{article_id}/source-bodies/{source_id}/url': {
     parameters: {
       query?: never
@@ -190,8 +206,17 @@ export interface components {
       source_id: string
       title: string
     }
+    FileUploadRequest: {
+      /** Format: binary */
+      file: string
+    }
     HealthResponse: {
       status: string
+    }
+    ImportFileResponse: {
+      file_name: string
+      source_id: string
+      title: string
     }
     LlmErrorPayload: {
       message: string
@@ -398,6 +423,80 @@ export interface operations {
       }
       /** @description Source body not found */
       404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body storage is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  import_file: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+        /** @description Source ID */
+        source_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'multipart/form-data': components['schemas']['FileUploadRequest']
+      }
+    }
+    responses: {
+      /** @description File name and extracted Markdown body; the body is stored */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ImportFileResponse']
+        }
+      }
+      /** @description The multipart request is invalid */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description The uploaded file exceeds the size limit */
+      413: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description The file type is not supported */
+      415: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description The file text could not be extracted */
+      422: {
         headers: {
           [name: string]: unknown
         }
