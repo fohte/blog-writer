@@ -86,6 +86,7 @@ fn build_result(
     response: ModelResponse,
     sources: Vec<ClaimEvidenceSourceInput>,
 ) -> Result<JudgeClaimEvidenceResult, LlmError> {
+    let requested_verdict = response.verdict;
     let quote = response.quote.and_then(|quote| {
         sources
             .iter()
@@ -96,25 +97,55 @@ fn build_result(
                 text: quote.text,
             })
     });
+    let suggestion = response
+        .suggestion
+        .filter(|suggestion| !suggestion.trim().is_empty());
 
-    let (verdict, quote, suggestion) = match response.verdict {
-        ClaimVerdict::Supported if quote.is_some() => (ClaimVerdict::Supported, quote, None),
-        ClaimVerdict::Outdated | ClaimVerdict::Contradicted
-            if quote.is_some()
-                && response
-                    .suggestion
-                    .as_deref()
-                    .is_some_and(|suggestion| !suggestion.trim().is_empty()) =>
-        {
-            (response.verdict, quote, response.suggestion)
+    let result = match requested_verdict {
+        ClaimVerdict::Supported => quote
+            .map(|quote| JudgeClaimEvidenceResult {
+                verdict: ClaimVerdict::Supported,
+                quote: Some(quote),
+                suggestion: None,
+            })
+            .ok_or("missing_or_unverified_quote"),
+        ClaimVerdict::Insufficient if quote.is_none() && suggestion.is_none() => {
+            Ok(insufficient_result())
         }
-        ClaimVerdict::Insufficient => (ClaimVerdict::Insufficient, None, None),
-        _ => (ClaimVerdict::Insufficient, None, None),
+        ClaimVerdict::Outdated | ClaimVerdict::Contradicted => {
+            let Some(quote) = quote else {
+                return Ok(rejected_result(
+                    requested_verdict,
+                    "missing_or_unverified_quote",
+                ));
+            };
+            suggestion
+                .map(|suggestion| JudgeClaimEvidenceResult {
+                    verdict: requested_verdict,
+                    quote: Some(quote),
+                    suggestion: Some(suggestion),
+                })
+                .ok_or("missing_suggestion")
+        }
+        ClaimVerdict::Insufficient => Err("unexpected_evidence_or_suggestion"),
     };
 
-    Ok(JudgeClaimEvidenceResult {
-        verdict,
-        quote,
-        suggestion,
-    })
+    Ok(result.unwrap_or_else(|reason| rejected_result(requested_verdict, reason)))
+}
+
+fn rejected_result(verdict: ClaimVerdict, reason: &str) -> JudgeClaimEvidenceResult {
+    tracing::warn!(
+        ?verdict,
+        reason,
+        "discarded claim judgment that failed validation"
+    );
+    insufficient_result()
+}
+
+fn insufficient_result() -> JudgeClaimEvidenceResult {
+    JudgeClaimEvidenceResult {
+        verdict: ClaimVerdict::Insufficient,
+        quote: None,
+        suggestion: None,
+    }
 }

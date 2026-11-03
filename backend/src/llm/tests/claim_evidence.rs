@@ -122,6 +122,14 @@ fn expected_frame(data: Value) -> Vec<SseFrame> {
     json!({"verdict": "contradicted", "quote": {"source_id": "source-a", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": "保存期間は30日です。"}),
     json!({"verdict": "contradicted", "quote": {"source_id": "source-a", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": "保存期間は30日です。"})
 )]
+#[case::outdated_without_suggestion(
+    json!({"verdict": "outdated", "quote": {"source_id": "source-a", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": null}),
+    json!({"verdict": "insufficient", "quote": null, "suggestion": null})
+)]
+#[case::contradicted_with_blank_suggestion(
+    json!({"verdict": "contradicted", "quote": {"source_id": "source-a", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": "  "}),
+    json!({"verdict": "insufficient", "quote": null, "suggestion": null})
+)]
 #[case::insufficient_discards_quote_and_suggestion(
     json!({"verdict": "insufficient", "quote": {"source_id": "source-a", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": "保存期間は30日です。"}),
     json!({"verdict": "insufficient", "quote": null, "suggestion": null})
