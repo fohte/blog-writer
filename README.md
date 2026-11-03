@@ -29,17 +29,31 @@ BACKEND_ALLOWED_ORIGINS=https://writer.example,http://dev.example:4567
 
 When the allowlists are unset, the backend allows `localhost`, `127.0.0.1`, and `[::1]` on the listening port. Requests without an `Origin` header are accepted after the Host check when `Sec-Fetch-Site` is absent, `same-origin`, or `none`. An empty allowlist value allows nothing; rejected requests receive `403 Forbidden`.
 
+## Run the container image
+
+The image `ghcr.io/fohte/blog-writer:latest` is published from pushes to `main`. It listens on port `3000` and requires `DATABASE_URL`. For SQLite, use a named volume mounted at `/data`:
+
+```sh
+docker volume create blog-writer-data
+docker run --rm -p 3000:3000 \
+  -e DATABASE_URL=sqlite:///data/blog-writer.sqlite \
+  -v blog-writer-data:/data \
+  ghcr.io/fohte/blog-writer:latest
+```
+
+The image runs as UID `65534`; `/data` is writable by that user.
+
 ## Build and run locally
 
 Install the tools in `.mise.toml` and the Rust toolchain in `backend/rust-toolchain.toml`. Then run these commands from the repository root:
 
 ```sh
 mise install
-rustup toolchain install 1.98.1
 corepack enable pnpm
 pnpm install --frozen-lockfile
-./scripts/build-release
 cd backend
+rustup show
+../scripts/build-release
 DATABASE_URL=sqlite://blog-writer.sqlite BACKEND_BIND_ADDR=127.0.0.1:3000 cargo run --release
 ```
 
