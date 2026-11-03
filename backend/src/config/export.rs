@@ -22,6 +22,8 @@ pub struct ExportDestination {
     pub path_template: String,
     pub format: ExportFormat,
     pub frontmatter_template: String,
+    #[serde(default)]
+    pub ogp_json_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -96,12 +98,23 @@ fn validate_destinations(
             || destination.base_branch.trim().is_empty()
             || !valid_repository(&destination.repository)
             || !valid_path_template(&destination.path_template)
+            || destination
+                .ogp_json_path
+                .as_deref()
+                .is_some_and(|path| !valid_repository_path(path))
         {
             return Err(DestinationValidationError::InvalidValue);
         }
     }
 
     Ok(())
+}
+
+fn valid_repository_path(path: &str) -> bool {
+    !path.starts_with('/')
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
 fn valid_repository(repository: &str) -> bool {
@@ -135,6 +148,7 @@ mod tests {
     use crate::config::{ConfigError, ExportFormat};
 
     const DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}"}]"#;
+    const DESTINATIONS_WITH_INVALID_OGP_PATH: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"","ogp_json_path":"../cards.json"}]"#;
     const DUPLICATE_ID_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":""},{"id":"site-one","repository":"writer/other","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":""}]"#;
     const TRAVERSAL_PATH_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/../{slug}.mdx","format":"mdx","frontmatter_template":""}]"#;
     const PATH_WITHOUT_SLUG_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/article.mdx","format":"mdx","frontmatter_template":""}]"#;
@@ -199,6 +213,13 @@ mod tests {
         Some("/var/run/token"),
         Err(ConfigError::InvalidExportDestinations)
     )]
+    #[case::ogp_path_traversal(
+        Some(DESTINATIONS_WITH_INVALID_OGP_PATH),
+        Some("https://sts.example"),
+        Some("writer-export"),
+        Some("/var/run/token"),
+        Err(ConfigError::InvalidExportDestinations)
+    )]
     fn parses_export_configuration(
         #[case] destinations: Option<&str>,
         #[case] octo_sts_url: Option<&str>,
@@ -230,6 +251,37 @@ mod tests {
                     path_template: "posts/{slug}.mdx".to_owned(),
                     format: ExportFormat::Mdx,
                     frontmatter_template: "title: {{ title }}".to_owned(),
+                    ogp_json_path: None,
+                }],
+                octo_sts_url: "https://sts.example".to_owned(),
+                octo_sts_identity: "writer-export".to_owned(),
+                octo_sts_sa_token_path: "/var/run/token".into(),
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_an_optional_ogp_json_path() {
+        let actual = ExportConfig::from_values(
+            Some(
+                r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}","ogp_json_path":"data/link-cards.json"}]"#,
+            ),
+            Some("https://sts.example"),
+            Some("writer-export"),
+            Some("/var/run/token"),
+        );
+
+        assert_eq!(
+            actual,
+            Ok(Some(ExportConfig {
+                destinations: vec![super::ExportDestination {
+                    id: "site-one".to_owned(),
+                    repository: "writer/notes".to_owned(),
+                    base_branch: "main".to_owned(),
+                    path_template: "posts/{slug}.mdx".to_owned(),
+                    format: ExportFormat::Mdx,
+                    frontmatter_template: "title: {{ title }}".to_owned(),
+                    ogp_json_path: Some("data/link-cards.json".to_owned()),
                 }],
                 octo_sts_url: "https://sts.example".to_owned(),
                 octo_sts_identity: "writer-export".to_owned(),
