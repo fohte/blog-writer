@@ -267,7 +267,7 @@ export interface operations {
           'application/json': components['schemas']['PublishArticleResponse']
         }
       }
-      /** @description Invalid article ID or slug */
+      /** @description Invalid article ID or slug, or more than 50 unregistered HTTP(S) CardLink hrefs */
       400: {
         headers: {
           [name: string]: unknown
@@ -287,6 +287,15 @@ export interface operations {
       }
       /** @description Remote file changed; fetch its current version before retrying */
       409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Export failed, including a conflict while updating OGP metadata after the article commit */
+      500: {
         headers: {
           [name: string]: unknown
         }

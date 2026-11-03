@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -124,9 +126,10 @@ pub async fn get_article_file(
     request_body = PublishArticleRequest,
     responses(
         (status = 200, description = "Pull request URL", body = PublishArticleResponse),
-        (status = 400, description = "Invalid article ID or slug", body = ErrorResponse),
+        (status = 400, description = "Invalid article ID or slug, or more than 50 unregistered HTTP(S) CardLink hrefs", body = ErrorResponse),
         (status = 404, description = "Destination not found", body = ErrorResponse),
         (status = 409, description = "Remote file changed; fetch its current version before retrying", body = ErrorResponse),
+        (status = 500, description = "Export failed, including a conflict while updating OGP metadata after the article commit", body = ErrorResponse),
         (status = 503, description = "Export publishing is not configured", body = ErrorResponse)
     )
 )]
@@ -143,7 +146,12 @@ pub async fn publish_article(
         sha: request.sha,
     };
     let url = export
-        .publish_article(destination, &article_id, &article)
+        .publish_article(
+            destination,
+            &article_id,
+            &article,
+            Arc::clone(&state.safe_fetch),
+        )
         .await
         .map_err(map_export_error)?;
 
@@ -173,6 +181,10 @@ fn map_export_error(error: ExportError) -> AppError {
         ExportError::InvalidInput => AppError::Client {
             status: axum::http::StatusCode::BAD_REQUEST,
             message: "Invalid article ID or slug".to_owned(),
+        },
+        ExportError::TooManyOgpHrefs => AppError::Client {
+            status: axum::http::StatusCode::BAD_REQUEST,
+            message: "Article contains more than 50 unregistered HTTP(S) CardLink hrefs".to_owned(),
         },
         ExportError::RemoteConflict => AppError::Client {
             status: axum::http::StatusCode::CONFLICT,
