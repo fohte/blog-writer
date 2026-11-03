@@ -4,7 +4,8 @@
 
 ## Backend configuration
 
-- `BACKEND_BIND_ADDR` sets the listening address. It defaults to `127.0.0.1:3000`.
+- `BACKEND_BIND_ADDR` sets the listening address. It defaults to `127.0.0.1:3000`; the container image defaults to `0.0.0.0:3000`.
+- `DATABASE_URL` is required to start the backend. `postgres://` and `postgresql://` URLs connect to PostgreSQL; `sqlite://` URLs use a SQLite file, which is created when it does not exist. Migrations run automatically at startup.
 - `BACKEND_ALLOWED_HOSTS` sets comma-separated Host values, including ports when needed.
 - `BACKEND_ALLOWED_ORIGINS` sets comma-separated origins in `scheme://host[:port]` form.
 - `BLOG_EXPORT_DESTINATIONS` enables article export when set to a non-empty JSON array. Each destination has a unique `id`, `repository` (`owner/repo`), `base_branch`, `path_template` with one `{slug}`, `format` (`markdown` or `mdx`), and `frontmatter_template`. The backend returns the `frontmatter_template` to the client as-is. An empty or invalid value makes the server fail at startup.
@@ -27,3 +28,33 @@ BACKEND_ALLOWED_ORIGINS=https://writer.example,http://dev.example:4567
 ```
 
 When the allowlists are unset, the backend allows `localhost`, `127.0.0.1`, and `[::1]` on the listening port. Requests without an `Origin` header are accepted after the Host check when `Sec-Fetch-Site` is absent, `same-origin`, or `none`. An empty allowlist value allows nothing; rejected requests receive `403 Forbidden`.
+
+## Run the container image
+
+The image `ghcr.io/fohte/blog-writer:latest` is published from pushes to `main`. It listens on port `3000` and requires `DATABASE_URL`. For SQLite, use a named volume mounted at `/data`:
+
+```sh
+docker volume create blog-writer-data
+docker run --rm -p 127.0.0.1:3000:3000 \
+  -e DATABASE_URL=sqlite:///data/blog-writer.sqlite \
+  -v blog-writer-data:/data \
+  ghcr.io/fohte/blog-writer:latest
+```
+
+The image runs as UID `65534`; `/data` is writable by that user.
+
+## Build and run locally
+
+Install the tools in `.mise.toml` and the Rust toolchain in `backend/rust-toolchain.toml`. Then run these commands from the repository root:
+
+```sh
+mise install
+corepack enable pnpm
+pnpm install --frozen-lockfile
+cd backend
+rustup show
+../scripts/build-release
+DATABASE_URL=sqlite://blog-writer.sqlite BACKEND_BIND_ADDR=127.0.0.1:3000 cargo run --release
+```
+
+The SQLite file is created in `backend/` if it does not exist. The frontend is included in the backend executable during the release build.
