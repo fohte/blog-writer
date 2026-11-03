@@ -519,14 +519,24 @@ async fn does_not_store_repeated_deletions(pool: AnyPool) -> TestResult {
     text.remove_range(&mut doc.transact_mut(), 0, 4);
     reconnect_existing_doc(&server, "deleted-document", &doc).await?;
     update_counts.push(count_updates(&pool, "deleted-document").await?);
+    drop(document);
     reconnect_existing_doc(&server, "deleted-document", &doc).await?;
     update_counts.push(count_updates(&pool, "deleted-document").await?);
+    reconnect_existing_doc(&server, "deleted-document", &doc).await?;
+    update_counts.push(count_updates(&pool, "deleted-document").await?);
+    let document = server.sync.open_document("deleted-document").await?;
     let server_contents = decode_contents(&document.encode_state().await)?;
     server.task.abort();
 
     assert_eq!(
-        (update_counts, server_contents.0),
-        (vec![1, 2, 2], String::new())
+        (update_counts, server_contents),
+        (
+            vec![1, 2, 1, 1],
+            (
+                String::new(),
+                yrs::Any::Array(Vec::<yrs::Any>::new().into()),
+            ),
+        ),
     );
     Ok(())
 }
