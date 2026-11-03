@@ -1,5 +1,4 @@
-# prettier-ignore
-name: "blog-writer backend"
+name: 'blog-writer backend'
 docPath: docs/db
 # Fixed names keep the disposable database name out of generated headings.
 # schema.json includes architecture-specific database_version values.

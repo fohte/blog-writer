@@ -45,10 +45,46 @@ pub async fn initialize(database_url: Option<&str>) -> Result<AnyPool, DatabaseE
     let kind = DatabaseKind::from_url(database_url)?;
 
     sqlx::any::install_default_drivers();
-    let pool = AnyPoolOptions::new().connect(database_url).await?;
+    let pool = match kind {
+        DatabaseKind::Postgres => AnyPoolOptions::new().connect(database_url).await?,
+        DatabaseKind::Sqlite if sqlite_is_memory(database_url) => {
+            AnyPoolOptions::new()
+                .max_connections(1)
+                .connect(database_url)
+                .await?
+        }
+        DatabaseKind::Sqlite => {
+            let url = sqlite_url_with_create_if_missing(database_url);
+            AnyPoolOptions::new().connect(&url).await?
+        }
+    };
     kind.migrator().run(&pool).await?;
 
     Ok(pool)
+}
+
+fn sqlite_is_memory(url: &str) -> bool {
+    url.contains(":memory:")
+        || url
+            .split_once('?')
+            .is_some_and(|(_, query)| query.split('&').any(|parameter| parameter == "mode=memory"))
+}
+
+fn sqlite_url_with_create_if_missing(url: &str) -> String {
+    let Some((_, query)) = url.split_once('?') else {
+        return format!("{url}?mode=rwc");
+    };
+    if query.is_empty() {
+        return format!("{url}mode=rwc");
+    }
+    if query
+        .split('&')
+        .any(|parameter| parameter.starts_with("mode="))
+    {
+        return url.to_owned();
+    }
+
+    format!("{url}&mode=rwc")
 }
 
 #[cfg(test)]
@@ -57,20 +93,11 @@ mod tests {
 
     use super::{DatabaseError, DatabaseKind};
 
-    #[test]
-    fn selects_migrator_from_database_url_scheme() {
-        assert_eq!(
-            [
-                DatabaseKind::from_url("postgres://localhost/sample").map_err(|_| ()),
-                DatabaseKind::from_url("sqlite://sample.sqlite").map_err(|_| ()),
-            ],
-            [Ok(DatabaseKind::Postgres), Ok(DatabaseKind::Sqlite)]
-        );
-    }
-
-    #[test]
-    fn rejects_unsupported_database_url_scheme() {
-        let actual = DatabaseKind::from_url("mysql://localhost/sample")
+    #[tokio::test]
+    async fn rejects_unsupported_database_url_scheme() {
+        let actual = super::initialize(Some("mysql://localhost/sample"))
+            .await
+            .map(|_| ())
             .err()
             .map(|error| match error {
                 DatabaseError::UnsupportedScheme(scheme) => scheme,
@@ -97,7 +124,8 @@ mod tests {
     async fn applies_postgres_migration_and_supports_any_pool(
         pool: PgPool,
     ) -> Result<(), DatabaseError> {
-        let pool = any_pool_from_postgres_test_pool(&pool).await?;
+        let url = pool.connect_options().to_url_lossy().to_string();
+        let pool = any_pool_from_test_database(&url).await?;
         verify_metadata_round_trip(&pool, DatabaseKind::Postgres).await
     }
 
@@ -105,18 +133,32 @@ mod tests {
     async fn applies_sqlite_migration_and_supports_any_pool(
         pool: SqlitePool,
     ) -> Result<(), DatabaseError> {
-        let pool = any_pool_from_sqlite_test_pool(&pool).await?;
+        let url = pool.connect_options().to_url_lossy().to_string();
+        let pool = any_pool_from_test_database(&url).await?;
         verify_metadata_round_trip(&pool, DatabaseKind::Sqlite).await
     }
 
-    async fn any_pool_from_postgres_test_pool(pool: &PgPool) -> Result<AnyPool, DatabaseError> {
-        let url = pool.connect_options().to_url_lossy().to_string();
-        super::initialize(Some(&url)).await
+    #[tokio::test]
+    async fn creates_a_new_sqlite_file_database()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let path =
+            std::env::temp_dir().join(format!("blog-writer-db-test-{}.sqlite", std::process::id()));
+        let url = format!("sqlite://{}", path.display());
+        let pool = super::initialize(Some(&url)).await?;
+        verify_metadata_round_trip(&pool, DatabaseKind::Sqlite).await?;
+        drop(pool);
+        std::fs::remove_file(path)?;
+        Ok(())
     }
 
-    async fn any_pool_from_sqlite_test_pool(pool: &SqlitePool) -> Result<AnyPool, DatabaseError> {
-        let url = pool.connect_options().to_url_lossy().to_string();
-        super::initialize(Some(&url)).await
+    #[tokio::test]
+    async fn supports_sqlite_memory_database() -> Result<(), DatabaseError> {
+        let pool = super::initialize(Some("sqlite::memory:")).await?;
+        verify_metadata_round_trip(&pool, DatabaseKind::Sqlite).await
+    }
+
+    async fn any_pool_from_test_database(url: &str) -> Result<AnyPool, DatabaseError> {
+        super::initialize(Some(url)).await
     }
 
     async fn verify_metadata_round_trip(

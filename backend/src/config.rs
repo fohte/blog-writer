@@ -147,11 +147,11 @@ fn parse_list(value: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
+    use std::{env, net::SocketAddr};
 
     use rstest::rstest;
 
-    use super::{Config, ConfigError};
+    use super::{Config, ConfigError, DATABASE_URL_ENV};
 
     #[rstest]
     #[case::default(
@@ -196,6 +196,20 @@ mod tests {
         #[case] expected: Result<Config, ConfigError>,
     ) {
         let actual = Config::from_values(value, None, None, None, None, None, None);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn reads_database_url_from_environment() {
+        let expected = env::var_os(DATABASE_URL_ENV)
+            .map(|value| {
+                value
+                    .into_string()
+                    .map_err(|_| ConfigError::NonUnicodeDatabaseUrl)
+            })
+            .transpose();
+        let actual = Config::from_env().map(|config| config.database_url);
 
         assert_eq!(actual, expected);
     }
