@@ -9,7 +9,7 @@ use thiserror::Error;
 mod export;
 mod llm;
 pub use export::{ExportConfig, ExportDestination, ExportFormat};
-pub use llm::{LlmConfig, ProviderName};
+pub use llm::{LlmConfig, OpenAiCompatibleConfig, ProviderName};
 
 use llm::{
     ANTHROPIC_API_KEY_ENV, LLM_API_KEY_ENV, LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_PROVIDER_ENV,
@@ -55,8 +55,8 @@ struct ConfigValues<'a> {
 struct LlmValues<'a> {
     provider: Option<&'a str>,
     locked: bool,
-    other_provider_configured: bool,
     anthropic_api_key_set: bool,
+    openai_compatible: OpenAiCompatibleConfig,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -79,6 +79,12 @@ pub enum ConfigError {
     NonUnicodeExportDestinations,
     #[error("{LLM_PROVIDER_ENV} must contain valid Unicode")]
     NonUnicodeLlmProvider,
+    #[error("{LLM_BASE_URL_ENV} must contain valid Unicode")]
+    NonUnicodeLlmBaseUrl,
+    #[error("{LLM_API_KEY_ENV} must contain valid Unicode")]
+    NonUnicodeLlmApiKey,
+    #[error("{LLM_MODEL_ENV} must contain valid Unicode")]
+    NonUnicodeLlmModel,
     #[error("{OCTO_STS_URL_ENV} must contain valid Unicode")]
     NonUnicodeOctoStsUrl,
     #[error("{OCTO_STS_IDENTITY_ENV} must contain valid Unicode")]
@@ -95,6 +101,10 @@ pub enum ConfigError {
     InvalidLlmProvider,
     #[error("{LLM_API_ONLY_ENV} must be one of 1, 0, true, or false")]
     InvalidLlmApiOnly,
+    #[error("{LLM_BASE_URL_ENV} is required when {LLM_PROVIDER_ENV} is openai_compatible")]
+    MissingOpenAiCompatibleBaseUrl,
+    #[error("{LLM_MODEL_ENV} is required when {LLM_PROVIDER_ENV} is openai_compatible")]
+    MissingOpenAiCompatibleModel,
     #[error("provider-specific settings cannot be set when {LLM_PROVIDER_LOCKED_ENV} is set")]
     OtherProviderConfigurationWithLockedProvider,
 }
@@ -167,9 +177,21 @@ impl Config {
             &read_env_value,
         )?;
         let llm_provider_locked = read_env_value(LLM_PROVIDER_LOCKED_ENV).is_some();
-        let other_provider_configured = [LLM_BASE_URL_ENV, LLM_API_KEY_ENV, LLM_MODEL_ENV]
-            .into_iter()
-            .any(|name| read_env_value(name).is_some());
+        let llm_base_url = read_env(
+            LLM_BASE_URL_ENV,
+            ConfigError::NonUnicodeLlmBaseUrl,
+            &read_env_value,
+        )?;
+        let llm_api_key = read_env(
+            LLM_API_KEY_ENV,
+            ConfigError::NonUnicodeLlmApiKey,
+            &read_env_value,
+        )?;
+        let llm_model = read_env(
+            LLM_MODEL_ENV,
+            ConfigError::NonUnicodeLlmModel,
+            &read_env_value,
+        )?;
         let anthropic_api_key_set = read_env_value(ANTHROPIC_API_KEY_ENV).is_some();
 
         Self::from_values(
@@ -187,8 +209,12 @@ impl Config {
             LlmValues {
                 provider: llm_provider.as_deref(),
                 locked: llm_provider_locked,
-                other_provider_configured,
                 anthropic_api_key_set,
+                openai_compatible: OpenAiCompatibleConfig {
+                    base_url: llm_base_url,
+                    api_key: llm_api_key,
+                    model: llm_model,
+                },
             },
         )
     }
@@ -232,8 +258,8 @@ impl Config {
             llm: LlmConfig::from_values(
                 llm.provider,
                 llm.locked,
-                llm.other_provider_configured,
                 llm.anthropic_api_key_set,
+                llm.openai_compatible,
             )?,
         })
     }
@@ -265,8 +291,9 @@ mod tests {
     use rstest::rstest;
 
     use super::{
-        Config, ConfigError, ConfigValues, DATABASE_URL_ENV, LLM_API_ONLY_ENV, LLM_BASE_URL_ENV,
-        LLM_PROVIDER_LOCKED_ENV, LlmConfig, LlmValues,
+        Config, ConfigError, ConfigValues, DATABASE_URL_ENV, LLM_API_KEY_ENV, LLM_API_ONLY_ENV,
+        LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_PROVIDER_ENV, LLM_PROVIDER_LOCKED_ENV, LlmConfig,
+        LlmValues, OpenAiCompatibleConfig, ProviderName,
     };
 
     #[rstest]
@@ -380,6 +407,86 @@ mod tests {
     }
 
     #[test]
+    fn reads_openai_compatible_provider_settings_from_environment() {
+        let actual = Config::from_env_with(|name| match name {
+            LLM_PROVIDER_ENV => Some(OsString::from("openai_compatible")),
+            LLM_BASE_URL_ENV => Some(OsString::from("https://api.example")),
+            LLM_API_KEY_ENV => Some(OsString::new()),
+            LLM_MODEL_ENV => Some(OsString::from("example-model")),
+            _ => None,
+        })
+        .map(|config| config.llm);
+
+        assert_eq!(
+            actual,
+            Ok(LlmConfig {
+                provider: ProviderName::OpenAiCompatible,
+                openai_compatible: OpenAiCompatibleConfig {
+                    base_url: Some("https://api.example".to_owned()),
+                    api_key: None,
+                    model: Some("example-model".to_owned()),
+                },
+                ..LlmConfig::default()
+            })
+        );
+    }
+
+    #[rstest]
+    #[case::missing_base_url(
+        None,
+        Some("example-model"),
+        ConfigError::MissingOpenAiCompatibleBaseUrl
+    )]
+    #[case::empty_base_url(
+        Some(""),
+        Some("example-model"),
+        ConfigError::MissingOpenAiCompatibleBaseUrl
+    )]
+    #[case::missing_model(
+        Some("https://api.example"),
+        None,
+        ConfigError::MissingOpenAiCompatibleModel
+    )]
+    #[case::empty_model(
+        Some("https://api.example"),
+        Some(""),
+        ConfigError::MissingOpenAiCompatibleModel
+    )]
+    fn requires_openai_compatible_base_url_and_model_at_startup(
+        #[case] base_url: Option<&str>,
+        #[case] model: Option<&str>,
+        #[case] expected: ConfigError,
+    ) {
+        let actual = Config::from_env_with(|name| match name {
+            LLM_PROVIDER_ENV => Some(OsString::from("openai_compatible")),
+            LLM_BASE_URL_ENV => base_url.map(OsString::from),
+            LLM_MODEL_ENV => model.map(OsString::from),
+            _ => None,
+        });
+
+        assert_eq!(actual, Err(expected));
+    }
+
+    #[test]
+    fn treats_empty_openai_compatible_settings_as_unset_when_claude_code_is_locked() {
+        let actual = Config::from_env_with(|name| match name {
+            LLM_PROVIDER_LOCKED_ENV | LLM_BASE_URL_ENV | LLM_API_KEY_ENV | LLM_MODEL_ENV => {
+                Some(OsString::new())
+            }
+            _ => None,
+        })
+        .map(|config| config.llm);
+
+        assert_eq!(
+            actual,
+            Ok(LlmConfig {
+                locked: true,
+                ..LlmConfig::default()
+            })
+        );
+    }
+
+    #[test]
     fn rejects_other_provider_environment_settings_when_provider_is_locked() {
         let actual = Config::from_env_with(|name| match name {
             LLM_PROVIDER_LOCKED_ENV => Some(OsString::new()),
@@ -446,32 +553,72 @@ mod tests {
     }
 
     #[rstest]
-    #[case::locked_with_other_provider_config(
+    #[case::claude_code_locked_with_openai_config(
         Some("claude_code"),
         true,
-        true,
         false,
+        OpenAiCompatibleConfig { base_url: Some("https://api.example".to_owned()), ..OpenAiCompatibleConfig::default() },
         Err(ConfigError::OtherProviderConfigurationWithLockedProvider)
     )]
-    #[case::unlocked_with_other_provider_config(
+    #[case::claude_code_unlocked_with_openai_config(
         Some("claude_code"),
         false,
+        false,
+        OpenAiCompatibleConfig { base_url: Some("https://api.example".to_owned()), ..OpenAiCompatibleConfig::default() },
+        Ok(LlmConfig {
+            openai_compatible: OpenAiCompatibleConfig {
+                base_url: Some("https://api.example".to_owned()),
+                ..OpenAiCompatibleConfig::default()
+            },
+            ..LlmConfig::default()
+        })
+    )]
+    #[case::openai_compatible_locked_with_anthropic_key(
+        Some("openai_compatible"),
+        true,
+        true,
+        OpenAiCompatibleConfig::default(),
+        Err(ConfigError::OtherProviderConfigurationWithLockedProvider)
+    )]
+    #[case::openai_compatible_locked_with_its_settings(
+        Some("openai_compatible"),
         true,
         false,
-        Ok(LlmConfig::default())
+        OpenAiCompatibleConfig {
+            base_url: Some("https://api.example".to_owned()),
+            api_key: Some("example-token".to_owned()),
+            model: Some("example-model".to_owned()),
+        },
+        Ok(LlmConfig {
+            provider: ProviderName::OpenAiCompatible,
+            locked: true,
+            anthropic_api_key_set: false,
+            openai_compatible: OpenAiCompatibleConfig {
+                base_url: Some("https://api.example".to_owned()),
+                api_key: Some("example-token".to_owned()),
+                model: Some("example-model".to_owned()),
+            },
+        })
+    )]
+    #[case::openai_compatible_with_config(
+        Some("openai_compatible"),
+        false,
+        false,
+        OpenAiCompatibleConfig { base_url: Some("https://api.example".to_owned()), api_key: Some("secret".to_owned()), model: Some("model".to_owned()) },
+        Ok(LlmConfig { provider: ProviderName::OpenAiCompatible, locked: false, anthropic_api_key_set: false, openai_compatible: OpenAiCompatibleConfig { base_url: Some("https://api.example".to_owned()), api_key: Some("secret".to_owned()), model: Some("model".to_owned()) } })
     )]
     #[case::unsupported_provider(
         Some("unknown_provider"),
         false,
         false,
-        false,
+        OpenAiCompatibleConfig::default(),
         Err(ConfigError::InvalidLlmProvider)
     )]
     fn validates_llm_configuration(
         #[case] provider: Option<&str>,
         #[case] locked: bool,
-        #[case] other_provider_configured: bool,
         #[case] anthropic_api_key_set: bool,
+        #[case] openai_compatible: OpenAiCompatibleConfig,
         #[case] expected: Result<LlmConfig, ConfigError>,
     ) {
         let actual = Config::from_values(
@@ -479,8 +626,8 @@ mod tests {
             LlmValues {
                 provider,
                 locked,
-                other_provider_configured,
                 anthropic_api_key_set,
+                openai_compatible,
             },
         )
         .map(|config| config.llm);

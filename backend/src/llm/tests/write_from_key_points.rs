@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use super::super::{LlmError, LlmProvider, LlmState};
-use crate::{app::AppState, write_from_key_points::router};
+use crate::{app::AppState, config::ProviderName, write_from_key_points::router};
 
 struct FixedProvider {
     output: Value,
@@ -140,6 +140,7 @@ async fn translates_valid_aliases_and_discards_unknown_aliases()
             }),
             prompt: prompt.clone(),
         },
+        ProviderName::ClaudeCode,
         Duration::from_secs(1),
     );
     let actual = post_request(
@@ -233,6 +234,7 @@ async fn prioritizes_target_heading_points_when_selecting_at_most_fifty()
             }),
             prompt: Arc::new(Mutex::new(None)),
         },
+        ProviderName::ClaudeCode,
         Duration::from_secs(1),
     );
     let actual = post_request(request(points), state).await?;
@@ -273,6 +275,7 @@ async fn rejects_targets_that_are_not_headings(
             output: json!({"sentences": []}),
             prompt: prompt.clone(),
         },
+        ProviderName::ClaudeCode,
         Duration::from_secs(1),
     );
     let mut request = request(Vec::new());
@@ -299,6 +302,7 @@ async fn groups_prioritized_key_points_by_source_in_the_prompt()
             output: json!({"sentences": []}),
             prompt: prompt.clone(),
         },
+        ProviderName::ClaudeCode,
         Duration::from_secs(1),
     );
     let actual = post_request(

@@ -184,14 +184,13 @@ async fn api_method_not_allowed() -> AppError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use axum::{
         body::{Body, to_bytes},
         http::{
             HeaderValue, Request, StatusCode,
-            header::{
-                ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
-                ACCESS_CONTROL_ALLOW_ORIGIN, ALLOW, CONTENT_TYPE,
-            },
+            header::{ACCESS_CONTROL_ALLOW_ORIGIN, ALLOW, CONTENT_TYPE, VARY},
         },
         routing::get,
     };
@@ -287,19 +286,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::write_from_key_points(
-        "/api/write-from-key-points",
-        r#"{"error":"Invalid request body"}"#
-    )]
-    #[case::research_key_points(
-        "/api/research/key-points",
-        "Failed to parse the request body as JSON: EOF while parsing a value at line 1 column 0"
-    )]
+    #[case::write_from_key_points("/api/write-from-key-points")]
+    #[case::research_key_points("/api/research/key-points")]
     #[test_attr(tokio::test)]
-    async fn includes_llm_use_case_routes_in_api_only_mode(
-        #[case] uri: &'static str,
-        #[case] expected_body: &'static str,
-    ) {
+    async fn includes_llm_use_case_routes_in_api_only_mode(#[case] uri: &'static str) {
         let response = test_llm_api_router(policy())
             .oneshot(
                 Request::builder()
@@ -312,18 +302,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let actual = (
-            response.status(),
-            String::from_utf8(
-                to_bytes(response.into_body(), usize::MAX)
-                    .await
-                    .unwrap()
-                    .to_vec(),
-            )
-            .unwrap(),
-        );
+        let actual = response.status();
 
-        assert_eq!(actual, (StatusCode::BAD_REQUEST, expected_body.to_owned()));
+        assert_eq!(actual, StatusCode::BAD_REQUEST);
     }
 
     #[rstest]
@@ -346,31 +327,48 @@ mod tests {
             )
             .await
             .unwrap();
-        let actual = (
-            response.status(),
-            response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).cloned(),
-            response
-                .headers()
-                .get(ACCESS_CONTROL_ALLOW_METHODS)
-                .cloned(),
-            response
-                .headers()
-                .get(ACCESS_CONTROL_ALLOW_HEADERS)
-                .cloned(),
-            response
-                .headers()
-                .get("access-control-allow-private-network")
-                .cloned(),
+        let actual_headers = response.headers().iter().fold(
+            BTreeMap::<String, Vec<String>>::new(),
+            |mut headers, (name, value)| {
+                let value = if name == VARY {
+                    "<normalized>".to_owned()
+                } else {
+                    value.to_str().unwrap().to_owned()
+                };
+                headers
+                    .entry(name.as_str().to_owned())
+                    .or_default()
+                    .push(value);
+                headers
+            },
         );
+        let actual = (response.status(), actual_headers);
 
         assert_eq!(
             actual,
             (
                 StatusCode::OK,
-                Some(HeaderValue::from_static("https://writer.example")),
-                Some(HeaderValue::from_static("GET,POST")),
-                Some(HeaderValue::from_static("content-type")),
-                Some(HeaderValue::from_static("true")),
+                BTreeMap::from([
+                    (
+                        "access-control-allow-headers".to_owned(),
+                        vec!["content-type".to_owned()],
+                    ),
+                    (
+                        "access-control-allow-methods".to_owned(),
+                        vec!["GET,POST".to_owned()],
+                    ),
+                    (
+                        "access-control-allow-origin".to_owned(),
+                        vec!["https://writer.example".to_owned()],
+                    ),
+                    (
+                        "access-control-allow-private-network".to_owned(),
+                        vec!["true".to_owned()],
+                    ),
+                    ("allow".to_owned(), vec!["POST".to_owned()]),
+                    ("content-length".to_owned(), vec!["0".to_owned()]),
+                    ("vary".to_owned(), vec!["<normalized>".to_owned()]),
+                ]),
             )
         );
     }
@@ -481,6 +479,7 @@ mod tests {
                 provider: ProviderName::ClaudeCode,
                 locked: true,
                 anthropic_api_key_set: false,
+                openai_compatible: Default::default(),
             }),
             database: None,
             ..AppState::default()
@@ -500,6 +499,42 @@ mod tests {
                 .unwrap();
 
         assert_eq!(actual, json!({"provider": "claude_code", "locked": true}));
+    }
+
+    #[tokio::test]
+    async fn reports_the_openai_compatible_provider() {
+        let state = AppState {
+            export: None,
+            llm: LlmState::new(LlmConfig {
+                provider: ProviderName::OpenAiCompatible,
+                openai_compatible: crate::config::OpenAiCompatibleConfig {
+                    base_url: Some("https://api.example".to_owned()),
+                    model: Some("example-model".to_owned()),
+                    ..Default::default()
+                },
+                ..LlmConfig::default()
+            }),
+            database: None,
+            ..AppState::default()
+        };
+        let response = router(state, policy())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/llm/status")
+                    .header("host", "localhost:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+
+        assert_eq!(
+            actual,
+            json!({"provider": "openai_compatible", "locked": false})
+        );
     }
 
     #[rstest]

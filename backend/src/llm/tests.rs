@@ -17,9 +17,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::sync::watch;
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+};
 
 use super::claude_code::ClaudeCodeProvider;
 use super::{CALL_TIMEOUT, LlmError, LlmEvent, LlmProvider, LlmState, call_to_sse};
+use crate::config::{OpenAiCompatibleConfig, ProviderName};
 
 mod research_key_points;
 mod write_from_key_points;
@@ -66,18 +71,55 @@ fn fake_claude(directory: &TempDir, body: &str) -> PathBuf {
 }
 
 async fn sse_body(
-    provider: ClaudeCodeProvider,
+    provider: impl LlmProvider + 'static,
     system_prompt: &str,
     prompt: &str,
     timeout: Duration,
 ) -> String {
-    let state = LlmState::with_provider(provider, timeout);
+    let state = LlmState::with_provider(provider, ProviderName::ClaudeCode, timeout);
+    sse_state_body(state, system_prompt, prompt).await
+}
+
+async fn sse_state_body(state: LlmState, system_prompt: &str, prompt: &str) -> String {
     let response = call_to_sse::<SampleOutput>(state, system_prompt.to_owned(), prompt.to_owned())
         .into_response();
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("SSE body is readable");
     String::from_utf8(body.to_vec()).expect("SSE body is UTF-8")
+}
+
+async fn run_openai_compatible_call(
+    status: u16,
+    body: &str,
+    api_key: Option<&str>,
+) -> (MockServer, String) {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/openai/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(status)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let actual = sse_state_body(
+        LlmState::new(crate::config::LlmConfig {
+            provider: ProviderName::OpenAiCompatible,
+            openai_compatible: OpenAiCompatibleConfig {
+                base_url: Some(format!("{}/openai", server.uri())),
+                api_key: api_key.map(str::to_owned),
+                model: Some("example-model".to_owned()),
+            },
+            ..crate::config::LlmConfig::default()
+        }),
+        "system instruction",
+        "user request",
+    )
+    .await;
+    (server, actual)
 }
 
 fn parse_sse_body(body: &str) -> Vec<SseFrame> {
@@ -106,8 +148,12 @@ fn parse_sse_body(body: &str) -> Vec<SseFrame> {
 #[tokio::test]
 async fn ends_an_in_flight_call_when_shutdown_is_signaled() {
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
-    let state = LlmState::with_provider(PendingProvider, Duration::from_secs(60))
-        .with_shutdown(shutdown_receiver);
+    let state = LlmState::with_provider(
+        PendingProvider,
+        ProviderName::ClaudeCode,
+        Duration::from_secs(60),
+    )
+    .with_shutdown(shutdown_receiver);
     let response = call_to_sse::<SampleOutput>(state, String::new(), String::new()).into_response();
     let body = tokio::spawn(to_bytes(response.into_body(), usize::MAX));
 
@@ -138,6 +184,183 @@ fn process_is_running(pid: u32) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+#[tokio::test]
+async fn openai_compatible_provider_sends_a_streaming_function_tool_request() {
+    let body = indoc! {r#"
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"structured_output","arguments":"{\"text\":"}}]}}]}
+
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"generated\"}"}}]}}]}
+
+        data: [DONE]
+    "#}
+    .replace('\n', "\r\n");
+    let (server, actual) = run_openai_compatible_call(200, &body, Some("example-token")).await;
+    let requests = server
+        .received_requests()
+        .await
+        .expect("provider request was received");
+    let request_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("provider request is JSON");
+    let schema = schemars::generate::SchemaSettings::draft07()
+        .into_generator()
+        .into_root_schema_for::<SampleOutput>();
+    let expected_body = serde_json::json!({
+        "model": "example-model",
+        "stream": true,
+        "messages": [
+            {"role": "system", "content": "system instruction"},
+            {"role": "user", "content": "user request"}
+        ],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "structured_output",
+                "parameters": serde_json::to_value(schema).expect("schema is JSON")
+            }
+        }],
+        "tool_choice": {"type": "function", "function": {"name": "structured_output"}}
+    });
+
+    assert_eq!(
+        (
+            requests.len(),
+            requests[0].method.as_str(),
+            requests[0].url.path(),
+            requests[0]
+                .headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            request_body,
+            parse_sse_body(&actual),
+        ),
+        (
+            1,
+            "POST",
+            "/openai/v1/chat/completions",
+            Some("Bearer example-token"),
+            expected_body,
+            vec![SseFrame {
+                lines: vec![
+                    SseLine::Raw("event: result".to_owned()),
+                    SseLine::Data {
+                        prefix: "data: ".to_owned(),
+                        value: serde_json::json!({"event":"result","data":{"text":"generated"}}),
+                    },
+                    SseLine::Raw(String::new()),
+                ],
+            }],
+        )
+    );
+}
+
+#[rstest]
+#[case::rate_limit(429, "", "LLM provider usage limit reached")]
+#[case::http_error(500, "", "failed to start or communicate with the LLM provider")]
+#[case::missing_tool_call(
+    200,
+    indoc! {r#"
+        data: {"choices":[{"delta":{}}]}
+
+        data: [DONE]
+
+    "#},
+    "LLM provider did not return structured output"
+)]
+#[case::invalid_arguments(
+    200,
+    indoc! {r#"
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"structured_output","arguments":"{\"text\":"}}]}}]}
+
+        data: [DONE]
+
+    "#},
+    "LLM provider returned invalid output"
+)]
+#[case::invalid_response_type(
+    200,
+    indoc! {r#"
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"structured_output","arguments":"{\"text\":1}"}}]}}]}
+
+        data: [DONE]
+
+    "#},
+    "LLM output does not match the expected type"
+)]
+#[tokio::test]
+async fn openai_compatible_provider_reports_provider_errors(
+    #[case] status: u16,
+    #[case] body: &str,
+    #[case] message: &str,
+) {
+    let (_, actual) = run_openai_compatible_call(status, body, Some("example-token")).await;
+
+    assert_eq!(
+        parse_sse_body(&actual),
+        vec![SseFrame {
+            lines: vec![
+                SseLine::Raw("event: error".to_owned()),
+                SseLine::Data {
+                    prefix: "data: ".to_owned(),
+                    value: serde_json::json!({"event":"error","data":{"message":message}}),
+                },
+                SseLine::Raw(String::new()),
+            ],
+        }]
+    );
+}
+
+#[tokio::test]
+async fn openai_compatible_provider_omits_auth_when_no_api_key_is_configured() {
+    let body = indoc! {r#"
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"structured_output","arguments":"{\"text\":\"generated\"}"}}]}}]}
+
+        data: [DONE]
+
+    "#};
+    let (server, actual) = run_openai_compatible_call(200, body, None).await;
+    let requests = server
+        .received_requests()
+        .await
+        .expect("provider request was received");
+    let authorization = requests[0]
+        .headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok());
+
+    assert_eq!(
+        (requests.len(), authorization, parse_sse_body(&actual)),
+        (
+            1,
+            None,
+            vec![SseFrame {
+                lines: vec![
+                    SseLine::Raw("event: result".to_owned()),
+                    SseLine::Data {
+                        prefix: "data: ".to_owned(),
+                        value: serde_json::json!({"event":"result","data":{"text":"generated"}}),
+                    },
+                    SseLine::Raw(String::new()),
+                ],
+            }],
+        )
+    );
+}
+
+#[tokio::test]
+async fn llm_state_selects_the_configured_openai_compatible_provider() {
+    let state = LlmState::new(crate::config::LlmConfig {
+        provider: ProviderName::OpenAiCompatible,
+        openai_compatible: OpenAiCompatibleConfig {
+            base_url: Some("http://127.0.0.1".to_owned()),
+            api_key: None,
+            model: Some("example-model".to_owned()),
+        },
+        ..crate::config::LlmConfig::default()
+    });
+
+    assert_eq!(state.provider_name(), ProviderName::OpenAiCompatible);
 }
 
 async fn wait_for_process_exit(pid: u32) -> bool {
@@ -368,6 +591,7 @@ async fn sends_keep_alive_comments_while_waiting_for_claude_code() {
     let pid_path = PathBuf::from(format!("{}.pid", executable.display()));
     let state = LlmState::with_provider(
         ClaudeCodeProvider::new(executable.into_os_string()),
+        ProviderName::ClaudeCode,
         Duration::from_secs(30),
     )
     .with_keep_alive_interval(Duration::from_millis(10));
@@ -419,6 +643,7 @@ async fn stops_claude_code_when_the_sse_stream_is_dropped() {
     let pid_path = PathBuf::from(format!("{}.pid", executable.display()));
     let state = LlmState::with_provider(
         ClaudeCodeProvider::new(executable.into_os_string()),
+        ProviderName::ClaudeCode,
         Duration::from_secs(30),
     );
     let mut stream = call_to_sse::<SampleOutput>(

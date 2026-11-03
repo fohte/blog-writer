@@ -41,7 +41,7 @@ async fn serve_with_database(
     config: Config,
     database: Option<sqlx::AnyPool>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if config.llm.anthropic_api_key_set {
+    if config.llm.provider == config::ProviderName::ClaudeCode && config.llm.anthropic_api_key_set {
         tracing::warn!("ANTHROPIC_API_KEY is set; Claude Code will prefer API key authentication");
     }
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
@@ -59,9 +59,7 @@ async fn serve_with_database(
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
-            if llm_api_only {
-                shutdown_sender.send_replace(true);
-            }
+            shutdown_sender.send_replace(true);
         })
         .await?;
 

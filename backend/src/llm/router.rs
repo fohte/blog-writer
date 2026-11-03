@@ -7,6 +7,7 @@ use crate::{
 };
 
 pub fn router() -> OpenApiRouter<AppState> {
+    // Register LLM use-case routes here so API-only startup exposes them with the status route.
     OpenApiRouter::new()
         .routes(routes!(status))
         .merge(research_key_points::router())
