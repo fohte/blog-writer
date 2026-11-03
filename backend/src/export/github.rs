@@ -413,7 +413,8 @@ impl ExportService {
             .send_github(self.github_request(Method::PUT, url, token).json(&body))
             .await?;
         if response.status() == StatusCode::CONFLICT
-            || (response.status() == StatusCode::UNPROCESSABLE_ENTITY && request.sha.is_none())
+            || response.status() == StatusCode::UNPROCESSABLE_ENTITY
+            || (response.status() == StatusCode::NOT_FOUND && request.sha.is_some())
         {
             return Err(ExportError::RemoteConflict);
         }
@@ -457,7 +458,11 @@ fn valid_article_id(article_id: &str) -> bool {
 }
 
 fn valid_slug(slug: &str) -> bool {
-    !slug.is_empty() && slug != "." && slug != ".." && !slug.contains('/') && !slug.contains('\\')
+    !slug.is_empty()
+        && !slug.starts_with('.')
+        && slug
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 async fn successful_response(response: Response) -> Result<Response, ExportError> {
@@ -643,11 +648,7 @@ mod tests {
             .await;
     }
 
-    #[tokio::test]
-    async fn creates_branch_commits_file_and_opens_pull_request() {
-        let fixture = fixture().await;
-        mock_token_exchange(&fixture).await;
-        mock_pulls(&fixture, json!([])).await;
+    async fn mock_base_reference_and_missing_article_branch(fixture: &Fixture) {
         Mock::given(method("GET"))
             .and(path("/repos/writer/notes/git/ref/heads/main"))
             .and(github_auth())
@@ -666,6 +667,14 @@ mod tests {
             .expect(1)
             .mount(&fixture.github)
             .await;
+    }
+
+    #[tokio::test]
+    async fn creates_branch_commits_file_and_opens_pull_request() {
+        let fixture = fixture().await;
+        mock_token_exchange(&fixture).await;
+        mock_pulls(&fixture, json!([])).await;
+        mock_base_reference_and_missing_article_branch(&fixture).await;
         Mock::given(method("POST"))
             .and(path("/repos/writer/notes/git/refs"))
             .and(body_json(json!({
@@ -809,29 +818,16 @@ mod tests {
         fixture.octo_sts.verify().await;
     }
 
+    #[rstest]
+    #[case::sha_mismatch(409)]
+    #[case::file_deleted(404)]
+    #[case::validation_conflict(422)]
     #[tokio::test]
-    async fn returns_conflict_when_the_remote_sha_changed() {
+    async fn returns_conflict_when_sha_is_stale_or_the_remote_file_is_missing(#[case] status: u16) {
         let fixture = fixture().await;
         mock_token_exchange(&fixture).await;
         mock_pulls(&fixture, json!([])).await;
-        Mock::given(method("GET"))
-            .and(path("/repos/writer/notes/git/ref/heads/main"))
-            .and(github_auth())
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "object": { "sha": "base-sha" }
-            })))
-            .expect(1)
-            .mount(&fixture.github)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/repos/writer/notes/git/ref/heads/blog-writer/{ARTICLE_ID}"
-            )))
-            .and(github_auth())
-            .respond_with(ResponseTemplate::new(404))
-            .expect(1)
-            .mount(&fixture.github)
-            .await;
+        mock_base_reference_and_missing_article_branch(&fixture).await;
         Mock::given(method("POST"))
             .and(path("/repos/writer/notes/git/refs"))
             .and(github_auth())
@@ -839,7 +835,7 @@ mod tests {
             .expect(1)
             .mount(&fixture.github)
             .await;
-        mock_contents_commit(&fixture, Some("stale-sha"), 409).await;
+        mock_contents_commit(&fixture, Some("stale-sha"), status).await;
         Mock::given(method("POST"))
             .and(path("/repos/writer/notes/pulls"))
             .respond_with(ResponseTemplate::new(500))
@@ -885,24 +881,7 @@ mod tests {
         let fixture = fixture().await;
         mock_token_exchange(&fixture).await;
         mock_pulls(&fixture, json!([])).await;
-        Mock::given(method("GET"))
-            .and(path("/repos/writer/notes/git/ref/heads/main"))
-            .and(github_auth())
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "object": { "sha": "base-sha" }
-            })))
-            .expect(1)
-            .mount(&fixture.github)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/repos/writer/notes/git/ref/heads/blog-writer/{ARTICLE_ID}"
-            )))
-            .and(github_auth())
-            .respond_with(ResponseTemplate::new(404))
-            .expect(1)
-            .mount(&fixture.github)
-            .await;
+        mock_base_reference_and_missing_article_branch(&fixture).await;
         Mock::given(method("POST"))
             .and(path("/repos/writer/notes/git/refs"))
             .and(github_auth())
@@ -958,18 +937,33 @@ mod tests {
         fixture.octo_sts.verify().await;
     }
 
+    #[rstest]
+    #[case::base_branch(json!([]), false, "file-sha")]
+    #[case::open_pull_request_branch(json!([{
+        "html_url": "https://github.example/writer/notes/pull/12",
+        "state": "open"
+    }]), true, "branch-file-sha")]
     #[tokio::test]
-    async fn reads_existing_file_content_and_sha() {
+    async fn reads_existing_file_content_and_sha(
+        #[case] pulls: serde_json::Value,
+        #[case] use_pull_request_branch: bool,
+        #[case] expected_sha: &str,
+    ) {
         let fixture = fixture().await;
         mock_token_exchange(&fixture).await;
-        mock_pulls(&fixture, json!([])).await;
+        mock_pulls(&fixture, pulls).await;
+        let reference = if use_pull_request_branch {
+            format!("blog-writer/{ARTICLE_ID}")
+        } else {
+            "main".to_owned()
+        };
         Mock::given(method("GET"))
             .and(path(format!("/repos/writer/notes/contents/{FILE_PATH}")))
-            .and(query_param("ref", "main"))
+            .and(query_param("ref", reference))
             .and(github_auth())
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "content": "Zm9v\n",
-                "sha": "file-sha",
+                "sha": expected_sha,
                 "encoding": "base64"
             })))
             .expect(1)
@@ -985,48 +979,7 @@ mod tests {
             actual,
             Ok(Some(super::RemoteFile {
                 content: "foo".to_owned(),
-                sha: "file-sha".to_owned(),
-            }))
-        );
-        fixture.github.verify().await;
-        fixture.octo_sts.verify().await;
-    }
-
-    #[tokio::test]
-    async fn reads_open_pull_request_file_from_its_branch() {
-        let fixture = fixture().await;
-        mock_token_exchange(&fixture).await;
-        mock_pulls(
-            &fixture,
-            json!([{
-                "html_url": "https://github.example/writer/notes/pull/12",
-                "state": "open"
-            }]),
-        )
-        .await;
-        Mock::given(method("GET"))
-            .and(path(format!("/repos/writer/notes/contents/{FILE_PATH}")))
-            .and(query_param("ref", format!("blog-writer/{ARTICLE_ID}")))
-            .and(github_auth())
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "content": "Zm9v",
-                "sha": "branch-file-sha",
-                "encoding": "base64"
-            })))
-            .expect(1)
-            .mount(&fixture.github)
-            .await;
-
-        let actual = fixture
-            .service
-            .get_article_file(&destination(), ARTICLE_ID, SLUG)
-            .await;
-
-        assert_eq!(
-            actual,
-            Ok(Some(super::RemoteFile {
-                content: "foo".to_owned(),
-                sha: "branch-file-sha".to_owned(),
+                sha: expected_sha.to_owned(),
             }))
         );
         fixture.github.verify().await;
@@ -1036,24 +989,37 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     enum InvalidInputCase {
         ArticleId,
-        Slug,
+        PathTraversalSlug,
+        NewlineSlug,
+        DotGithubSlug,
+        PercentEncodedSlashSlug,
     }
 
     #[rstest]
     #[case::invalid_article_id(InvalidInputCase::ArticleId)]
-    #[case::traversal_slug(InvalidInputCase::Slug)]
+    #[case::path_traversal_slug(InvalidInputCase::PathTraversalSlug)]
+    #[case::newline_slug(InvalidInputCase::NewlineSlug)]
+    #[case::dot_github_slug(InvalidInputCase::DotGithubSlug)]
+    #[case::percent_encoded_slash_slug(InvalidInputCase::PercentEncodedSlashSlug)]
     #[tokio::test]
     async fn rejects_invalid_input_before_external_requests(#[case] case: InvalidInputCase) {
         let fixture = fixture().await;
-        let result = match case {
-            InvalidInputCase::ArticleId => fixture
+        let slug = match case {
+            InvalidInputCase::PathTraversalSlug => Some("../secret".to_owned()),
+            InvalidInputCase::NewlineSlug => Some(format!("bad{}slug", char::from(10))),
+            InvalidInputCase::DotGithubSlug => Some(".github".to_owned()),
+            InvalidInputCase::PercentEncodedSlashSlug => Some("bad%2Fslug".to_owned()),
+            InvalidInputCase::ArticleId => None,
+        };
+        let result = match slug {
+            None => fixture
                 .service
                 .get_article_file(&destination(), "bad/id", SLUG)
                 .await
                 .map(|_| ()),
-            InvalidInputCase::Slug => {
+            Some(slug) => {
                 let request = ArticleContent {
-                    slug: "../secret".to_owned(),
+                    slug,
                     content: BODY.to_owned(),
                     sha: None,
                 };

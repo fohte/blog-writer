@@ -135,6 +135,11 @@ mod tests {
     use crate::config::{ConfigError, ExportFormat};
 
     const DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}"}]"#;
+    const DUPLICATE_ID_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":""},{"id":"site-one","repository":"writer/other","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":""}]"#;
+    const TRAVERSAL_PATH_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/../{slug}.mdx","format":"mdx","frontmatter_template":""}]"#;
+    const PATH_WITHOUT_SLUG_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/article.mdx","format":"mdx","frontmatter_template":""}]"#;
+    const PATH_WITH_MULTIPLE_SLUGS_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}/{slug}.mdx","format":"mdx","frontmatter_template":""}]"#;
+    const MALFORMED_REPOSITORY_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes/archive","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":""}]"#;
 
     #[rstest]
     #[case::disabled(None, None, None, None, Ok(None))]
@@ -147,6 +152,41 @@ mod tests {
     )]
     #[case::invalid_json(
         Some("not-json"),
+        Some("https://sts.example"),
+        Some("writer-export"),
+        Some("/var/run/token"),
+        Err(ConfigError::InvalidExportDestinations)
+    )]
+    #[case::duplicate_destination_id(
+        Some(DUPLICATE_ID_DESTINATIONS),
+        Some("https://sts.example"),
+        Some("writer-export"),
+        Some("/var/run/token"),
+        Err(ConfigError::InvalidExportDestinations)
+    )]
+    #[case::path_template_traversal(
+        Some(TRAVERSAL_PATH_DESTINATIONS),
+        Some("https://sts.example"),
+        Some("writer-export"),
+        Some("/var/run/token"),
+        Err(ConfigError::InvalidExportDestinations)
+    )]
+    #[case::path_template_without_slug(
+        Some(PATH_WITHOUT_SLUG_DESTINATIONS),
+        Some("https://sts.example"),
+        Some("writer-export"),
+        Some("/var/run/token"),
+        Err(ConfigError::InvalidExportDestinations)
+    )]
+    #[case::path_template_with_multiple_slugs(
+        Some(PATH_WITH_MULTIPLE_SLUGS_DESTINATIONS),
+        Some("https://sts.example"),
+        Some("writer-export"),
+        Some("/var/run/token"),
+        Err(ConfigError::InvalidExportDestinations)
+    )]
+    #[case::malformed_repository(
+        Some(MALFORMED_REPOSITORY_DESTINATIONS),
         Some("https://sts.example"),
         Some("writer-export"),
         Some("/var/run/token"),
