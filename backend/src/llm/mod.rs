@@ -59,6 +59,29 @@ pub struct LlmErrorPayload {
     pub message: String,
 }
 
+impl LlmEvent {
+    fn into_sse_event(self) -> Event {
+        let data = match serde_json::to_value(self) {
+            Ok(data) => data,
+            Err(_) => return Self::serialization_error_event(),
+        };
+        let Some(name) = data.get("event").and_then(Value::as_str).map(str::to_owned) else {
+            return Self::serialization_error_event();
+        };
+
+        Event::default().event(name).data(data.to_string())
+    }
+
+    fn serialization_error_event() -> Event {
+        let data = serde_json::json!({
+            "event": "error",
+            "data": {"message": LlmError::SerializeResult.to_string()}
+        });
+
+        Event::default().event("error").data(data.to_string())
+    }
+}
+
 #[derive(Clone)]
 pub struct LlmState {
     pub(crate) provider: Arc<dyn LlmProvider>,
@@ -149,15 +172,6 @@ where
                     message: error.to_string(),
                 }),
             };
-        let name = match event {
-            LlmEvent::Result(_) => "result",
-            LlmEvent::Error(_) => "error",
-        };
-        let data = serde_json::to_string(&event).unwrap_or_else(|_| {
-            r#"{"event":"error","data":{"message":"LLM result could not be serialized"}}"#
-                .to_owned()
-        });
-
-        Ok(Event::default().event(name).data(data))
+        Ok(event.into_sse_event())
     }))
 }

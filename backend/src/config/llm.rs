@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -17,6 +19,17 @@ pub enum ProviderName {
     ClaudeCode,
 }
 
+impl FromStr for ProviderName {
+    type Err = ConfigError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "claude_code" => Ok(Self::ClaudeCode),
+            _ => Err(ConfigError::InvalidLlmProvider),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LlmConfig {
     pub provider: ProviderName,
@@ -31,10 +44,7 @@ impl LlmConfig {
         other_provider_configured: bool,
         anthropic_api_key_set: bool,
     ) -> Result<Self, ConfigError> {
-        let provider = match provider.unwrap_or("claude_code") {
-            "claude_code" => ProviderName::ClaudeCode,
-            _ => return Err(ConfigError::InvalidLlmProvider),
-        };
+        let provider = provider.map(str::parse).transpose()?.unwrap_or_default();
 
         if locked && other_provider_configured {
             return Err(ConfigError::OtherProviderConfigurationWithLockedProvider);

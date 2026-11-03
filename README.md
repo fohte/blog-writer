@@ -7,6 +7,9 @@
 - `BACKEND_BIND_ADDR` sets the listening address. It defaults to `127.0.0.1:3000`.
 - `BACKEND_ALLOWED_HOSTS` sets comma-separated Host values, including ports when needed.
 - `BACKEND_ALLOWED_ORIGINS` sets comma-separated origins in `scheme://host[:port]` form.
+- `LLM_PROVIDER` selects the LLM provider. The supported value is `claude_code`, which is also the default.
+- `LLM_PROVIDER_LOCKED` locks the configured provider when set. The backend exits at startup if `LLM_BASE_URL`, `LLM_API_KEY`, or `LLM_MODEL` is also set.
+- If `ANTHROPIC_API_KEY` is set, the backend logs a warning because Claude Code prefers API key authentication.
 - `BLOG_EXPORT_DESTINATIONS` enables article export when set to a non-empty JSON array. Each destination has a unique `id`, `repository` (`owner/repo`), `base_branch`, `path_template` with one `{slug}`, `format` (`markdown` or `mdx`), and `frontmatter_template`. The backend returns the `frontmatter_template` to the client as-is. An empty or invalid value makes the server fail at startup.
 - `BLOG_EXPORT_OCTO_STS_URL`, `BLOG_EXPORT_OCTO_STS_IDENTITY`, and `BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH` configure the per-request GitHub App token exchange. All three are required when destinations are configured.
 

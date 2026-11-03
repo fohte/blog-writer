@@ -72,6 +72,7 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
     let executable = fake_claude(
         &directory,
         indoc! {r#"
+            printf '%s\n' "$@" > "$0.args"
             cat > "$0.input"
             printf '%s\n' '{"type":"result","structured_output":{"text":"ready"}}'
         "#},
@@ -85,17 +86,42 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
     .await;
     let input = fs::read_to_string(format!("{}.input", executable.display()))
         .expect("prompt was sent to stdin");
+    let args = fs::read_to_string(format!("{}.args", executable.display()))
+        .expect("provider arguments were passed to the command")
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let schema = serde_json::json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+        "title": "SampleOutput",
+        "type": "object"
+    })
+    .to_string();
 
     assert_eq!(
-        (actual, input),
+        (actual, input, args),
         (
             indoc! {r#"
                 event: result
-                data: {"event":"result","data":{"text":"ready"}}
+                data: {"data":{"text":"ready"},"event":"result"}
 
             "#}
             .to_owned(),
             prompt.to_owned(),
+            vec![
+                "-p".to_owned(),
+                "--output-format".to_owned(),
+                "stream-json".to_owned(),
+                "--verbose".to_owned(),
+                "--safe-mode".to_owned(),
+                "--no-session-persistence".to_owned(),
+                "--json-schema".to_owned(),
+                schema,
+                "--tools".to_owned(),
+                String::new(),
+            ],
         )
     );
 }
@@ -115,7 +141,7 @@ async fn returns_an_error_event_when_claude_code_fails() {
         actual,
         indoc! {r#"
             event: error
-            data: {"event":"error","data":{"message":"failed to start or communicate with Claude Code"}}
+            data: {"data":{"message":"failed to start or communicate with Claude Code"},"event":"error"}
 
         "#}
     );
@@ -126,7 +152,9 @@ async fn returns_an_error_event_when_output_does_not_match_the_rust_type() {
     let directory = TempDir::new().expect("temporary directory is available");
     let executable = fake_claude(
         &directory,
-        "printf '%s\\n' '{\"type\":\"result\",\"structured_output\":{\"text\":42}}'",
+        indoc! {r#"
+            printf '%s\n' '{"type":"result","structured_output":{"text":42}}'
+        "#},
     );
     let actual = sse_body(
         ClaudeCodeProvider::new(executable.into_os_string()),
@@ -139,7 +167,7 @@ async fn returns_an_error_event_when_output_does_not_match_the_rust_type() {
         actual,
         indoc! {r#"
             event: error
-            data: {"event":"error","data":{"message":"LLM output does not match the expected type"}}
+            data: {"data":{"message":"LLM output does not match the expected type"},"event":"error"}
 
         "#}
     );
@@ -148,7 +176,13 @@ async fn returns_an_error_event_when_output_does_not_match_the_rust_type() {
 #[tokio::test]
 async fn stops_claude_code_when_the_sse_stream_is_dropped() {
     let directory = TempDir::new().expect("temporary directory is available");
-    let executable = fake_claude(&directory, "printf '%s' \"$$\" > \"$0.pid\"\nexec sleep 30");
+    let executable = fake_claude(
+        &directory,
+        indoc! {r#"
+            printf '%s' "$$" > "$0.pid"
+            exec sleep 30
+        "#},
+    );
     let pid_path = PathBuf::from(format!("{}.pid", executable.display()));
     let state = LlmState::with_provider(
         ClaudeCodeProvider::new(executable.into_os_string()),
@@ -172,7 +206,13 @@ async fn stops_claude_code_when_the_sse_stream_is_dropped() {
 #[tokio::test]
 async fn enforces_the_call_timeout_and_stops_the_fake_process() {
     let directory = TempDir::new().expect("temporary directory is available");
-    let executable = fake_claude(&directory, "printf '%s' \"$$\" > \"$0.pid\"\nexec sleep 30");
+    let executable = fake_claude(
+        &directory,
+        indoc! {r#"
+            printf '%s' "$$" > "$0.pid"
+            exec sleep 30
+        "#},
+    );
     let pid_path = PathBuf::from(format!("{}.pid", executable.display()));
     let provider = ClaudeCodeProvider::new(executable.into_os_string());
     let actual = sse_body(
@@ -192,7 +232,7 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
             Duration::from_secs(600),
             indoc! {r#"
                 event: error
-                data: {"event":"error","data":{"message":"LLM call exceeded the 10 minute time limit"}}
+                data: {"data":{"message":"LLM call exceeded the 10 minute time limit"},"event":"error"}
 
             "#}
             .to_owned(),

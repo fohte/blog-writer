@@ -71,6 +71,7 @@ impl ClaudeCodeProvider {
 
         let status = child.wait().await.map_err(|_| LlmError::Provider)?;
         if !status.success() {
+            tracing::warn!(exit_code = ?status.code(), "Claude Code exited unsuccessfully");
             return Err(LlmError::Provider);
         }
 

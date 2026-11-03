@@ -30,6 +30,7 @@ pub struct Config {
     pub llm: LlmConfig,
 }
 
+#[derive(Default)]
 struct ConfigValues<'a> {
     bind_addr: Option<&'a str>,
     allowed_hosts: Option<&'a str>,
@@ -40,6 +41,7 @@ struct ConfigValues<'a> {
     octo_sts_sa_token_path: Option<&'a str>,
 }
 
+#[derive(Default)]
 struct LlmValues<'a> {
     provider: Option<&'a str>,
     locked: bool,
@@ -73,7 +75,7 @@ pub enum ConfigError {
         "all BLOG_EXPORT_OCTO_STS_* variables are required when {EXPORT_DESTINATIONS_ENV} is set"
     )]
     MissingOctoStsConfiguration,
-    #[error("{LLM_PROVIDER_ENV} must be claude_code")]
+    #[error("{LLM_PROVIDER_ENV} must name a supported provider")]
     InvalidLlmProvider,
     #[error("provider-specific settings cannot be set when {LLM_PROVIDER_LOCKED_ENV} is set")]
     OtherProviderConfigurationWithLockedProvider,
@@ -111,7 +113,7 @@ impl Config {
             .any(|name| env::var_os(name).is_some());
         let anthropic_api_key_set = env::var_os(ANTHROPIC_API_KEY_ENV).is_some();
 
-        Self::from_values_with_llm(
+        Self::from_values(
             ConfigValues {
                 bind_addr: value.as_deref(),
                 allowed_hosts: allowed_hosts.as_deref(),
@@ -131,41 +133,16 @@ impl Config {
     }
 
     pub fn from_bind_addr(value: Option<&str>) -> Result<Self, ConfigError> {
-        Self::from_values(value, None, None, None, None, None, None)
-    }
-
-    fn from_values(
-        bind_addr: Option<&str>,
-        allowed_hosts: Option<&str>,
-        allowed_origins: Option<&str>,
-        export_destinations: Option<&str>,
-        octo_sts_url: Option<&str>,
-        octo_sts_identity: Option<&str>,
-        octo_sts_sa_token_path: Option<&str>,
-    ) -> Result<Self, ConfigError> {
-        Self::from_values_with_llm(
+        Self::from_values(
             ConfigValues {
-                bind_addr,
-                allowed_hosts,
-                allowed_origins,
-                export_destinations,
-                octo_sts_url,
-                octo_sts_identity,
-                octo_sts_sa_token_path,
+                bind_addr: value,
+                ..ConfigValues::default()
             },
-            LlmValues {
-                provider: None,
-                locked: false,
-                other_provider_configured: false,
-                anthropic_api_key_set: false,
-            },
+            LlmValues::default(),
         )
     }
 
-    fn from_values_with_llm(
-        values: ConfigValues<'_>,
-        llm: LlmValues<'_>,
-    ) -> Result<Self, ConfigError> {
+    fn from_values(values: ConfigValues<'_>, llm: LlmValues<'_>) -> Result<Self, ConfigError> {
         let bind_addr = values.bind_addr.unwrap_or(DEFAULT_BIND_ADDR);
         let bind_addr: SocketAddr = bind_addr
             .parse()
@@ -261,7 +238,13 @@ mod tests {
         #[case] value: Option<&str>,
         #[case] expected: Result<Config, ConfigError>,
     ) {
-        let actual = Config::from_values(value, None, None, None, None, None, None);
+        let actual = Config::from_values(
+            ConfigValues {
+                bind_addr: value,
+                ..ConfigValues::default()
+            },
+            LlmValues::default(),
+        );
 
         assert_eq!(actual, expected);
     }
@@ -302,63 +285,58 @@ mod tests {
     ) {
         assert_eq!(
             Config::from_values(
-                bind_addr,
-                allowed_hosts,
-                allowed_origins,
-                None,
-                None,
-                None,
-                None
+                ConfigValues {
+                    bind_addr,
+                    allowed_hosts,
+                    allowed_origins,
+                    ..ConfigValues::default()
+                },
+                LlmValues::default(),
             ),
             expected
         );
     }
 
-    #[test]
-    fn rejects_other_provider_settings_when_provider_is_locked() {
-        assert_eq!(
-            Config::from_values_with_llm(
-                ConfigValues {
-                    bind_addr: None,
-                    allowed_hosts: None,
-                    allowed_origins: None,
-                    export_destinations: None,
-                    octo_sts_url: None,
-                    octo_sts_identity: None,
-                    octo_sts_sa_token_path: None,
-                },
-                LlmValues {
-                    provider: Some("claude_code"),
-                    locked: true,
-                    other_provider_configured: true,
-                    anthropic_api_key_set: false,
-                },
-            ),
-            Err(ConfigError::OtherProviderConfigurationWithLockedProvider)
-        );
-    }
-
-    #[test]
-    fn accepts_other_provider_settings_when_provider_is_not_locked() {
-        let actual = Config::from_values_with_llm(
-            ConfigValues {
-                bind_addr: None,
-                allowed_hosts: None,
-                allowed_origins: None,
-                export_destinations: None,
-                octo_sts_url: None,
-                octo_sts_identity: None,
-                octo_sts_sa_token_path: None,
-            },
+    #[rstest]
+    #[case::locked_with_other_provider_config(
+        Some("claude_code"),
+        true,
+        true,
+        false,
+        Err(ConfigError::OtherProviderConfigurationWithLockedProvider)
+    )]
+    #[case::unlocked_with_other_provider_config(
+        Some("claude_code"),
+        false,
+        true,
+        false,
+        Ok(LlmConfig::default())
+    )]
+    #[case::unsupported_provider(
+        Some("unknown_provider"),
+        false,
+        false,
+        false,
+        Err(ConfigError::InvalidLlmProvider)
+    )]
+    fn validates_llm_configuration(
+        #[case] provider: Option<&str>,
+        #[case] locked: bool,
+        #[case] other_provider_configured: bool,
+        #[case] anthropic_api_key_set: bool,
+        #[case] expected: Result<LlmConfig, ConfigError>,
+    ) {
+        let actual = Config::from_values(
+            ConfigValues::default(),
             LlmValues {
-                provider: Some("claude_code"),
-                locked: false,
-                other_provider_configured: true,
-                anthropic_api_key_set: false,
+                provider,
+                locked,
+                other_provider_configured,
+                anthropic_api_key_set,
             },
         )
         .map(|config| config.llm);
 
-        assert_eq!(actual, Ok(LlmConfig::default()));
+        assert_eq!(actual, expected);
     }
 }
