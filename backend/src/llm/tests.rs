@@ -9,11 +9,14 @@ use std::{
 use axum::{body::to_bytes, response::IntoResponse};
 use futures_util::StreamExt;
 use indoc::indoc;
+use rstest::rstest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tempfile::TempDir;
 
-use super::{CALL_TIMEOUT, ClaudeCodeProvider, LlmEvent, LlmState, call_to_sse};
+use super::claude_code::ClaudeCodeProvider;
+use super::{CALL_TIMEOUT, LlmEvent, LlmState, call_to_sse};
 
 #[derive(Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 struct SampleOutput {
@@ -33,21 +36,40 @@ fn fake_claude(directory: &TempDir, body: &str) -> PathBuf {
     path
 }
 
-async fn sse_body(provider: ClaudeCodeProvider, prompt: &str, timeout: Duration) -> String {
+async fn sse_body(
+    provider: ClaudeCodeProvider,
+    system_prompt: &str,
+    prompt: &str,
+    timeout: Duration,
+) -> String {
     let state = LlmState::with_provider(provider, timeout);
-    let response = call_to_sse::<SampleOutput>(state, prompt.to_owned()).into_response();
+    let response = call_to_sse::<SampleOutput>(state, system_prompt.to_owned(), prompt.to_owned())
+        .into_response();
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("SSE body is readable");
     String::from_utf8(body.to_vec()).expect("SSE body is UTF-8")
 }
 
-async fn process_is_running(pid: u32) -> bool {
+fn process_is_running(pid: u32) -> bool {
     StdCommand::new("/bin/kill")
         .args(["-0", &pid.to_string()])
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+async fn wait_for_process_exit(pid: u32) -> bool {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if !process_is_running(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .is_ok_and(|exited| exited)
 }
 
 async fn wait_for_pid_file(path: &Path) -> Option<u32> {
@@ -77,9 +99,11 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
             printf '%s\n' '{"type":"result","structured_output":{"text":"ready"}}'
         "#},
     );
+    let system_prompt = "Return a concise structured response.";
     let prompt = "Return the sample output.";
     let actual = sse_body(
         ClaudeCodeProvider::new(executable.clone().into_os_string()),
+        system_prompt,
         prompt,
         Duration::from_secs(5),
     )
@@ -112,6 +136,8 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
             prompt.to_owned(),
             vec![
                 "-p".to_owned(),
+                "--system-prompt".to_owned(),
+                system_prompt.to_owned(),
                 "--output-format".to_owned(),
                 "stream-json".to_owned(),
                 "--verbose".to_owned(),
@@ -126,50 +152,142 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
     );
 }
 
+#[rstest]
+#[case::process_failure(
+    "exit 1",
+    indoc! {r#"
+        event: error
+        data: {"data":{"message":"failed to start or communicate with the LLM provider"},"event":"error"}
+
+    "#}
+)]
+#[case::type_mismatch(
+    indoc! {r#"
+        printf '%s\n' '{"type":"result","structured_output":{"text":42}}'
+    "#},
+    indoc! {r#"
+        event: error
+        data: {"data":{"message":"LLM output does not match the expected type"},"event":"error"}
+
+    "#}
+)]
+#[case::missing_structured_output(
+    indoc! {r#"
+        printf '%s\n' '{"type":"result","structured_output":null}'
+    "#},
+    indoc! {r#"
+        event: error
+        data: {"data":{"message":"LLM provider did not return structured output"},"event":"error"}
+
+    "#}
+)]
+#[case::invalid_json_line(
+    indoc! {r#"
+        printf '%s\n' 'not-json'
+    "#},
+    indoc! {r#"
+        event: error
+        data: {"data":{"message":"LLM provider returned invalid output"},"event":"error"}
+
+    "#}
+)]
+#[case::error_result_event(
+    indoc! {r#"
+        printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["generation failed"],"structured_output":null}'
+    "#},
+    indoc! {r#"
+        event: error
+        data: {"data":{"message":"failed to start or communicate with the LLM provider"},"event":"error"}
+
+    "#}
+)]
+#[case::max_budget_result_event(
+    indoc! {r#"
+        printf '%s\n' '{"type":"result","subtype":"error_max_budget_usd","is_error":true,"errors":["maximum budget reached"],"api_error_status":null,"structured_output":null}'
+    "#},
+    indoc! {r#"
+        event: error
+        data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
+
+    "#}
+)]
+#[case::credits_required_rate_limit_event(
+    indoc! {r#"
+        printf '%s\n' '{"type":"rate_limit_event","rate_limit_info":{"errorCode":"credits_required"}}'
+        exit 1
+    "#},
+    indoc! {r#"
+        event: error
+        data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
+
+    "#}
+)]
 #[tokio::test]
-async fn returns_an_error_event_when_claude_code_fails() {
+async fn returns_an_error_event_for_claude_code_failures(
+    #[case] script: &str,
+    #[case] expected: &str,
+) {
     let directory = TempDir::new().expect("temporary directory is available");
-    let executable = fake_claude(&directory, "exit 1");
+    let executable = fake_claude(&directory, script);
     let actual = sse_body(
         ClaudeCodeProvider::new(executable.into_os_string()),
+        "Return a concise structured response.",
         "Return the sample output.",
         Duration::from_secs(5),
     )
     .await;
 
-    assert_eq!(
-        actual,
-        indoc! {r#"
-            event: error
-            data: {"data":{"message":"failed to start or communicate with Claude Code"},"event":"error"}
-
-        "#}
-    );
+    assert_eq!(actual, expected);
 }
 
 #[tokio::test]
-async fn returns_an_error_event_when_output_does_not_match_the_rust_type() {
+async fn sends_keep_alive_comments_while_waiting_for_claude_code() {
     let directory = TempDir::new().expect("temporary directory is available");
     let executable = fake_claude(
         &directory,
         indoc! {r#"
-            printf '%s\n' '{"type":"result","structured_output":{"text":42}}'
+            printf '%s' "$$" > "$0.pid"
+            exec sleep 30
         "#},
     );
-    let actual = sse_body(
+    let pid_path = PathBuf::from(format!("{}.pid", executable.display()));
+    let state = LlmState::with_provider(
         ClaudeCodeProvider::new(executable.into_os_string()),
-        "Return the sample output.",
-        Duration::from_secs(5),
+        Duration::from_secs(30),
     )
-    .await;
+    .with_keep_alive_interval(Duration::from_millis(10));
+    let mut stream = call_to_sse::<SampleOutput>(
+        state,
+        "Return a concise structured response.".to_owned(),
+        "Return the sample output.".to_owned(),
+    )
+    .into_response()
+    .into_body()
+    .into_data_stream();
+    let first_chunk = tokio::time::timeout(Duration::from_secs(1), stream.next())
+        .await
+        .expect("SSE keep-alive arrives while the provider is running")
+        .expect("SSE stream is not empty")
+        .expect("SSE chunk is readable");
+    let pid = wait_for_pid_file(&pid_path)
+        .await
+        .expect("fake process started");
+    drop(stream);
+    let process_exited = wait_for_process_exit(pid).await;
 
     assert_eq!(
-        actual,
-        indoc! {r#"
-            event: error
-            data: {"data":{"message":"LLM output does not match the expected type"},"event":"error"}
+        (
+            String::from_utf8(first_chunk.to_vec()).expect("keep-alive is UTF-8"),
+            process_exited
+        ),
+        (
+            indoc! {r#"
+                : keep-alive
 
-        "#}
+            "#}
+            .to_owned(),
+            true,
+        )
     );
 }
 
@@ -188,19 +306,23 @@ async fn stops_claude_code_when_the_sse_stream_is_dropped() {
         ClaudeCodeProvider::new(executable.into_os_string()),
         Duration::from_secs(30),
     );
-    let mut stream = call_to_sse::<SampleOutput>(state, "Return the sample output.".to_owned())
-        .into_response()
-        .into_body()
-        .into_data_stream();
+    let mut stream = call_to_sse::<SampleOutput>(
+        state,
+        "Return a concise structured response.".to_owned(),
+        "Return the sample output.".to_owned(),
+    )
+    .into_response()
+    .into_body()
+    .into_data_stream();
     let task = tokio::spawn(async move { stream.next().await });
     let pid = wait_for_pid_file(&pid_path)
         .await
         .expect("fake process started");
     task.abort();
     let _ = task.await;
+    let process_exited = wait_for_process_exit(pid).await;
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(!process_is_running(pid).await);
+    assert_eq!((pid > 0, process_exited), (true, true));
 }
 
 #[tokio::test]
@@ -217,6 +339,7 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
     let provider = ClaudeCodeProvider::new(executable.into_os_string());
     let actual = sse_body(
         provider,
+        "Return a concise structured response.",
         "Return the sample output.",
         Duration::from_millis(750),
     )
@@ -224,10 +347,10 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
     let pid = wait_for_pid_file(&pid_path)
         .await
         .expect("fake process started");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let process_exited = wait_for_process_exit(pid).await;
 
     assert_eq!(
-        (CALL_TIMEOUT, actual, process_is_running(pid).await),
+        (CALL_TIMEOUT, actual, process_exited),
         (
             Duration::from_secs(600),
             indoc! {r#"
@@ -236,7 +359,7 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
 
             "#}
             .to_owned(),
-            false,
+            true,
         )
     );
 }
@@ -251,5 +374,33 @@ fn event_payloads_keep_their_openapi_wire_shape() {
     assert_eq!(
         actual,
         serde_json::json!({"event": "error", "data": {"message": "failed"}})
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires an authenticated Claude Code CLI; run with cargo test --lib llm::tests::manual_claude_call_uses_the_system_prompt -- --ignored"]
+async fn manual_claude_call_uses_the_system_prompt() {
+    let response = call_to_sse::<SampleOutput>(
+        LlmState::default(),
+        "Set the text field to exactly system_prompt_applied.".to_owned(),
+        "Return a JSON object that matches the supplied schema.".to_owned(),
+    )
+    .into_response();
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("SSE body is readable");
+    let body = String::from_utf8(body.to_vec()).expect("SSE body is UTF-8");
+    let results = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        results,
+        vec![serde_json::json!({
+            "data": {"text": "system_prompt_applied"},
+            "event": "result"
+        })]
     );
 }

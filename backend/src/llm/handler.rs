@@ -6,7 +6,7 @@ use super::LlmState;
 use crate::config::ProviderName;
 
 #[derive(Debug, Serialize, ToSchema)]
-pub struct LlmStatusResponse {
+pub(crate) struct LlmStatusResponse {
     pub provider: ProviderName,
     pub locked: bool,
 }
