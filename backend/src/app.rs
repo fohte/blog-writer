@@ -190,7 +190,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{
             HeaderValue, Request, StatusCode,
-            header::{ACCESS_CONTROL_ALLOW_ORIGIN, ALLOW, CONTENT_TYPE, VARY},
+            header::{ACCESS_CONTROL_ALLOW_ORIGIN, ALLOW, CONTENT_TYPE},
         },
         routing::get,
     };
@@ -340,22 +340,16 @@ mod tests {
             )
             .await
             .unwrap();
-        let actual_headers = response
-            .headers()
-            .iter()
-            .filter(|(name, _)| {
-                name.as_str().starts_with("access-control-") || name.as_str() == VARY.as_str()
-            })
-            .fold(
-                BTreeMap::<String, Vec<String>>::new(),
-                |mut headers, (name, value)| {
-                    headers
-                        .entry(name.as_str().to_owned())
-                        .or_default()
-                        .push(value.to_str().unwrap().to_owned());
-                    headers
-                },
-            );
+        let actual_headers = response.headers().iter().fold(
+            BTreeMap::<String, Vec<String>>::new(),
+            |mut headers, (name, value)| {
+                headers
+                    .entry(name.as_str().to_owned())
+                    .or_default()
+                    .push(value.to_str().unwrap().to_owned());
+                headers
+            },
+        );
         let actual = (response.status(), actual_headers);
 
         assert_eq!(
@@ -363,6 +357,7 @@ mod tests {
             (
                 StatusCode::OK,
                 BTreeMap::from([
+                    ("allow".to_owned(), vec!["POST".to_owned()]),
                     (
                         "access-control-allow-headers".to_owned(),
                         vec!["content-type".to_owned()],
@@ -386,6 +381,7 @@ mod tests {
                                 .to_owned(),
                         ],
                     ),
+                    ("content-length".to_owned(), vec!["0".to_owned()]),
                 ]),
             )
         );
