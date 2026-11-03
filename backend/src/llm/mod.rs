@@ -1,5 +1,6 @@
 mod claude_code;
 mod handler;
+mod openai_compatible;
 mod router;
 
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
@@ -97,8 +98,14 @@ pub(crate) struct LlmState {
 
 impl LlmState {
     pub(crate) fn new(config: LlmConfig) -> Self {
+        let provider: Arc<dyn LlmProvider> = match config.provider {
+            ProviderName::ClaudeCode => Arc::new(claude_code::ClaudeCodeProvider::default()),
+            ProviderName::OpenAiCompatible => Arc::new(
+                openai_compatible::OpenAiCompatibleProvider::new(config.openai_compatible),
+            ),
+        };
         Self {
-            provider: Arc::new(claude_code::ClaudeCodeProvider::default()),
+            provider,
             provider_name: config.provider,
             locked: config.locked,
             timeout: CALL_TIMEOUT,
@@ -115,10 +122,14 @@ impl LlmState {
     }
 
     #[cfg(test)]
-    fn with_provider(provider: impl LlmProvider + 'static, timeout: Duration) -> Self {
+    fn with_provider(
+        provider: impl LlmProvider + 'static,
+        provider_name: ProviderName,
+        timeout: Duration,
+    ) -> Self {
         Self {
             provider: Arc::new(provider),
-            provider_name: ProviderName::ClaudeCode,
+            provider_name,
             locked: false,
             timeout,
             keep_alive_interval: KEEP_ALIVE_INTERVAL,

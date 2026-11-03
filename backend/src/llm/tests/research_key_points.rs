@@ -15,6 +15,7 @@ use super::{
 };
 use crate::{
     app::{AppState, router},
+    config::ProviderName,
     host_origin::HostOriginPolicy,
     llm::LlmState,
 };
@@ -28,6 +29,7 @@ fn api(executable: std::path::PathBuf) -> axum::Router {
     let state = AppState {
         llm: LlmState::with_provider(
             ClaudeCodeProvider::new(executable.into_os_string()),
+            ProviderName::ClaudeCode,
             Duration::from_secs(5),
         ),
         ..AppState::default()
