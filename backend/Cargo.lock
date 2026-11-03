@@ -180,6 +180,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tower",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",
