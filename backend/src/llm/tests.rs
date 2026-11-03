@@ -588,7 +588,7 @@ async fn claude_code_web_search_streams_progress_and_only_search_result_citation
         &directory,
         indoc! {r#"
             printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebSearch","input":{"query":"example query"}}]}}'
-            printf '%s\n' '{"type":"user","tool_use_result":{"results":[{"title":"First","url":"https://source.example.invalid/first"},{"title":"Second","url":"https://source.example.invalid/second"},{"title":"Repeat","url":"https://source.example.invalid/first"}]},"message":{"content":[{"type":"tool_result","content":"Links: https://source.example.invalid/first"}]}}'
+            printf '%s\n' '{"type":"user","tool_use_result":{"durationSeconds":1.25,"query":"example query","results":[{"tool_use_id":"srvtoolu-example","content":[{"title":"First","url":"https://source.example.invalid/first"},{"title":"Second","url":"https://source.example.invalid/second"},{"title":"Repeat","url":"https://source.example.invalid/first"}]},"Supplemental result: https://supplement.example.invalid/model-written"],"searchCount":1},"message":{"content":[{"type":"tool_result","content":"Web search results for query: \"example query\"\n\nLinks: [{\"title\":\"First\",\"url\":\"https://source.example.invalid/first\"}]\n\nSupplemental result: https://tool-result-supplement.example.invalid/model-written"}]}}'
             printf '%s\n' '{"type":"result","result":"Answer mentioning https://body.example.invalid/page."}'
             printf '%s\n' "$@" > "$0.args"
             cat > "$0.input"
@@ -658,8 +658,6 @@ async fn claude_code_web_search_streams_progress_and_only_search_result_citation
                 "--safe-mode".to_owned(),
                 "--no-session-persistence".to_owned(),
                 "--tools".to_owned(),
-                "WebSearch".to_owned(),
-                "--allowedTools".to_owned(),
                 "WebSearch".to_owned(),
             ],
         )

@@ -168,10 +168,6 @@ impl ClaudeCodeProvider {
             }
             InvocationMode::WebSearch { .. } => OsString::from("WebSearch"),
         });
-        if matches!(&mode, InvocationMode::WebSearch { .. }) {
-            args.push(OsString::from("--allowedTools"));
-            args.push(OsString::from("WebSearch"));
-        }
         let mut child = Command::new(&self.executable)
             .args(args)
             .current_dir(working_directory.path())
@@ -331,19 +327,11 @@ fn process_web_search_event(
         .and_then(Value::as_array)
     {
         for result in results {
-            if let Some(url) = result.get("url").and_then(Value::as_str) {
-                add_citation(url, citations, seen_citations);
-            }
-        }
-    }
-
-    if let Some(content) = event.pointer("/message/content").and_then(Value::as_array) {
-        for block in content {
-            if block.get("type").and_then(Value::as_str) == Some("tool_result")
-                && let Some(result_text) = block.get("content").and_then(Value::as_str)
-            {
-                for url in urls_in_text(result_text) {
-                    add_citation(&url, citations, seen_citations);
+            if let Some(entries) = result.get("content").and_then(Value::as_array) {
+                for entry in entries {
+                    if let Some(url) = entry.get("url").and_then(Value::as_str) {
+                        add_citation(url, citations, seen_citations);
+                    }
                 }
             }
         }
@@ -354,14 +342,4 @@ fn add_citation(url: &str, citations: &mut Vec<String>, seen: &mut HashSet<Strin
     if (url.starts_with("https://") || url.starts_with("http://")) && seen.insert(url.to_owned()) {
         citations.push(url.to_owned());
     }
-}
-
-fn urls_in_text(text: &str) -> Vec<String> {
-    text.split_whitespace()
-        .filter_map(|part| {
-            let start = part.find("https://").or_else(|| part.find("http://"))?;
-            let url = part[start..].trim_end_matches(['.', ',', ';', ')', ']', '}', '"', '\'']);
-            Some(url.to_owned())
-        })
-        .collect()
 }
