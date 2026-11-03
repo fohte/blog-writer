@@ -22,6 +22,7 @@ use crate::{
     safe_fetch::{SafeFetchService, SafeFetcher},
     source_bodies,
     sync::SyncService,
+    write_from_key_points,
 };
 
 #[derive(OpenApi)]
@@ -126,6 +127,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(ogp::router())
         .merge(source_bodies::router())
         .merge(crate::sync::router())
+        .merge(write_from_key_points::router())
 }
 
 async fn api_not_found() -> AppError {
