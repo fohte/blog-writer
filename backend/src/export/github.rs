@@ -582,6 +582,7 @@ mod tests {
             AppState {
                 export: Some(fixture.service.clone()),
                 database: None,
+                ..AppState::default()
             },
             HostOriginPolicy::new(
                 vec!["localhost:3000".to_owned()],
