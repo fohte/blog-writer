@@ -116,6 +116,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/research/claim-evidence': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['judge_claim_evidence']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/research/key-points': {
     parameters: {
       query?: never
@@ -182,6 +198,16 @@ export interface components {
       purpose: string
       thesis: string
     }
+    ClaimEvidenceQuote: {
+      source_id: string
+      text: string
+    }
+    ClaimEvidenceSourceInput: {
+      body: string
+      id: string
+    }
+    /** @enum {string} */
+    ClaimVerdict: 'supported' | 'insufficient' | 'outdated' | 'contradicted'
     DestinationListResponse: {
       destinations: components['schemas']['DestinationResponse'][]
     }
@@ -208,6 +234,28 @@ export interface components {
     }
     HealthResponse: {
       status: string
+    }
+    JudgeClaimEvidenceEvent:
+      | {
+          data: components['schemas']['JudgeClaimEvidenceResult']
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['LlmErrorPayload']
+          /** @enum {string} */
+          event: 'error'
+        }
+    JudgeClaimEvidenceRequest: {
+      after?: string | null
+      before?: string | null
+      claim: string
+      sources: components['schemas']['ClaimEvidenceSourceInput'][]
+    }
+    JudgeClaimEvidenceResult: {
+      quote?: components['schemas']['ClaimEvidenceQuote'] | null
+      suggestion?: string | null
+      verdict: components['schemas']['ClaimVerdict']
     }
     LlmErrorPayload: {
       message: string
@@ -758,6 +806,39 @@ export interface operations {
         }
       }
       /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  judge_claim_evidence: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['JudgeClaimEvidenceRequest']
+      }
+    }
+    responses: {
+      /** @description Claim verdict and source quote */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': components['schemas']['JudgeClaimEvidenceEvent']
+        }
+      }
+      /** @description Source IDs must be unique */
       400: {
         headers: {
           [name: string]: unknown
