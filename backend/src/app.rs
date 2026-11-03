@@ -7,6 +7,7 @@ use axum::{
     routing::{MethodRouter, any, get},
 };
 use sqlx::AnyPool;
+use thiserror::Error;
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
 use utoipa_axum::router::OpenApiRouter;
 
@@ -20,6 +21,7 @@ use crate::{
     ogp,
     safe_fetch::{SafeFetchService, SafeFetcher},
     source_bodies,
+    sync::SyncService,
 };
 
 #[derive(OpenApi)]
@@ -34,7 +36,16 @@ pub struct AppState {
     pub export: Option<ExportService>,
     pub(crate) llm: LlmState,
     pub database: Option<AnyPool>,
+    pub sync: Option<SyncService>,
     pub(crate) safe_fetch: Arc<dyn SafeFetchService>,
+}
+
+#[derive(Debug, Error)]
+pub enum AppStateError {
+    #[error(transparent)]
+    Export(#[from] ExportError),
+    #[error(transparent)]
+    Sync(#[from] crate::sync::SyncError),
 }
 
 impl Default for AppState {
@@ -43,6 +54,7 @@ impl Default for AppState {
             export: None,
             llm: LlmState::default(),
             database: None,
+            sync: None,
             safe_fetch: Arc::new(SafeFetcher::new()),
         }
     }
@@ -53,11 +65,13 @@ impl AppState {
         export: Option<ExportConfig>,
         llm_config: crate::config::LlmConfig,
         database: Option<AnyPool>,
-    ) -> Result<Self, ExportError> {
+    ) -> Result<Self, AppStateError> {
+        let sync = database.clone().map(SyncService::new).transpose()?;
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
             llm: LlmState::new(llm_config),
             database,
+            sync,
             safe_fetch: Arc::new(SafeFetcher::new()),
         })
     }
@@ -111,6 +125,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(llm::router())
         .merge(ogp::router())
         .merge(source_bodies::router())
+        .merge(crate::sync::router())
 }
 
 async fn api_not_found() -> AppError {

@@ -104,6 +104,7 @@ mod tests {
             export: None,
             llm: LlmState::default(),
             database: None,
+            sync: None,
             safe_fetch: Arc::new(TestFetcher(response)),
         }
     }
