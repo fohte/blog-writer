@@ -25,8 +25,13 @@ struct SampleOutput {
 
 #[derive(Debug, PartialEq)]
 struct SseFrame {
-    event: String,
-    data: Value,
+    lines: Vec<SseLine>,
+}
+
+#[derive(Debug, PartialEq)]
+enum SseLine {
+    Data { prefix: String, value: Value },
+    Raw(String),
 }
 
 fn fake_claude(directory: &TempDir, body: &str) -> PathBuf {
@@ -59,31 +64,32 @@ async fn sse_body(
 
 fn parse_sse_body(body: &str) -> Vec<SseFrame> {
     let mut frames = Vec::new();
-    let mut event = None;
-    let mut data = String::new();
+    let mut lines = Vec::new();
     for line in body.lines() {
-        if let Some(name) = line.strip_prefix("event: ") {
-            event = Some(name.to_owned());
-        } else if let Some(value) = line.strip_prefix("data: ") {
-            data.push_str(value);
-        } else if line.is_empty()
-            && let Some(name) = event.take()
-        {
-            frames.push(SseFrame {
-                event: name,
-                data: serde_json::from_str(&data).expect("SSE data is valid JSON"),
+        if line.is_empty() {
+            push_sse_frame(&mut frames, &mut lines);
+        } else if let Some(("data", raw_value)) = line.split_once(':') {
+            let value = raw_value.strip_prefix(' ').unwrap_or(raw_value);
+            let prefix = line[..line.len() - value.len()].to_owned();
+            lines.push(SseLine::Data {
+                prefix,
+                value: serde_json::from_str(value).expect("SSE data is valid JSON"),
             });
-            data.clear();
+        } else {
+            lines.push(SseLine::Raw(line.to_owned()));
         }
     }
-    if let Some(name) = event {
-        frames.push(SseFrame {
-            event: name,
-            data: serde_json::from_str(&data).expect("SSE data is valid JSON"),
-        });
-    }
+    push_sse_frame(&mut frames, &mut lines);
 
     frames
+}
+
+fn push_sse_frame(frames: &mut Vec<SseFrame>, lines: &mut Vec<SseLine>) {
+    if !lines.is_empty() {
+        frames.push(SseFrame {
+            lines: std::mem::take(lines),
+        });
+    }
 }
 
 fn process_is_running(pid: u32) -> bool {
@@ -170,8 +176,16 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
         (parse_sse_body(&actual), input, args_without_schema, schema,),
         (
             vec![SseFrame {
-                event: "result".to_owned(),
-                data: serde_json::json!({"event": "result", "data": {"text": "ready"}}),
+                lines: vec![
+                    SseLine::Raw("event: result".to_owned()),
+                    SseLine::Data {
+                        prefix: "data: ".to_owned(),
+                        value: serde_json::json!({
+                            "event": "result",
+                            "data": {"text": "ready"}
+                        }),
+                    },
+                ],
             }],
             prompt.to_owned(),
             vec![
@@ -394,11 +408,16 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
         (
             Duration::from_secs(600),
             vec![SseFrame {
-                event: "error".to_owned(),
-                data: serde_json::json!({
-                    "event": "error",
-                    "data": {"message": "LLM call exceeded the 10 minute time limit"}
-                }),
+                lines: vec![
+                    SseLine::Raw("event: error".to_owned()),
+                    SseLine::Data {
+                        prefix: "data: ".to_owned(),
+                        value: serde_json::json!({
+                            "event": "error",
+                            "data": {"message": "LLM call exceeded the 10 minute time limit"}
+                        }),
+                    },
+                ],
             }],
             true,
         )
