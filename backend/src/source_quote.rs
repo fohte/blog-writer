@@ -5,6 +5,9 @@ pub(crate) fn quote_exists(body: &str, quote: &str) -> bool {
     !normalized_quote.is_empty() && normalize(body).contains(&normalized_quote)
 }
 
+#[cfg(test)]
+mod tests;
+
 fn normalize(value: &str) -> String {
     let mut normalized = String::new();
     let mut pending_space = false;

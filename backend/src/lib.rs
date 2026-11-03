@@ -14,6 +14,7 @@ pub mod ogp;
 pub(crate) mod research_key_points;
 pub mod safe_fetch;
 pub mod source_bodies;
+pub(crate) mod source_quote;
 
 use std::error::Error;
 use tokio::net::TcpListener;

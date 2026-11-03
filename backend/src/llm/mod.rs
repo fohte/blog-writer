@@ -32,7 +32,7 @@ trait LlmProvider: Send + Sync {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-enum LlmError {
+pub(crate) enum LlmError {
     #[error("failed to start or communicate with the LLM provider")]
     Provider,
     #[error("LLM provider returned invalid output")]
@@ -45,6 +45,8 @@ enum LlmError {
     Timeout,
     #[error("LLM output does not match the expected type")]
     InvalidResponse,
+    #[error("LLM result does not match the request")]
+    InvalidResult,
     #[error("LLM result could not be serialized")]
     SerializeResult,
 }
@@ -179,7 +181,7 @@ pub(crate) fn call_to_sse_with<Input, Output, Transform>(
 where
     Input: DeserializeOwned + JsonSchema + Send + 'static,
     Output: Serialize + Send + 'static,
-    Transform: FnOnce(Input) -> Result<Output, ()> + Send + 'static,
+    Transform: FnOnce(Input) -> Result<Output, LlmError> + Send + 'static,
 {
     let keep_alive_interval = state.keep_alive_interval;
     let stream = stream::once(async move {
@@ -205,13 +207,10 @@ where
                         })
                     }
                 },
-                Err(()) => {
-                    tracing::warn!(
-                        error_kind = ?LlmError::InvalidResponse,
-                        "LLM result did not match the request"
-                    );
+                Err(error) => {
+                    tracing::warn!(error_kind = ?error, "failed to transform LLM result");
                     LlmEvent::Error(LlmErrorPayload {
-                        message: LlmError::InvalidResponse.to_string(),
+                        message: error.to_string(),
                     })
                 }
             },

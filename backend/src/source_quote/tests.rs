@@ -1,6 +1,6 @@
 use rstest::rstest;
 
-use super::quote::quote_exists;
+use super::quote_exists;
 
 #[rstest]
 #[case::nfkc_fullwidth("ＡＢＣ を使う", "ABC を使う", true)]

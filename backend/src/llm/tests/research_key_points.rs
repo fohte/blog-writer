@@ -244,7 +244,7 @@ async fn emits_an_error_when_the_model_omits_a_requested_source() {
                         prefix: "data: ".to_owned(),
                         value: json!({
                             "event": "error",
-                            "data": {"message": "LLM output does not match the expected type"}
+                            "data": {"message": "LLM result does not match the request"}
                         }),
                     },
                     SseLine::Raw(String::new()),
