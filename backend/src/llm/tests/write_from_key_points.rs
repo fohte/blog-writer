@@ -11,7 +11,7 @@ use rstest::rstest;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use super::super::{LlmError, LlmProvider, LlmState};
+use super::super::{LlmError, LlmProvider, LlmState, WebSearchResult};
 use crate::{app::AppState, config::ProviderName, write_from_key_points::router};
 
 struct FixedProvider {
@@ -29,6 +29,15 @@ impl LlmProvider for FixedProvider {
         *self.prompt.lock().expect("prompt lock") = Some(prompt);
         let output = self.output.clone();
         Box::pin(async move { Ok(output) })
+    }
+
+    fn web_search<'a>(
+        &'a self,
+        _system_prompt: String,
+        _prompt: String,
+        _progress: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<WebSearchResult, LlmError>> + Send + 'a>> {
+        Box::pin(async { Err(LlmError::Provider) })
     }
 }
 

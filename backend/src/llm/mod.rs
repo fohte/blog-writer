@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use utoipa::ToSchema;
 
 use crate::config::{LlmConfig, ProviderName};
@@ -34,12 +34,27 @@ trait LlmProvider: Send + Sync {
         prompt: String,
         schema: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, LlmError>> + Send + 'a>>;
+
+    fn web_search<'a>(
+        &'a self,
+        system_prompt: String,
+        prompt: String,
+        progress: mpsc::UnboundedSender<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<WebSearchResult, LlmError>> + Send + 'a>>;
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize, ToSchema)]
+pub(crate) struct WebSearchResult {
+    pub text: String,
+    pub citations: Vec<String>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum LlmError {
     #[error("failed to start or communicate with the LLM provider")]
     Provider,
+    #[error("LLM call was cancelled due to shutdown")]
+    Cancelled,
     #[error("LLM provider returned invalid output")]
     InvalidOutput,
     #[error("LLM provider did not return structured output")]
@@ -59,8 +74,14 @@ pub(crate) enum LlmError {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub(crate) enum LlmEvent {
+    Progress(LlmProgress),
     Result(Value),
     Error(LlmErrorPayload),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct LlmProgress {
+    pub query: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -133,6 +154,10 @@ impl LlmState {
         self.locked
     }
 
+    pub(crate) fn supports_web_search(&self) -> bool {
+        true
+    }
+
     #[cfg(test)]
     fn with_provider(
         provider: impl LlmProvider + 'static,
@@ -203,6 +228,187 @@ where
     call_to_sse_with::<T, T, _>(state, system_prompt, prompt, Ok)
 }
 
+enum WebSearchEvent {
+    Progress(String),
+    Result(WebSearchResult),
+    Error(LlmError),
+    Cancelled,
+}
+
+impl WebSearchEvent {
+    fn into_sse_event(self) -> Option<Event> {
+        match self {
+            Self::Progress(query) => {
+                Some(LlmEvent::Progress(LlmProgress { query }).into_sse_event())
+            }
+            Self::Result(result) => match serde_json::to_value(result) {
+                Ok(result) => Some(LlmEvent::Result(result).into_sse_event()),
+                Err(error) => {
+                    tracing::warn!(error_kind = ?LlmError::SerializeResult, %error, "failed to serialize web search result");
+                    Some(
+                        LlmEvent::Error(LlmErrorPayload {
+                            message: LlmError::SerializeResult.to_string(),
+                        })
+                        .into_sse_event(),
+                    )
+                }
+            },
+            Self::Error(error) => {
+                tracing::warn!(error_kind = ?error, "LLM web search failed");
+                Some(
+                    LlmEvent::Error(LlmErrorPayload {
+                        message: error.to_string(),
+                    })
+                    .into_sse_event(),
+                )
+            }
+            Self::Cancelled => None,
+        }
+    }
+}
+
+type WebSearchFuture = Pin<Box<dyn Future<Output = Result<WebSearchResult, LlmError>> + Send>>;
+
+struct WebSearchStreamState {
+    search: Option<WebSearchFuture>,
+    progress_receiver: mpsc::UnboundedReceiver<String>,
+    pending_result: Option<WebSearchEvent>,
+    finished: bool,
+}
+
+impl WebSearchStreamState {
+    async fn next_event(&mut self) -> Option<WebSearchEvent> {
+        if self.finished {
+            return None;
+        }
+        if let Ok(query) = self.progress_receiver.try_recv() {
+            return Some(WebSearchEvent::Progress(query));
+        }
+        if let Some(event) = self.pending_result.take() {
+            self.finished = true;
+            return Some(event);
+        }
+
+        let search_future = self.search.as_mut()?;
+        tokio::select! {
+            Some(query) = self.progress_receiver.recv() => Some(WebSearchEvent::Progress(query)),
+            result = search_future => {
+                self.search = None;
+                let event = match result {
+                    Ok(result) => WebSearchEvent::Result(result),
+                    Err(error) => WebSearchEvent::Error(error),
+                };
+                if let Ok(query) = self.progress_receiver.try_recv() {
+                    self.pending_result = Some(event);
+                    Some(WebSearchEvent::Progress(query))
+                } else {
+                    self.finished = true;
+                    Some(event)
+                }
+            }
+        }
+    }
+
+    fn cancel(&mut self) {
+        self.search = None;
+        self.pending_result = None;
+        self.finished = true;
+    }
+}
+
+struct WebSearchEventStream {
+    state: WebSearchStreamState,
+    shutdown: watch::Receiver<bool>,
+}
+
+impl WebSearchEventStream {
+    async fn next_event(&mut self) -> Option<WebSearchEvent> {
+        if self.state.finished {
+            return None;
+        }
+
+        let state = &mut self.state;
+        let shutdown = &mut self.shutdown;
+        tokio::select! {
+            biased;
+            _ = wait_for_shutdown(shutdown) => {
+                state.cancel();
+                Some(WebSearchEvent::Cancelled)
+            }
+            event = state.next_event() => event,
+        }
+    }
+}
+
+fn web_search_events(
+    state: LlmState,
+    system_prompt: String,
+    prompt: String,
+) -> impl Stream<Item = WebSearchEvent> {
+    let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
+    let provider = state.provider.clone();
+    let search = Box::pin(async move {
+        provider
+            .web_search(system_prompt, prompt, progress_sender)
+            .await
+    });
+    let timeout = state.timeout;
+    let search: Pin<Box<dyn Future<Output = Result<WebSearchResult, LlmError>> + Send>> =
+        Box::pin(async move {
+            tokio::time::timeout(timeout, search)
+                .await
+                .unwrap_or(Err(LlmError::Timeout))
+        });
+    stream::unfold(
+        WebSearchEventStream {
+            state: WebSearchStreamState {
+                search: Some(search),
+                progress_receiver,
+                pending_result: None,
+                finished: false,
+            },
+            shutdown: state.shutdown,
+        },
+        |mut stream| async move { stream.next_event().await.map(|event| (event, stream)) },
+    )
+}
+
+pub(crate) async fn call_web_search_with(
+    state: LlmState,
+    system_prompt: String,
+    prompt: String,
+    mut on_progress: impl FnMut(String),
+) -> Result<WebSearchResult, LlmError> {
+    let events = web_search_events(state, system_prompt, prompt);
+    futures_util::pin_mut!(events);
+    let mut result = None;
+    while let Some(event) = events.next().await {
+        match event {
+            WebSearchEvent::Progress(query) => on_progress(query),
+            WebSearchEvent::Result(web_search_result) => result = Some(web_search_result),
+            WebSearchEvent::Error(error) => return Err(error),
+            WebSearchEvent::Cancelled => return Err(LlmError::Cancelled),
+        }
+    }
+    result.ok_or(LlmError::InvalidOutput)
+}
+
+pub(crate) fn call_web_search_to_sse(
+    state: LlmState,
+    system_prompt: String,
+    prompt: String,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let keep_alive_interval = state.keep_alive_interval;
+    let stream = web_search_events(state, system_prompt, prompt)
+        .filter_map(|event| async move { event.into_sse_event().map(Ok) });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(keep_alive_interval)
+            .text("keep-alive"),
+    )
+}
+
 pub(crate) fn call_to_sse_with<Input, Output, Transform>(
     state: LlmState,
     system_prompt: String,
@@ -268,7 +474,9 @@ where
 }
 
 async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
-    if !*shutdown.borrow() && shutdown.changed().await.is_err() {
-        std::future::pending::<()>().await;
+    while !*shutdown.borrow() {
+        if shutdown.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
     }
 }

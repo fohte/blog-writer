@@ -5,13 +5,14 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::Command as StdCommand,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
 use axum::{body::to_bytes, response::IntoResponse};
 use futures_util::StreamExt;
 use indoc::indoc;
-use rstest::rstest;
+use rstest::{fixture, rstest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,7 +24,10 @@ use wiremock::{
 };
 
 use super::claude_code::ClaudeCodeProvider;
-use super::{CALL_TIMEOUT, LlmError, LlmEvent, LlmProvider, LlmState, call_to_sse};
+use super::{
+    CALL_TIMEOUT, LlmError, LlmEvent, LlmProvider, LlmState, call_to_sse, call_web_search_to_sse,
+    call_web_search_with,
+};
 use crate::config::{OpenAiCompatibleConfig, ProviderName};
 
 mod claim_evidence;
@@ -36,6 +40,40 @@ struct SampleOutput {
 
 struct PendingProvider;
 
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl LogBuffer {
+    fn contents(&self) -> Vec<u8> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for LogBuffer {
+    type Writer = Self;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        self.clone()
+    }
+}
+
 impl LlmProvider for PendingProvider {
     fn generate<'a>(
         &'a self,
@@ -45,6 +83,30 @@ impl LlmProvider for PendingProvider {
     ) -> Pin<Box<dyn Future<Output = Result<Value, LlmError>> + Send + 'a>> {
         Box::pin(std::future::pending())
     }
+
+    fn web_search<'a>(
+        &'a self,
+        _: String,
+        _: String,
+        _: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<super::WebSearchResult, LlmError>> + Send + 'a>> {
+        Box::pin(std::future::pending())
+    }
+}
+
+type PendingWebSearch = (watch::Sender<bool>, LlmState);
+
+#[fixture]
+fn pending_web_search() -> PendingWebSearch {
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let state = LlmState::with_provider(
+        PendingProvider,
+        ProviderName::ClaudeCode,
+        Duration::from_secs(60),
+    )
+    .with_shutdown(shutdown_receiver);
+
+    (shutdown_sender, state)
 }
 
 #[derive(Debug, PartialEq)]
@@ -90,6 +152,15 @@ async fn sse_state_body(state: LlmState, system_prompt: &str, prompt: &str) -> S
     String::from_utf8(body.to_vec()).expect("SSE body is UTF-8")
 }
 
+async fn web_search_sse_body(state: LlmState, system_prompt: &str, prompt: &str) -> String {
+    let response =
+        call_web_search_to_sse(state, system_prompt.to_owned(), prompt.to_owned()).into_response();
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("SSE body is readable");
+    String::from_utf8(body.to_vec()).expect("SSE body is UTF-8")
+}
+
 async fn run_openai_compatible_call(
     status: u16,
     body: &str,
@@ -121,6 +192,65 @@ async fn run_openai_compatible_call(
     )
     .await;
     (server, actual)
+}
+
+async fn run_openai_compatible_web_search(
+    body: &str,
+) -> (MockServer, super::WebSearchResult, Vec<String>) {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/openai/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let state = LlmState::new(crate::config::LlmConfig {
+        provider: ProviderName::OpenAiCompatible,
+        openai_compatible: OpenAiCompatibleConfig {
+            base_url: Some(format!("{}/openai", server.uri())),
+            api_key: None,
+            model: Some("example-model".to_owned()),
+        },
+        ..crate::config::LlmConfig::default()
+    });
+    let mut progress = Vec::new();
+    let result = call_web_search_with(
+        state,
+        "system instruction".to_owned(),
+        "user request".to_owned(),
+        |query| progress.push(query),
+    )
+    .await
+    .expect("provider returns a web search result");
+    (server, result, progress)
+}
+
+async fn openai_compatible_web_search_sse(status: u16, body: &str) -> String {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/openai/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(status)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let state = LlmState::new(crate::config::LlmConfig {
+        provider: ProviderName::OpenAiCompatible,
+        openai_compatible: OpenAiCompatibleConfig {
+            base_url: Some(format!("{}/openai", server.uri())),
+            api_key: None,
+            model: Some("example-model".to_owned()),
+        },
+        ..crate::config::LlmConfig::default()
+    });
+    web_search_sse_body(state, "system instruction", "user request").await
 }
 
 fn parse_sse_body(body: &str) -> Vec<SseFrame> {
@@ -169,6 +299,50 @@ async fn ends_an_in_flight_call_when_shutdown_is_signaled() {
         .map_err(|_| ());
 
     assert_eq!(actual, Ok(Vec::new()));
+}
+
+#[rstest]
+#[test_attr(tokio::test)]
+async fn closes_web_search_sse_when_shutdown_is_signaled(pending_web_search: PendingWebSearch) {
+    let (shutdown_sender, state) = pending_web_search;
+    let response = call_web_search_to_sse(state, String::new(), String::new()).into_response();
+    let body = tokio::spawn(to_bytes(response.into_body(), usize::MAX));
+
+    tokio::task::yield_now().await;
+    shutdown_sender.send_replace(true);
+
+    let actual = tokio::time::timeout(Duration::from_secs(1), body)
+        .await
+        .expect("the web search SSE body closes after shutdown")
+        .expect("the web search SSE body task completes")
+        .map(|bytes| bytes.to_vec())
+        .map_err(|_| ());
+
+    assert_eq!(actual, Ok(Vec::new()));
+}
+
+#[rstest]
+#[test_attr(tokio::test)]
+async fn returns_a_cancellation_error_when_web_search_is_shutdown(
+    pending_web_search: PendingWebSearch,
+) {
+    let (shutdown_sender, state) = pending_web_search;
+    let call = tokio::spawn(call_web_search_with(
+        state,
+        String::new(),
+        String::new(),
+        |_| {},
+    ));
+
+    tokio::task::yield_now().await;
+    shutdown_sender.send_replace(true);
+
+    let actual = tokio::time::timeout(Duration::from_secs(1), call)
+        .await
+        .expect("the web search call finishes after shutdown")
+        .expect("the web search call task completes");
+
+    assert_eq!(actual, Err(LlmError::Cancelled));
 }
 
 fn push_sse_frame(frames: &mut Vec<SseFrame>, lines: &mut Vec<SseLine>) {
@@ -253,6 +427,87 @@ async fn openai_compatible_provider_sends_a_streaming_function_tool_request() {
                 ],
             }],
         )
+    );
+}
+
+#[tokio::test]
+async fn openai_compatible_web_search_returns_annotations_and_streams_search_progress() {
+    let body = indoc! {r#"
+        data: {"choices":[{"delta":{"web_search_call":{"search_queries":[{"search_query":"example query"}]}}}]}
+
+        data: {"choices":[{"delta":{"content":"An answer mentioning https://body.example.invalid/page.","annotations":[{"type":"url_citation","url_citation":{"url":"https://source.example.invalid/first"}}]}}]}
+
+        data: {"choices":[{"delta":{"annotations":[{"type":"url_citation","url_citation":{"url":"https://source.example.invalid/first"}},{"type":"url_citation","url_citation":{"url":"https://source.example.invalid/second"}}]}}]}
+
+        data: [DONE]
+    "#}
+    .replace('\n', "\r\n");
+    let (server, result, progress) = run_openai_compatible_web_search(&body).await;
+    let requests = server
+        .received_requests()
+        .await
+        .expect("provider request was received");
+    let request_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("provider request is JSON");
+
+    assert_eq!(
+        (requests.len(), request_body, result, progress),
+        (
+            1,
+            serde_json::json!({
+                "model": "example-model",
+                "stream": true,
+                "web_search_options": {},
+                "messages": [
+                    {"role": "system", "content": "system instruction"},
+                    {"role": "user", "content": "user request"}
+                ]
+            }),
+            super::WebSearchResult {
+                text: "An answer mentioning https://body.example.invalid/page.".to_owned(),
+                citations: vec![
+                    "https://source.example.invalid/first".to_owned(),
+                    "https://source.example.invalid/second".to_owned(),
+                ],
+            },
+            vec!["example query".to_owned()],
+        )
+    );
+}
+
+#[rstest]
+#[case::usage_limit(429, "", "LLM provider usage limit reached")]
+#[case::missing_answer(
+    200,
+    indoc! {"
+        data: [DONE]
+
+    "},
+    "LLM provider returned invalid output"
+)]
+#[tokio::test]
+async fn openai_compatible_web_search_reports_provider_errors(
+    #[case] status: u16,
+    #[case] body: &str,
+    #[case] message: &str,
+) {
+    let actual = openai_compatible_web_search_sse(status, body).await;
+
+    assert_eq!(
+        parse_sse_body(&actual),
+        vec![SseFrame {
+            lines: vec![
+                SseLine::Raw("event: error".to_owned()),
+                SseLine::Data {
+                    prefix: "data: ".to_owned(),
+                    value: serde_json::json!({
+                        "event": "error",
+                        "data": {"message": message}
+                    }),
+                },
+                SseLine::Raw(String::new()),
+            ],
+        }]
     );
 }
 
@@ -471,6 +726,238 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
     );
 }
 
+#[tokio::test]
+async fn claude_code_web_search_streams_progress_and_only_search_result_citations() {
+    let directory = TempDir::new().expect("temporary directory is available");
+    let executable = fake_claude(
+        &directory,
+        indoc! {r#"
+            printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebSearch","input":{"query":"example query"}}]}}'
+            printf '%s\n' '{"type":"user","tool_use_result":{"durationSeconds":1.25,"query":"example query","results":[{"tool_use_id":"srvtoolu-example","content":[{"title":"First","url":"https://source.example.invalid/first"},{"title":"Second","url":"https://source.example.invalid/second"},{"title":"Repeat","url":"https://source.example.invalid/first"}]},"Supplemental result: https://supplement.example.invalid/model-written"],"searchCount":1},"message":{"content":[{"type":"tool_result","content":"Web search results for query: \"example query\"\n\nLinks: [{\"title\":\"First\",\"url\":\"https://source.example.invalid/first\"}]\n\nSupplemental result: https://tool-result-supplement.example.invalid/model-written"}]}}'
+            printf '%s\n' '{"type":"result","result":"Answer mentioning https://body.example.invalid/page."}'
+            printf '%s\n' "$@" > "$0.args"
+            cat > "$0.input"
+        "#},
+    );
+    let system_prompt = "Use web search and summarize results.";
+    let prompt = "Find the relevant information.";
+    let state = LlmState::with_provider(
+        ClaudeCodeProvider::new(executable.clone().into_os_string()),
+        ProviderName::ClaudeCode,
+        Duration::from_secs(5),
+    );
+    let actual = web_search_sse_body(state, system_prompt, prompt).await;
+    let input = fs::read_to_string(format!("{}.input", executable.display()))
+        .expect("prompt was sent to stdin");
+    let args = fs::read_to_string(format!("{}.args", executable.display()))
+        .expect("provider arguments were passed to the command")
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        (parse_sse_body(&actual), input, args),
+        (
+            vec![
+                SseFrame {
+                    lines: vec![
+                        SseLine::Raw("event: progress".to_owned()),
+                        SseLine::Data {
+                            prefix: "data: ".to_owned(),
+                            value: serde_json::json!({
+                                "event": "progress",
+                                "data": {"query": "example query"}
+                            }),
+                        },
+                        SseLine::Raw(String::new()),
+                    ],
+                },
+                SseFrame {
+                    lines: vec![
+                        SseLine::Raw("event: result".to_owned()),
+                        SseLine::Data {
+                            prefix: "data: ".to_owned(),
+                            value: serde_json::json!({
+                                "event": "result",
+                                "data": {
+                                    "text": "Answer mentioning https://body.example.invalid/page.",
+                                    "citations": [
+                                        "https://source.example.invalid/first",
+                                        "https://source.example.invalid/second"
+                                    ]
+                                }
+                            }),
+                        },
+                        SseLine::Raw(String::new()),
+                    ],
+                },
+            ],
+            prompt.to_owned(),
+            vec![
+                "-p".to_owned(),
+                "--system-prompt".to_owned(),
+                system_prompt.to_owned(),
+                "--output-format".to_owned(),
+                "stream-json".to_owned(),
+                "--verbose".to_owned(),
+                "--safe-mode".to_owned(),
+                "--no-session-persistence".to_owned(),
+                "--tools".to_owned(),
+                "WebSearch".to_owned(),
+            ],
+        )
+    );
+}
+
+#[rstest]
+#[case::warns_after_search_without_citations(
+    true,
+    false,
+    "Claude Code performed web search but returned no citation URLs\n"
+)]
+#[case::does_not_warn_without_a_search(false, false, "")]
+#[case::does_not_warn_when_citations_are_present(true, true, "")]
+#[test_attr(tokio::test)]
+async fn warns_only_when_claude_code_search_returns_no_citations(
+    #[case] search_performed: bool,
+    #[case] citations_provided: bool,
+    #[case] expected_log: &str,
+) {
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(logs.clone())
+        .without_time()
+        .with_ansi(false)
+        .with_level(false)
+        .with_target(false)
+        .finish();
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let directory = TempDir::new().expect("temporary directory is available");
+    let search_results = if citations_provided {
+        serde_json::json!([{
+            "tool_use_id": "srvtoolu-example",
+            "content": [{
+                "title": "Example source",
+                "url": "https://source.example.invalid/article"
+            }]
+        }])
+    } else {
+        serde_json::json!([])
+    };
+    let search_events = if search_performed {
+        [
+            serde_json::json!({
+                "type": "assistant",
+                "message": {"content": [{
+                    "type": "tool_use",
+                    "name": "WebSearch",
+                    "input": {"query": "example query"}
+                }]}
+            }),
+            serde_json::json!({
+                "type": "user",
+                "tool_use_result": {"results": search_results}
+            }),
+        ]
+        .into_iter()
+        .map(|event| format!("printf '%s\\n' '{event}'"))
+        .collect::<Vec<_>>()
+        .join("\n")
+            + "\n"
+    } else {
+        String::new()
+    };
+    let executable = fake_claude(
+        &directory,
+        &format!(
+            "{search_events}{}",
+            indoc! {r#"
+                printf '%s\n' '{"type":"result","result":"Answer without source URLs."}'
+            "#}
+        ),
+    );
+    let state = LlmState::with_provider(
+        ClaudeCodeProvider::new(executable.into_os_string()),
+        ProviderName::ClaudeCode,
+        Duration::from_secs(5),
+    );
+    let actual = web_search_sse_body(state, "system instruction", "user request").await;
+    let mut expected_frames = Vec::new();
+    if search_performed {
+        expected_frames.push(SseFrame {
+            lines: vec![
+                SseLine::Raw("event: progress".to_owned()),
+                SseLine::Data {
+                    prefix: "data: ".to_owned(),
+                    value: serde_json::json!({
+                        "event": "progress",
+                        "data": {"query": "example query"}
+                    }),
+                },
+                SseLine::Raw(String::new()),
+            ],
+        });
+    }
+    let citations = if citations_provided {
+        vec!["https://source.example.invalid/article".to_owned()]
+    } else {
+        Vec::new()
+    };
+    expected_frames.push(SseFrame {
+        lines: vec![
+            SseLine::Raw("event: result".to_owned()),
+            SseLine::Data {
+                prefix: "data: ".to_owned(),
+                value: serde_json::json!({
+                    "event": "result",
+                    "data": {
+                        "text": "Answer without source URLs.",
+                        "citations": citations
+                    }
+                }),
+            },
+            SseLine::Raw(String::new()),
+        ],
+    });
+
+    assert_eq!(
+        (
+            parse_sse_body(&actual),
+            String::from_utf8_lossy(&logs.contents()).into_owned(),
+        ),
+        (expected_frames, expected_log.to_owned())
+    );
+}
+
+#[tokio::test]
+async fn claude_code_web_search_reports_a_missing_answer() {
+    let directory = TempDir::new().expect("temporary directory is available");
+    let executable = fake_claude(&directory, "cat > \"$0.input\"");
+    let state = LlmState::with_provider(
+        ClaudeCodeProvider::new(executable.into_os_string()),
+        ProviderName::ClaudeCode,
+        Duration::from_secs(5),
+    );
+    let actual = web_search_sse_body(state, "system instruction", "user request").await;
+
+    assert_eq!(
+        parse_sse_body(&actual),
+        vec![SseFrame {
+            lines: vec![
+                SseLine::Raw("event: error".to_owned()),
+                SseLine::Data {
+                    prefix: "data: ".to_owned(),
+                    value: serde_json::json!({
+                        "event": "error",
+                        "data": {"message": "LLM provider returned invalid output"}
+                    }),
+                },
+                SseLine::Raw(String::new()),
+            ],
+        }]
+    );
+}
+
 #[rstest]
 #[case::process_failure(
     "exit 1",
@@ -505,6 +992,7 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
 )]
 #[case::invalid_json_line(
     indoc! {r#"
+        cat >/dev/null
         printf '%s\n' 'not-json'
     "#},
     indoc! {r#"

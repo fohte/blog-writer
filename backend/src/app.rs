@@ -248,7 +248,7 @@ mod tests {
             actual,
             (
                 StatusCode::OK,
-                json!({"provider": "claude_code", "locked": false})
+                json!({"provider": "claude_code", "locked": false, "web_search": true})
             )
         );
     }
@@ -435,7 +435,7 @@ mod tests {
         "GET",
         "localhost:3000",
         200,
-        json!({"provider": "claude_code", "locked": false})
+        json!({"provider": "claude_code", "locked": false, "web_search": true})
     )]
     #[case::untrusted_host_on_api(
         "/api/health",
@@ -512,7 +512,10 @@ mod tests {
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
 
-        assert_eq!(actual, json!({"provider": "claude_code", "locked": true}));
+        assert_eq!(
+            actual,
+            json!({"provider": "claude_code", "locked": true, "web_search": true})
+        );
     }
 
     #[tokio::test]
@@ -547,7 +550,7 @@ mod tests {
 
         assert_eq!(
             actual,
-            json!({"provider": "openai_compatible", "locked": false})
+            json!({"provider": "openai_compatible", "locked": false, "web_search": true})
         );
     }
 
