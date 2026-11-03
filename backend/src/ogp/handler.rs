@@ -101,6 +101,7 @@ mod tests {
     fn test_state(response: Option<FetchResponse>) -> AppState {
         AppState {
             export: None,
+            database: None,
             safe_fetch: Arc::new(TestFetcher(response)),
         }
     }
