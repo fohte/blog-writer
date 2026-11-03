@@ -1,4 +1,8 @@
-use std::{env, ffi::OsString, net::SocketAddr};
+use std::{
+    env,
+    ffi::OsString,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 
 use thiserror::Error;
 
@@ -15,6 +19,7 @@ use llm::{
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:3000";
 const BIND_ADDR_ENV: &str = "BACKEND_BIND_ADDR";
 const DATABASE_URL_ENV: &str = "DATABASE_URL";
+const LLM_API_ONLY_ENV: &str = "LLM_API_ONLY";
 const ALLOWED_HOSTS_ENV: &str = "BACKEND_ALLOWED_HOSTS";
 const ALLOWED_ORIGINS_ENV: &str = "BACKEND_ALLOWED_ORIGINS";
 const EXPORT_DESTINATIONS_ENV: &str = "BLOG_EXPORT_DESTINATIONS";
@@ -25,6 +30,7 @@ const OCTO_STS_SA_TOKEN_PATH_ENV: &str = "BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub bind_addr: SocketAddr,
+    pub llm_api_only: bool,
     pub database_url: Option<String>,
     pub allowed_hosts: Vec<String>,
     pub allowed_origins: Vec<String>,
@@ -35,6 +41,7 @@ pub struct Config {
 #[derive(Default)]
 struct ConfigValues<'a> {
     bind_addr: Option<&'a str>,
+    llm_api_only: bool,
     database_url: Option<&'a str>,
     allowed_hosts: Option<&'a str>,
     allowed_origins: Option<&'a str>,
@@ -56,10 +63,14 @@ struct LlmValues<'a> {
 pub enum ConfigError {
     #[error("{BIND_ADDR_ENV} must be a valid socket address")]
     InvalidBindAddress,
+    #[error("{BIND_ADDR_ENV} must use 127.0.0.1 when {LLM_API_ONLY_ENV} is set")]
+    LlmApiOnlyRequiresLoopback,
     #[error("{BIND_ADDR_ENV} must contain valid Unicode")]
     NonUnicodeBindAddress,
     #[error("{DATABASE_URL_ENV} must contain valid Unicode")]
     NonUnicodeDatabaseUrl,
+    #[error("{LLM_API_ONLY_ENV} must contain valid Unicode")]
+    NonUnicodeLlmApiOnly,
     #[error("{ALLOWED_HOSTS_ENV} must contain valid Unicode")]
     NonUnicodeAllowedHosts,
     #[error("{ALLOWED_ORIGINS_ENV} must contain valid Unicode")]
@@ -88,6 +99,8 @@ pub enum ConfigError {
     MissingOctoStsConfiguration,
     #[error("{LLM_PROVIDER_ENV} must name a supported provider")]
     InvalidLlmProvider,
+    #[error("{LLM_API_ONLY_ENV} must be one of 1, 0, true, or false")]
+    InvalidLlmApiOnly,
     #[error("{LLM_BASE_URL_ENV} is required when {LLM_PROVIDER_ENV} is openai_compatible")]
     MissingOpenAiCompatibleBaseUrl,
     #[error("{LLM_MODEL_ENV} is required when {LLM_PROVIDER_ENV} is openai_compatible")]
@@ -116,6 +129,18 @@ impl Config {
             ConfigError::NonUnicodeDatabaseUrl,
             &read_env_value,
         )?;
+        let llm_api_only = read_env(
+            LLM_API_ONLY_ENV,
+            ConfigError::NonUnicodeLlmApiOnly,
+            &read_env_value,
+        )?
+        .map(|value| match value.to_ascii_lowercase().as_str() {
+            "1" | "true" => Ok(true),
+            "0" | "false" => Ok(false),
+            _ => Err(ConfigError::InvalidLlmApiOnly),
+        })
+        .transpose()?
+        .unwrap_or(false);
         let allowed_hosts = read_env(
             ALLOWED_HOSTS_ENV,
             ConfigError::NonUnicodeAllowedHosts,
@@ -172,6 +197,7 @@ impl Config {
         Self::from_values(
             ConfigValues {
                 bind_addr: value.as_deref(),
+                llm_api_only,
                 database_url: database_url.as_deref(),
                 allowed_hosts: allowed_hosts.as_deref(),
                 allowed_origins: allowed_origins.as_deref(),
@@ -208,6 +234,9 @@ impl Config {
         let bind_addr: SocketAddr = bind_addr
             .parse()
             .map_err(|_| ConfigError::InvalidBindAddress)?;
+        if values.llm_api_only && bind_addr.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) {
+            return Err(ConfigError::LlmApiOnlyRequiresLoopback);
+        }
 
         let port = bind_addr.port();
         let default_hosts = format!("localhost:{port},127.0.0.1:{port},[::1]:{port}");
@@ -216,6 +245,7 @@ impl Config {
 
         Ok(Self {
             bind_addr,
+            llm_api_only: values.llm_api_only,
             database_url: values.database_url.map(str::to_owned),
             allowed_hosts: parse_list(values.allowed_hosts.unwrap_or(&default_hosts)),
             allowed_origins: parse_list(values.allowed_origins.unwrap_or(&default_origins)),
@@ -261,9 +291,9 @@ mod tests {
     use rstest::rstest;
 
     use super::{
-        Config, ConfigError, ConfigValues, DATABASE_URL_ENV, LLM_API_KEY_ENV, LLM_BASE_URL_ENV,
-        LLM_MODEL_ENV, LLM_PROVIDER_ENV, LLM_PROVIDER_LOCKED_ENV, LlmConfig, LlmValues,
-        OpenAiCompatibleConfig, ProviderName,
+        Config, ConfigError, ConfigValues, DATABASE_URL_ENV, LLM_API_KEY_ENV, LLM_API_ONLY_ENV,
+        LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_PROVIDER_ENV, LLM_PROVIDER_LOCKED_ENV, LlmConfig,
+        LlmValues, OpenAiCompatibleConfig, ProviderName,
     };
 
     #[rstest]
@@ -271,6 +301,7 @@ mod tests {
         None,
         Ok(Config {
             bind_addr: "127.0.0.1:3000".parse::<SocketAddr>().unwrap(),
+            llm_api_only: false,
             database_url: None,
             allowed_hosts: vec![
                 "localhost:3000".to_owned(),
@@ -290,6 +321,7 @@ mod tests {
         Some("0.0.0.0:8080"),
         Ok(Config {
             bind_addr: "0.0.0.0:8080".parse::<SocketAddr>().unwrap(),
+            llm_api_only: false,
             database_url: None,
             allowed_hosts: vec![
                 "localhost:8080".to_owned(),
@@ -321,6 +353,26 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    #[rstest]
+    #[case::loopback("127.0.0.1:4312", Ok(()))]
+    #[case::wildcard("0.0.0.0:4312", Err(ConfigError::LlmApiOnlyRequiresLoopback))]
+    fn requires_loopback_for_llm_api_only(
+        #[case] bind_addr: &str,
+        #[case] expected: Result<(), ConfigError>,
+    ) {
+        let actual = Config::from_values(
+            ConfigValues {
+                bind_addr: Some(bind_addr),
+                llm_api_only: true,
+                ..ConfigValues::default()
+            },
+            LlmValues::default(),
+        )
+        .map(|_| ());
+
+        assert_eq!(actual, expected);
+    }
+
     #[test]
     fn reads_database_url_from_environment() {
         let actual = Config::from_env_with(|name| {
@@ -329,6 +381,29 @@ mod tests {
         .map(|config| config.database_url);
 
         assert_eq!(actual, Ok(Some("sqlite://sample.db".to_owned())));
+    }
+
+    #[rstest]
+    #[case::unset(None, Ok(false))]
+    #[case::enabled_one(Some("1"), Ok(true))]
+    #[case::enabled_true(Some("true"), Ok(true))]
+    #[case::disabled_zero(Some("0"), Ok(false))]
+    #[case::disabled_false(Some("false"), Ok(false))]
+    #[case::invalid(Some("unexpected"), Err(ConfigError::InvalidLlmApiOnly))]
+    fn reads_llm_api_only_from_environment(
+        #[case] value: Option<&str>,
+        #[case] expected: Result<bool, ConfigError>,
+    ) {
+        let actual = Config::from_env_with(|name| {
+            if name == LLM_API_ONLY_ENV {
+                value.map(OsString::from)
+            } else {
+                None
+            }
+        })
+        .map(|config| config.llm_api_only);
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -432,6 +507,7 @@ mod tests {
         Some("https://Editor.Example, http://preview.example:4312"),
         Ok(Config {
             bind_addr: "127.0.0.1:4312".parse::<SocketAddr>().unwrap(),
+            llm_api_only: false,
             database_url: None,
             allowed_hosts: vec!["Editor.Example".to_owned(), "preview.example:4312".to_owned()],
             allowed_origins: vec![
@@ -448,6 +524,7 @@ mod tests {
         Some(""),
         Ok(Config {
             bind_addr: "127.0.0.1:4312".parse::<SocketAddr>().unwrap(),
+            llm_api_only: false,
             database_url: None,
             allowed_hosts: vec![],
             allowed_origins: vec![],
