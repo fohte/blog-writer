@@ -23,6 +23,12 @@ struct SampleOutput {
     text: String,
 }
 
+#[derive(Debug, PartialEq)]
+struct SseFrame {
+    event: String,
+    data: Value,
+}
+
 fn fake_claude(directory: &TempDir, body: &str) -> PathBuf {
     let path = directory.path().join("fake-claude");
     let header = indoc! {"
@@ -49,6 +55,35 @@ async fn sse_body(
         .await
         .expect("SSE body is readable");
     String::from_utf8(body.to_vec()).expect("SSE body is UTF-8")
+}
+
+fn parse_sse_body(body: &str) -> Vec<SseFrame> {
+    let mut frames = Vec::new();
+    let mut event = None;
+    let mut data = String::new();
+    for line in body.lines() {
+        if let Some(name) = line.strip_prefix("event: ") {
+            event = Some(name.to_owned());
+        } else if let Some(value) = line.strip_prefix("data: ") {
+            data.push_str(value);
+        } else if line.is_empty()
+            && let Some(name) = event.take()
+        {
+            frames.push(SseFrame {
+                event: name,
+                data: serde_json::from_str(&data).expect("SSE data is valid JSON"),
+            });
+            data.clear();
+        }
+    }
+    if let Some(name) = event {
+        frames.push(SseFrame {
+            event: name,
+            data: serde_json::from_str(&data).expect("SSE data is valid JSON"),
+        });
+    }
+
+    frames
 }
 
 fn process_is_running(pid: u32) -> bool {
@@ -115,24 +150,29 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
         .lines()
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    let schema = serde_json::json!({
+    let schema_argument_index = args
+        .iter()
+        .position(|arg| arg == "--json-schema")
+        .expect("provider passes a JSON schema argument");
+    let schema = serde_json::from_str::<Value>(&args[schema_argument_index + 1])
+        .expect("provider passes a valid JSON schema");
+    let mut args_without_schema = args;
+    args_without_schema.remove(schema_argument_index + 1);
+    let expected_schema = serde_json::json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {"text": {"type": "string"}},
         "required": ["text"],
         "title": "SampleOutput",
         "type": "object"
-    })
-    .to_string();
+    });
 
     assert_eq!(
-        (actual, input, args),
+        (parse_sse_body(&actual), input, args_without_schema, schema,),
         (
-            indoc! {r#"
-                event: result
-                data: {"data":{"text":"ready"},"event":"result"}
-
-            "#}
-            .to_owned(),
+            vec![SseFrame {
+                event: "result".to_owned(),
+                data: serde_json::json!({"event": "result", "data": {"text": "ready"}}),
+            }],
             prompt.to_owned(),
             vec![
                 "-p".to_owned(),
@@ -144,10 +184,10 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
                 "--safe-mode".to_owned(),
                 "--no-session-persistence".to_owned(),
                 "--json-schema".to_owned(),
-                schema,
                 "--tools".to_owned(),
                 String::new(),
             ],
+            expected_schema,
         )
     );
 }
@@ -237,7 +277,7 @@ async fn returns_an_error_event_for_claude_code_failures(
     )
     .await;
 
-    assert_eq!(actual, expected);
+    assert_eq!(parse_sse_body(&actual), parse_sse_body(expected));
 }
 
 #[tokio::test]
@@ -350,15 +390,16 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
     let process_exited = wait_for_process_exit(pid).await;
 
     assert_eq!(
-        (CALL_TIMEOUT, actual, process_exited),
+        (CALL_TIMEOUT, parse_sse_body(&actual), process_exited),
         (
             Duration::from_secs(600),
-            indoc! {r#"
-                event: error
-                data: {"data":{"message":"LLM call exceeded the 10 minute time limit"},"event":"error"}
-
-            "#}
-            .to_owned(),
+            vec![SseFrame {
+                event: "error".to_owned(),
+                data: serde_json::json!({
+                    "event": "error",
+                    "data": {"message": "LLM call exceeded the 10 minute time limit"}
+                }),
+            }],
             true,
         )
     );
