@@ -2,7 +2,7 @@ use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{app::AppState, error::ApiJson, ogp::metadata, safe_fetch::SafeFetchError};
+use crate::{app::AppState, error::ApiJson, html, ogp::metadata, safe_fetch::SafeFetchError};
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct FetchOgpRequest {
@@ -61,9 +61,9 @@ fn response_for_fetch(
     result: Result<crate::safe_fetch::FetchResponse, SafeFetchError>,
 ) -> OgpResponse {
     match result {
-        Ok(response) if metadata::is_html_content_type(response.content_type.as_deref()) => {
-            let html = metadata::decode_html(&response.body, response.content_type.as_deref());
-            metadata::extract(&response.final_url, &html)
+        Ok(response) if html::is_html_content_type(response.content_type.as_deref()) => {
+            let document = html::decode_html(&response.body, response.content_type.as_deref());
+            metadata::extract(&response.final_url, &document)
         }
         Ok(_) => OgpResponse::unavailable(),
         Err(error) => {

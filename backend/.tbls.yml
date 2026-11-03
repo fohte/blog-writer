@@ -12,6 +12,12 @@ comments:
     columnComments:
       metadata_key: Unique metadata key.
       metadata_value: Metadata value.
+  - table: source_bodies
+    tableComment: Stores Markdown bodies for article sources.
+    columnComments:
+      source_id: Unique source identifier stored in the article document.
+      article_id: Article identifier from the article document.
+      body: Imported or user-provided Markdown body.
 lint:
   requireTableComment:
     enabled: true
