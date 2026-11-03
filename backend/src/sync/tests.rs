@@ -224,6 +224,27 @@ async fn reconnect_existing_doc(server: &TestServer, doc_id: &str, doc: &Doc) ->
     Ok(())
 }
 
+async fn reconnect_and_count(
+    server: &TestServer,
+    pool: &AnyPool,
+    doc_id: &str,
+    doc: &Doc,
+) -> TestResult<i64> {
+    reconnect_existing_doc(server, doc_id, doc).await?;
+    count_updates(pool, doc_id).await
+}
+
+async fn restart_server(server: TestServer, pool: AnyPool) -> TestResult<TestServer> {
+    let TestServer { task, .. } = server;
+    task.abort();
+    match task.await {
+        Err(error) if error.is_cancelled() => {}
+        Err(error) => return Err(error.into()),
+        Ok(()) => {}
+    }
+    start_server(pool).await
+}
+
 async fn publish_awareness(client: &mut Client, doc: &Doc) -> TestResult<AwarenessUpdate> {
     let mut awareness = Awareness::new(doc.clone());
     awareness.set_local_state_raw(r#"{"user":"writer"}"#);
@@ -507,23 +528,21 @@ async fn does_not_store_empty_updates(pool: AnyPool) -> TestResult {
 }
 
 async fn does_not_store_repeated_deletions(pool: AnyPool) -> TestResult {
-    let server = start_server(pool.clone()).await?;
+    let mut server = start_server(pool.clone()).await?;
     let document = server.sync.open_document("deleted-document").await?;
     let doc = Doc::with_client_id(90);
     let text = doc.get_or_insert_text("body");
     text.insert(&mut doc.transact_mut(), 0, "gone");
 
     let mut update_counts = Vec::new();
-    reconnect_existing_doc(&server, "deleted-document", &doc).await?;
-    update_counts.push(count_updates(&pool, "deleted-document").await?);
+    update_counts.push(reconnect_and_count(&server, &pool, "deleted-document", &doc).await?);
     text.remove_range(&mut doc.transact_mut(), 0, 4);
-    reconnect_existing_doc(&server, "deleted-document", &doc).await?;
-    update_counts.push(count_updates(&pool, "deleted-document").await?);
+    update_counts.push(reconnect_and_count(&server, &pool, "deleted-document", &doc).await?);
     drop(document);
-    reconnect_existing_doc(&server, "deleted-document", &doc).await?;
-    update_counts.push(count_updates(&pool, "deleted-document").await?);
-    reconnect_existing_doc(&server, "deleted-document", &doc).await?;
-    update_counts.push(count_updates(&pool, "deleted-document").await?);
+    server = restart_server(server, pool.clone()).await?;
+    update_counts.push(reconnect_and_count(&server, &pool, "deleted-document", &doc).await?);
+    server = restart_server(server, pool.clone()).await?;
+    update_counts.push(reconnect_and_count(&server, &pool, "deleted-document", &doc).await?);
     let document = server.sync.open_document("deleted-document").await?;
     let server_contents = decode_contents(&document.encode_state().await)?;
     server.task.abort();
