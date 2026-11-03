@@ -53,41 +53,23 @@ async fn start_server(pool: AnyPool) -> TestResult<TestServer> {
 }
 
 async fn open_client(server: &TestServer, doc_id: &str) -> TestResult<(Client, Doc)> {
+    let (client, doc, _) = open_client_with_startup_frames(server, doc_id).await?;
+    Ok((client, doc))
+}
+
+async fn open_client_with_startup_frames(
+    server: &TestServer,
+    doc_id: &str,
+) -> TestResult<(Client, Doc, Vec<Vec<u8>>)> {
     let (mut client, _) = connect_async(format!("{}/{doc_id}", server.url)).await?;
-    let startup_frames = [
+    let startup_frames = vec![
         receive_binary(&mut client).await?,
         receive_binary(&mut client).await?,
     ];
-    let start = startup_frames
-        .iter()
-        .map(|frame| {
-            protocol::decode_messages(frame).map(|messages| {
-                messages
-                    .into_iter()
-                    .map(|message| match message {
-                        YMessage::Sync(SyncMessage::SyncStep1(_)) => "sync-step-1",
-                        YMessage::Awareness(_) => "awareness",
-                        YMessage::Sync(SyncMessage::SyncStep2(_)) => "sync-step-2",
-                        YMessage::Sync(SyncMessage::Update(_)) => "update",
-                        YMessage::Auth(_) => "auth",
-                        YMessage::AwarenessQuery => "awareness-query",
-                        YMessage::Custom(_, _) => "custom",
-                    })
-                    .collect::<Vec<_>>()
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let start = describe_frames(&startup_frames)?;
     assert_eq!(start, vec![vec!["sync-step-1"], vec!["awareness"]]);
     let mut doc = Doc::new();
     let state_vector = doc.transact().state_vector();
-    client
-        .send(ClientMessage::Binary(
-            protocol::encode_message(&YMessage::Sync(SyncMessage::SyncStep2(
-                Update::EMPTY_V1.to_vec(),
-            )))
-            .into(),
-        ))
-        .await?;
     client
         .send(ClientMessage::Binary(
             protocol::encode_message(&yrs::sync::Message::Sync(
@@ -98,7 +80,30 @@ async fn open_client(server: &TestServer, doc_id: &str) -> TestResult<(Client, D
         .await?;
     let frame = receive_binary(&mut client).await?;
     apply_frame(&mut doc, &frame)?;
-    Ok((client, doc))
+    Ok((client, doc, startup_frames))
+}
+
+fn message_kind(message: &YMessage) -> &'static str {
+    match message {
+        YMessage::Sync(SyncMessage::SyncStep1(_)) => "sync-step-1",
+        YMessage::Awareness(_) => "awareness",
+        YMessage::Sync(SyncMessage::SyncStep2(_)) => "sync-step-2",
+        YMessage::Sync(SyncMessage::Update(_)) => "update",
+        YMessage::Auth(_) => "auth",
+        YMessage::AwarenessQuery => "awareness-query",
+        YMessage::Custom(_, _) => "custom",
+    }
+}
+
+fn describe_frame(frame: &[u8]) -> TestResult<Vec<&'static str>> {
+    Ok(protocol::decode_messages(frame)?
+        .iter()
+        .map(message_kind)
+        .collect())
+}
+
+fn describe_frames(frames: &[Vec<u8>]) -> TestResult<Vec<Vec<&'static str>>> {
+    frames.iter().map(|frame| describe_frame(frame)).collect()
 }
 
 async fn receive_binary(client: &mut Client) -> TestResult<Vec<u8>> {
@@ -165,28 +170,38 @@ async fn send_update(client: &mut Client, update: Vec<u8>) -> TestResult {
     Ok(())
 }
 
+async fn send_empty_update(client: &mut Client, doc: &Doc) -> TestResult {
+    let empty_update = protocol::encode_message(&YMessage::Sync(SyncMessage::SyncStep2(
+        Update::EMPTY_V1.to_vec(),
+    )));
+    client
+        .send(ClientMessage::Binary(empty_update.into()))
+        .await?;
+
+    let sync_request = protocol::encode_message(&YMessage::Sync(SyncMessage::SyncStep1(
+        doc.transact().state_vector(),
+    )));
+    client
+        .send(ClientMessage::Binary(sync_request.into()))
+        .await?;
+    let _response = receive_binary(client).await?;
+    Ok(())
+}
+
+async fn publish_awareness(client: &mut Client, doc: &Doc) -> TestResult<AwarenessUpdate> {
+    let mut awareness = Awareness::new(doc.clone());
+    awareness.set_local_state_raw(r#"{"user":"writer"}"#);
+    let update = awareness.update()?;
+    let frame = protocol::encode_message(&YMessage::Awareness(update.clone()));
+    client.send(ClientMessage::Binary(frame.into())).await?;
+    let _broadcast = receive_binary(client).await?;
+    Ok(update)
+}
+
 async fn connect_and_edit_twice(pool: AnyPool) -> TestResult {
     let server = start_server(pool).await?;
     let (mut first, mut first_doc) = open_client(&server, "shared-document").await?;
     let (mut second, mut second_doc) = open_client(&server, "shared-document").await?;
-
-    let mut awareness = Awareness::new(first_doc.clone());
-    awareness.set_local_state_raw(r#"{"user":"writer"}"#);
-    let awareness_update = awareness.update()?;
-    let awareness_message = YMessage::Awareness(awareness_update.clone());
-    let awareness_frame = protocol::encode_message(&awareness_message);
-    first
-        .send(ClientMessage::Binary(awareness_frame.clone().into()))
-        .await?;
-    let second_awareness = receive_binary(&mut second).await?;
-    let first_awareness = receive_binary(&mut first).await?;
-    assert_eq!(
-        (
-            protocol::decode_messages(&second_awareness)?,
-            protocol::decode_messages(&first_awareness)?,
-        ),
-        (vec![awareness_message.clone()], vec![awareness_message]),
-    );
 
     let first_update = create_text_update(&first_doc, 0, "first");
     send_update(&mut first, first_update).await?;
@@ -207,28 +222,65 @@ async fn connect_and_edit_twice(pool: AnyPool) -> TestResult {
         ("first second".to_owned(), "first second".to_owned()),
     );
     first.close(None).await?;
-    let removal_frame = receive_binary(&mut second).await?;
-    let removal_messages = protocol::decode_messages(&removal_frame)?;
-    let client_id = awareness.client_id();
+    second.close(None).await?;
+    server.task.abort();
+    Ok(())
+}
+
+async fn sends_existing_awareness_to_late_joiners(pool: AnyPool) -> TestResult {
+    let server = start_server(pool).await?;
+    let (mut first, first_doc) = open_client(&server, "awareness-document").await?;
+    let awareness_update = publish_awareness(&mut first, &first_doc).await?;
+    let (mut second, _, startup_frames) =
+        open_client_with_startup_frames(&server, "awareness-document").await?;
+
+    assert_eq!(
+        protocol::decode_messages(&startup_frames[1])?,
+        vec![YMessage::Awareness(awareness_update)],
+    );
+    second.close(None).await?;
+    first.close(None).await?;
+    server.task.abort();
+    Ok(())
+}
+
+async fn broadcasts_and_removes_awareness(pool: AnyPool) -> TestResult {
+    let server = start_server(pool).await?;
+    let (mut first, first_doc) = open_client(&server, "awareness-document").await?;
+    let (mut second, _) = open_client(&server, "awareness-document").await?;
+    let awareness_update = publish_awareness(&mut first, &first_doc).await?;
+    let second_awareness = protocol::decode_messages(&receive_binary(&mut second).await?)?;
+    let client_id = *awareness_update
+        .clients
+        .keys()
+        .next()
+        .ok_or("awareness update has no client")?;
     let previous_clock = awareness_update
         .clients
         .get(&client_id)
         .ok_or("awareness client id missing from update")?
         .clock;
-    assert_eq!(
-        removal_messages,
-        vec![YMessage::Awareness(AwarenessUpdate {
-            clients: HashMap::from([(
-                client_id,
-                yrs::sync::awareness::AwarenessUpdateEntry {
-                    clock: previous_clock + 1,
-                    json: "null".into(),
-                },
-            )]),
-        })],
-    );
+
+    first.close(None).await?;
+    let removal = protocol::decode_messages(&receive_binary(&mut second).await?)?;
     second.close(None).await?;
     server.task.abort();
+
+    assert_eq!(
+        (second_awareness, removal),
+        (
+            vec![YMessage::Awareness(awareness_update)],
+            vec![YMessage::Awareness(AwarenessUpdate {
+                clients: HashMap::from([(
+                    client_id,
+                    yrs::sync::awareness::AwarenessUpdateEntry {
+                        clock: previous_clock + 1,
+                        json: "null".into(),
+                    },
+                )]),
+            })],
+        ),
+    );
     Ok(())
 }
 
@@ -347,7 +399,8 @@ async fn rejects_unapplicable_updates(pool: AnyPool) -> TestResult {
 
 async fn does_not_store_empty_updates(pool: AnyPool) -> TestResult {
     let server = start_server(pool.clone()).await?;
-    let (mut client, _doc) = open_client(&server, "empty-update-document").await?;
+    let (mut client, doc) = open_client(&server, "empty-update-document").await?;
+    send_empty_update(&mut client, &doc).await?;
     let updates = count_updates(&pool, "empty-update-document").await?;
     client.close(None).await?;
     server.task.abort();
@@ -396,6 +449,30 @@ async fn synchronizes_two_websocket_clients_over_postgres(pool: PgPool) -> TestR
 async fn synchronizes_two_websocket_clients_over_sqlite(pool: SqlitePool) -> TestResult {
     let url = pool.connect_options().to_url_lossy().to_string();
     connect_and_edit_twice(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn sends_existing_awareness_to_late_postgres_clients(pool: PgPool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    sends_existing_awareness_to_late_joiners(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn sends_existing_awareness_to_late_sqlite_clients(pool: SqlitePool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    sends_existing_awareness_to_late_joiners(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn broadcasts_and_removes_awareness_over_postgres(pool: PgPool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    broadcasts_and_removes_awareness(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn broadcasts_and_removes_awareness_over_sqlite(pool: SqlitePool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    broadcasts_and_removes_awareness(any_pool(&url).await?).await
 }
 
 #[sqlx::test]
