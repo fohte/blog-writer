@@ -35,7 +35,7 @@ The image `ghcr.io/fohte/blog-writer:latest` is published from pushes to `main`.
 
 ```sh
 docker volume create blog-writer-data
-docker run --rm -p 3000:3000 \
+docker run --rm -p 127.0.0.1:3000:3000 \
   -e DATABASE_URL=sqlite:///data/blog-writer.sqlite \
   -v blog-writer-data:/data \
   ghcr.io/fohte/blog-writer:latest
