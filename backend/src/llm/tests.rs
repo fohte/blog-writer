@@ -812,12 +812,15 @@ async fn claude_code_web_search_streams_progress_and_only_search_result_citation
 #[rstest]
 #[case::warns_after_search_without_citations(
     true,
+    false,
     "Claude Code performed web search but returned no citation URLs\n"
 )]
-#[case::does_not_warn_without_a_search(false, "")]
+#[case::does_not_warn_without_a_search(false, false, "")]
+#[case::does_not_warn_when_citations_are_present(true, true, "")]
 #[test_attr(tokio::test)]
 async fn warns_only_when_claude_code_search_returns_no_citations(
     #[case] search_performed: bool,
+    #[case] citations_provided: bool,
     #[case] expected_log: &str,
 ) {
     let logs = LogBuffer::default();
@@ -830,13 +833,39 @@ async fn warns_only_when_claude_code_search_returns_no_citations(
         .finish();
     let _subscriber = tracing::subscriber::set_default(subscriber);
     let directory = TempDir::new().expect("temporary directory is available");
-    let search_events = if search_performed {
-        indoc! {r#"
-            printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebSearch","input":{"query":"example query"}}]}}'
-            printf '%s\n' '{"type":"user","tool_use_result":{"results":[]}}'
-        "#}
+    let search_results = if citations_provided {
+        serde_json::json!([{
+            "tool_use_id": "srvtoolu-example",
+            "content": [{
+                "title": "Example source",
+                "url": "https://source.example.invalid/article"
+            }]
+        }])
     } else {
-        ""
+        serde_json::json!([])
+    };
+    let search_events = if search_performed {
+        [
+            serde_json::json!({
+                "type": "assistant",
+                "message": {"content": [{
+                    "type": "tool_use",
+                    "name": "WebSearch",
+                    "input": {"query": "example query"}
+                }]}
+            }),
+            serde_json::json!({
+                "type": "user",
+                "tool_use_result": {"results": search_results}
+            }),
+        ]
+        .into_iter()
+        .map(|event| format!("printf '%s\\n' '{event}'"))
+        .collect::<Vec<_>>()
+        .join("\n")
+            + "\n"
+    } else {
+        String::new()
     };
     let executable = fake_claude(
         &directory,
@@ -869,6 +898,11 @@ async fn warns_only_when_claude_code_search_returns_no_citations(
             ],
         });
     }
+    let citations = if citations_provided {
+        vec!["https://source.example.invalid/article".to_owned()]
+    } else {
+        Vec::new()
+    };
     expected_frames.push(SseFrame {
         lines: vec![
             SseLine::Raw("event: result".to_owned()),
@@ -876,7 +910,10 @@ async fn warns_only_when_claude_code_search_returns_no_citations(
                 prefix: "data: ".to_owned(),
                 value: serde_json::json!({
                     "event": "result",
-                    "data": {"text": "Answer without source URLs.", "citations": []}
+                    "data": {
+                        "text": "Answer without source URLs.",
+                        "citations": citations
+                    }
                 }),
             },
             SseLine::Raw(String::new()),
