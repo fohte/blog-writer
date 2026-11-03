@@ -22,6 +22,18 @@ pub struct OgpResponse {
     pub image: Option<String>,
 }
 
+impl OgpResponse {
+    fn unavailable() -> Self {
+        Self {
+            available: false,
+            final_url: None,
+            title: None,
+            description: None,
+            image: None,
+        }
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/ogp",
@@ -35,20 +47,25 @@ pub async fn fetch_ogp(
     State(state): State<AppState>,
     ApiJson(request): ApiJson<FetchOgpRequest>,
 ) -> Json<OgpResponse> {
-    match state.safe_fetch.fetch(&request.url).await {
+    Json(response_for_fetch(
+        state.safe_fetch.fetch(&request.url).await,
+    ))
+}
+
+fn response_for_fetch(
+    result: Result<crate::safe_fetch::FetchResponse, SafeFetchError>,
+) -> OgpResponse {
+    match result {
         Ok(response) => {
             let html = String::from_utf8_lossy(&response.body);
-            Json(metadata::extract(&response.final_url, &html))
+            metadata::extract(&response.final_url, &html)
         }
         Err(error) => {
-            tracing::debug!(error = %safe_fetch_error_kind(&error), "OGP page is unavailable");
-            Json(OgpResponse {
-                available: false,
-                final_url: None,
-                title: None,
-                description: None,
-                image: None,
-            })
+            tracing::warn!(
+                reason = safe_fetch_error_kind(&error),
+                "OGP page is unavailable"
+            );
+            OgpResponse::unavailable()
         }
     }
 }
@@ -81,7 +98,10 @@ mod tests {
         ogp::{FetchOgpRequest, router},
     };
 
-    async fn post_ogp(state: AppState, url: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    async fn post_ogp(
+        state: AppState,
+        url: &str,
+    ) -> Result<(u16, Value), Box<dyn std::error::Error>> {
         let api: Router = router().split_for_parts().0.with_state(state);
         let response = api
             .oneshot(
@@ -94,8 +114,9 @@ mod tests {
                     })?))?,
             )
             .await?;
+        let status = response.status().as_u16();
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
-        Ok(serde_json::from_slice(&bytes)?)
+        Ok((status, serde_json::from_slice(&bytes)?))
     }
 
     #[tokio::test]
@@ -107,13 +128,16 @@ mod tests {
 
         assert_eq!(
             actual,
-            json!({
-                "available": false,
-                "final_url": null,
-                "title": null,
-                "description": null,
-                "image": null
-            })
+            (
+                200,
+                json!({
+                    "available": false,
+                    "final_url": null,
+                    "title": null,
+                    "description": null,
+                    "image": null
+                })
+            )
         );
         Ok(())
     }

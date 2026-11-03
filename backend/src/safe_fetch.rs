@@ -14,6 +14,23 @@ const TOTAL_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_REDIRECTS: usize = 5;
 const MAX_BODY_BYTES: usize = 1_048_576;
+const BLOCKED_IPV4_SUBNETS: [(Ipv4Addr, u32); 15] = [
+    (Ipv4Addr::new(0, 0, 0, 0), 8),
+    (Ipv4Addr::new(10, 0, 0, 0), 8),
+    (Ipv4Addr::new(100, 64, 0, 0), 10),
+    (Ipv4Addr::new(127, 0, 0, 0), 8),
+    (Ipv4Addr::new(169, 254, 0, 0), 16),
+    (Ipv4Addr::new(172, 16, 0, 0), 12),
+    (Ipv4Addr::new(192, 0, 0, 0), 24),
+    (Ipv4Addr::new(192, 0, 2, 0), 24),
+    (Ipv4Addr::new(192, 88, 99, 0), 24),
+    (Ipv4Addr::new(192, 168, 0, 0), 16),
+    (Ipv4Addr::new(198, 18, 0, 0), 15),
+    (Ipv4Addr::new(198, 51, 100, 0), 24),
+    (Ipv4Addr::new(203, 0, 113, 0), 24),
+    (Ipv4Addr::new(224, 0, 0, 0), 4),
+    (Ipv4Addr::new(240, 0, 0, 0), 4),
+];
 
 type ResolveFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Vec<SocketAddr>>> + Send + 'a>>;
 type AddressPolicy = Arc<dyn Fn(IpAddr) -> bool + Send + Sync>;
@@ -89,30 +106,9 @@ impl SafeFetcher {
 
         loop {
             validate_url(&current_url)?;
-            let host = current_url
-                .host_str()
-                .ok_or(SafeFetchError::InvalidUrl)?
-                .trim_matches(['[', ']'])
-                .to_owned();
-            let port = current_url
-                .port_or_known_default()
-                .ok_or(SafeFetchError::InvalidUrl)?;
+            let (host, port) = host_and_port(&current_url)?;
             let addresses = self.resolve_and_validate(&host, port).await?;
-
-            let mut client_builder = Client::builder()
-                .redirect(Policy::none())
-                .connect_timeout(CONNECT_TIMEOUT)
-                .timeout(TOTAL_TIMEOUT)
-                .no_proxy();
-            if host.parse::<IpAddr>().is_err() {
-                let pinned_addresses: Vec<_> = addresses
-                    .iter()
-                    .map(|address| SocketAddr::new(address.ip(), 0))
-                    .collect();
-                client_builder = client_builder.resolve_to_addrs(&host, &pinned_addresses);
-            }
-
-            let client = client_builder.build().map_err(SafeFetchError::Request)?;
+            let client = build_pinned_client(&host, &addresses)?;
             let response = client
                 .get(current_url.clone())
                 .send()
@@ -140,21 +136,7 @@ impl SafeFetcher {
                 return Err(SafeFetchError::HttpStatus(status));
             }
 
-            if response
-                .content_length()
-                .is_some_and(|length| length > MAX_BODY_BYTES as u64)
-            {
-                return Err(SafeFetchError::TooLarge);
-            }
-
-            let mut body = Vec::new();
-            let mut response = response;
-            while let Some(chunk) = response.chunk().await.map_err(SafeFetchError::Request)? {
-                if body.len().saturating_add(chunk.len()) > MAX_BODY_BYTES {
-                    return Err(SafeFetchError::TooLarge);
-                }
-                body.extend_from_slice(&chunk);
-            }
+            let body = read_limited_body(response).await?;
 
             return Ok(FetchResponse {
                 final_url: current_url,
@@ -204,6 +186,52 @@ pub async fn fetch(url: &str) -> Result<FetchResponse, SafeFetchError> {
     SafeFetcher::new().fetch(url).await
 }
 
+fn host_and_port(url: &Url) -> Result<(String, u16), SafeFetchError> {
+    let host = url
+        .host_str()
+        .ok_or(SafeFetchError::InvalidUrl)?
+        .trim_matches(['[', ']'])
+        .to_owned();
+    let port = url
+        .port_or_known_default()
+        .ok_or(SafeFetchError::InvalidUrl)?;
+    Ok((host, port))
+}
+
+fn build_pinned_client(host: &str, addresses: &[SocketAddr]) -> Result<Client, SafeFetchError> {
+    let mut builder = Client::builder()
+        .redirect(Policy::none())
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(TOTAL_TIMEOUT)
+        .no_proxy();
+    if host.parse::<IpAddr>().is_err() {
+        let pinned_addresses: Vec<_> = addresses
+            .iter()
+            .map(|address| SocketAddr::new(address.ip(), 0))
+            .collect();
+        builder = builder.resolve_to_addrs(host, &pinned_addresses);
+    }
+    builder.build().map_err(SafeFetchError::Request)
+}
+
+async fn read_limited_body(mut response: reqwest::Response) -> Result<Vec<u8>, SafeFetchError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_BODY_BYTES as u64)
+    {
+        return Err(SafeFetchError::TooLarge);
+    }
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(SafeFetchError::Request)? {
+        if body.len().saturating_add(chunk.len()) > MAX_BODY_BYTES {
+            return Err(SafeFetchError::TooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 fn validate_url(url: &Url) -> Result<(), SafeFetchError> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err(SafeFetchError::UnsupportedScheme);
@@ -242,29 +270,9 @@ fn is_public_address(address: IpAddr) -> bool {
 
 fn is_public_ipv4(address: Ipv4Addr) -> bool {
     let address = u32::from(address);
-    ![
-        ("0.0.0.0", 8),
-        ("10.0.0.0", 8),
-        ("100.64.0.0", 10),
-        ("127.0.0.0", 8),
-        ("169.254.0.0", 16),
-        ("172.16.0.0", 12),
-        ("192.0.0.0", 24),
-        ("192.0.2.0", 24),
-        ("192.88.99.0", 24),
-        ("192.168.0.0", 16),
-        ("198.18.0.0", 15),
-        ("198.51.100.0", 24),
-        ("203.0.113.0", 24),
-        ("224.0.0.0", 4),
-        ("240.0.0.0", 4),
-    ]
-    .into_iter()
-    .any(|(network, prefix)| {
-        network
-            .parse::<Ipv4Addr>()
-            .is_ok_and(|network| in_ipv4_subnet(address, u32::from(network), prefix))
-    })
+    !BLOCKED_IPV4_SUBNETS
+        .iter()
+        .any(|(network, prefix)| in_ipv4_subnet(address, u32::from(*network), *prefix))
 }
 
 fn in_ipv4_subnet(address: u32, network: u32, prefix: u32) -> bool {
@@ -292,7 +300,10 @@ mod tests {
         sync::Arc,
     };
 
+    use axum::{Router, body::Body, http::Request};
     use rstest::rstest;
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
     use super::{
@@ -348,6 +359,55 @@ mod tests {
         assert_eq!(
             (response.final_url.as_str(), response.body),
             (url.as_str(), b"<title>Sample</title>".to_vec())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_ogp_metadata_through_the_api() -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"<meta property="og:title" content="Card title"><meta property="og:image" content="/card.png">"#,
+            ))
+            .mount(&server)
+            .await;
+        let address = server_address(&server)?;
+        let fetcher = test_fetcher([("site.test".to_owned(), vec![address])], |address| {
+            address.is_loopback()
+        });
+        let state = crate::app::AppState {
+            export: None,
+            safe_fetch: fetcher,
+        };
+        let api: Router = crate::ogp::router().split_for_parts().0.with_state(state);
+        let url = format!("http://site.test:{}/article", address.port());
+
+        let response = api
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/ogp")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"url": url}).to_string()))?,
+            )
+            .await?;
+        let status = response.status().as_u16();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+        let body: Value = serde_json::from_slice(&bytes)?;
+
+        assert_eq!(
+            (status, body),
+            (
+                200,
+                json!({
+                    "available": true,
+                    "final_url": format!("http://site.test:{}/article", address.port()),
+                    "title": "Card title",
+                    "description": null,
+                    "image": format!("http://site.test:{}/card.png", address.port())
+                })
+            )
         );
         Ok(())
     }
@@ -432,25 +492,25 @@ mod tests {
     }
 
     #[rstest]
-    #[case::file_url("file:///etc/passwd", true)]
-    #[case::loopback("http://127.0.0.1/", true)]
-    #[case::private("http://10.2.3.4/", true)]
-    #[case::carrier_grade_nat("http://100.64.0.1/", true)]
-    #[case::link_local("http://169.254.169.254/", true)]
-    #[case::ipv6_ula("http://[fd00::1]/", true)]
-    #[case::public_ipv4("http://8.8.8.8/", false)]
-    #[case::public_ipv6("http://[2606:4700:4700::1111]/", false)]
-    fn validates_address_ranges(#[case] url: &str, #[case] is_rejected: bool) {
-        let parsed = reqwest::Url::parse(url);
-        let actual_is_rejected = parsed.is_err()
-            || parsed.is_ok_and(|parsed| {
-                super::validate_url(&parsed).is_err()
-                    || parsed
-                        .host_str()
-                        .and_then(|host| host.trim_matches(['[', ']']).parse::<IpAddr>().ok())
-                        .is_some_and(|address| !is_public_address(address))
-            });
+    #[case::ipv4_loopback("http://127.0.0.1/")]
+    #[case::ipv4_private("http://10.2.3.4/")]
+    #[case::carrier_grade_nat("http://100.64.0.1/")]
+    #[case::link_local("http://169.254.169.254/")]
+    #[case::ipv6_ula("http://[fd00::1]/")]
+    #[case::ipv6_loopback("http://[::1]/")]
+    #[case::ipv6_link_local("http://[fe80::1]/")]
+    #[case::ipv4_mapped_ipv6("http://[::ffff:127.0.0.1]/")]
+    #[test_attr(tokio::test)]
+    async fn rejects_internal_ip_literals(#[case] url: &str) {
+        let actual = SafeFetcher::new().fetch(url).await;
 
-        assert_eq!(actual_is_rejected, is_rejected);
+        assert!(matches!(actual, Err(SafeFetchError::DisallowedAddress)));
+    }
+
+    #[tokio::test]
+    async fn rejects_non_http_schemes() {
+        let actual = SafeFetcher::new().fetch("file:///etc/passwd").await;
+
+        assert!(matches!(actual, Err(SafeFetchError::UnsupportedScheme)));
     }
 }
