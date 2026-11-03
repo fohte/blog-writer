@@ -538,10 +538,83 @@
           }
         }
       }
+    },
+    "/api/sync/{doc_id}": {
+      "get": {
+        "operationId": "sync_document",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "description": "Document identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket connection"
+          }
+        }
+      }
+    },
+    "/api/write-from-key-points": {
+      "post": {
+        "operationId": "write_from_key_points",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteFromKeyPointsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Generated sentences with key point citations",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteFromKeyPointsEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body or target heading",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ArticleBlockRequest": {
+        "type": "object",
+        "required": ["id", "kind", "markdown"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "markdown": {
+            "type": "string"
+          }
+        }
+      },
       "ArticleFileResponse": {
         "type": "object",
         "required": ["content", "sha"],
@@ -551,6 +624,21 @@
           },
           "sha": {
             "type": ["string", "null"]
+          }
+        }
+      },
+      "ArticlePremiseRequest": {
+        "type": "object",
+        "required": ["audience", "purpose", "thesis"],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
           }
         }
       },
@@ -736,6 +824,48 @@
           }
         }
       },
+      "ReferencePointRequest": {
+        "type": "object",
+        "required": ["id", "researched_heading_id", "text"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "quote": {
+            "type": ["string", "null"]
+          },
+          "researched_heading_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "ReferenceSourceRequest": {
+        "type": "object",
+        "required": ["title", "url", "fetched_at", "summary", "key_points"],
+        "properties": {
+          "fetched_at": {
+            "type": "string"
+          },
+          "key_points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReferencePointRequest"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
       "SaveSourceBodyRequest": {
         "type": "object",
         "required": ["body"],
@@ -756,6 +886,99 @@
             "type": "string"
           },
           "source_id": {
+            "type": "string"
+          }
+        }
+      },
+      "WriteFromKeyPointsError": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "WriteFromKeyPointsEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WriteFromKeyPointsResponse"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WriteFromKeyPointsError"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "WriteFromKeyPointsRequest": {
+        "type": "object",
+        "required": ["premise", "target_heading_id", "blocks", "sources"],
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArticleBlockRequest"
+            }
+          },
+          "premise": {
+            "$ref": "#/components/schemas/ArticlePremiseRequest"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReferenceSourceRequest"
+            }
+          },
+          "target_heading_id": {
+            "type": "string"
+          }
+        }
+      },
+      "WriteFromKeyPointsResponse": {
+        "type": "object",
+        "required": ["sentences"],
+        "properties": {
+          "sentences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WrittenSentence"
+            }
+          }
+        }
+      },
+      "WrittenSentence": {
+        "type": "object",
+        "required": ["text", "is_factual", "key_point_ids"],
+        "properties": {
+          "is_factual": {
+            "type": "boolean"
+          },
+          "key_point_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "text": {
             "type": "string"
           }
         }
