@@ -15,6 +15,7 @@ pub(crate) mod research_key_points;
 pub mod safe_fetch;
 pub mod source_bodies;
 pub(crate) mod source_quote;
+pub mod sync;
 
 use std::error::Error;
 use tokio::net::TcpListener;

@@ -132,6 +132,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/sync/{doc_id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['sync_document']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
 export type webhooks = Record<string, never>
 export interface components {
@@ -715,6 +731,27 @@ export interface operations {
         content: {
           'application/json': components['schemas']['ErrorResponse']
         }
+      }
+    }
+  }
+  sync_document: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Document identifier */
+        doc_id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description WebSocket connection */
+      101: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
       }
     }
   }
