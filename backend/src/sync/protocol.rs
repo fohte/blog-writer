@@ -6,7 +6,7 @@ use yrs::{
         protocol::{DefaultProtocol, MessageReader},
     },
     updates::{
-        decoder::DecoderV1,
+        decoder::{Decode, DecoderV1},
         encoder::{Encode, Encoder, EncoderV1},
     },
 };
@@ -28,6 +28,21 @@ impl DocumentState {
 
     pub(super) fn apply_update(&mut self, update: Update) -> Result<(), yrs::error::UpdateError> {
         self.awareness.doc_mut().transact_mut().apply_update(update)
+    }
+
+    pub(super) fn has_new_information(
+        &self,
+        update: &Update,
+    ) -> Result<bool, yrs::encoding::read::Error> {
+        let known_update = Update::decode_v1(
+            &self
+                .doc()
+                .transact()
+                .encode_state_as_update_v1(&yrs::StateVector::default()),
+        )?;
+        let new_insertions = update.insertions(true).diff(&known_update.insertions(true));
+        let new_deletions = update.delete_set().diff(known_update.delete_set());
+        Ok(!new_insertions.is_empty() || !new_deletions.is_empty())
     }
 
     pub(super) fn remove_awareness_client(&mut self, client_id: ClientID) {

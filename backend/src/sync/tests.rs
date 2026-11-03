@@ -9,7 +9,7 @@ use yrs::{
     Array, ArrayPrelim, Doc, GetString, ReadTxn, StateVector, Transact, Update,
     sync::{Awareness, AwarenessUpdate, Message as YMessage, SyncMessage},
     types::{Text, ToJson},
-    updates::decoder::Decode,
+    updates::{decoder::Decode, encoder::Encode},
 };
 
 use crate::{
@@ -188,6 +188,42 @@ async fn send_empty_update(client: &mut Client, doc: &Doc) -> TestResult {
     Ok(())
 }
 
+async fn reconnect_existing_doc(server: &TestServer, doc_id: &str, doc: &Doc) -> TestResult {
+    let (mut client, _) = connect_async(format!("{}/{doc_id}", server.url)).await?;
+    let startup_frames = vec![
+        receive_binary(&mut client).await?,
+        receive_binary(&mut client).await?,
+    ];
+    assert_eq!(
+        describe_frames(&startup_frames)?,
+        vec![vec!["sync-step-1"], vec!["awareness"]],
+    );
+    let server_state_vector = match protocol::decode_messages(&startup_frames[0])?.as_slice() {
+        [YMessage::Sync(SyncMessage::SyncStep1(state_vector))] => state_vector.clone(),
+        _ => return Err("server did not start with a sync step 1".into()),
+    };
+    let update = doc.transact().encode_diff_v1(&server_state_vector);
+    let frame = protocol::encode_message(&YMessage::Sync(SyncMessage::SyncStep2(update)));
+    client.send(ClientMessage::Binary(frame.into())).await?;
+    let frame = protocol::encode_message(&YMessage::Sync(SyncMessage::SyncStep1(
+        doc.transact().state_vector(),
+    )));
+    client.send(ClientMessage::Binary(frame.into())).await?;
+
+    loop {
+        let frame = receive_binary(&mut client).await?;
+        let messages = protocol::decode_messages(&frame)?;
+        let has_sync_step_2 = messages
+            .iter()
+            .any(|message| matches!(message, YMessage::Sync(SyncMessage::SyncStep2(_))));
+        if has_sync_step_2 {
+            break;
+        }
+    }
+    client.close(None).await?;
+    Ok(())
+}
+
 async fn publish_awareness(client: &mut Client, doc: &Doc) -> TestResult<AwarenessUpdate> {
     let mut awareness = Awareness::new(doc.clone());
     awareness.set_local_state_raw(r#"{"user":"writer"}"#);
@@ -356,12 +392,26 @@ async fn count_updates(pool: &AnyPool, doc_id: &str) -> TestResult<i64> {
         .await?)
 }
 
-async fn rejects_unapplicable_updates(pool: AnyPool) -> TestResult {
+fn document_contents(doc: &Doc) -> (String, yrs::Any) {
+    let body = doc.get_or_insert_text("body").get_string(&doc.transact());
+    let items = doc.get_or_insert_array("items").to_json(&doc.transact());
+    (body, items)
+}
+
+async fn retains_partially_applied_updates(pool: AnyPool) -> TestResult {
     let server = start_server(pool.clone()).await?;
-    let document = server.sync.open_document("invalid-update-document").await?;
-    let (valid_update, invalid_update) = updates_with_invalid_parent();
-    document.apply_update(&valid_update).await?;
-    let result = document.apply_update(&invalid_update).await;
+    let document = server.sync.open_document("partial-update-document").await?;
+    let (baseline_update, invalid_update) = updates_with_invalid_parent();
+    let body_doc = Doc::with_client_id(100);
+    let first_update = create_text_update(&body_doc, 0, "first");
+    let dependent_update = create_text_update(&body_doc, 5, " second");
+    let merged_update = Update::merge_updates(vec![
+        Update::decode_v1(&first_update)?,
+        Update::decode_v1(&invalid_update)?,
+    ])
+    .encode_v1();
+    document.apply_update(&baseline_update).await?;
+    let result = document.apply_update(&merged_update).await;
     let outcome = match result {
         Err(crate::sync::SyncError::Update(yrs::error::UpdateError::InvalidParent(..))) => {
             "invalid-parent"
@@ -369,28 +419,63 @@ async fn rejects_unapplicable_updates(pool: AnyPool) -> TestResult {
         Err(error) => return Err(error.into()),
         Ok(()) => return Err("invalid update was applied".into()),
     };
-    let stored_updates = count_updates(&pool, "invalid-update-document").await?;
+    let partially_applied = Doc::new();
+    partially_applied
+        .transact_mut()
+        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    let partial_contents = document_contents(&partially_applied);
+    document.apply_update(&dependent_update).await?;
+    let stored_updates = count_updates(&pool, "partial-update-document").await?;
 
     let restored_service = SyncService::new(pool.clone())?;
     let restored = restored_service
-        .open_document("invalid-update-document")
+        .open_document("partial-update-document")
         .await?;
     let restored_doc = Doc::new();
     restored_doc
         .transact_mut()
         .apply_update(Update::decode_v1(&restored.encode_state().await)?)?;
-    let contents = restored_doc
-        .get_or_insert_array("items")
-        .to_json(&restored_doc.transact());
-    let restored_updates = count_updates(&pool, "invalid-update-document").await?;
+    let restored_contents = document_contents(&restored_doc);
+    let compacted_updates = count_updates(&pool, "partial-update-document").await?;
+
+    let compacted_service = SyncService::new(pool.clone())?;
+    let compacted = compacted_service
+        .open_document("partial-update-document")
+        .await?;
+    let compacted_doc = Doc::new();
+    compacted_doc
+        .transact_mut()
+        .apply_update(Update::decode_v1(&compacted.encode_state().await)?)?;
+    let compacted_contents = document_contents(&compacted_doc);
+    let final_updates = count_updates(&pool, "partial-update-document").await?;
     server.task.abort();
 
     assert_eq!(
-        (outcome, stored_updates, contents, restored_updates),
+        (
+            outcome,
+            partial_contents,
+            stored_updates,
+            restored_contents,
+            compacted_updates,
+            compacted_contents,
+            final_updates,
+        ),
         (
             "invalid-parent",
+            (
+                "first".to_owned(),
+                yrs::Any::Array(vec![yrs::Any::from("scalar")].into()),
+            ),
+            3,
+            (
+                "first second".to_owned(),
+                yrs::Any::Array(vec![yrs::Any::from("scalar")].into()),
+            ),
             1,
-            yrs::Any::Array(vec![yrs::Any::from("scalar")].into()),
+            (
+                "first second".to_owned(),
+                yrs::Any::Array(vec![yrs::Any::from("scalar")].into()),
+            ),
             1,
         ),
     );
@@ -406,6 +491,27 @@ async fn does_not_store_empty_updates(pool: AnyPool) -> TestResult {
     server.task.abort();
 
     assert_eq!(updates, 0);
+    Ok(())
+}
+
+async fn does_not_store_repeated_deletions(pool: AnyPool) -> TestResult {
+    let server = start_server(pool.clone()).await?;
+    let doc = Doc::with_client_id(90);
+    let text = doc.get_or_insert_text("body");
+    text.insert(&mut doc.transact_mut(), 0, "gone");
+    text.remove_range(&mut doc.transact_mut(), 0, 4);
+
+    let mut update_counts = Vec::new();
+    for _ in 0..3 {
+        reconnect_existing_doc(&server, "deleted-document", &doc).await?;
+        update_counts.push(count_updates(&pool, "deleted-document").await?);
+    }
+    server.task.abort();
+
+    assert_eq!(
+        (update_counts, text_value(&doc)),
+        (vec![1, 1, 1], String::new())
+    );
     Ok(())
 }
 
@@ -488,15 +594,27 @@ async fn does_not_persist_empty_updates_over_sqlite(pool: SqlitePool) -> TestRes
 }
 
 #[sqlx::test]
-async fn removes_unapplicable_updates_over_postgres(pool: PgPool) -> TestResult {
+async fn skips_unapplicable_updates_over_postgres(pool: PgPool) -> TestResult {
     let url = pool.connect_options().to_url_lossy().to_string();
-    rejects_unapplicable_updates(any_pool(&url).await?).await
+    retains_partially_applied_updates(any_pool(&url).await?).await
 }
 
 #[sqlx::test]
-async fn removes_unapplicable_updates_over_sqlite(pool: SqlitePool) -> TestResult {
+async fn skips_unapplicable_updates_over_sqlite(pool: SqlitePool) -> TestResult {
     let url = pool.connect_options().to_url_lossy().to_string();
-    rejects_unapplicable_updates(any_pool(&url).await?).await
+    retains_partially_applied_updates(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn does_not_persist_repeated_deletions_over_postgres(pool: PgPool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    does_not_store_repeated_deletions(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn does_not_persist_repeated_deletions_over_sqlite(pool: SqlitePool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    does_not_store_repeated_deletions(any_pool(&url).await?).await
 }
 
 #[sqlx::test]

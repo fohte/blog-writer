@@ -14,10 +14,6 @@ pub(super) enum DatabaseError {
     Unsupported(String),
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
-    #[error(transparent)]
-    Yrs(#[from] yrs::error::UpdateError),
-    #[error(transparent)]
-    Decode(#[from] yrs::encoding::read::Error),
 }
 
 impl DatabaseKind {
@@ -33,10 +29,10 @@ impl DatabaseKind {
     fn select_updates(self) -> &'static str {
         match self {
             Self::Postgres => {
-                "SELECT update_data FROM sync_updates WHERE doc_id = $1 ORDER BY update_id"
+                "SELECT update_id, update_data FROM sync_updates WHERE doc_id = $1 ORDER BY update_id"
             }
             Self::Sqlite => {
-                "SELECT update_data FROM sync_updates WHERE doc_id = ?1 ORDER BY update_id"
+                "SELECT update_id, update_data FROM sync_updates WHERE doc_id = ?1 ORDER BY update_id"
             }
         }
     }
@@ -50,19 +46,8 @@ impl DatabaseKind {
 
     fn insert_update(self) -> &'static str {
         match self {
-            Self::Postgres => {
-                "INSERT INTO sync_updates (doc_id, update_data) VALUES ($1, $2) RETURNING update_id"
-            }
-            Self::Sqlite => {
-                "INSERT INTO sync_updates (doc_id, update_data) VALUES (?1, ?2) RETURNING update_id"
-            }
-        }
-    }
-
-    fn delete_update(self) -> &'static str {
-        match self {
-            Self::Postgres => "DELETE FROM sync_updates WHERE update_id = $1",
-            Self::Sqlite => "DELETE FROM sync_updates WHERE update_id = ?1",
+            Self::Postgres => "INSERT INTO sync_updates (doc_id, update_data) VALUES ($1, $2)",
+            Self::Sqlite => "INSERT INTO sync_updates (doc_id, update_data) VALUES (?1, ?2)",
         }
     }
 }
@@ -79,9 +64,18 @@ pub(super) async fn load_and_compact(
         .await?;
     let doc = Doc::new();
     for row in &rows {
-        let update = row.try_get::<Vec<u8>, _>(0)?;
-        doc.transact_mut()
-            .apply_update(Update::decode_v1(&update)?)?;
+        let update_id = row.try_get::<i64, _>(0)?;
+        let update_data = row.try_get::<Vec<u8>, _>(1)?;
+        match Update::decode_v1(&update_data) {
+            Ok(update) => {
+                if let Err(error) = doc.transact_mut().apply_update(update) {
+                    tracing::warn!(doc_id, update_id, %error, "skipping unappliable synchronization update");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(doc_id, update_id, %error, "skipping undecodable synchronization update");
+            }
+        }
     }
 
     if !rows.is_empty() {
@@ -108,22 +102,10 @@ pub(super) async fn append_update(
     kind: DatabaseKind,
     doc_id: &str,
     update: &[u8],
-) -> Result<i64, DatabaseError> {
-    let row = sqlx::query(kind.insert_update())
+) -> Result<(), DatabaseError> {
+    sqlx::query(kind.insert_update())
         .bind(doc_id)
         .bind(update)
-        .fetch_one(pool)
-        .await?;
-    Ok(row.try_get("update_id")?)
-}
-
-pub(super) async fn delete_update(
-    pool: &AnyPool,
-    kind: DatabaseKind,
-    update_id: i64,
-) -> Result<(), DatabaseError> {
-    sqlx::query(kind.delete_update())
-        .bind(update_id)
         .execute(pool)
         .await?;
     Ok(())
