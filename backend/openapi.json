@@ -225,6 +225,23 @@
         }
       }
     },
+    "/api/llm/status": {
+      "get": {
+        "operationId": "get_llm_status",
+        "responses": {
+          "200": {
+            "description": "Configured LLM provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/ogp": {
       "post": {
         "operationId": "fetch_ogp",
@@ -335,6 +352,55 @@
           }
         }
       },
+      "LlmErrorPayload": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "LlmEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {},
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LlmErrorPayload"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "LlmStatusResponse": {
+        "type": "object",
+        "required": ["provider", "locked"],
+        "properties": {
+          "locked": {
+            "type": "boolean"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderName"
+          }
+        }
+      },
       "OgpResponse": {
         "type": "object",
         "required": ["available", "final_url", "title", "description", "image"],
@@ -355,6 +421,10 @@
             "type": ["string", "null"]
           }
         }
+      },
+      "ProviderName": {
+        "type": "string",
+        "enum": ["claude_code"]
       },
       "PublishArticleRequest": {
         "type": "object",

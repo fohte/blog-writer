@@ -52,6 +52,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/llm/status': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['get_llm_status']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/ogp': {
     parameters: {
       query?: never
@@ -95,6 +111,24 @@ export interface components {
     HealthResponse: {
       status: string
     }
+    LlmErrorPayload: {
+      message: string
+    }
+    LlmEvent:
+      | {
+          data: unknown
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['LlmErrorPayload']
+          /** @enum {string} */
+          event: 'error'
+        }
+    LlmStatusResponse: {
+      locked: boolean
+      provider: components['schemas']['ProviderName']
+    }
     OgpResponse: {
       available: boolean
       description: string | null
@@ -102,6 +136,8 @@ export interface components {
       image: string | null
       title: string | null
     }
+    /** @enum {string} */
+    ProviderName: 'claude_code'
     PublishArticleRequest: {
       content: string
       sha?: string | null
@@ -294,6 +330,26 @@ export interface operations {
         }
         content: {
           'application/json': components['schemas']['HealthResponse']
+        }
+      }
+    }
+  }
+  get_llm_status: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Configured LLM provider */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['LlmStatusResponse']
         }
       }
     }

@@ -85,6 +85,7 @@ mod tests {
 
     use crate::{
         app::AppState,
+        llm::LlmState,
         ogp::{FetchOgpRequest, router},
         safe_fetch::{FetchResponse, SafeFetchError, SafeFetchFuture, SafeFetchService},
     };
@@ -101,6 +102,7 @@ mod tests {
     fn test_state(response: Option<FetchResponse>) -> AppState {
         AppState {
             export: None,
+            llm: LlmState::default(),
             database: None,
             safe_fetch: Arc::new(TestFetcher(response)),
         }
