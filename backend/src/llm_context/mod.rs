@@ -26,11 +26,8 @@ pub struct ContextInput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Selects the article blocks included around the requested targets.
 pub enum BlockScope {
-    /// Include this many blocks before and after each target block.
     AroundTargets { before: usize, after: usize },
-    /// Include every article block.
     FullArticle,
 }
 
@@ -421,7 +418,7 @@ mod tests {
           引用: Changes take effect after saving.
         - [s2] 再起動が必要な場合がある
     "};
-    const MULTIPLE_TARGET_BLOCK_IDS: &[&str] = &["intro-id", "ending-id"];
+    const MULTIPLE_TARGET_BLOCK_IDS: &[&str] = &["ending-id", "intro-id"];
     const MULTIPLE_TARGET_PROMPT: &str = indoc! {"
         記事の前提
         - 読者: 新しい利用者
