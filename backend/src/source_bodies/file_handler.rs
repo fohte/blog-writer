@@ -12,7 +12,7 @@ use crate::{
     error::{AppError, ErrorResponse},
 };
 
-use super::{file_import, storage};
+use super::{file_import, handler};
 
 const MAX_UPLOAD_SIZE: usize = 25 * 1024 * 1024;
 
@@ -61,10 +61,7 @@ async fn import_file(
     Path((article_id, source_id)): Path<(String, String)>,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<Json<ImportFileResponse>, AppError> {
-    let pool = state
-        .database
-        .as_ref()
-        .ok_or(AppError::SourceBodyStorageUnavailable)?;
+    let pool = handler::database(&state)?;
     let mut multipart = multipart.map_err(|error| multipart_error(error.status()))?;
     let mut uploaded_file = None;
 
@@ -117,12 +114,7 @@ async fn import_file(
         }
     })?;
 
-    storage::upsert(pool, &source_id, &article_id, &body)
-        .await
-        .map_err(|error| {
-            tracing::error!(error = %error, "source body storage failed");
-            AppError::Internal("Source body storage failed".to_owned())
-        })?;
+    handler::store_body(pool, &source_id, &article_id, &body).await?;
 
     Ok(Json(ImportFileResponse {
         source_id,
@@ -169,10 +161,12 @@ fn multipart_error(status: StatusCode) -> AppError {
 #[cfg(test)]
 mod tests {
     use axum::{Router, body::Body, http::Request};
+    use indoc::indoc;
     use serde_json::{Value, json};
     use sqlx::{AnyPool, ConnectOptions, postgres::PgPool, sqlite::SqlitePool};
     use tower::ServiceExt;
 
+    use super::MAX_UPLOAD_SIZE;
     use crate::{app::AppState, db::initialize, source_bodies::router};
 
     const FILE_BOUNDARY: &str = "upload-boundary";
@@ -192,10 +186,26 @@ mod tests {
     async fn verify_file_import(database_url: &str) -> Result<(), Box<dyn std::error::Error>> {
         let pool = initialize(Some(database_url)).await?;
         let api = test_api(pool);
+        let markdown_body = indoc! {"
+            # 仮の資料
+            本文
+        "};
         let actual = vec![
             call_json(
                 api.clone(),
-                upload_request("brief.md", "text/markdown", "# 仮の資料\n本文".as_bytes())?,
+                upload_request("brief.md", "text/markdown", markdown_body.as_bytes())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                upload_request("broken.pdf", "application/pdf", b"not a PDF")?,
             )
             .await?,
             call_json(
@@ -239,7 +249,19 @@ mod tests {
                     json!({
                         "source_id": "source-test",
                         "article_id": "article-test",
-                        "body": "# 仮の資料\n本文"
+                        "body": markdown_body
+                    })
+                ),
+                (
+                    422,
+                    json!({"error": "Readable source text could not be extracted"})
+                ),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-test",
+                        "body": markdown_body
                     })
                 ),
                 (
@@ -259,6 +281,67 @@ mod tests {
                     })
                 ),
             ]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_json_errors_for_invalid_and_oversized_uploads()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let pool = initialize(Some("sqlite::memory:")).await?;
+        let api = test_api(pool);
+        let oversized_body = vec![b'x'; MAX_UPLOAD_SIZE + 1];
+        let actual = vec![
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-test/file")
+                    .header(
+                        "content-type",
+                        "multipart/form-data; boundary=upload-boundary",
+                    )
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api,
+                upload_request("large.md", "text/markdown", &oversized_body)?,
+            )
+            .await?,
+        ];
+
+        assert_eq!(
+            actual,
+            vec![
+                (400, json!({"error": "Invalid file upload"})),
+                (
+                    413,
+                    json!({"error": "Uploaded file exceeds the size limit"})
+                ),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_service_unavailable_without_source_body_storage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let api = router().split_for_parts().0.with_state(AppState::default());
+        let actual = call_json(
+            api,
+            upload_request("brief.md", "text/markdown", b"A short source body")?,
+        )
+        .await?;
+
+        assert_eq!(
+            actual,
+            (
+                503,
+                json!({"error": "Source body storage is not configured"})
+            )
         );
 
         Ok(())

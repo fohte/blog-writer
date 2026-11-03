@@ -180,14 +180,14 @@ pub async fn delete_body(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn database(state: &AppState) -> Result<&sqlx::AnyPool, AppError> {
+pub(super) fn database(state: &AppState) -> Result<&sqlx::AnyPool, AppError> {
     state
         .database
         .as_ref()
         .ok_or(AppError::SourceBodyStorageUnavailable)
 }
 
-async fn store_body(
+pub(super) async fn store_body(
     pool: &sqlx::AnyPool,
     source_id: &str,
     article_id: &str,
@@ -198,7 +198,7 @@ async fn store_body(
         .map_err(storage_error)
 }
 
-fn storage_error(error: sqlx::Error) -> AppError {
+pub(super) fn storage_error(error: sqlx::Error) -> AppError {
     tracing::error!(error = %error, "source body storage failed");
     AppError::Internal("Source body storage failed".to_owned())
 }
