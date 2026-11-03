@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod error;
+mod export;
 mod frontend;
 pub mod health;
 pub mod host_origin;
@@ -16,7 +17,7 @@ pub fn dump_openapi() -> Result<String, serde_json::Error> {
 }
 
 pub async fn serve(config: Config) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let state = AppState::default();
+    let state = AppState::new(config.export);
     let host_origin_policy =
         host_origin::HostOriginPolicy::new(config.allowed_hosts, config.allowed_origins);
     let app = app::router(state, host_origin_policy);

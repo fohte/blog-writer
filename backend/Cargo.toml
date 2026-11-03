@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+base64 = "=0.22.1"
 axum = "=0.8.9"
+reqwest = { version = "=0.13.5", features = ["json"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 rust-embed = { version = "=8.13.0", features = ["mime-guess"] }
@@ -17,7 +19,9 @@ utoipa-axum = "=0.3.0"
 
 [dev-dependencies]
 rstest = "=0.26.1"
+indoc = "=2.0.6"
 tower = { version = "=0.5.3", features = ["util"] }
+wiremock = "=0.6.5"
 
 [lints.clippy]
 allow_attributes = "warn"

@@ -7,6 +7,17 @@
 - `BACKEND_BIND_ADDR` sets the listening address. It defaults to `127.0.0.1:3000`.
 - `BACKEND_ALLOWED_HOSTS` sets comma-separated Host values, including ports when needed.
 - `BACKEND_ALLOWED_ORIGINS` sets comma-separated origins in `scheme://host[:port]` form.
+- `BLOG_EXPORT_DESTINATIONS` enables article export when it contains a non-empty JSON array. Each destination has an `id`, `repository` (`owner/repo`), `base_branch`, `path_template` with one `{slug}`, `format` (`markdown` or `mdx`), and `frontmatter_template`.
+- `BLOG_EXPORT_OCTO_STS_URL`, `BLOG_EXPORT_OCTO_STS_IDENTITY`, and `BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH` configure the per-request GitHub App token exchange. All three are required when destinations are configured.
+
+```sh
+BLOG_EXPORT_DESTINATIONS='[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}"}]'
+BLOG_EXPORT_OCTO_STS_URL=https://sts.example
+BLOG_EXPORT_OCTO_STS_IDENTITY=writer-export
+BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH=/var/run/secrets/service-token
+```
+
+When destinations are unset, export endpoints return `503 Service Unavailable`.
 
 The Vite development proxy preserves the browser's `Host` and `Origin` headers. Add the dev server's host to `BACKEND_ALLOWED_HOSTS` and its origin to `BACKEND_ALLOWED_ORIGINS` to allow proxied HTTP and WebSocket requests. This example uses fictional backend and dev-server hosts:
 

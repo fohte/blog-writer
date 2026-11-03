@@ -14,6 +14,8 @@ pub enum AppError {
     NotFound,
     #[error("Method Not Allowed")]
     MethodNotAllowed,
+    #[error("Export publishing is not configured")]
+    ExportUnavailable,
     #[error("{message}")]
     Client { status: StatusCode, message: String },
     #[error("{0}")]
@@ -64,6 +66,10 @@ impl IntoResponse for AppError {
             Self::MethodNotAllowed => (
                 StatusCode::METHOD_NOT_ALLOWED,
                 "Method Not Allowed".to_owned(),
+            ),
+            Self::ExportUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Export publishing is not configured".to_owned(),
             ),
             Self::Client { status, message } => (status, message),
             Self::Internal(message) => {
