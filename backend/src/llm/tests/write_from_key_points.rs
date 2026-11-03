@@ -32,8 +32,12 @@ impl LlmProvider for FixedProvider {
 }
 
 fn source(points: Vec<Value>) -> Value {
+    source_named("架空資料", points)
+}
+
+fn source_named(title: &str, points: Vec<Value>) -> Value {
     json!({
-        "title": "架空資料",
+        "title": title,
         "url": "https://example.invalid/article",
         "fetched_at": "2026-10-01",
         "summary": "架空の概要",
@@ -51,6 +55,10 @@ fn point(id: String, heading_id: &str) -> Value {
 }
 
 fn request(points: Vec<Value>) -> Value {
+    request_with_sources(vec![source(points)])
+}
+
+fn request_with_sources(sources: Vec<Value>) -> Value {
     json!({
         "premise": {
             "audience": "架空の読者",
@@ -75,7 +83,7 @@ fn request(points: Vec<Value>) -> Value {
                 "markdown": "## 次の架空見出し"
             }
         ],
-        "sources": [source(points)]
+        "sources": sources
     })
 }
 
@@ -192,7 +200,7 @@ async fn translates_valid_aliases_and_discards_unknown_aliases()
 }
 
 #[tokio::test]
-async fn puts_target_heading_points_first_and_limits_context_to_fifty()
+async fn prioritizes_target_heading_points_when_selecting_at_most_fifty()
 -> Result<(), Box<dyn std::error::Error>> {
     let prompt = Arc::new(Mutex::new(None));
     let points = (1..=51)
@@ -220,29 +228,20 @@ async fn puts_target_heading_points_first_and_limits_context_to_fifty()
         .expect("prompt lock")
         .clone()
         .unwrap_or_default();
-    let first_point_position = captured_prompt
-        .find("[s1] 架空の要点")
-        .unwrap_or(usize::MAX);
-    let target_heading_position = captured_prompt
-        .find("調査対象見出し: ## 架空の見出し")
-        .unwrap_or(usize::MAX);
-    let other_heading_position = captured_prompt
-        .find("調査対象見出し: heading-other")
-        .unwrap_or(usize::MAX);
+    let target_heading_point_is_included =
+        captured_prompt.contains("調査対象見出し: ## 架空の見出し");
     let selected_point_count = captured_prompt.matches("- [s").count();
 
     assert_eq!(
         (
             response.0,
             response.1,
-            first_point_position < target_heading_position,
-            target_heading_position < other_heading_position,
+            target_heading_point_is_included,
             selected_point_count
         ),
         (
             200,
             json!({"data": {"sentences": []}, "event": "result"}),
-            true,
             true,
             50
         )
@@ -271,6 +270,85 @@ async fn returns_bad_request_without_calling_the_provider_for_an_unknown_heading
         (
             (400, json!({"error": "Target heading does not exist"})),
             None
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn groups_prioritized_key_points_by_source_in_the_prompt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let prompt = Arc::new(Mutex::new(None));
+    let state = LlmState::with_provider(
+        FixedProvider {
+            output: json!({"sentences": []}),
+            prompt: prompt.clone(),
+        },
+        Duration::from_secs(1),
+    );
+    let actual = post_request(
+        request_with_sources(vec![
+            source(vec![
+                point("point-a-target".to_owned(), "heading-target"),
+                point("point-a-other".to_owned(), "heading-other"),
+            ]),
+            source_named(
+                "別の架空資料",
+                vec![point("point-b-target".to_owned(), "heading-target")],
+            ),
+        ]),
+        state,
+    )
+    .await?;
+    let captured_prompt = prompt.lock().expect("prompt lock").clone();
+
+    assert_eq!(
+        (actual, captured_prompt),
+        (
+            (200, json!({"data": {"sentences": []}, "event": "result"})),
+            Some(indoc! {"
+                記事の前提
+                - 読者: 架空の読者
+                - 目的: 説明する
+                - 主張: 架空の主張
+
+                見出し一覧
+                - ## 架空の見出し
+                - ## 次の架空見出し
+
+                対象と前後の本文ブロック
+
+                [b1] 対象 (種類: paragraph)
+                架空の既存文です。
+
+                参考資料
+
+                資料 1
+                タイトル: 架空資料
+                URL: https://example.invalid/article
+                要約: 架空の概要
+                取得日: 2026-10-01
+                要点:
+                - [s1] 架空の要点
+                  調査対象見出し: ## 架空の見出し
+                - [s2] 架空の要点
+                  調査対象見出し: heading-other
+
+                資料 2
+                タイトル: 別の架空資料
+                URL: https://example.invalid/article
+                要約: 架空の概要
+                取得日: 2026-10-01
+                要点:
+                - [s3] 架空の要点
+                  調査対象見出し: ## 架空の見出し
+
+                執筆指示
+                「## 架空の見出し」の下に置く文を書いてください。
+                文を分けて返し、各文が事実を述べるなら is_factual を true にしてください。
+                参考要点に基づく事実の文では、根拠にした要点の別名を key_point_aliases に列挙してください。
+                つなぎや意見の文は is_factual を false にし、key_point_aliases は空にしてください。
+            "}.to_owned())
         )
     );
     Ok(())

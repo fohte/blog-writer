@@ -234,6 +234,7 @@ fn target_section_block_ids(
 
 struct SelectedPoint {
     source_index: usize,
+    point_index: usize,
     point: ReferencePointRequest,
 }
 
@@ -244,9 +245,10 @@ fn prioritize_key_points(
     let mut target_points = Vec::new();
     let mut other_points = Vec::new();
     for (source_index, source) in sources.iter().enumerate() {
-        for point in &source.key_points {
+        for (point_index, point) in source.key_points.iter().enumerate() {
             let selected = SelectedPoint {
                 source_index,
+                point_index,
                 point: point.clone(),
             };
             if point.researched_heading_id == target_heading_id {
@@ -271,34 +273,39 @@ fn ordered_sources(
         .filter(|block| block.kind == HEADING_BLOCK_KIND)
         .map(|block| (block.id.as_str(), block.markdown.as_str()))
         .collect();
-    let mut ordered = Vec::new();
-    let mut last_source_index = None;
+    let mut points_by_source = std::collections::BTreeMap::<usize, Vec<SelectedPoint>>::new();
     for selected in points {
-        let source = &sources[selected.source_index];
-        if last_source_index != Some(selected.source_index) {
-            ordered.push(ReferenceSource {
+        points_by_source
+            .entry(selected.source_index)
+            .or_default()
+            .push(selected);
+    }
+    points_by_source
+        .into_iter()
+        .map(|(source_index, mut selected_points)| {
+            selected_points.sort_by_key(|selected| selected.point_index);
+            let source = &sources[source_index];
+            ReferenceSource {
                 title: Some(source.title.clone()),
                 url: Some(source.url.clone()),
                 summary: source.summary.clone(),
                 checked_at: source.fetched_at.clone(),
-                key_points: Vec::new(),
-            });
-        }
-        last_source_index = Some(selected.source_index);
-        if let Some(source) = ordered.last_mut() {
-            source.key_points.push(ReferencePoint {
-                id: selected.point.id,
-                heading: Some(
-                    headings
-                        .get(selected.point.researched_heading_id.as_str())
-                        .copied()
-                        .unwrap_or(&selected.point.researched_heading_id)
-                        .to_owned(),
-                ),
-                text: selected.point.text,
-                quote: selected.point.quote,
-            });
-        }
-    }
-    ordered
+                key_points: selected_points
+                    .into_iter()
+                    .map(|selected| ReferencePoint {
+                        id: selected.point.id,
+                        heading: Some(
+                            headings
+                                .get(selected.point.researched_heading_id.as_str())
+                                .copied()
+                                .unwrap_or(&selected.point.researched_heading_id)
+                                .to_owned(),
+                        ),
+                        text: selected.point.text,
+                        quote: selected.point.quote,
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
 }
