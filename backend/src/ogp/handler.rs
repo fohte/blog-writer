@@ -177,6 +177,11 @@ mod tests {
         "<meta charset=\"EUC-JP\">"
     )]
     #[case::meta_charset("EUC-JP", Some("text/html"), "<meta charset=\"EUC-JP\">")]
+    #[case::legacy_meta_http_equiv(
+        "Shift_JIS",
+        Some("text/html"),
+        "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=Shift_JIS\">"
+    )]
     #[test_attr(tokio::test)]
     async fn decodes_legacy_html_charsets(
         #[case] label: &str,
@@ -190,6 +195,37 @@ mod tests {
             final_url: reqwest::Url::parse("http://site.test/article")?,
             body,
             content_type: content_type.map(str::to_owned),
+        }));
+
+        let actual = post_ogp(state, "http://site.test/article").await?;
+
+        assert_eq!(
+            actual,
+            (
+                200,
+                json!({
+                    "available": true,
+                    "final_url": "http://site.test/article",
+                    "title": "日本語の記事",
+                    "description": null,
+                    "image": null
+                })
+            )
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn prefers_a_byte_order_mark_over_the_response_charset()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut body = vec![0xef, 0xbb, 0xbf];
+        body.extend_from_slice(b"<meta property=\"og:title\" content=\"");
+        body.extend_from_slice("日本語の記事".as_bytes());
+        body.extend_from_slice(b"\">");
+        let state = test_state(Some(FetchResponse {
+            final_url: reqwest::Url::parse("http://site.test/article")?,
+            body,
+            content_type: Some("text/html; charset=Shift_JIS".to_owned()),
         }));
 
         let actual = post_ogp(state, "http://site.test/article").await?;

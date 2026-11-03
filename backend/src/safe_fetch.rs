@@ -104,6 +104,7 @@ pub(crate) trait SafeFetchService: Send + Sync {
 pub struct SafeFetcher {
     resolver: Arc<dyn HostResolver>,
     address_policy: AddressPolicy,
+    total_timeout: Duration,
 }
 
 impl SafeFetcher {
@@ -111,19 +112,12 @@ impl SafeFetcher {
         Self {
             resolver: Arc::new(SystemHostResolver),
             address_policy: Arc::new(is_public_address),
+            total_timeout: TOTAL_TIMEOUT,
         }
     }
 
     pub async fn fetch(&self, url: &str) -> Result<FetchResponse, SafeFetchError> {
-        self.fetch_with_timeout(url, TOTAL_TIMEOUT).await
-    }
-
-    async fn fetch_with_timeout(
-        &self,
-        url: &str,
-        timeout: Duration,
-    ) -> Result<FetchResponse, SafeFetchError> {
-        tokio::time::timeout(timeout, self.fetch_inner(url))
+        tokio::time::timeout(self.total_timeout, self.fetch_inner(url))
             .await
             .map_err(|_| SafeFetchError::Timeout)?
     }
@@ -136,7 +130,14 @@ impl SafeFetcher {
         Self {
             resolver,
             address_policy,
+            total_timeout: TOTAL_TIMEOUT,
         }
+    }
+
+    #[cfg(test)]
+    fn with_timeout(mut self, total_timeout: Duration) -> Self {
+        self.total_timeout = total_timeout;
+        self
     }
 
     async fn fetch_inner(&self, url: &str) -> Result<FetchResponse, SafeFetchError> {
@@ -354,7 +355,7 @@ mod tests {
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
         sync::Arc,
         thread::JoinHandle,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use rstest::rstest;
@@ -412,12 +413,32 @@ mod tests {
 
     fn spawn_response_server(
         response: Vec<u8>,
-        delay: Duration,
     ) -> Result<ResponseServer, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
         let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept()?;
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error)
+                        if error.kind() == io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "response server did not receive a request",
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+            stream.set_write_timeout(Some(Duration::from_secs(2)))?;
             let mut request = Vec::new();
             let mut buffer = [0; 1024];
             while !request.windows(4).any(|window| window == [13, 10, 13, 10]) {
@@ -427,7 +448,6 @@ mod tests {
                 }
                 request.extend_from_slice(&buffer[..read]);
             }
-            std::thread::sleep(delay);
             let _ = stream.write_all(&response);
             Ok(())
         });
@@ -478,19 +498,14 @@ mod tests {
     #[tokio::test]
     async fn retains_the_response_content_type() -> Result<(), Box<dyn std::error::Error>> {
         let body = b"<title>Sample</title>";
-        let content_length = format!("Content-Length: {}", body.len());
-        let mut response = Vec::new();
-        append_http_headers(
-            &mut response,
-            &[
-                "HTTP/1.1 200 OK",
-                "Content-Type: text/html; charset=utf-8",
-                &content_length,
-                "Connection: close",
-            ],
-        );
-        response.extend_from_slice(body);
-        let (address, handle) = spawn_response_server(response, Duration::ZERO)?;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(body.to_vec(), "text/html; charset=utf-8"),
+            )
+            .mount(&server)
+            .await;
+        let address = server_address(&server)?;
         let fetcher = test_fetcher([("site.test".to_owned(), vec![address])], |address| {
             address.is_loopback()
         });
@@ -498,9 +513,6 @@ mod tests {
 
         let actual = fetcher.fetch(&url).await?;
 
-        handle
-            .join()
-            .map_err(|_| io::Error::other("response server thread panicked"))??;
         assert_eq!(
             actual,
             FetchResponse {
@@ -610,7 +622,7 @@ mod tests {
         response.extend_from_slice(&[13, 10]);
         response.extend_from_slice(b"0");
         response.extend_from_slice(&[13, 10, 13, 10]);
-        let (address, handle) = spawn_response_server(response, Duration::ZERO)?;
+        let (address, handle) = spawn_response_server(response)?;
         let fetcher = test_fetcher([("site.test".to_owned(), vec![address])], |address| {
             address.is_loopback()
         });
@@ -682,46 +694,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_urls_with_userinfo() {
-        let actual = SafeFetcher::new()
-            .fetch("http://user:password@site.test/article")
-            .await;
-
-        assert_eq!(error_code(actual), Err("credentials_not_allowed"));
-    }
-
-    #[tokio::test]
     async fn enforces_a_total_fetch_timeout() {
         let fetcher =
-            SafeFetcher::with_resolver_and_policy(Arc::new(SlowResolver), Arc::new(|_| true));
+            SafeFetcher::with_resolver_and_policy(Arc::new(SlowResolver), Arc::new(|_| true))
+                .with_timeout(Duration::from_millis(10));
 
-        let actual = fetcher
-            .fetch_with_timeout("http://site.test/article", Duration::from_millis(10))
-            .await;
+        let actual = fetcher.fetch("http://site.test/article").await;
 
         assert_eq!(error_code(actual), Err("timeout"));
     }
 
     #[rstest]
-    #[case::ipv4_loopback("http://127.0.0.1/")]
-    #[case::ipv4_private("http://10.2.3.4/")]
-    #[case::carrier_grade_nat("http://100.64.0.1/")]
-    #[case::link_local("http://169.254.169.254/")]
-    #[case::ipv6_ula("http://[fd00::1]/")]
-    #[case::ipv6_loopback("http://[::1]/")]
-    #[case::ipv6_link_local("http://[fe80::1]/")]
-    #[case::ipv4_mapped_ipv6("http://[::ffff:127.0.0.1]/")]
+    #[case::ipv4_loopback("http://127.0.0.1/", "disallowed_address")]
+    #[case::ipv4_private("http://10.2.3.4/", "disallowed_address")]
+    #[case::carrier_grade_nat("http://100.64.0.1/", "disallowed_address")]
+    #[case::link_local("http://169.254.169.254/", "disallowed_address")]
+    #[case::ipv6_ula("http://[fd00::1]/", "disallowed_address")]
+    #[case::ipv6_loopback("http://[::1]/", "disallowed_address")]
+    #[case::ipv6_link_local("http://[fe80::1]/", "disallowed_address")]
+    #[case::ipv4_mapped_ipv6("http://[::ffff:127.0.0.1]/", "disallowed_address")]
+    #[case::non_http_scheme("gopher://site.test/article", "unsupported_scheme")]
+    #[case::userinfo("http://user:password@site.test/article", "credentials_not_allowed")]
     #[test_attr(tokio::test)]
-    async fn rejects_internal_ip_literals(#[case] url: &str) {
+    async fn rejects_unsafe_urls(#[case] url: &str, #[case] expected: &'static str) {
         let actual = SafeFetcher::new().fetch(url).await;
 
-        assert_eq!(error_code(actual), Err("disallowed_address"));
-    }
-
-    #[tokio::test]
-    async fn rejects_non_http_schemes() {
-        let actual = SafeFetcher::new().fetch("file:///etc/passwd").await;
-
-        assert_eq!(error_code(actual), Err("unsupported_scheme"));
+        assert_eq!(error_code(actual), Err(expected));
     }
 }
