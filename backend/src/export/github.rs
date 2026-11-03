@@ -413,7 +413,7 @@ impl ExportService {
             .send_github(self.github_request(Method::PUT, url, token).json(&body))
             .await?;
         if response.status() == StatusCode::CONFLICT
-            || response.status() == StatusCode::UNPROCESSABLE_ENTITY
+            || (response.status() == StatusCode::UNPROCESSABLE_ENTITY && request.sha.is_none())
             || (response.status() == StatusCode::NOT_FOUND && request.sha.is_some())
         {
             return Err(ExportError::RemoteConflict);
@@ -504,6 +504,7 @@ mod tests {
     use super::{ArticleContent, ExportError, ExportService};
 
     const ARTICLE_ID: &str = "01f00000-0000-7000-8000-000000000001";
+    const ARTICLE_BRANCH: &str = "blog-writer/01f00000-0000-7000-8000-000000000001";
     const SLUG: &str = "sample-entry";
     const BODY: &str = indoc! {"
         ---
@@ -821,7 +822,6 @@ mod tests {
     #[rstest]
     #[case::sha_mismatch(409)]
     #[case::file_deleted(404)]
-    #[case::validation_conflict(422)]
     #[tokio::test]
     async fn returns_conflict_when_sha_is_stale_or_the_remote_file_is_missing(#[case] status: u16) {
         let fixture = fixture().await;
@@ -902,6 +902,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preserves_validation_failure_when_sha_is_present() {
+        let fixture = fixture().await;
+        mock_token_exchange(&fixture).await;
+        mock_pulls(&fixture, json!([])).await;
+        mock_base_reference_and_missing_article_branch(&fixture).await;
+        Mock::given(method("POST"))
+            .and(path("/repos/writer/notes/git/refs"))
+            .and(github_auth())
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&fixture.github)
+            .await;
+        mock_contents_commit(&fixture, Some("file-sha"), 422).await;
+        Mock::given(method("POST"))
+            .and(path("/repos/writer/notes/pulls"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&fixture.github)
+            .await;
+
+        let actual = fixture
+            .service
+            .publish_article(
+                &destination(),
+                ARTICLE_ID,
+                &publish_request(Some("file-sha")),
+            )
+            .await;
+
+        assert_eq!(actual, Err(ExportError::HttpStatus(422)));
+        fixture.github.verify().await;
+        fixture.octo_sts.verify().await;
+    }
+
+    #[tokio::test]
     async fn returns_none_when_the_file_does_not_exist() {
         let fixture = fixture().await;
         mock_token_exchange(&fixture).await;
@@ -938,25 +973,20 @@ mod tests {
     }
 
     #[rstest]
-    #[case::base_branch(json!([]), false, "file-sha")]
+    #[case::base_branch(json!([]), "main", "file-sha")]
     #[case::open_pull_request_branch(json!([{
         "html_url": "https://github.example/writer/notes/pull/12",
         "state": "open"
-    }]), true, "branch-file-sha")]
+    }]), ARTICLE_BRANCH, "branch-file-sha")]
     #[tokio::test]
     async fn reads_existing_file_content_and_sha(
         #[case] pulls: serde_json::Value,
-        #[case] use_pull_request_branch: bool,
+        #[case] reference: &str,
         #[case] expected_sha: &str,
     ) {
         let fixture = fixture().await;
         mock_token_exchange(&fixture).await;
         mock_pulls(&fixture, pulls).await;
-        let reference = if use_pull_request_branch {
-            format!("blog-writer/{ARTICLE_ID}")
-        } else {
-            "main".to_owned()
-        };
         Mock::given(method("GET"))
             .and(path(format!("/repos/writer/notes/contents/{FILE_PATH}")))
             .and(query_param("ref", reference))
@@ -986,50 +1016,65 @@ mod tests {
         fixture.octo_sts.verify().await;
     }
 
-    #[derive(Debug, Clone, Copy)]
-    enum InvalidInputCase {
-        ArticleId,
-        PathTraversalSlug,
-        NewlineSlug,
-        DotGithubSlug,
-        PercentEncodedSlashSlug,
+    #[rstest]
+    #[case::path_traversal("../secret")]
+    #[case::newline("bad\nslug")]
+    #[case::dot_github(".github")]
+    #[case::percent_encoded_slash("bad%2Fslug")]
+    #[tokio::test]
+    async fn rejects_invalid_slug_before_external_requests(#[case] slug: &str) {
+        let fixture = fixture().await;
+        let read_result = fixture
+            .service
+            .get_article_file(&destination(), ARTICLE_ID, slug)
+            .await
+            .map(|_| ());
+        let request = ArticleContent {
+            slug: slug.to_owned(),
+            content: BODY.to_owned(),
+            sha: None,
+        };
+        let publish_result = fixture
+            .service
+            .publish_article(&destination(), ARTICLE_ID, &request)
+            .await
+            .map(|_| ());
+        let actual = (
+            read_result,
+            publish_result,
+            fixture
+                .octo_sts
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .len(),
+            fixture
+                .github
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .len(),
+        );
+
+        assert_eq!(
+            actual,
+            (
+                Err(ExportError::InvalidInput),
+                Err(ExportError::InvalidInput),
+                0,
+                0
+            )
+        );
     }
 
-    #[rstest]
-    #[case::invalid_article_id(InvalidInputCase::ArticleId)]
-    #[case::path_traversal_slug(InvalidInputCase::PathTraversalSlug)]
-    #[case::newline_slug(InvalidInputCase::NewlineSlug)]
-    #[case::dot_github_slug(InvalidInputCase::DotGithubSlug)]
-    #[case::percent_encoded_slash_slug(InvalidInputCase::PercentEncodedSlashSlug)]
     #[tokio::test]
-    async fn rejects_invalid_input_before_external_requests(#[case] case: InvalidInputCase) {
+    async fn rejects_invalid_article_id_before_external_requests() {
         let fixture = fixture().await;
-        let slug = match case {
-            InvalidInputCase::PathTraversalSlug => Some("../secret".to_owned()),
-            InvalidInputCase::NewlineSlug => Some(format!("bad{}slug", char::from(10))),
-            InvalidInputCase::DotGithubSlug => Some(".github".to_owned()),
-            InvalidInputCase::PercentEncodedSlashSlug => Some("bad%2Fslug".to_owned()),
-            InvalidInputCase::ArticleId => None,
-        };
-        let result = match slug {
-            None => fixture
-                .service
-                .get_article_file(&destination(), "bad/id", SLUG)
-                .await
-                .map(|_| ()),
-            Some(slug) => {
-                let request = ArticleContent {
-                    slug,
-                    content: BODY.to_owned(),
-                    sha: None,
-                };
-                fixture
-                    .service
-                    .publish_article(&destination(), ARTICLE_ID, &request)
-                    .await
-                    .map(|_| ())
-            }
-        };
+        let result = fixture
+            .service
+            .get_article_file(&destination(), "bad/id", SLUG)
+            .await
+            .map(|_| ());
         let actual = (
             result,
             fixture

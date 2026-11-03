@@ -157,6 +157,13 @@ mod tests {
         Some("/var/run/token"),
         Err(ConfigError::InvalidExportDestinations)
     )]
+    #[case::empty_destination_list(
+        Some("[]"),
+        Some("https://sts.example"),
+        Some("writer-export"),
+        Some("/var/run/token"),
+        Err(ConfigError::InvalidExportDestinations)
+    )]
     #[case::duplicate_destination_id(
         Some(DUPLICATE_ID_DESTINATIONS),
         Some("https://sts.example"),

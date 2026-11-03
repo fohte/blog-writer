@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::{
     app::AppState,
@@ -24,8 +24,11 @@ pub struct DestinationResponse {
     pub frontmatter_template: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SlugQuery {
+    /// Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens.
+    #[param(pattern = "^[A-Za-z0-9][A-Za-z0-9._-]*$")]
     pub slug: String,
 }
 
@@ -39,6 +42,8 @@ pub struct ArticleFileResponse {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PublishArticleRequest {
+    /// Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens.
+    #[schema(pattern = "^[A-Za-z0-9][A-Za-z0-9._-]*$")]
     pub slug: String,
     pub content: String,
     pub sha: Option<String>,
@@ -76,7 +81,7 @@ pub async fn list_destinations(
     params(
         ("destination_id" = String, Path, description = "Configured export destination ID"),
         ("article_id" = String, Path, description = "Article ID"),
-        ("slug" = String, Query, description = "Destination file slug")
+        SlugQuery
     ),
     responses(
         (status = 200, description = "Current file contents, or null when the file does not exist", body = ArticleFileResponse),

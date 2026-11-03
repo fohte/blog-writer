@@ -79,6 +79,7 @@ export interface components {
     PublishArticleRequest: {
       content: string
       sha?: string | null
+      /** @description Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens. */
       slug: string
     }
     PublishArticleResponse: {
@@ -125,7 +126,7 @@ export interface operations {
   get_article_file: {
     parameters: {
       query: {
-        /** @description Destination file slug */
+        /** @description Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens. */
         slug: string
       }
       header?: never

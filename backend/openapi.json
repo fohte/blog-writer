@@ -61,10 +61,11 @@
           {
             "name": "slug",
             "in": "query",
-            "description": "Destination file slug",
+            "description": "Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
             }
           }
         ],
@@ -289,7 +290,9 @@
             "type": ["string", "null"]
           },
           "slug": {
-            "type": "string"
+            "type": "string",
+            "description": "Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens.",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
           }
         }
       },
