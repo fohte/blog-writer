@@ -297,6 +297,31 @@ async fn returns_an_error_event_for_claude_code_failures(
 }
 
 #[tokio::test]
+async fn returns_rate_limit_event_when_claude_code_closes_stdin_early() {
+    let directory = TempDir::new().expect("temporary directory is available");
+    let executable = fake_claude(
+        &directory,
+        indoc! {r#"
+            printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["rate limit reached"],"api_error_status":429,"structured_output":null}'
+        "#},
+    );
+    let expected = indoc! {r#"
+        event: error
+        data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
+
+    "#};
+    let actual = sse_body(
+        ClaudeCodeProvider::new(executable.into_os_string()),
+        "Return a concise structured response.",
+        &"x".repeat(1_000_000),
+        Duration::from_secs(5),
+    )
+    .await;
+
+    assert_eq!(parse_sse_body(&actual), parse_sse_body(expected));
+}
+
+#[tokio::test]
 async fn sends_keep_alive_comments_while_waiting_for_claude_code() {
     let directory = TempDir::new().expect("temporary directory is available");
     let executable = fake_claude(
