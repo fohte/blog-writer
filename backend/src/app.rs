@@ -272,6 +272,7 @@ mod tests {
                         path_template: "posts/{slug}.mdx".to_owned(),
                         format: ExportFormat::Mdx,
                         frontmatter_template: "title: {{ title }}".to_owned(),
+                        ogp_json_path: None,
                     }],
                     octo_sts_url: "https://sts.example".to_owned(),
                     octo_sts_identity: "writer-export".to_owned(),

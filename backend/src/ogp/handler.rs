@@ -47,9 +47,14 @@ pub async fn fetch_ogp(
     State(state): State<AppState>,
     ApiJson(request): ApiJson<FetchOgpRequest>,
 ) -> Json<OgpResponse> {
-    Json(response_for_fetch(
-        state.safe_fetch.fetch(&request.url).await,
-    ))
+    Json(fetch_metadata(state.safe_fetch.as_ref(), &request.url).await)
+}
+
+pub(crate) async fn fetch_metadata(
+    safe_fetch: &dyn crate::safe_fetch::SafeFetchService,
+    url: &str,
+) -> OgpResponse {
+    response_for_fetch(safe_fetch.fetch(url).await)
 }
 
 fn response_for_fetch(
