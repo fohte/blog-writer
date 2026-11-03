@@ -150,15 +150,29 @@ impl SyncDocument {
     pub async fn apply_update(&self, update: &[u8]) -> Result<(), SyncError> {
         let update_value = Update::decode_v1(update)?;
         let mut state = self.inner.state.lock().await;
-        if !state.has_new_information(&update_value)? {
+        if !state.has_new_information(&update_value) {
             return Ok(());
         }
         database::append_update(&self.inner.pool, self.inner.kind, &self.inner.id, update).await?;
-        state.apply_update(update_value)?;
+        let (result, partial_update) = state.apply_update(update_value);
+        match result {
+            Ok(()) => {
+                self.publish_update(update);
+                Ok(())
+            }
+            Err(error) => {
+                if let Some(update) = partial_update {
+                    self.publish_update(&update);
+                }
+                Err(error.into())
+            }
+        }
+    }
+
+    fn publish_update(&self, update: &[u8]) {
         let _ = self.inner.update_subscribers.send(update.to_vec());
         let message = protocol::encode_sync_update(update);
         let _ = self.inner.protocol_subscribers.send(message);
-        Ok(())
     }
 
     pub(super) async fn start_protocol(&self) -> Result<Vec<Vec<u8>>, SyncError> {

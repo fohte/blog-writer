@@ -1,24 +1,29 @@
 use yrs::{
-    ClientID, Doc, ReadTxn, Transact, Update,
+    ClientID, Doc, ID, IdSet, ReadTxn, Transact, Update,
     encoding::read::Cursor,
     sync::{
         Awareness, Message, Protocol, SyncMessage,
         protocol::{DefaultProtocol, MessageReader},
     },
     updates::{
-        decoder::{Decode, DecoderV1},
+        decoder::DecoderV1,
         encoder::{Encode, Encoder, EncoderV1},
     },
 };
 
 pub(super) struct DocumentState {
     awareness: Awareness,
+    known_insertions: IdSet,
+    known_deletions: IdSet,
 }
 
 impl DocumentState {
     pub(super) fn new(doc: Doc) -> Self {
+        let (known_insertions, known_deletions) = known_information(&doc);
         Self {
             awareness: Awareness::new(doc),
+            known_insertions,
+            known_deletions,
         }
     }
 
@@ -26,23 +31,33 @@ impl DocumentState {
         self.awareness.doc()
     }
 
-    pub(super) fn apply_update(&mut self, update: Update) -> Result<(), yrs::error::UpdateError> {
-        self.awareness.doc_mut().transact_mut().apply_update(update)
+    pub(super) fn apply_update(
+        &mut self,
+        update: Update,
+    ) -> (Result<(), yrs::error::UpdateError>, Option<Vec<u8>>) {
+        let insertions = update.insertions(true);
+        let deletions = update.delete_set().clone();
+        let mut transaction = self.awareness.doc_mut().transact_mut();
+        let result = transaction.apply_update(update);
+        let partial_update = if result.is_err() {
+            let insertions = transaction.insert_set().clone();
+            let deletions = transaction.delete_set().clone();
+            let changed = !insertions.is_empty() || !deletions.is_empty();
+            self.known_insertions.merge_with(insertions);
+            self.known_deletions.merge_with(deletions);
+            changed.then(|| transaction.encode_update_v1())
+        } else {
+            self.known_insertions.merge_with(insertions);
+            self.known_deletions.merge_with(deletions);
+            None
+        };
+        (result, partial_update)
     }
 
-    pub(super) fn has_new_information(
-        &self,
-        update: &Update,
-    ) -> Result<bool, yrs::encoding::read::Error> {
-        let known_update = Update::decode_v1(
-            &self
-                .doc()
-                .transact()
-                .encode_state_as_update_v1(&yrs::StateVector::default()),
-        )?;
-        let new_insertions = update.insertions(true).diff(&known_update.insertions(true));
-        let new_deletions = update.delete_set().diff(known_update.delete_set());
-        Ok(!new_insertions.is_empty() || !new_deletions.is_empty())
+    pub(super) fn has_new_information(&self, update: &Update) -> bool {
+        let new_insertions = update.insertions(true).diff(&self.known_insertions);
+        let new_deletions = update.delete_set().diff(&self.known_deletions);
+        !new_insertions.is_empty() || !new_deletions.is_empty()
     }
 
     pub(super) fn remove_awareness_client(&mut self, client_id: ClientID) {
@@ -55,6 +70,26 @@ impl DocumentState {
     ) -> Result<yrs::sync::AwarenessUpdate, yrs::sync::awareness::Error> {
         self.awareness.update_with_clients(client_ids)
     }
+}
+
+fn known_information(doc: &Doc) -> (IdSet, IdSet) {
+    let transaction = doc.transact();
+    let snapshot = transaction.snapshot();
+    let mut insertions = IdSet::default();
+    for (&client_id, &clock) in snapshot.state_map.iter() {
+        if clock > 0 {
+            insertions.insert(ID::new(client_id, 0), clock);
+        }
+    }
+    if let Some(pending) = transaction.store().pending_update() {
+        insertions.merge_with(pending.update.insertions(true));
+    }
+
+    let mut deletions = snapshot.delete_set;
+    if let Some(pending) = transaction.store().pending_ds() {
+        deletions.merge_with(pending.clone());
+    }
+    (insertions, deletions)
 }
 
 pub(super) fn encode_state(state: &DocumentState) -> Vec<u8> {

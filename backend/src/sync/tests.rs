@@ -57,10 +57,10 @@ async fn open_client(server: &TestServer, doc_id: &str) -> TestResult<(Client, D
     Ok((client, doc))
 }
 
-async fn open_client_with_startup_frames(
+async fn connect_with_startup_frames(
     server: &TestServer,
     doc_id: &str,
-) -> TestResult<(Client, Doc, Vec<Vec<u8>>)> {
+) -> TestResult<(Client, Vec<Vec<u8>>)> {
     let (mut client, _) = connect_async(format!("{}/{doc_id}", server.url)).await?;
     let startup_frames = vec![
         receive_binary(&mut client).await?,
@@ -68,6 +68,14 @@ async fn open_client_with_startup_frames(
     ];
     let start = describe_frames(&startup_frames)?;
     assert_eq!(start, vec![vec!["sync-step-1"], vec!["awareness"]]);
+    Ok((client, startup_frames))
+}
+
+async fn open_client_with_startup_frames(
+    server: &TestServer,
+    doc_id: &str,
+) -> TestResult<(Client, Doc, Vec<Vec<u8>>)> {
+    let (mut client, startup_frames) = connect_with_startup_frames(server, doc_id).await?;
     let mut doc = Doc::new();
     let state_vector = doc.transact().state_vector();
     client
@@ -189,15 +197,7 @@ async fn send_empty_update(client: &mut Client, doc: &Doc) -> TestResult {
 }
 
 async fn reconnect_existing_doc(server: &TestServer, doc_id: &str, doc: &Doc) -> TestResult {
-    let (mut client, _) = connect_async(format!("{}/{doc_id}", server.url)).await?;
-    let startup_frames = vec![
-        receive_binary(&mut client).await?,
-        receive_binary(&mut client).await?,
-    ];
-    assert_eq!(
-        describe_frames(&startup_frames)?,
-        vec![vec!["sync-step-1"], vec!["awareness"]],
-    );
+    let (mut client, startup_frames) = connect_with_startup_frames(server, doc_id).await?;
     let server_state_vector = match protocol::decode_messages(&startup_frames[0])?.as_slice() {
         [YMessage::Sync(SyncMessage::SyncStep1(state_vector))] => state_vector.clone(),
         _ => return Err("server did not start with a sync step 1".into()),
@@ -392,10 +392,27 @@ async fn count_updates(pool: &AnyPool, doc_id: &str) -> TestResult<i64> {
         .await?)
 }
 
-fn document_contents(doc: &Doc) -> (String, yrs::Any) {
+type DocumentContents = (String, yrs::Any);
+
+fn document_contents(doc: &Doc) -> DocumentContents {
     let body = doc.get_or_insert_text("body").get_string(&doc.transact());
     let items = doc.get_or_insert_array("items").to_json(&doc.transact());
     (body, items)
+}
+
+fn decode_contents(update: &[u8]) -> TestResult<DocumentContents> {
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(Update::decode_v1(update)?)?;
+    Ok(document_contents(&doc))
+}
+
+async fn reopen_contents(pool: &AnyPool, doc_id: &str) -> TestResult<(DocumentContents, i64)> {
+    let service = SyncService::new(pool.clone())?;
+    let document = service.open_document(doc_id).await?;
+    let contents = decode_contents(&document.encode_state().await)?;
+    let updates = count_updates(pool, doc_id).await?;
+    Ok((contents, updates))
 }
 
 async fn retains_partially_applied_updates(pool: AnyPool) -> TestResult {
@@ -411,6 +428,7 @@ async fn retains_partially_applied_updates(pool: AnyPool) -> TestResult {
     ])
     .encode_v1();
     document.apply_update(&baseline_update).await?;
+    let (mut client, mut client_doc) = open_client(&server, "partial-update-document").await?;
     let result = document.apply_update(&merged_update).await;
     let outcome = match result {
         Err(crate::sync::SyncError::Update(yrs::error::UpdateError::InvalidParent(..))) => {
@@ -419,41 +437,27 @@ async fn retains_partially_applied_updates(pool: AnyPool) -> TestResult {
         Err(error) => return Err(error.into()),
         Ok(()) => return Err("invalid update was applied".into()),
     };
-    let partially_applied = Doc::new();
-    partially_applied
-        .transact_mut()
-        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
-    let partial_contents = document_contents(&partially_applied);
+    let partial_contents = decode_contents(&document.encode_state().await)?;
+    apply_frame(&mut client_doc, &receive_binary(&mut client).await?)?;
+    let partial_relay_contents = document_contents(&client_doc);
     document.apply_update(&dependent_update).await?;
+    apply_frame(&mut client_doc, &receive_binary(&mut client).await?)?;
+    let dependent_relay_contents = document_contents(&client_doc);
     let stored_updates = count_updates(&pool, "partial-update-document").await?;
 
-    let restored_service = SyncService::new(pool.clone())?;
-    let restored = restored_service
-        .open_document("partial-update-document")
-        .await?;
-    let restored_doc = Doc::new();
-    restored_doc
-        .transact_mut()
-        .apply_update(Update::decode_v1(&restored.encode_state().await)?)?;
-    let restored_contents = document_contents(&restored_doc);
-    let compacted_updates = count_updates(&pool, "partial-update-document").await?;
-
-    let compacted_service = SyncService::new(pool.clone())?;
-    let compacted = compacted_service
-        .open_document("partial-update-document")
-        .await?;
-    let compacted_doc = Doc::new();
-    compacted_doc
-        .transact_mut()
-        .apply_update(Update::decode_v1(&compacted.encode_state().await)?)?;
-    let compacted_contents = document_contents(&compacted_doc);
-    let final_updates = count_updates(&pool, "partial-update-document").await?;
+    client.close(None).await?;
+    let (restored_contents, compacted_updates) =
+        reopen_contents(&pool, "partial-update-document").await?;
+    let (compacted_contents, final_updates) =
+        reopen_contents(&pool, "partial-update-document").await?;
     server.task.abort();
 
     assert_eq!(
         (
             outcome,
             partial_contents,
+            partial_relay_contents,
+            dependent_relay_contents,
             stored_updates,
             restored_contents,
             compacted_updates,
@@ -464,6 +468,14 @@ async fn retains_partially_applied_updates(pool: AnyPool) -> TestResult {
             "invalid-parent",
             (
                 "first".to_owned(),
+                yrs::Any::Array(vec![yrs::Any::from("scalar")].into()),
+            ),
+            (
+                "first".to_owned(),
+                yrs::Any::Array(vec![yrs::Any::from("scalar")].into()),
+            ),
+            (
+                "first second".to_owned(),
                 yrs::Any::Array(vec![yrs::Any::from("scalar")].into()),
             ),
             3,
@@ -496,21 +508,25 @@ async fn does_not_store_empty_updates(pool: AnyPool) -> TestResult {
 
 async fn does_not_store_repeated_deletions(pool: AnyPool) -> TestResult {
     let server = start_server(pool.clone()).await?;
+    let document = server.sync.open_document("deleted-document").await?;
     let doc = Doc::with_client_id(90);
     let text = doc.get_or_insert_text("body");
     text.insert(&mut doc.transact_mut(), 0, "gone");
-    text.remove_range(&mut doc.transact_mut(), 0, 4);
 
     let mut update_counts = Vec::new();
-    for _ in 0..3 {
-        reconnect_existing_doc(&server, "deleted-document", &doc).await?;
-        update_counts.push(count_updates(&pool, "deleted-document").await?);
-    }
+    reconnect_existing_doc(&server, "deleted-document", &doc).await?;
+    update_counts.push(count_updates(&pool, "deleted-document").await?);
+    text.remove_range(&mut doc.transact_mut(), 0, 4);
+    reconnect_existing_doc(&server, "deleted-document", &doc).await?;
+    update_counts.push(count_updates(&pool, "deleted-document").await?);
+    reconnect_existing_doc(&server, "deleted-document", &doc).await?;
+    update_counts.push(count_updates(&pool, "deleted-document").await?);
+    let server_contents = decode_contents(&document.encode_state().await)?;
     server.task.abort();
 
     assert_eq!(
-        (update_counts, text_value(&doc)),
-        (vec![1, 1, 1], String::new())
+        (update_counts, server_contents.0),
+        (vec![1, 2, 2], String::new())
     );
     Ok(())
 }
