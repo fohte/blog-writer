@@ -108,6 +108,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "encoding_rs",
  "indoc",
  "reqwest",
  "rstest",

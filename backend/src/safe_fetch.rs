@@ -7,7 +7,11 @@ use std::{
     time::Duration,
 };
 
-use reqwest::{Client, StatusCode, Url, header::LOCATION, redirect::Policy};
+use reqwest::{
+    Client, StatusCode, Url,
+    header::{ACCEPT, CONTENT_TYPE, LOCATION},
+    redirect::Policy,
+};
 use thiserror::Error;
 
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -63,10 +67,30 @@ pub enum SafeFetchError {
     Timeout,
 }
 
-#[derive(Debug, Clone)]
+impl SafeFetchError {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidUrl => "invalid_url",
+            Self::UnsupportedScheme => "unsupported_scheme",
+            Self::CredentialsNotAllowed => "credentials_not_allowed",
+            Self::DnsLookup(_) => "dns_lookup",
+            Self::NoAddresses => "no_addresses",
+            Self::DisallowedAddress => "disallowed_address",
+            Self::Request(_) => "request_failed",
+            Self::TooManyRedirects => "too_many_redirects",
+            Self::InvalidRedirect => "invalid_redirect",
+            Self::HttpStatus(_) => "http_status",
+            Self::TooLarge => "too_large",
+            Self::Timeout => "timeout",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchResponse {
     pub final_url: Url,
     pub body: Vec<u8>,
+    pub content_type: Option<String>,
 }
 
 pub(crate) type SafeFetchFuture<'a> =
@@ -91,7 +115,15 @@ impl SafeFetcher {
     }
 
     pub async fn fetch(&self, url: &str) -> Result<FetchResponse, SafeFetchError> {
-        tokio::time::timeout(TOTAL_TIMEOUT, self.fetch_inner(url))
+        self.fetch_with_timeout(url, TOTAL_TIMEOUT).await
+    }
+
+    async fn fetch_with_timeout(
+        &self,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<FetchResponse, SafeFetchError> {
+        tokio::time::timeout(timeout, self.fetch_inner(url))
             .await
             .map_err(|_| SafeFetchError::Timeout)?
     }
@@ -118,6 +150,7 @@ impl SafeFetcher {
             let client = build_pinned_client(&host, &addresses)?;
             let response = client
                 .get(current_url.clone())
+                .header(ACCEPT, "text/html")
                 .send()
                 .await
                 .map_err(SafeFetchError::Request)?;
@@ -143,11 +176,17 @@ impl SafeFetcher {
                 return Err(SafeFetchError::HttpStatus(status));
             }
 
+            let content_type = response
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
             let body = read_limited_body(response).await?;
 
             return Ok(FetchResponse {
                 final_url: current_url,
                 body,
+                content_type,
             });
         }
     }
@@ -216,6 +255,7 @@ fn build_pinned_client(host: &str, addresses: &[SocketAddr]) -> Result<Client, S
         .redirect(Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(TOTAL_TIMEOUT)
+        .user_agent("blog-writer")
         .no_proxy();
     if host.parse::<IpAddr>().is_err() {
         let pinned_addresses: Vec<_> = addresses
@@ -295,8 +335,10 @@ fn in_ipv4_subnet(address: u32, network: u32, prefix: u32) -> bool {
 
 fn is_public_ipv6(address: Ipv6Addr) -> bool {
     let segments = address.segments();
+    // Only 2000::/3 contains global unicast allocations; other ranges include special-purpose addresses.
     let is_global_unicast = segments[0] & 0xe000 == 0x2000;
     let is_protocol_assignment = segments[0] == 0x2001 && segments[1] & 0xfe00 == 0;
+    // 6to4 embeds an IPv4 address and cannot be checked by the IPv6 prefix alone.
     let is_6to4 = segments[0] == 0x2002;
     let is_documentation = (segments[0] == 0x2001 && segments[1] == 0x0db8)
         || (segments[0] == 0x3fff && segments[1] & 0xfff0 == 0);
@@ -308,18 +350,25 @@ fn is_public_ipv6(address: Ipv6Addr) -> bool {
 mod tests {
     use std::{
         collections::HashMap,
-        io,
-        net::{IpAddr, SocketAddr},
+        io::{self, Read, Write},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
         sync::Arc,
+        thread::JoinHandle,
+        time::Duration,
     };
 
     use rstest::rstest;
-    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{header, method},
+    };
 
     use super::{
         FetchResponse, HostResolver, MAX_BODY_BYTES, ResolveFuture, SafeFetchError, SafeFetcher,
         is_public_address,
     };
+
+    type ResponseServer = (SocketAddr, JoinHandle<io::Result<()>>);
 
     struct TestResolver(HashMap<String, Vec<SocketAddr>>);
 
@@ -329,6 +378,17 @@ mod tests {
                 self.0.get(host).cloned().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::NotFound, "test host is not configured")
                 })
+            })
+        }
+    }
+
+    struct SlowResolver;
+
+    impl HostResolver for SlowResolver {
+        fn resolve<'a>(&'a self, _host: &'a str, _port: u16) -> ResolveFuture<'a> {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)])
             })
         }
     }
@@ -350,11 +410,49 @@ mod tests {
         Ok(SocketAddr::new(ip, port))
     }
 
+    fn spawn_response_server(
+        response: Vec<u8>,
+        delay: Duration,
+    ) -> Result<ResponseServer, Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept()?;
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == [13, 10, 13, 10]) {
+                let read = stream.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            std::thread::sleep(delay);
+            let _ = stream.write_all(&response);
+            Ok(())
+        });
+        Ok((address, handle))
+    }
+
+    fn append_http_headers(response: &mut Vec<u8>, headers: &[&str]) {
+        for header in headers {
+            response.extend_from_slice(header.as_bytes());
+            response.extend_from_slice(&[13, 10]);
+        }
+        response.extend_from_slice(&[13, 10]);
+    }
+
+    fn error_code<T>(result: Result<T, SafeFetchError>) -> Result<(), &'static str> {
+        result.map(|_| ()).map_err(|error| error.code())
+    }
+
     #[tokio::test]
-    async fn fetches_html_from_an_allowed_resolved_address()
+    async fn fetches_a_response_from_an_allowed_resolved_address()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
+            .and(header("user-agent", "blog-writer"))
+            .and(header("accept", "text/html"))
             .respond_with(ResponseTemplate::new(200).set_body_string("<title>Sample</title>"))
             .mount(&server)
             .await;
@@ -367,8 +465,49 @@ mod tests {
         let response: FetchResponse = fetcher.fetch(&url).await?;
 
         assert_eq!(
-            (response.final_url.as_str(), response.body),
-            (url.as_str(), b"<title>Sample</title>".to_vec())
+            response,
+            FetchResponse {
+                final_url: reqwest::Url::parse(&url)?,
+                body: b"<title>Sample</title>".to_vec(),
+                content_type: Some("text/plain".to_owned()),
+            }
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn retains_the_response_content_type() -> Result<(), Box<dyn std::error::Error>> {
+        let body = b"<title>Sample</title>";
+        let content_length = format!("Content-Length: {}", body.len());
+        let mut response = Vec::new();
+        append_http_headers(
+            &mut response,
+            &[
+                "HTTP/1.1 200 OK",
+                "Content-Type: text/html; charset=utf-8",
+                &content_length,
+                "Connection: close",
+            ],
+        );
+        response.extend_from_slice(body);
+        let (address, handle) = spawn_response_server(response, Duration::ZERO)?;
+        let fetcher = test_fetcher([("site.test".to_owned(), vec![address])], |address| {
+            address.is_loopback()
+        });
+        let url = format!("http://site.test:{}/page", address.port());
+
+        let actual = fetcher.fetch(&url).await?;
+
+        handle
+            .join()
+            .map_err(|_| io::Error::other("response server thread panicked"))??;
+        assert_eq!(
+            actual,
+            FetchResponse {
+                final_url: reqwest::Url::parse(&url)?,
+                body: body.to_vec(),
+                content_type: Some("text/html; charset=utf-8".to_owned()),
+            }
         );
         Ok(())
     }
@@ -383,7 +522,7 @@ mod tests {
 
         let actual = fetcher.fetch("http://private.test/page").await;
 
-        assert!(matches!(actual, Err(SafeFetchError::DisallowedAddress)));
+        assert_eq!(error_code(actual), Err("disallowed_address"));
         Ok(())
     }
 
@@ -409,7 +548,7 @@ mod tests {
         let url = format!("http://site.test:{}/start", address.port());
         let actual = fetcher.fetch(&url).await;
 
-        assert!(matches!(actual, Err(SafeFetchError::DisallowedAddress)));
+        assert_eq!(error_code(actual), Err("disallowed_address"));
         Ok(())
     }
 
@@ -428,7 +567,7 @@ mod tests {
 
         let actual = fetcher.fetch(&url).await;
 
-        assert!(matches!(actual, Err(SafeFetchError::TooManyRedirects)));
+        assert_eq!(error_code(actual), Err("too_many_redirects"));
         Ok(())
     }
 
@@ -448,8 +587,119 @@ mod tests {
         let url = format!("http://site.test:{}/large", server_address(&server)?.port());
         let actual = fetcher.fetch(&url).await;
 
-        assert!(matches!(actual, Err(SafeFetchError::TooLarge)));
+        assert_eq!(error_code(actual), Err("too_large"));
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_a_chunked_response_that_exceeds_the_body_limit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let body = vec![b'x'; MAX_BODY_BYTES + 1];
+        let mut response = Vec::new();
+        append_http_headers(
+            &mut response,
+            &[
+                "HTTP/1.1 200 OK",
+                "Transfer-Encoding: chunked",
+                "Connection: close",
+            ],
+        );
+        response.extend_from_slice(format!("{:x}", body.len()).as_bytes());
+        response.extend_from_slice(&[13, 10]);
+        response.extend_from_slice(&body);
+        response.extend_from_slice(&[13, 10]);
+        response.extend_from_slice(b"0");
+        response.extend_from_slice(&[13, 10, 13, 10]);
+        let (address, handle) = spawn_response_server(response, Duration::ZERO)?;
+        let fetcher = test_fetcher([("site.test".to_owned(), vec![address])], |address| {
+            address.is_loopback()
+        });
+        let url = format!("http://site.test:{}/large", address.port());
+
+        let actual = fetcher.fetch(&url).await;
+
+        handle
+            .join()
+            .map_err(|_| io::Error::other("response server thread panicked"))??;
+        assert_eq!(error_code(actual), Err("too_large"));
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::unspecified_ipv4("0.0.0.0", false)]
+    #[case::limited_broadcast("255.255.255.255", false)]
+    #[case::multicast_ipv4("224.0.0.1", false)]
+    #[case::benchmark_ipv4("198.18.0.1", false)]
+    #[case::documentation_ipv4("203.0.113.1", false)]
+    #[case::carrier_grade_nat_upper_bound("100.127.255.255", false)]
+    #[case::outside_carrier_grade_nat("100.128.0.1", true)]
+    #[case::ula_lower_bound("fc00::", false)]
+    #[case::ula_upper_bound("fdff::", false)]
+    #[case::six_to_four("2002::", false)]
+    #[case::nat64_embedded_private("64:ff9b::7f00:1", false)]
+    #[case::ipv4_compatible_loopback("::127.0.0.1", false)]
+    #[case::ipv4_mapped_loopback("::ffff:127.0.0.1", false)]
+    #[case::public_ipv4("1.1.1.1", true)]
+    #[case::public_ipv6("2606:4700:4700::1111", true)]
+    fn classifies_address_policy_boundaries(
+        #[case] value: &str,
+        #[case] expected: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let address = value.parse::<IpAddr>()?;
+
+        assert_eq!(is_public_address(address), expected);
+        Ok(())
+    }
+
+    #[rstest]
+    #[case::private_ip_literal(Some("http://10.4.0.2/private"), "disallowed_address")]
+    #[case::non_http_scheme(Some("file:///etc/passwd"), "unsupported_scheme")]
+    #[case::missing_location(None, "invalid_redirect")]
+    #[test_attr(tokio::test)]
+    async fn validates_redirect_targets(
+        #[case] location: Option<&str>,
+        #[case] expected: &'static str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        let response = location.map_or_else(
+            || ResponseTemplate::new(302),
+            |location| ResponseTemplate::new(302).insert_header("location", location),
+        );
+        Mock::given(method("GET"))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+        let address = server_address(&server)?;
+        let fetcher = test_fetcher([("site.test".to_owned(), vec![address])], |address| {
+            address.is_loopback()
+        });
+        let url = format!("http://site.test:{}/start", address.port());
+
+        let actual = fetcher.fetch(&url).await;
+
+        assert_eq!(error_code(actual), Err(expected));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_urls_with_userinfo() {
+        let actual = SafeFetcher::new()
+            .fetch("http://user:password@site.test/article")
+            .await;
+
+        assert_eq!(error_code(actual), Err("credentials_not_allowed"));
+    }
+
+    #[tokio::test]
+    async fn enforces_a_total_fetch_timeout() {
+        let fetcher =
+            SafeFetcher::with_resolver_and_policy(Arc::new(SlowResolver), Arc::new(|_| true));
+
+        let actual = fetcher
+            .fetch_with_timeout("http://site.test/article", Duration::from_millis(10))
+            .await;
+
+        assert_eq!(error_code(actual), Err("timeout"));
     }
 
     #[rstest]
@@ -465,13 +715,13 @@ mod tests {
     async fn rejects_internal_ip_literals(#[case] url: &str) {
         let actual = SafeFetcher::new().fetch(url).await;
 
-        assert!(matches!(actual, Err(SafeFetchError::DisallowedAddress)));
+        assert_eq!(error_code(actual), Err("disallowed_address"));
     }
 
     #[tokio::test]
     async fn rejects_non_http_schemes() {
         let actual = SafeFetcher::new().fetch("file:///etc/passwd").await;
 
-        assert!(matches!(actual, Err(SafeFetchError::UnsupportedScheme)));
+        assert_eq!(error_code(actual), Err("unsupported_scheme"));
     }
 }

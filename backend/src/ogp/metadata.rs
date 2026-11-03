@@ -1,7 +1,51 @@
+use encoding_rs::{Encoding, UTF_8};
 use reqwest::Url;
 use scraper::{Html, Selector};
 
 use crate::ogp::OgpResponse;
+
+pub(super) fn is_html_content_type(content_type: Option<&str>) -> bool {
+    content_type
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|media_type| {
+            media_type.trim().eq_ignore_ascii_case("text/html")
+                || media_type
+                    .trim()
+                    .eq_ignore_ascii_case("application/xhtml+xml")
+        })
+}
+
+pub(super) fn decode_html(bytes: &[u8], content_type: Option<&str>) -> String {
+    let encoding = Encoding::for_bom(bytes)
+        .or_else(|| charset_from_content_type(content_type).map(|encoding| (encoding, 0)))
+        .or_else(|| charset_from_meta(bytes).map(|encoding| (encoding, 0)))
+        .unwrap_or((UTF_8, 0));
+    encoding
+        .0
+        .decode_without_bom_handling(&bytes[encoding.1..])
+        .0
+        .into_owned()
+}
+
+fn charset_from_content_type(content_type: Option<&str>) -> Option<&'static Encoding> {
+    content_type?.split(';').skip(1).find_map(|parameter| {
+        let (name, value) = parameter.split_once('=')?;
+        if !name.trim().eq_ignore_ascii_case("charset") {
+            return None;
+        }
+        let label = value.trim().trim_matches(['"', '\'']);
+        Encoding::for_label(label.as_bytes())
+    })
+}
+
+fn charset_from_meta(bytes: &[u8]) -> Option<&'static Encoding> {
+    let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]);
+    let document = Html::parse_document(&prefix);
+    let selector = Selector::parse("meta[charset]").ok()?;
+    document
+        .select(&selector)
+        .find_map(|element| Encoding::for_label(element.value().attr("charset")?.trim().as_bytes()))
+}
 
 pub(super) fn extract(final_url: &Url, html: &str) -> OgpResponse {
     let document = Html::parse_document(html);
