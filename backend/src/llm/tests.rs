@@ -11,7 +11,7 @@ use std::{
 use axum::{body::to_bytes, response::IntoResponse};
 use futures_util::StreamExt;
 use indoc::indoc;
-use rstest::rstest;
+use rstest::{fixture, rstest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -55,8 +55,23 @@ impl LlmProvider for PendingProvider {
         _: String,
         _: tokio::sync::mpsc::UnboundedSender<String>,
     ) -> Pin<Box<dyn Future<Output = Result<super::WebSearchResult, LlmError>> + Send + 'a>> {
-        Box::pin(async { Err(LlmError::Provider) })
+        Box::pin(std::future::pending())
     }
+}
+
+type PendingWebSearch = (watch::Sender<bool>, LlmState);
+
+#[fixture]
+fn pending_web_search() -> PendingWebSearch {
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let state = LlmState::with_provider(
+        PendingProvider,
+        ProviderName::ClaudeCode,
+        Duration::from_secs(60),
+    )
+    .with_shutdown(shutdown_receiver);
+
+    (shutdown_sender, state)
 }
 
 #[derive(Debug, PartialEq)]
@@ -249,6 +264,50 @@ async fn ends_an_in_flight_call_when_shutdown_is_signaled() {
         .map_err(|_| ());
 
     assert_eq!(actual, Ok(Vec::new()));
+}
+
+#[rstest]
+#[test_attr(tokio::test)]
+async fn closes_web_search_sse_when_shutdown_is_signaled(pending_web_search: PendingWebSearch) {
+    let (shutdown_sender, state) = pending_web_search;
+    let response = call_web_search_to_sse(state, String::new(), String::new()).into_response();
+    let body = tokio::spawn(to_bytes(response.into_body(), usize::MAX));
+
+    tokio::task::yield_now().await;
+    shutdown_sender.send_replace(true);
+
+    let actual = tokio::time::timeout(Duration::from_secs(1), body)
+        .await
+        .expect("the web search SSE body closes after shutdown")
+        .expect("the web search SSE body task completes")
+        .map(|bytes| bytes.to_vec())
+        .map_err(|_| ());
+
+    assert_eq!(actual, Ok(Vec::new()));
+}
+
+#[rstest]
+#[test_attr(tokio::test)]
+async fn returns_a_cancellation_error_when_web_search_is_shutdown(
+    pending_web_search: PendingWebSearch,
+) {
+    let (shutdown_sender, state) = pending_web_search;
+    let call = tokio::spawn(call_web_search_with(
+        state,
+        String::new(),
+        String::new(),
+        |_| {},
+    ));
+
+    tokio::task::yield_now().await;
+    shutdown_sender.send_replace(true);
+
+    let actual = tokio::time::timeout(Duration::from_secs(1), call)
+        .await
+        .expect("the web search call finishes after shutdown")
+        .expect("the web search call task completes");
+
+    assert_eq!(actual, Err(LlmError::Cancelled));
 }
 
 fn push_sse_frame(frames: &mut Vec<SseFrame>, lines: &mut Vec<SseLine>) {

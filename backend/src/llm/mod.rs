@@ -53,6 +53,8 @@ pub(crate) struct WebSearchResult {
 pub(crate) enum LlmError {
     #[error("failed to start or communicate with the LLM provider")]
     Provider,
+    #[error("LLM call was cancelled due to shutdown")]
+    Cancelled,
     #[error("LLM provider returned invalid output")]
     InvalidOutput,
     #[error("LLM provider did not return structured output")]
@@ -230,29 +232,37 @@ enum WebSearchEvent {
     Progress(String),
     Result(WebSearchResult),
     Error(LlmError),
+    Cancelled,
 }
 
 impl WebSearchEvent {
-    fn into_sse_event(self) -> Event {
+    fn into_sse_event(self) -> Option<Event> {
         match self {
-            Self::Progress(query) => LlmEvent::Progress(LlmProgress { query }).into_sse_event(),
+            Self::Progress(query) => {
+                Some(LlmEvent::Progress(LlmProgress { query }).into_sse_event())
+            }
             Self::Result(result) => match serde_json::to_value(result) {
-                Ok(result) => LlmEvent::Result(result).into_sse_event(),
+                Ok(result) => Some(LlmEvent::Result(result).into_sse_event()),
                 Err(error) => {
                     tracing::warn!(error_kind = ?LlmError::SerializeResult, %error, "failed to serialize web search result");
-                    LlmEvent::Error(LlmErrorPayload {
-                        message: LlmError::SerializeResult.to_string(),
-                    })
-                    .into_sse_event()
+                    Some(
+                        LlmEvent::Error(LlmErrorPayload {
+                            message: LlmError::SerializeResult.to_string(),
+                        })
+                        .into_sse_event(),
+                    )
                 }
             },
             Self::Error(error) => {
                 tracing::warn!(error_kind = ?error, "LLM web search failed");
-                LlmEvent::Error(LlmErrorPayload {
-                    message: error.to_string(),
-                })
-                .into_sse_event()
+                Some(
+                    LlmEvent::Error(LlmErrorPayload {
+                        message: error.to_string(),
+                    })
+                    .into_sse_event(),
+                )
             }
+            Self::Cancelled => None,
         }
     }
 }
@@ -276,32 +286,48 @@ fn web_search_events(
                 .await
                 .unwrap_or(Err(LlmError::Timeout))
         });
+    let shutdown = state.shutdown.clone();
     stream::unfold(
         (
             Some(search),
             progress_receiver,
             None::<WebSearchEvent>,
             false,
+            shutdown,
         ),
-        |(mut search, mut progress_receiver, mut result_event, finished)| async move {
+        |(mut search, mut progress_receiver, mut result_event, finished, mut shutdown)| async move {
             if finished {
                 return None;
+            }
+            if *shutdown.borrow() {
+                search = None;
+                return Some((
+                    WebSearchEvent::Cancelled,
+                    (search, progress_receiver, None, true, shutdown),
+                ));
             }
             if let Ok(query) = progress_receiver.try_recv() {
                 return Some((
                     WebSearchEvent::Progress(query),
-                    (search, progress_receiver, result_event, false),
+                    (search, progress_receiver, result_event, false, shutdown),
                 ));
             }
             if let Some(event) = result_event.take() {
-                return Some((event, (search, progress_receiver, None, true)));
+                return Some((event, (search, progress_receiver, None, true, shutdown)));
             }
             let search_future = search.as_mut()?;
             tokio::select! {
                 biased;
+                _ = wait_for_shutdown(&mut shutdown) => {
+                    search = None;
+                    Some((
+                        WebSearchEvent::Cancelled,
+                        (search, progress_receiver, None, true, shutdown),
+                    ))
+                },
                 Some(query) = progress_receiver.recv() => Some((
                     WebSearchEvent::Progress(query),
-                    (search, progress_receiver, result_event, false),
+                    (search, progress_receiver, result_event, false, shutdown),
                 )),
                 result = search_future => {
                     search = None;
@@ -313,10 +339,10 @@ fn web_search_events(
                         result_event = Some(event);
                         Some((
                             WebSearchEvent::Progress(query),
-                            (search, progress_receiver, result_event, false),
+                            (search, progress_receiver, result_event, false, shutdown),
                         ))
                     } else {
-                        Some((event, (search, progress_receiver, None, true)))
+                        Some((event, (search, progress_receiver, None, true, shutdown)))
                     }
                 }
             }
@@ -338,6 +364,7 @@ pub(crate) async fn call_web_search_with(
             WebSearchEvent::Progress(query) => on_progress(query),
             WebSearchEvent::Result(web_search_result) => result = Some(web_search_result),
             WebSearchEvent::Error(error) => return Err(error),
+            WebSearchEvent::Cancelled => return Err(LlmError::Cancelled),
         }
     }
     result.ok_or(LlmError::InvalidOutput)
@@ -349,8 +376,8 @@ pub(crate) fn call_web_search_to_sse(
     prompt: String,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let keep_alive_interval = state.keep_alive_interval;
-    let stream =
-        web_search_events(state, system_prompt, prompt).map(|event| Ok(event.into_sse_event()));
+    let stream = web_search_events(state, system_prompt, prompt)
+        .filter_map(|event| async move { event.into_sse_event().map(Ok) });
 
     Sse::new(stream).keep_alive(
         KeepAlive::new()
@@ -424,7 +451,9 @@ where
 }
 
 async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
-    if !*shutdown.borrow() && shutdown.changed().await.is_err() {
-        std::future::pending::<()>().await;
+    while !*shutdown.borrow() {
+        if shutdown.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
     }
 }
