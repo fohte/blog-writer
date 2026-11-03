@@ -18,9 +18,20 @@ pub enum ContextError {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ContextInput {
     pub premise: ArticlePremise,
+    /// Ordered blocks for the entire article; the heading list is derived from all of these blocks.
     pub blocks: Vec<ArticleBlock>,
     pub target_block_ids: Vec<String>,
+    pub block_scope: BlockScope,
     pub sources: Vec<ReferenceSource>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Selects the article blocks included around the requested targets.
+pub enum BlockScope {
+    /// Include this many blocks before and after each target block.
+    AroundTargets { before: usize, after: usize },
+    /// Include every article block.
+    FullArticle,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -54,7 +65,9 @@ pub struct ReferencePoint {
 #[derive(Debug, PartialEq, Eq)]
 pub struct AssembledContext {
     pub prompt: String,
+    /// Short aliases avoid copying long block IDs; aliases absent from this map can be discarded.
     pub block_aliases: BTreeMap<String, String>,
+    /// Short aliases avoid copying long point IDs; aliases absent from this map can be discarded.
     pub point_aliases: BTreeMap<String, String>,
 }
 
@@ -66,6 +79,7 @@ fn push_line(prompt: &mut String, line: &str) {
 fn select_blocks<'a>(
     blocks: &'a [ArticleBlock],
     target_block_ids: &[String],
+    block_scope: BlockScope,
 ) -> Result<Vec<(String, &'a ArticleBlock, bool)>, ContextError> {
     let block_ids: HashSet<&str> = blocks.iter().map(|block| block.id.as_str()).collect();
     if let Some(missing_id) = target_block_ids
@@ -81,16 +95,18 @@ fn select_blocks<'a>(
         .enumerate()
         .filter_map(|(index, block)| target_ids.contains(block.id.as_str()).then_some(index))
         .collect();
-    let mut selected_indices = BTreeSet::new();
-    for index in target_indices {
-        selected_indices.insert(index);
-        if let Some(previous_index) = index.checked_sub(1) {
-            selected_indices.insert(previous_index);
+    let selected_indices = match block_scope {
+        BlockScope::FullArticle => (0..blocks.len()).collect(),
+        BlockScope::AroundTargets { before, after } => {
+            let mut indices = BTreeSet::new();
+            for index in target_indices {
+                let first = index.saturating_sub(before);
+                let last = index.saturating_add(after).min(blocks.len() - 1);
+                indices.extend(first..=last);
+            }
+            indices
         }
-        if index + 1 < blocks.len() {
-            selected_indices.insert(index + 1);
-        }
-    }
+    };
     Ok(selected_indices
         .into_iter()
         .enumerate()
@@ -177,7 +193,7 @@ fn render_sources(sources: &[ReferenceSource]) -> (String, BTreeMap<String, Stri
 }
 
 pub fn assemble(input: ContextInput) -> Result<AssembledContext, ContextError> {
-    let blocks = select_blocks(&input.blocks, &input.target_block_ids)?;
+    let blocks = select_blocks(&input.blocks, &input.target_block_ids, input.block_scope)?;
     let mut prompt = render_premise_and_headings(&input.premise, &input.blocks);
     let (block_prompt, block_aliases) = render_blocks(&blocks);
     let (source_prompt, point_aliases) = render_sources(&input.sources);
@@ -199,8 +215,8 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use super::{
-        ArticleBlock, ArticlePremise, AssembledContext, ContextError, ContextInput, ReferencePoint,
-        ReferenceSource, SYSTEM_PROMPT, assemble,
+        ArticleBlock, ArticlePremise, AssembledContext, BlockScope, ContextError, ContextInput,
+        ReferencePoint, ReferenceSource, SYSTEM_PROMPT, assemble,
     };
 
     fn article_block(id: &str, kind: &str, markdown: &str) -> ArticleBlock {
@@ -227,6 +243,10 @@ mod tests {
                 article_block("next-heading-id", "heading", "## 次の手順"),
             ],
             target_block_ids: vec!["target-id".to_owned()],
+            block_scope: BlockScope::AroundTargets {
+                before: 1,
+                after: 1,
+            },
             sources: vec![ReferenceSource {
                 summary: "設定手順の概要".to_owned(),
                 checked_at: "2026-10-31".to_owned(),
@@ -266,6 +286,74 @@ mod tests {
 
         [b3] 前後の文脈 (種類: paragraph)
         結果を確認します。
+
+        参考資料
+
+        資料 1
+        要約: 設定手順の概要
+        確認日: 2026-10-31
+        要点:
+        - [s1] 設定値は保存後に反映される
+          引用: Changes take effect after saving.
+        - [s2] 再起動が必要な場合がある
+    "};
+    const CUSTOM_WINDOW_PROMPT: &str = indoc! {"
+        記事の前提
+        - 読者: 新しい利用者
+        - 目的: 手順を説明する
+        - 主張: 準備を先に行う
+
+        見出し一覧
+        - ## 準備
+        - ## 次の手順
+
+        対象と前後の本文ブロック
+
+        [b1] 前後の文脈 (種類: heading)
+        ## 準備
+
+        [b2] 前後の文脈 (種類: paragraph)
+        事前に確認します。
+
+        [b3] 対象 (種類: paragraph)
+        設定を保存します。
+
+        参考資料
+
+        資料 1
+        要約: 設定手順の概要
+        確認日: 2026-10-31
+        要点:
+        - [s1] 設定値は保存後に反映される
+          引用: Changes take effect after saving.
+        - [s2] 再起動が必要な場合がある
+    "};
+    const FULL_ARTICLE_PROMPT: &str = indoc! {"
+        記事の前提
+        - 読者: 新しい利用者
+        - 目的: 手順を説明する
+        - 主張: 準備を先に行う
+
+        見出し一覧
+        - ## 準備
+        - ## 次の手順
+
+        対象と前後の本文ブロック
+
+        [b1] 前後の文脈 (種類: heading)
+        ## 準備
+
+        [b2] 前後の文脈 (種類: paragraph)
+        事前に確認します。
+
+        [b3] 対象 (種類: paragraph)
+        設定を保存します。
+
+        [b4] 前後の文脈 (種類: paragraph)
+        結果を確認します。
+
+        [b5] 前後の文脈 (種類: heading)
+        ## 次の手順
 
         参考資料
 
@@ -333,11 +421,6 @@ mod tests {
           引用: Changes take effect after saving.
         - [s2] 再起動が必要な場合がある
     "};
-    const FIRST_BLOCK_TARGET_IDS: &[&str] = &["heading-id"];
-    const FIRST_BLOCK_ALIAS_IDS: &[&str] = &["heading-id", "intro-id"];
-    const LAST_BLOCK_TARGET_IDS: &[&str] = &["next-heading-id"];
-    const LAST_BLOCK_ALIAS_IDS: &[&str] = &["ending-id", "next-heading-id"];
-    const TARGET_BLOCK_ALIAS_IDS: &[&str] = &["intro-id", "target-id", "ending-id"];
     const MULTIPLE_TARGET_BLOCK_IDS: &[&str] = &["intro-id", "ending-id"];
     const MULTIPLE_TARGET_PROMPT: &str = indoc! {"
         記事の前提
@@ -376,55 +459,292 @@ mod tests {
           引用: Changes take effect after saving.
         - [s2] 再起動が必要な場合がある
     "};
-    const MULTIPLE_TARGET_ALIAS_IDS: &[&str] = &[
-        "heading-id",
-        "intro-id",
-        "target-id",
-        "ending-id",
-        "next-heading-id",
-    ];
-    const POINT_ALIAS_IDS: &[&str] = &["point-one-id", "point-two-id"];
-
-    fn aliases(prefix: char, ids: &[&str]) -> BTreeMap<String, String> {
-        ids.iter()
-            .enumerate()
-            .map(|(index, id)| (format!("{prefix}{}", index + 1), (*id).to_owned()))
-            .collect()
-    }
-
     #[rstest]
-    #[case::target_and_neighbors(&["target-id"], TARGET_PROMPT, TARGET_BLOCK_ALIAS_IDS)]
+    #[case::target_and_neighbors(
+        &["target-id"],
+        BlockScope::AroundTargets { before: 1, after: 1 },
+        TARGET_PROMPT,
+        BTreeMap::from([
+            ("b1".to_owned(), "intro-id".to_owned()),
+            ("b2".to_owned(), "target-id".to_owned()),
+            ("b3".to_owned(), "ending-id".to_owned()),
+        ]),
+        BTreeMap::from([
+            ("s1".to_owned(), "point-one-id".to_owned()),
+            ("s2".to_owned(), "point-two-id".to_owned()),
+        ])
+    )]
     #[case::multiple_targets_keep_article_order(
         MULTIPLE_TARGET_BLOCK_IDS,
+        BlockScope::AroundTargets { before: 1, after: 1 },
         MULTIPLE_TARGET_PROMPT,
-        MULTIPLE_TARGET_ALIAS_IDS
+        BTreeMap::from([
+            ("b1".to_owned(), "heading-id".to_owned()),
+            ("b2".to_owned(), "intro-id".to_owned()),
+            ("b3".to_owned(), "target-id".to_owned()),
+            ("b4".to_owned(), "ending-id".to_owned()),
+            ("b5".to_owned(), "next-heading-id".to_owned()),
+        ]),
+        BTreeMap::from([
+            ("s1".to_owned(), "point-one-id".to_owned()),
+            ("s2".to_owned(), "point-two-id".to_owned()),
+        ])
     )]
     #[case::first_block_has_no_previous_context(
-        FIRST_BLOCK_TARGET_IDS,
+        &["heading-id"],
+        BlockScope::AroundTargets { before: 1, after: 1 },
         FIRST_BLOCK_TARGET_PROMPT,
-        FIRST_BLOCK_ALIAS_IDS
+        BTreeMap::from([
+            ("b1".to_owned(), "heading-id".to_owned()),
+            ("b2".to_owned(), "intro-id".to_owned()),
+        ]),
+        BTreeMap::from([
+            ("s1".to_owned(), "point-one-id".to_owned()),
+            ("s2".to_owned(), "point-two-id".to_owned()),
+        ])
     )]
     #[case::last_block_has_no_next_context(
-        LAST_BLOCK_TARGET_IDS,
+        &["next-heading-id"],
+        BlockScope::AroundTargets { before: 1, after: 1 },
         LAST_BLOCK_TARGET_PROMPT,
-        LAST_BLOCK_ALIAS_IDS
+        BTreeMap::from([
+            ("b1".to_owned(), "ending-id".to_owned()),
+            ("b2".to_owned(), "next-heading-id".to_owned()),
+        ]),
+        BTreeMap::from([
+            ("s1".to_owned(), "point-one-id".to_owned()),
+            ("s2".to_owned(), "point-two-id".to_owned()),
+        ])
+    )]
+    #[case::custom_window_uses_the_requested_depth(
+        &["target-id"],
+        BlockScope::AroundTargets { before: 2, after: 0 },
+        CUSTOM_WINDOW_PROMPT,
+        BTreeMap::from([
+            ("b1".to_owned(), "heading-id".to_owned()),
+            ("b2".to_owned(), "intro-id".to_owned()),
+            ("b3".to_owned(), "target-id".to_owned()),
+        ]),
+        BTreeMap::from([
+            ("s1".to_owned(), "point-one-id".to_owned()),
+            ("s2".to_owned(), "point-two-id".to_owned()),
+        ])
+    )]
+    #[case::full_article_includes_every_block(
+        &["target-id"],
+        BlockScope::FullArticle,
+        FULL_ARTICLE_PROMPT,
+        BTreeMap::from([
+            ("b1".to_owned(), "heading-id".to_owned()),
+            ("b2".to_owned(), "intro-id".to_owned()),
+            ("b3".to_owned(), "target-id".to_owned()),
+            ("b4".to_owned(), "ending-id".to_owned()),
+            ("b5".to_owned(), "next-heading-id".to_owned()),
+        ]),
+        BTreeMap::from([
+            ("s1".to_owned(), "point-one-id".to_owned()),
+            ("s2".to_owned(), "point-two-id".to_owned()),
+        ])
     )]
     fn assembles_context(
         mut context_input: ContextInput,
         #[case] target_block_ids: &[&str],
+        #[case] block_scope: BlockScope,
         #[case] expected_prompt: &str,
-        #[case] expected_block_ids: &[&str],
+        #[case] expected_block_aliases: BTreeMap<String, String>,
+        #[case] expected_point_aliases: BTreeMap<String, String>,
     ) {
         context_input.target_block_ids =
             target_block_ids.iter().map(|id| (*id).to_owned()).collect();
+        context_input.block_scope = block_scope;
         let actual = assemble(context_input);
 
         assert_eq!(
             actual,
             Ok(AssembledContext {
                 prompt: expected_prompt.to_owned(),
-                block_aliases: aliases('b', expected_block_ids),
-                point_aliases: aliases('s', POINT_ALIAS_IDS),
+                block_aliases: expected_block_aliases,
+                point_aliases: expected_point_aliases,
+            })
+        );
+    }
+
+    const MULTI_SOURCE_PROMPT: &str = indoc! {"
+        記事の前提
+        - 読者: 新しい利用者
+        - 目的: 手順を説明する
+        - 主張: 準備を先に行う
+
+        見出し一覧
+        - ## 準備
+        - ## 次の手順
+
+        対象と前後の本文ブロック
+
+        [b1] 前後の文脈 (種類: paragraph)
+        事前に確認します。
+
+        [b2] 対象 (種類: paragraph)
+        設定を保存します。
+
+        [b3] 前後の文脈 (種類: paragraph)
+        結果を確認します。
+
+        参考資料
+
+        資料 1
+        要約: 第一資料の概要
+        確認日: 2026-11-01
+        要点:
+        - [s1] 要点 1
+        - [s2] 要点 2
+        - [s3] 要点 3
+        - [s4] 要点 4
+        - [s5] 要点 5
+        - [s6] 要点 6
+        - [s7] 要点 7
+        - [s8] 要点 8
+        - [s9] 要点 9
+        - [s10] 要点 10
+        - [s11] 要点 11
+        - [s12] 要点 12
+        - [s13] 要点 13
+        - [s14] 要点 14
+        - [s15] 要点 15
+        - [s16] 要点 16
+        - [s17] 要点 17
+        - [s18] 要点 18
+        - [s19] 要点 19
+        - [s20] 要点 20
+        - [s21] 要点 21
+        - [s22] 要点 22
+        - [s23] 要点 23
+        - [s24] 要点 24
+        - [s25] 要点 25
+        - [s26] 要点 26
+
+        資料 2
+        要約: 第二資料の概要
+        確認日: 2026-11-02
+        要点:
+        - [s27] 要点 27
+        - [s28] 要点 28
+        - [s29] 要点 29
+        - [s30] 要点 30
+        - [s31] 要点 31
+        - [s32] 要点 32
+        - [s33] 要点 33
+        - [s34] 要点 34
+        - [s35] 要点 35
+        - [s36] 要点 36
+        - [s37] 要点 37
+        - [s38] 要点 38
+        - [s39] 要点 39
+        - [s40] 要点 40
+        - [s41] 要点 41
+        - [s42] 要点 42
+        - [s43] 要点 43
+        - [s44] 要点 44
+        - [s45] 要点 45
+        - [s46] 要点 46
+        - [s47] 要点 47
+        - [s48] 要点 48
+        - [s49] 要点 49
+        - [s50] 要点 50
+        - [s51] 要点 51
+    "};
+
+    #[rstest]
+    #[case::all_points_across_sources(51)]
+    fn renders_every_point_across_sources(
+        mut context_input: ContextInput,
+        #[case] point_count: usize,
+    ) {
+        let points = |start, end| {
+            (start..=end)
+                .map(|index| ReferencePoint {
+                    id: format!("point-{index}"),
+                    text: format!("要点 {index}"),
+                    quote: None,
+                })
+                .collect()
+        };
+        context_input.sources = vec![
+            ReferenceSource {
+                summary: "第一資料の概要".to_owned(),
+                checked_at: "2026-11-01".to_owned(),
+                key_points: points(1, 26),
+            },
+            ReferenceSource {
+                summary: "第二資料の概要".to_owned(),
+                checked_at: "2026-11-02".to_owned(),
+                key_points: points(27, point_count),
+            },
+        ];
+        let actual = assemble(context_input);
+
+        assert_eq!(
+            actual,
+            Ok(AssembledContext {
+                prompt: MULTI_SOURCE_PROMPT.to_owned(),
+                block_aliases: BTreeMap::from([
+                    ("b1".to_owned(), "intro-id".to_owned()),
+                    ("b2".to_owned(), "target-id".to_owned()),
+                    ("b3".to_owned(), "ending-id".to_owned()),
+                ]),
+                point_aliases: BTreeMap::from([
+                    ("s1".to_owned(), "point-1".to_owned()),
+                    ("s2".to_owned(), "point-2".to_owned()),
+                    ("s3".to_owned(), "point-3".to_owned()),
+                    ("s4".to_owned(), "point-4".to_owned()),
+                    ("s5".to_owned(), "point-5".to_owned()),
+                    ("s6".to_owned(), "point-6".to_owned()),
+                    ("s7".to_owned(), "point-7".to_owned()),
+                    ("s8".to_owned(), "point-8".to_owned()),
+                    ("s9".to_owned(), "point-9".to_owned()),
+                    ("s10".to_owned(), "point-10".to_owned()),
+                    ("s11".to_owned(), "point-11".to_owned()),
+                    ("s12".to_owned(), "point-12".to_owned()),
+                    ("s13".to_owned(), "point-13".to_owned()),
+                    ("s14".to_owned(), "point-14".to_owned()),
+                    ("s15".to_owned(), "point-15".to_owned()),
+                    ("s16".to_owned(), "point-16".to_owned()),
+                    ("s17".to_owned(), "point-17".to_owned()),
+                    ("s18".to_owned(), "point-18".to_owned()),
+                    ("s19".to_owned(), "point-19".to_owned()),
+                    ("s20".to_owned(), "point-20".to_owned()),
+                    ("s21".to_owned(), "point-21".to_owned()),
+                    ("s22".to_owned(), "point-22".to_owned()),
+                    ("s23".to_owned(), "point-23".to_owned()),
+                    ("s24".to_owned(), "point-24".to_owned()),
+                    ("s25".to_owned(), "point-25".to_owned()),
+                    ("s26".to_owned(), "point-26".to_owned()),
+                    ("s27".to_owned(), "point-27".to_owned()),
+                    ("s28".to_owned(), "point-28".to_owned()),
+                    ("s29".to_owned(), "point-29".to_owned()),
+                    ("s30".to_owned(), "point-30".to_owned()),
+                    ("s31".to_owned(), "point-31".to_owned()),
+                    ("s32".to_owned(), "point-32".to_owned()),
+                    ("s33".to_owned(), "point-33".to_owned()),
+                    ("s34".to_owned(), "point-34".to_owned()),
+                    ("s35".to_owned(), "point-35".to_owned()),
+                    ("s36".to_owned(), "point-36".to_owned()),
+                    ("s37".to_owned(), "point-37".to_owned()),
+                    ("s38".to_owned(), "point-38".to_owned()),
+                    ("s39".to_owned(), "point-39".to_owned()),
+                    ("s40".to_owned(), "point-40".to_owned()),
+                    ("s41".to_owned(), "point-41".to_owned()),
+                    ("s42".to_owned(), "point-42".to_owned()),
+                    ("s43".to_owned(), "point-43".to_owned()),
+                    ("s44".to_owned(), "point-44".to_owned()),
+                    ("s45".to_owned(), "point-45".to_owned()),
+                    ("s46".to_owned(), "point-46".to_owned()),
+                    ("s47".to_owned(), "point-47".to_owned()),
+                    ("s48".to_owned(), "point-48".to_owned()),
+                    ("s49".to_owned(), "point-49".to_owned()),
+                    ("s50".to_owned(), "point-50".to_owned()),
+                    ("s51".to_owned(), "point-51".to_owned()),
+                ]),
             })
         );
     }
