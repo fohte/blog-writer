@@ -437,6 +437,7 @@ mod tests {
                     Err(error) => return Err(error),
                 }
             };
+            // macOS accepted sockets inherit the listener's nonblocking mode.
             stream.set_nonblocking(false)?;
             stream.set_read_timeout(Some(Duration::from_secs(2)))?;
             stream.set_write_timeout(Some(Duration::from_secs(2)))?;
