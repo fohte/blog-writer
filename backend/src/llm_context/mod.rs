@@ -47,6 +47,8 @@ pub struct ArticleBlock {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ReferenceSource {
+    pub title: Option<String>,
+    pub url: Option<String>,
     pub summary: String,
     pub checked_at: String,
     pub key_points: Vec<ReferencePoint>,
@@ -55,6 +57,7 @@ pub struct ReferenceSource {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ReferencePoint {
     pub id: String,
+    pub heading: Option<String>,
     pub text: String,
     pub quote: Option<String>,
 }
@@ -172,13 +175,22 @@ fn render_sources(sources: &[ReferenceSource]) -> (String, BTreeMap<String, Stri
     for (source_index, source) in sources.iter().enumerate() {
         prompt.push('\n');
         push_line(&mut prompt, &format!("資料 {}", source_index + 1));
+        if let Some(title) = &source.title {
+            push_line(&mut prompt, &format!("タイトル: {title}"));
+        }
+        if let Some(url) = &source.url {
+            push_line(&mut prompt, &format!("URL: {url}"));
+        }
         push_line(&mut prompt, &format!("要約: {}", source.summary));
-        push_line(&mut prompt, &format!("確認日: {}", source.checked_at));
+        push_line(&mut prompt, &format!("取得日: {}", source.checked_at));
         push_line(&mut prompt, "要点:");
         for point in &source.key_points {
             let alias = format!("s{point_index}");
             aliases.insert(alias.clone(), point.id.clone());
             push_line(&mut prompt, &format!("- [{alias}] {}", point.text));
+            if let Some(heading) = &point.heading {
+                push_line(&mut prompt, &format!("  調査対象見出し: {heading}"));
+            }
             if let Some(quote) = &point.quote {
                 push_line(&mut prompt, &format!("  引用: {quote}"));
             }
@@ -245,16 +257,20 @@ mod tests {
                 after: 1,
             },
             sources: vec![ReferenceSource {
+                title: None,
+                url: None,
                 summary: "設定手順の概要".to_owned(),
                 checked_at: "2026-10-31".to_owned(),
                 key_points: vec![
                     ReferencePoint {
                         id: "point-one-id".to_owned(),
+                        heading: None,
                         text: "設定値は保存後に反映される".to_owned(),
                         quote: Some("Changes take effect after saving.".to_owned()),
                     },
                     ReferencePoint {
                         id: "point-two-id".to_owned(),
+                        heading: None,
                         text: "再起動が必要な場合がある".to_owned(),
                         quote: None,
                     },
@@ -288,7 +304,7 @@ mod tests {
 
         資料 1
         要約: 設定手順の概要
-        確認日: 2026-10-31
+        取得日: 2026-10-31
         要点:
         - [s1] 設定値は保存後に反映される
           引用: Changes take effect after saving.
@@ -319,7 +335,7 @@ mod tests {
 
         資料 1
         要約: 設定手順の概要
-        確認日: 2026-10-31
+        取得日: 2026-10-31
         要点:
         - [s1] 設定値は保存後に反映される
           引用: Changes take effect after saving.
@@ -356,7 +372,7 @@ mod tests {
 
         資料 1
         要約: 設定手順の概要
-        確認日: 2026-10-31
+        取得日: 2026-10-31
         要点:
         - [s1] 設定値は保存後に反映される
           引用: Changes take effect after saving.
@@ -384,7 +400,7 @@ mod tests {
 
         資料 1
         要約: 設定手順の概要
-        確認日: 2026-10-31
+        取得日: 2026-10-31
         要点:
         - [s1] 設定値は保存後に反映される
           引用: Changes take effect after saving.
@@ -412,7 +428,7 @@ mod tests {
 
         資料 1
         要約: 設定手順の概要
-        確認日: 2026-10-31
+        取得日: 2026-10-31
         要点:
         - [s1] 設定値は保存後に反映される
           引用: Changes take effect after saving.
@@ -450,7 +466,7 @@ mod tests {
 
         資料 1
         要約: 設定手順の概要
-        確認日: 2026-10-31
+        取得日: 2026-10-31
         要点:
         - [s1] 設定値は保存後に反映される
           引用: Changes take effect after saving.
@@ -591,7 +607,7 @@ mod tests {
 
         資料 1
         要約: 第一資料の概要
-        確認日: 2026-11-01
+        取得日: 2026-11-01
         要点:
         - [s1] 要点 1
         - [s2] 要点 2
@@ -622,7 +638,7 @@ mod tests {
 
         資料 2
         要約: 第二資料の概要
-        確認日: 2026-11-02
+        取得日: 2026-11-02
         要点:
         - [s27] 要点 27
         - [s28] 要点 28
@@ -661,6 +677,7 @@ mod tests {
             (start..=end)
                 .map(|index| ReferencePoint {
                     id: format!("point-{index}"),
+                    heading: None,
                     text: format!("要点 {index}"),
                     quote: None,
                 })
@@ -668,11 +685,15 @@ mod tests {
         };
         context_input.sources = vec![
             ReferenceSource {
+                title: None,
+                url: None,
                 summary: "第一資料の概要".to_owned(),
                 checked_at: "2026-11-01".to_owned(),
                 key_points: points(1, 26),
             },
             ReferenceSource {
+                title: None,
+                url: None,
                 summary: "第二資料の概要".to_owned(),
                 checked_at: "2026-11-02".to_owned(),
                 key_points: points(27, point_count),
