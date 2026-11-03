@@ -267,6 +267,79 @@ impl WebSearchEvent {
     }
 }
 
+type WebSearchFuture = Pin<Box<dyn Future<Output = Result<WebSearchResult, LlmError>> + Send>>;
+
+struct WebSearchStreamState {
+    search: Option<WebSearchFuture>,
+    progress_receiver: mpsc::UnboundedReceiver<String>,
+    pending_result: Option<WebSearchEvent>,
+    finished: bool,
+}
+
+impl WebSearchStreamState {
+    async fn next_event(&mut self) -> Option<WebSearchEvent> {
+        if self.finished {
+            return None;
+        }
+        if let Ok(query) = self.progress_receiver.try_recv() {
+            return Some(WebSearchEvent::Progress(query));
+        }
+        if let Some(event) = self.pending_result.take() {
+            self.finished = true;
+            return Some(event);
+        }
+
+        let search_future = self.search.as_mut()?;
+        tokio::select! {
+            Some(query) = self.progress_receiver.recv() => Some(WebSearchEvent::Progress(query)),
+            result = search_future => {
+                self.search = None;
+                let event = match result {
+                    Ok(result) => WebSearchEvent::Result(result),
+                    Err(error) => WebSearchEvent::Error(error),
+                };
+                if let Ok(query) = self.progress_receiver.try_recv() {
+                    self.pending_result = Some(event);
+                    Some(WebSearchEvent::Progress(query))
+                } else {
+                    self.finished = true;
+                    Some(event)
+                }
+            }
+        }
+    }
+
+    fn cancel(&mut self) {
+        self.search = None;
+        self.pending_result = None;
+        self.finished = true;
+    }
+}
+
+struct WebSearchEventStream {
+    state: WebSearchStreamState,
+    shutdown: watch::Receiver<bool>,
+}
+
+impl WebSearchEventStream {
+    async fn next_event(&mut self) -> Option<WebSearchEvent> {
+        if self.state.finished {
+            return None;
+        }
+
+        let state = &mut self.state;
+        let shutdown = &mut self.shutdown;
+        tokio::select! {
+            biased;
+            _ = wait_for_shutdown(shutdown) => {
+                state.cancel();
+                Some(WebSearchEvent::Cancelled)
+            }
+            event = state.next_event() => event,
+        }
+    }
+}
+
 fn web_search_events(
     state: LlmState,
     system_prompt: String,
@@ -286,67 +359,17 @@ fn web_search_events(
                 .await
                 .unwrap_or(Err(LlmError::Timeout))
         });
-    let shutdown = state.shutdown.clone();
     stream::unfold(
-        (
-            Some(search),
-            progress_receiver,
-            None::<WebSearchEvent>,
-            false,
-            shutdown,
-        ),
-        |(mut search, mut progress_receiver, mut result_event, finished, mut shutdown)| async move {
-            if finished {
-                return None;
-            }
-            if *shutdown.borrow() {
-                search = None;
-                return Some((
-                    WebSearchEvent::Cancelled,
-                    (search, progress_receiver, None, true, shutdown),
-                ));
-            }
-            if let Ok(query) = progress_receiver.try_recv() {
-                return Some((
-                    WebSearchEvent::Progress(query),
-                    (search, progress_receiver, result_event, false, shutdown),
-                ));
-            }
-            if let Some(event) = result_event.take() {
-                return Some((event, (search, progress_receiver, None, true, shutdown)));
-            }
-            let search_future = search.as_mut()?;
-            tokio::select! {
-                biased;
-                _ = wait_for_shutdown(&mut shutdown) => {
-                    search = None;
-                    Some((
-                        WebSearchEvent::Cancelled,
-                        (search, progress_receiver, None, true, shutdown),
-                    ))
-                },
-                Some(query) = progress_receiver.recv() => Some((
-                    WebSearchEvent::Progress(query),
-                    (search, progress_receiver, result_event, false, shutdown),
-                )),
-                result = search_future => {
-                    search = None;
-                    let event = match result {
-                        Ok(result) => WebSearchEvent::Result(result),
-                        Err(error) => WebSearchEvent::Error(error),
-                    };
-                    if let Ok(query) = progress_receiver.try_recv() {
-                        result_event = Some(event);
-                        Some((
-                            WebSearchEvent::Progress(query),
-                            (search, progress_receiver, result_event, false, shutdown),
-                        ))
-                    } else {
-                        Some((event, (search, progress_receiver, None, true, shutdown)))
-                    }
-                }
-            }
+        WebSearchEventStream {
+            state: WebSearchStreamState {
+                search: Some(search),
+                progress_receiver,
+                pending_result: None,
+                finished: false,
+            },
+            shutdown: state.shutdown,
         },
+        |mut stream| async move { stream.next_event().await.map(|event| (event, stream)) },
     )
 }
 
