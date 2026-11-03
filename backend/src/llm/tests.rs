@@ -992,6 +992,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
 )]
 #[case::invalid_json_line(
     indoc! {r#"
+        cat >/dev/null
         printf '%s\n' 'not-json'
     "#},
     indoc! {r#"
