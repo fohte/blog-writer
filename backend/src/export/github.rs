@@ -3,7 +3,6 @@ mod ogp_json;
 
 use std::{fs, sync::Arc, time::Duration};
 
-use base64::{Engine, engine::general_purpose::STANDARD};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -54,6 +53,8 @@ pub enum ExportError {
     InvalidResponse,
     #[error("OGP metadata task failed")]
     OgpFetchTask,
+    #[error("article contains more than 50 unregistered HTTP(S) CardLink hrefs")]
+    TooManyOgpHrefs,
     #[error("export destination configuration is invalid")]
     InvalidConfiguration,
     #[error("export request contains an invalid article ID or slug")]
@@ -185,6 +186,29 @@ impl ExportService {
         let branch = article_branch(article_id);
         let pull = self.find_open_pull(owner, repo, &branch, &token).await?;
 
+        let ogp_update = if let Some(json_path) = &destination.ogp_json_path {
+            let hrefs = ogp_json::card_link_hrefs(&request.content);
+            if hrefs.is_empty() {
+                None
+            } else {
+                let reference = pull
+                    .as_ref()
+                    .map_or(destination.base_branch.as_str(), |_| branch.as_str());
+                self.validate_article_file(
+                    destination,
+                    &destination.file_path(&request.slug),
+                    reference,
+                    request.sha.as_deref(),
+                    &token,
+                )
+                .await?;
+                self.prepare_ogp_json(destination, json_path, reference, hrefs, &token)
+                    .await?
+            }
+        } else {
+            None
+        };
+
         if pull.is_none() {
             self.reset_branch(owner, repo, destination, &branch, &token)
                 .await?;
@@ -194,16 +218,9 @@ impl ExportService {
         self.put_contents(destination, &path, &branch, request, &token)
             .await?;
 
-        if let Some(json_path) = &destination.ogp_json_path {
-            self.update_ogp_json(
-                destination,
-                json_path,
-                &branch,
-                &request.content,
-                &token,
-                safe_fetch,
-            )
-            .await?;
+        if let Some(ogp_update) = ogp_update {
+            self.commit_ogp_json(destination, &branch, &token, ogp_update, safe_fetch)
+                .await?;
         }
 
         match pull {
@@ -378,58 +395,6 @@ impl ExportService {
         successful_response(response).await.map(|_| ())
     }
 
-    async fn put_contents(
-        &self,
-        destination: &ExportDestination,
-        path: &str,
-        branch: &str,
-        request: &ArticleContent,
-        token: &str,
-    ) -> Result<(), ExportError> {
-        let result = self
-            .put_raw_contents(
-                destination,
-                path,
-                PutContentsRequest {
-                    message: format!("Publish {path}"),
-                    content: STANDARD.encode(request.content.as_bytes()),
-                    branch,
-                    sha: request.sha.as_deref(),
-                },
-                token,
-            )
-            .await;
-        match result {
-            Err(ExportError::HttpStatus(409)) => Err(ExportError::RemoteConflict),
-            Err(ExportError::HttpStatus(422)) if request.sha.is_none() => {
-                Err(ExportError::RemoteConflict)
-            }
-            Err(ExportError::HttpStatus(404)) if request.sha.is_some() => {
-                Err(ExportError::RemoteConflict)
-            }
-            other => other,
-        }
-    }
-
-    async fn put_raw_contents(
-        &self,
-        destination: &ExportDestination,
-        path: &str,
-        body: PutContentsRequest<'_>,
-        token: &str,
-    ) -> Result<(), ExportError> {
-        let (owner, repo) = destination
-            .repository_parts()
-            .ok_or(ExportError::InvalidConfiguration)?;
-        let mut url_parts = vec!["contents"];
-        url_parts.extend(path.split('/'));
-        let url = self.github_url(owner, repo, &url_parts)?;
-        let response = self
-            .send_github(self.github_request(Method::PUT, url, token).json(&body))
-            .await?;
-        successful_response(response).await.map(|_| ())
-    }
-
     fn github_request(&self, method: Method, url: Url, token: &str) -> RequestBuilder {
         self.client
             .request(method, url)
@@ -540,6 +505,7 @@ mod tests {
 
     struct TestFetcher {
         available: bool,
+        unavailable_urls: Vec<String>,
         calls: Mutex<Vec<String>>,
     }
 
@@ -547,6 +513,7 @@ mod tests {
         fn available() -> Arc<Self> {
             Arc::new(Self {
                 available: true,
+                unavailable_urls: vec![],
                 calls: Mutex::new(Vec::new()),
             })
         }
@@ -554,6 +521,15 @@ mod tests {
         fn unavailable() -> Arc<Self> {
             Arc::new(Self {
                 available: false,
+                unavailable_urls: vec![],
+                calls: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn with_unavailable_url(url: &str) -> Arc<Self> {
+            Arc::new(Self {
+                available: true,
+                unavailable_urls: vec![url.to_owned()],
                 calls: Mutex::new(Vec::new()),
             })
         }
@@ -562,7 +538,9 @@ mod tests {
     impl SafeFetchService for TestFetcher {
         fn fetch<'a>(&'a self, url: &'a str) -> SafeFetchFuture<'a> {
             self.calls.lock().unwrap().push(url.to_owned());
-            let response = if self.available {
+            let response = if self.available
+                && !self.unavailable_urls.iter().any(|item| item == url)
+            {
                 Ok(FetchResponse {
                     final_url: reqwest::Url::parse(url).unwrap(),
                     body: br#"<meta property="og:title" content="Card title"><meta property="og:description" content="Card description"><meta property="og:image" content="/card.png">"#.to_vec(),
@@ -735,15 +713,7 @@ mod tests {
         sha: Option<&str>,
         status: u16,
     ) {
-        mock_token_exchange(fixture).await;
-        mock_pulls(
-            fixture,
-            json!([{
-                "html_url": "https://github.example/writer/notes/pull/12",
-                "state": "open"
-            }]),
-        )
-        .await;
+        mock_open_pull(fixture).await;
         mock_file_commit(
             fixture,
             FILE_PATH,
@@ -755,6 +725,63 @@ mod tests {
         .await;
     }
 
+    async fn mock_open_pull(fixture: &Fixture) {
+        mock_token_exchange(fixture).await;
+        mock_pulls(
+            fixture,
+            json!([{
+                "html_url": "https://github.example/writer/notes/pull/12",
+                "state": "open"
+            }]),
+        )
+        .await;
+    }
+
+    async fn mock_open_pull_article_commit_with_preflight(
+        fixture: &Fixture,
+        article_content: &str,
+        sha: Option<&str>,
+        status: u16,
+    ) {
+        mock_open_pull_article_commit(fixture, article_content, sha, status).await;
+        mock_article_contents_read(fixture, ARTICLE_BRANCH, Some(article_content), sha).await;
+    }
+
+    async fn mock_article_contents_read(
+        fixture: &Fixture,
+        reference: &str,
+        content: Option<&str>,
+        sha: Option<&str>,
+    ) {
+        let response = match (content, sha) {
+            (Some(content), Some(sha)) => ResponseTemplate::new(200).set_body_json(json!({
+                "content": STANDARD.encode(content.as_bytes()),
+                "sha": sha,
+                "encoding": "base64"
+            })),
+            (None, None) => ResponseTemplate::new(404),
+            _ => unreachable!(),
+        };
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/writer/notes/contents/{FILE_PATH}")))
+            .and(query_param("ref", reference))
+            .and(github_auth())
+            .respond_with(response)
+            .expect(1)
+            .mount(&fixture.github)
+            .await;
+    }
+
+    async fn mock_no_github_writes(fixture: &Fixture) {
+        for request_method in ["POST", "PATCH", "PUT"] {
+            Mock::given(method(request_method))
+                .respond_with(ResponseTemplate::new(500))
+                .expect(0)
+                .mount(&fixture.github)
+                .await;
+        }
+    }
+
     fn expected_ogp_content(value: serde_json::Value) -> String {
         let mut content = serde_json::to_string_pretty(&value).unwrap();
         content.push('\n');
@@ -762,6 +789,14 @@ mod tests {
     }
 
     async fn mock_ogp_json_read(fixture: &Fixture, content: Option<&str>) {
+        mock_ogp_json_read_for_reference(fixture, ARTICLE_BRANCH, content).await;
+    }
+
+    async fn mock_ogp_json_read_for_reference(
+        fixture: &Fixture,
+        reference: &str,
+        content: Option<&str>,
+    ) {
         let response = match content {
             Some(content) => ResponseTemplate::new(200).set_body_json(json!({
                 "content": STANDARD.encode(content.as_bytes()),
@@ -774,7 +809,7 @@ mod tests {
             .and(path(format!(
                 "/repos/writer/notes/contents/{OGP_JSON_PATH}"
             )))
-            .and(query_param("ref", ARTICLE_BRANCH))
+            .and(query_param("ref", reference))
             .and(github_auth())
             .respond_with(response)
             .expect(1)
@@ -958,7 +993,8 @@ mod tests {
         });
         let expected_content = expected_ogp_content(expected_json);
 
-        mock_open_pull_article_commit(&fixture, article, Some("file-sha"), 200).await;
+        mock_open_pull_article_commit_with_preflight(&fixture, article, Some("file-sha"), 200)
+            .await;
         mock_ogp_json_read(&fixture, Some(existing)).await;
         mock_ogp_json_commit(&fixture, &expected_content, Some("json-sha"), 200).await;
 
@@ -993,7 +1029,8 @@ mod tests {
         let fetcher = TestFetcher::available();
         let article = "<CardLink href=\"https://cached.example/page\" />";
         let existing = r#"{"https://cached.example/page":{"title":"Cached title"}}"#;
-        mock_open_pull_article_commit(&fixture, article, Some("file-sha"), 200).await;
+        mock_open_pull_article_commit_with_preflight(&fixture, article, Some("file-sha"), 200)
+            .await;
         mock_ogp_json_read(&fixture, Some(existing)).await;
         Mock::given(method("PUT"))
             .and(path(format!(
@@ -1042,7 +1079,8 @@ mod tests {
             }
         });
         let expected_content = expected_ogp_content(expected_json);
-        mock_open_pull_article_commit(&fixture, article, Some("file-sha"), 200).await;
+        mock_open_pull_article_commit_with_preflight(&fixture, article, Some("file-sha"), 200)
+            .await;
         mock_ogp_json_read(&fixture, None).await;
         mock_ogp_json_commit(&fixture, &expected_content, None, 201).await;
 
@@ -1066,6 +1104,144 @@ mod tests {
                 Ok("https://github.example/writer/notes/pull/12".to_owned()),
                 vec!["https://unavailable.example/page".to_owned()]
             )
+        );
+        fixture.github.verify().await;
+        fixture.octo_sts.verify().await;
+    }
+
+    #[tokio::test]
+    async fn commits_available_and_unavailable_ogp_metadata_together() {
+        let fixture = fixture().await;
+        let available_url = "https://available.example/page";
+        let unavailable_url = "https://unavailable.example/page";
+        let fetcher = TestFetcher::with_unavailable_url(unavailable_url);
+        let article = format!(
+            "<CardLink href=\"{available_url}\" />\n<CardLink href=\"{unavailable_url}\" />"
+        );
+        let expected_json = json!({
+            "https://available.example/page": {
+                "title": "Card title",
+                "description": "Card description",
+                "image": "https://available.example/card.png"
+            },
+            "https://unavailable.example/page": {
+                "title": "",
+                "description": "",
+                "image": ""
+            }
+        });
+        let expected_content = expected_ogp_content(expected_json);
+        mock_open_pull_article_commit_with_preflight(&fixture, &article, Some("file-sha"), 200)
+            .await;
+        mock_ogp_json_read(&fixture, None).await;
+        mock_ogp_json_commit(&fixture, &expected_content, None, 201).await;
+
+        let actual = fixture
+            .service
+            .publish_article(
+                &destination_with_ogp_json(),
+                ARTICLE_ID,
+                &ArticleContent {
+                    slug: SLUG.to_owned(),
+                    content: article,
+                    sha: Some("file-sha".to_owned()),
+                },
+                fetcher.clone(),
+            )
+            .await;
+        let mut fetch_calls = fetcher.calls.lock().unwrap().clone();
+        fetch_calls.sort();
+
+        assert_eq!(
+            (actual, fetch_calls),
+            (
+                Ok("https://github.example/writer/notes/pull/12".to_owned()),
+                vec![available_url.to_owned(), unavailable_url.to_owned()]
+            )
+        );
+        fixture.github.verify().await;
+        fixture.octo_sts.verify().await;
+    }
+
+    #[tokio::test]
+    async fn does_not_read_ogp_json_when_configured_article_has_no_card_links() {
+        let fixture = fixture().await;
+        mock_open_pull_article_commit(&fixture, BODY, Some("file-sha"), 200).await;
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/repos/writer/notes/contents/{OGP_JSON_PATH}"
+            )))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(0)
+            .mount(&fixture.github)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path(format!(
+                "/repos/writer/notes/contents/{OGP_JSON_PATH}"
+            )))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&fixture.github)
+            .await;
+
+        let fetcher = TestFetcher::available();
+        let actual = fixture
+            .service
+            .publish_article(
+                &destination_with_ogp_json(),
+                ARTICLE_ID,
+                &publish_request(Some("file-sha")),
+                fetcher.clone(),
+            )
+            .await;
+
+        assert_eq!(
+            (actual, fetcher.calls.lock().unwrap().clone()),
+            (
+                Ok("https://github.example/writer/notes/pull/12".to_owned()),
+                vec![]
+            )
+        );
+        fixture.github.verify().await;
+        fixture.octo_sts.verify().await;
+    }
+
+    #[tokio::test]
+    async fn rejects_more_than_50_new_ogp_hrefs_before_writing() {
+        let fixture = fixture().await;
+        let article = (0..51)
+            .map(|index| format!("<CardLink href=\"https://example.test/{index}\" />"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        mock_open_pull(&fixture).await;
+        mock_article_contents_read(
+            &fixture,
+            ARTICLE_BRANCH,
+            Some(article.as_str()),
+            Some("file-sha"),
+        )
+        .await;
+        mock_ogp_json_read(&fixture, Some("{}")).await;
+        mock_no_github_writes(&fixture).await;
+
+        let fetcher = TestFetcher::available();
+        let actual = fixture
+            .service
+            .publish_article(
+                &destination_with_ogp_json(),
+                ARTICLE_ID,
+                &ArticleContent {
+                    slug: SLUG.to_owned(),
+                    content: article,
+                    sha: Some("file-sha".to_owned()),
+                },
+                fetcher.clone(),
+            )
+            .await;
+
+        assert_eq!(
+            (actual, fetcher.calls.lock().unwrap().clone()),
+            (Err(ExportError::TooManyOgpHrefs), vec![])
         );
         fixture.github.verify().await;
         fixture.octo_sts.verify().await;
@@ -1124,25 +1300,9 @@ mod tests {
         let fixture = fixture().await;
         let fetcher = TestFetcher::available();
         let article = "<CardLink href=\"https://conflict.example/page\" />";
-        mock_token_exchange(&fixture).await;
-        mock_pulls(&fixture, json!([])).await;
-        mock_base_reference_and_missing_article_branch(&fixture).await;
-        Mock::given(method("POST"))
-            .and(path("/repos/writer/notes/git/refs"))
-            .and(github_auth())
-            .respond_with(ResponseTemplate::new(201))
-            .expect(1)
-            .mount(&fixture.github)
+        mock_open_pull(&fixture).await;
+        mock_article_contents_read(&fixture, ARTICLE_BRANCH, Some(article), Some("current-sha"))
             .await;
-        mock_file_commit(
-            &fixture,
-            FILE_PATH,
-            article,
-            &format!("Publish {FILE_PATH}"),
-            Some("stale-sha"),
-            409,
-        )
-        .await;
         Mock::given(method("GET"))
             .and(path(format!(
                 "/repos/writer/notes/contents/{OGP_JSON_PATH}"
@@ -1151,6 +1311,7 @@ mod tests {
             .expect(0)
             .mount(&fixture.github)
             .await;
+        mock_no_github_writes(&fixture).await;
 
         let actual = fixture
             .service
@@ -1187,7 +1348,8 @@ mod tests {
             }
         });
         let expected_content = expected_ogp_content(expected_json);
-        mock_open_pull_article_commit(&fixture, article, Some("file-sha"), 200).await;
+        mock_open_pull_article_commit_with_preflight(&fixture, article, Some("file-sha"), 200)
+            .await;
         mock_ogp_json_read(&fixture, None).await;
         mock_ogp_json_commit(&fixture, &expected_content, None, 409).await;
 
@@ -1218,16 +1380,11 @@ mod tests {
         let fixture = fixture().await;
         let fetcher = TestFetcher::available();
         let article = "<CardLink href=\"https://card.example/page\" />";
-        mock_open_pull_article_commit(&fixture, article, Some("file-sha"), 200).await;
-        mock_ogp_json_read(&fixture, Some(existing)).await;
-        Mock::given(method("PUT"))
-            .and(path(format!(
-                "/repos/writer/notes/contents/{OGP_JSON_PATH}"
-            )))
-            .respond_with(ResponseTemplate::new(500))
-            .expect(0)
-            .mount(&fixture.github)
-            .await;
+        mock_token_exchange(&fixture).await;
+        mock_pulls(&fixture, json!([])).await;
+        mock_article_contents_read(&fixture, "main", None, None).await;
+        mock_ogp_json_read_for_reference(&fixture, "main", Some(existing)).await;
+        mock_no_github_writes(&fixture).await;
 
         let actual = fixture
             .service
@@ -1237,7 +1394,7 @@ mod tests {
                 &ArticleContent {
                     slug: SLUG.to_owned(),
                     content: article.to_owned(),
-                    sha: Some("file-sha".to_owned()),
+                    sha: None,
                 },
                 fetcher.clone(),
             )

@@ -1,54 +1,75 @@
 use std::{collections::HashSet, sync::Arc};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
+use reqwest::Url;
+use tokio::task::JoinSet;
 
 use crate::{
     config::ExportDestination,
     ogp::{self, OgpResponse},
     safe_fetch::SafeFetchService,
 };
-use tokio::task::JoinSet;
 
 use super::{ExportError, ExportService, PutContentsRequest};
 
 const MAX_CONCURRENT_OGP_FETCHES: usize = 4;
+const MAX_OGP_HREFS_PER_ARTICLE: usize = 50;
+
+pub(super) struct PreparedOgpJson {
+    path: String,
+    sha: Option<String>,
+    entries: serde_json::Map<String, serde_json::Value>,
+    missing_hrefs: Vec<String>,
+}
 
 impl ExportService {
-    pub(super) async fn update_ogp_json(
+    pub(super) async fn prepare_ogp_json(
         &self,
         destination: &ExportDestination,
         json_path: &str,
-        branch: &str,
-        article_content: &str,
+        reference: &str,
+        hrefs: Vec<String>,
         token: &str,
-        safe_fetch: Arc<dyn SafeFetchService>,
-    ) -> Result<(), ExportError> {
-        let hrefs = card_link_hrefs(article_content);
-        if hrefs.is_empty() {
-            return Ok(());
-        }
-
+    ) -> Result<Option<PreparedOgpJson>, ExportError> {
         let remote_file = self
-            .get_contents_file(destination, json_path, branch, token)
+            .get_contents_file(destination, json_path, reference, token)
             .await?;
-        let mut entries = match remote_file.as_ref() {
-            Some(file) => serde_json::from_str::<serde_json::Value>(&file.content)
-                .map_err(|_| ExportError::InvalidResponse)?,
-            None => serde_json::Value::Object(serde_json::Map::new()),
-        };
-        let Some(object) = entries.as_object_mut() else {
-            return Err(ExportError::InvalidResponse);
+        let entries = match remote_file.as_ref() {
+            Some(file) => {
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&file.content)
+                    .map_err(|_| ExportError::InvalidResponse)?
+            }
+            None => serde_json::Map::new(),
         };
 
         let missing_hrefs: Vec<_> = hrefs
             .into_iter()
-            .filter(|href| !object.contains_key(href))
+            .filter(|href| !entries.contains_key(href))
             .collect();
+        if missing_hrefs.len() > MAX_OGP_HREFS_PER_ARTICLE {
+            return Err(ExportError::TooManyOgpHrefs);
+        }
         if missing_hrefs.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
-        let mut pending = missing_hrefs.iter().enumerate();
+        Ok(Some(PreparedOgpJson {
+            path: json_path.to_owned(),
+            sha: remote_file.map(|file| file.sha),
+            entries,
+            missing_hrefs,
+        }))
+    }
+
+    pub(super) async fn commit_ogp_json(
+        &self,
+        destination: &ExportDestination,
+        branch: &str,
+        token: &str,
+        mut prepared: PreparedOgpJson,
+        safe_fetch: Arc<dyn SafeFetchService>,
+    ) -> Result<(), ExportError> {
+        let mut pending = prepared.missing_hrefs.iter().enumerate();
         let mut fetches = JoinSet::new();
         for _ in 0..MAX_CONCURRENT_OGP_FETCHES {
             let Some((index, href)) = pending.next() else {
@@ -57,7 +78,7 @@ impl ExportService {
             spawn_ogp_fetch(&mut fetches, Arc::clone(&safe_fetch), index, href.clone());
         }
 
-        let mut results = Vec::with_capacity(missing_hrefs.len());
+        let mut results = Vec::with_capacity(prepared.missing_hrefs.len());
         while let Some(result) = fetches.join_next().await {
             let result = result.map_err(|_| ExportError::OgpFetchTask)?;
             results.push(result);
@@ -78,20 +99,20 @@ impl ExportService {
                 tracing::warn!(href = %href, "OGP metadata is unavailable");
                 serde_json::json!({ "title": "", "description": "", "image": "" })
             };
-            object.insert(href, value);
+            prepared.entries.insert(href, value);
         }
 
-        let mut content =
-            serde_json::to_string_pretty(&entries).map_err(|_| ExportError::InvalidResponse)?;
+        let mut content = serde_json::to_string_pretty(&prepared.entries)
+            .map_err(|_| ExportError::InvalidResponse)?;
         content.push('\n');
         self.put_raw_contents(
             destination,
-            json_path,
+            &prepared.path,
             PutContentsRequest {
-                message: format!("Update {json_path}"),
+                message: format!("Update {}", prepared.path),
                 content: STANDARD.encode(content.as_bytes()),
                 branch,
-                sha: remote_file.as_ref().map(|file| file.sha.as_str()),
+                sha: prepared.sha.as_deref(),
             },
             token,
         )
@@ -111,7 +132,7 @@ fn spawn_ogp_fetch(
     });
 }
 
-fn card_link_hrefs(content: &str) -> Vec<String> {
+pub(super) fn card_link_hrefs(content: &str) -> Vec<String> {
     let mut hrefs = Vec::new();
     let mut seen = HashSet::new();
     let mut search_from = 0;
@@ -141,18 +162,29 @@ fn card_link_hrefs(content: &str) -> Vec<String> {
             }
         }
         let Some(tag_end) = tag_end else {
+            tracing::warn!("CardLink tag is not closed");
             break;
         };
         let attributes = &content[attributes_start..tag_end];
-        if let Some(href) = quoted_attribute(attributes, "href")
-            && !href.is_empty()
-            && seen.insert(href.clone())
-        {
-            hrefs.push(href);
+        match quoted_attribute(attributes, "href") {
+            Some(href) if !href.is_empty() && is_http_url(&href) => {
+                if seen.insert(href.clone()) {
+                    hrefs.push(href);
+                }
+            }
+            Some(href) if href.is_empty() => {
+                tracing::warn!("CardLink href is empty");
+            }
+            None => tracing::warn!("CardLink href is missing or not quoted"),
+            Some(_) => {}
         }
         search_from = tag_end + 1;
     }
     hrefs
+}
+
+fn is_http_url(href: &str) -> bool {
+    Url::parse(href).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
 }
 
 fn quoted_attribute(attributes: &str, expected_name: &str) -> Option<String> {
@@ -200,4 +232,56 @@ fn quoted_attribute(attributes: &str, expected_name: &str) -> Option<String> {
         cursor += usize::from(cursor < bytes.len());
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use indoc::indoc;
+    use rstest::rstest;
+
+    use super::card_link_hrefs;
+
+    #[rstest]
+    #[case::double_quoted(
+        "<CardLink href=\"https://example.test/guide\" />",
+        vec!["https://example.test/guide"]
+    )]
+    #[case::single_quoted(
+        "<CardLink href='https://example.test/guide' />",
+        vec!["https://example.test/guide"]
+    )]
+    #[case::attribute_order(
+        "<CardLink title=\"Guide\" href=\"https://example.test/guide\" />",
+        vec!["https://example.test/guide"]
+    )]
+    #[case::multiline_tag(
+        indoc! {r#"
+            <CardLink
+                title="Guide"
+                href="https://example.test/guide"
+            />
+        "#},
+        vec!["https://example.test/guide"]
+    )]
+    #[case::duplicate_hrefs(
+        "<CardLink href=\"https://example.test/guide\" /><CardLink href='https://example.test/guide' />",
+        vec!["https://example.test/guide"]
+    )]
+    #[case::card_link_prefix_is_not_a_tag(
+        "<CardLinkFoo href=\"https://example.test/guide\" />",
+        vec![]
+    )]
+    #[case::jsx_expression_is_not_quoted(
+        "<CardLink href={\"https://example.test/guide\"} />",
+        vec![]
+    )]
+    #[case::relative_href_is_ignored("<CardLink href=\"/guide\" />", vec![])]
+    #[case::mailto_href_is_ignored("<CardLink href=\"mailto:reader@example.test\" />", vec![])]
+    fn extracts_distinct_http_card_link_hrefs(#[case] content: &str, #[case] expected: Vec<&str>) {
+        let actual = card_link_hrefs(content);
+        assert_eq!(
+            actual.iter().map(String::as_str).collect::<Vec<_>>(),
+            expected
+        );
+    }
 }

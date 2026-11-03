@@ -126,9 +126,10 @@ pub async fn get_article_file(
     request_body = PublishArticleRequest,
     responses(
         (status = 200, description = "Pull request URL", body = PublishArticleResponse),
-        (status = 400, description = "Invalid article ID or slug", body = ErrorResponse),
+        (status = 400, description = "Invalid article ID or slug, or more than 50 unregistered HTTP(S) CardLink hrefs", body = ErrorResponse),
         (status = 404, description = "Destination not found", body = ErrorResponse),
         (status = 409, description = "Remote file changed; fetch its current version before retrying", body = ErrorResponse),
+        (status = 500, description = "Export failed, including a conflict while updating OGP metadata after the article commit", body = ErrorResponse),
         (status = 503, description = "Export publishing is not configured", body = ErrorResponse)
     )
 )]
@@ -181,11 +182,42 @@ fn map_export_error(error: ExportError) -> AppError {
             status: axum::http::StatusCode::BAD_REQUEST,
             message: "Invalid article ID or slug".to_owned(),
         },
+        ExportError::TooManyOgpHrefs => AppError::Client {
+            status: axum::http::StatusCode::BAD_REQUEST,
+            message: "Article contains more than 50 unregistered HTTP(S) CardLink hrefs".to_owned(),
+        },
         ExportError::RemoteConflict => AppError::Client {
             status: axum::http::StatusCode::CONFLICT,
             message: "The remote file changed. Fetch its current version before publishing again."
                 .to_owned(),
         },
         other => AppError::Internal(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{body::to_bytes, response::IntoResponse};
+    use serde_json::{Value, json};
+
+    use super::map_export_error;
+    use crate::export::github::ExportError;
+
+    #[tokio::test]
+    async fn maps_too_many_ogp_hrefs_to_bad_request() {
+        let response = map_export_error(ExportError::TooManyOgpHrefs).into_response();
+        let status = response.status().as_u16();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let actual = (status, serde_json::from_slice::<Value>(&body).unwrap());
+
+        assert_eq!(
+            actual,
+            (
+                400,
+                json!({
+                    "error": "Article contains more than 50 unregistered HTTP(S) CardLink hrefs"
+                })
+            )
+        );
     }
 }
