@@ -288,6 +288,7 @@ mod tests {
     #[rstest]
     #[case::write_from_key_points("/api/write-from-key-points")]
     #[case::research_key_points("/api/research/key-points")]
+    #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[test_attr(tokio::test)]
     async fn includes_llm_use_case_routes_in_api_only_mode(#[case] uri: &'static str) {
         let response = test_llm_api_router(policy())
@@ -310,6 +311,7 @@ mod tests {
     #[rstest]
     #[case::write_from_key_points("/api/write-from-key-points")]
     #[case::research_key_points("/api/research/key-points")]
+    #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[test_attr(tokio::test)]
     async fn allows_cors_preflight_from_an_allowed_origin(#[case] uri: &'static str) {
         let response = test_llm_api_router(policy())
