@@ -50,8 +50,19 @@ impl DatabaseKind {
 
     fn insert_update(self) -> &'static str {
         match self {
-            Self::Postgres => "INSERT INTO sync_updates (doc_id, update_data) VALUES ($1, $2)",
-            Self::Sqlite => "INSERT INTO sync_updates (doc_id, update_data) VALUES (?1, ?2)",
+            Self::Postgres => {
+                "INSERT INTO sync_updates (doc_id, update_data) VALUES ($1, $2) RETURNING update_id"
+            }
+            Self::Sqlite => {
+                "INSERT INTO sync_updates (doc_id, update_data) VALUES (?1, ?2) RETURNING update_id"
+            }
+        }
+    }
+
+    fn delete_update(self) -> &'static str {
+        match self {
+            Self::Postgres => "DELETE FROM sync_updates WHERE update_id = $1",
+            Self::Sqlite => "DELETE FROM sync_updates WHERE update_id = ?1",
         }
     }
 }
@@ -97,10 +108,22 @@ pub(super) async fn append_update(
     kind: DatabaseKind,
     doc_id: &str,
     update: &[u8],
-) -> Result<(), DatabaseError> {
-    sqlx::query(kind.insert_update())
+) -> Result<i64, DatabaseError> {
+    let row = sqlx::query(kind.insert_update())
         .bind(doc_id)
         .bind(update)
+        .fetch_one(pool)
+        .await?;
+    Ok(row.try_get("update_id")?)
+}
+
+pub(super) async fn delete_update(
+    pool: &AnyPool,
+    kind: DatabaseKind,
+    update_id: i64,
+) -> Result<(), DatabaseError> {
+    sqlx::query(kind.delete_update())
+        .bind(update_id)
         .execute(pool)
         .await?;
     Ok(())

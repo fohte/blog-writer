@@ -2,7 +2,7 @@ use yrs::{
     ClientID, Doc, ReadTxn, Transact, Update,
     encoding::read::Cursor,
     sync::{
-        Awareness, Message, Protocol,
+        Awareness, Message, Protocol, SyncMessage,
         protocol::{DefaultProtocol, MessageReader},
     },
     updates::{
@@ -49,10 +49,13 @@ pub(super) fn encode_state(state: &DocumentState) -> Vec<u8> {
         .encode_state_as_update_v1(&yrs::StateVector::default())
 }
 
-pub(super) fn start(state: &DocumentState) -> Result<Vec<u8>, yrs::sync::protocol::Error> {
-    let mut encoder = EncoderV1::new();
-    DefaultProtocol.start(&state.awareness, &mut encoder)?;
-    Ok(encoder.to_vec())
+pub(super) fn start(state: &DocumentState) -> Result<Vec<Vec<u8>>, yrs::sync::protocol::Error> {
+    let state_vector = state.awareness.doc().transact().state_vector();
+    let awareness = state.awareness.update()?;
+    Ok(vec![
+        encode_message(&Message::Sync(SyncMessage::SyncStep1(state_vector))),
+        encode_message(&Message::Awareness(awareness)),
+    ])
 }
 
 pub(super) fn decode_messages(data: &[u8]) -> Result<Vec<Message>, yrs::encoding::read::Error> {

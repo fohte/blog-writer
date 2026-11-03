@@ -6,9 +6,9 @@ use sqlx::{AnyPool, ConnectOptions, postgres::PgPool, sqlite::SqlitePool};
 use tokio::{net::TcpListener, task::JoinHandle, time::timeout};
 use tokio_tungstenite::{WebSocketStream, connect_async, tungstenite::Message as ClientMessage};
 use yrs::{
-    Doc, GetString, ReadTxn, Transact, Update,
+    Array, ArrayPrelim, Doc, GetString, ReadTxn, StateVector, Transact, Update,
     sync::{Awareness, AwarenessUpdate, Message as YMessage, SyncMessage},
-    types::Text,
+    types::{Text, ToJson},
     updates::decoder::Decode,
 };
 
@@ -54,21 +54,40 @@ async fn start_server(pool: AnyPool) -> TestResult<TestServer> {
 
 async fn open_client(server: &TestServer, doc_id: &str) -> TestResult<(Client, Doc)> {
     let (mut client, _) = connect_async(format!("{}/{doc_id}", server.url)).await?;
-    let start = protocol::decode_messages(&receive_binary(&mut client).await?)?
-        .into_iter()
-        .map(|message| match message {
-            YMessage::Sync(SyncMessage::SyncStep1(_)) => "sync-step-1",
-            YMessage::Awareness(_) => "awareness",
-            YMessage::Sync(SyncMessage::SyncStep2(_)) => "sync-step-2",
-            YMessage::Sync(SyncMessage::Update(_)) => "update",
-            YMessage::Auth(_) => "auth",
-            YMessage::AwarenessQuery => "awareness-query",
-            YMessage::Custom(_, _) => "custom",
+    let startup_frames = [
+        receive_binary(&mut client).await?,
+        receive_binary(&mut client).await?,
+    ];
+    let start = startup_frames
+        .iter()
+        .map(|frame| {
+            protocol::decode_messages(frame).map(|messages| {
+                messages
+                    .into_iter()
+                    .map(|message| match message {
+                        YMessage::Sync(SyncMessage::SyncStep1(_)) => "sync-step-1",
+                        YMessage::Awareness(_) => "awareness",
+                        YMessage::Sync(SyncMessage::SyncStep2(_)) => "sync-step-2",
+                        YMessage::Sync(SyncMessage::Update(_)) => "update",
+                        YMessage::Auth(_) => "auth",
+                        YMessage::AwarenessQuery => "awareness-query",
+                        YMessage::Custom(_, _) => "custom",
+                    })
+                    .collect::<Vec<_>>()
+            })
         })
-        .collect::<Vec<_>>();
-    assert_eq!(start, ["sync-step-1", "awareness"]);
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(start, vec![vec!["sync-step-1"], vec!["awareness"]]);
     let mut doc = Doc::new();
     let state_vector = doc.transact().state_vector();
+    client
+        .send(ClientMessage::Binary(
+            protocol::encode_message(&YMessage::Sync(SyncMessage::SyncStep2(
+                Update::EMPTY_V1.to_vec(),
+            )))
+            .into(),
+        ))
+        .await?;
     client
         .send(ClientMessage::Binary(
             protocol::encode_message(&yrs::sync::Message::Sync(
@@ -111,6 +130,25 @@ fn create_text_update(doc: &Doc, index: u32, value: &str) -> Vec<u8> {
     let text = doc.get_or_insert_text("body");
     text.insert(&mut doc.transact_mut(), index, value);
     doc.transact().encode_state_as_update_v1(&state_vector)
+}
+
+fn updates_with_invalid_parent() -> (Vec<u8>, Vec<u8>) {
+    let primitive_doc = Doc::with_client_id(41);
+    let items = primitive_doc.get_or_insert_array("items");
+    items.insert(&mut primitive_doc.transact_mut(), 0, "scalar");
+    let primitive_update = primitive_doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+
+    let nested_doc = Doc::with_client_id(41);
+    let items = nested_doc.get_or_insert_array("items");
+    let nested = items.insert(&mut nested_doc.transact_mut(), 0, ArrayPrelim::default());
+    nested.insert(&mut nested_doc.transact_mut(), 0, "nested");
+    let invalid_update = nested_doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+
+    (primitive_update, invalid_update)
 }
 
 fn text_value(doc: &Doc) -> String {
@@ -205,20 +243,25 @@ async fn survives_restart_and_compacts(pool: AnyPool) -> TestResult {
     server.task.abort();
 
     let restarted = start_server(pool.clone()).await?;
-    let (mut client, doc) = open_client(&restarted, "persistent-document").await?;
-    let query = if pool.connect_options().to_url_lossy().scheme() == "sqlite" {
-        "SELECT COUNT(*) FROM sync_updates WHERE doc_id = ?1"
-    } else {
-        "SELECT COUNT(*) FROM sync_updates WHERE doc_id = $1"
-    };
-    let rows = sqlx::query_scalar::<_, i64>(query)
-        .bind("persistent-document")
-        .fetch_one(&pool)
-        .await?;
-
-    assert_eq!((text_value(&doc), rows), ("one two".to_owned(), 1));
+    let (mut client, first_doc) = open_client(&restarted, "persistent-document").await?;
+    let first_value = text_value(&first_doc);
+    let first_rows = count_updates(&pool, "persistent-document").await?;
     client.close(None).await?;
+    drop(client);
+    drop(first_doc);
     restarted.task.abort();
+
+    let compacted_restart = start_server(pool.clone()).await?;
+    let (mut client, second_doc) = open_client(&compacted_restart, "persistent-document").await?;
+    let second_value = text_value(&second_doc);
+    let second_rows = count_updates(&pool, "persistent-document").await?;
+    client.close(None).await?;
+    compacted_restart.task.abort();
+
+    assert_eq!(
+        (first_value, first_rows, second_value, second_rows),
+        ("one two".to_owned(), 1, "one two".to_owned(), 1),
+    );
     Ok(())
 }
 
@@ -247,6 +290,70 @@ async fn forwards_server_side_updates(pool: AnyPool) -> TestResult {
 
 async fn any_pool(url: &str) -> TestResult<AnyPool> {
     Ok(db::initialize(Some(url)).await?)
+}
+
+async fn count_updates(pool: &AnyPool, doc_id: &str) -> TestResult<i64> {
+    let query = if pool.connect_options().to_url_lossy().scheme() == "sqlite" {
+        "SELECT COUNT(*) FROM sync_updates WHERE doc_id = ?1"
+    } else {
+        "SELECT COUNT(*) FROM sync_updates WHERE doc_id = $1"
+    };
+    Ok(sqlx::query_scalar::<_, i64>(query)
+        .bind(doc_id)
+        .fetch_one(pool)
+        .await?)
+}
+
+async fn rejects_unapplicable_updates(pool: AnyPool) -> TestResult {
+    let server = start_server(pool.clone()).await?;
+    let document = server.sync.open_document("invalid-update-document").await?;
+    let (valid_update, invalid_update) = updates_with_invalid_parent();
+    document.apply_update(&valid_update).await?;
+    let result = document.apply_update(&invalid_update).await;
+    let outcome = match result {
+        Err(crate::sync::SyncError::Update(yrs::error::UpdateError::InvalidParent(..))) => {
+            "invalid-parent"
+        }
+        Err(error) => return Err(error.into()),
+        Ok(()) => return Err("invalid update was applied".into()),
+    };
+    let stored_updates = count_updates(&pool, "invalid-update-document").await?;
+
+    let restored_service = SyncService::new(pool.clone())?;
+    let restored = restored_service
+        .open_document("invalid-update-document")
+        .await?;
+    let restored_doc = Doc::new();
+    restored_doc
+        .transact_mut()
+        .apply_update(Update::decode_v1(&restored.encode_state().await)?)?;
+    let contents = restored_doc
+        .get_or_insert_array("items")
+        .to_json(&restored_doc.transact());
+    let restored_updates = count_updates(&pool, "invalid-update-document").await?;
+    server.task.abort();
+
+    assert_eq!(
+        (outcome, stored_updates, contents, restored_updates),
+        (
+            "invalid-parent",
+            1,
+            yrs::Any::Array(vec![yrs::Any::from("scalar")].into()),
+            1,
+        ),
+    );
+    Ok(())
+}
+
+async fn does_not_store_empty_updates(pool: AnyPool) -> TestResult {
+    let server = start_server(pool.clone()).await?;
+    let (mut client, _doc) = open_client(&server, "empty-update-document").await?;
+    let updates = count_updates(&pool, "empty-update-document").await?;
+    client.close(None).await?;
+    server.task.abort();
+
+    assert_eq!(updates, 0);
+    Ok(())
 }
 
 #[tokio::test]
@@ -289,6 +396,30 @@ async fn synchronizes_two_websocket_clients_over_postgres(pool: PgPool) -> TestR
 async fn synchronizes_two_websocket_clients_over_sqlite(pool: SqlitePool) -> TestResult {
     let url = pool.connect_options().to_url_lossy().to_string();
     connect_and_edit_twice(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn does_not_persist_empty_updates_over_postgres(pool: PgPool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    does_not_store_empty_updates(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn does_not_persist_empty_updates_over_sqlite(pool: SqlitePool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    does_not_store_empty_updates(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn removes_unapplicable_updates_over_postgres(pool: PgPool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    rejects_unapplicable_updates(any_pool(&url).await?).await
+}
+
+#[sqlx::test]
+async fn removes_unapplicable_updates_over_sqlite(pool: SqlitePool) -> TestResult {
+    let url = pool.connect_options().to_url_lossy().to_string();
+    rejects_unapplicable_updates(any_pool(&url).await?).await
 }
 
 #[sqlx::test]

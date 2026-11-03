@@ -149,16 +149,29 @@ impl SyncDocument {
 
     pub async fn apply_update(&self, update: &[u8]) -> Result<(), SyncError> {
         let update_value = Update::decode_v1(update)?;
+        if update_value.is_empty() {
+            return Ok(());
+        }
         let mut state = self.inner.state.lock().await;
-        database::append_update(&self.inner.pool, self.inner.kind, &self.inner.id, update).await?;
-        state.apply_update(update_value)?;
+        let update_id =
+            database::append_update(&self.inner.pool, self.inner.kind, &self.inner.id, update)
+                .await?;
+        if let Err(error) = state.apply_update(update_value) {
+            if let Err(cleanup_error) =
+                database::delete_update(&self.inner.pool, self.inner.kind, update_id).await
+            {
+                tracing::error!(%cleanup_error, %error, "failed to remove unapplied synchronization update");
+                return Err(cleanup_error.into());
+            }
+            return Err(error.into());
+        }
         let _ = self.inner.update_subscribers.send(update.to_vec());
         let message = protocol::encode_sync_update(update);
         let _ = self.inner.protocol_subscribers.send(message);
         Ok(())
     }
 
-    pub(super) async fn start_protocol(&self) -> Result<Vec<u8>, SyncError> {
+    pub(super) async fn start_protocol(&self) -> Result<Vec<Vec<u8>>, SyncError> {
         let state = self.inner.state.lock().await;
         protocol::start(&state).map_err(Into::into)
     }

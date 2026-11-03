@@ -43,9 +43,11 @@ async fn sync_document(
 async fn handle_socket(mut socket: WebSocket, document: super::SyncDocument) {
     let mut outgoing = document.subscribe_protocol();
     match document.start_protocol().await {
-        Ok(frame) => {
-            if socket.send(Message::Binary(frame.into())).await.is_err() {
-                return;
+        Ok(frames) => {
+            for frame in frames {
+                if socket.send(Message::Binary(frame.into())).await.is_err() {
+                    return;
+                }
             }
         }
         Err(error) => {
