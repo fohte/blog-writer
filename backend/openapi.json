@@ -538,10 +538,120 @@
           }
         }
       }
+    },
+    "/api/research/key-points": {
+      "post": {
+        "operationId": "extract_research_key_points",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchKeyPointsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Summaries and source-backed key points",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchKeyPointsEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Source IDs must be unique",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sync/{doc_id}": {
+      "get": {
+        "operationId": "sync_document",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "description": "Document identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket connection"
+          }
+        }
+      }
+    },
+    "/api/write-from-key-points": {
+      "post": {
+        "operationId": "write_from_key_points",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WriteFromKeyPointsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Generated sentences with key point citations",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteFromKeyPointsEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body or target heading",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ArticleBlockRequest": {
+        "type": "object",
+        "required": ["id", "kind", "markdown"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "markdown": {
+            "type": "string"
+          }
+        }
+      },
       "ArticleFileResponse": {
         "type": "object",
         "required": ["content", "sha"],
@@ -551,6 +661,21 @@
           },
           "sha": {
             "type": ["string", "null"]
+          }
+        }
+      },
+      "ArticlePremiseRequest": {
+        "type": "object",
+        "required": ["audience", "purpose", "thesis"],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
           }
         }
       },
@@ -736,6 +861,147 @@
           }
         }
       },
+      "ReferencePointRequest": {
+        "type": "object",
+        "required": ["id", "researched_heading_id", "text"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "quote": {
+            "type": ["string", "null"]
+          },
+          "researched_heading_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "ReferenceSourceRequest": {
+        "type": "object",
+        "required": ["title", "url", "fetched_at", "summary", "key_points"],
+        "properties": {
+          "fetched_at": {
+            "type": "string"
+          },
+          "key_points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReferencePointRequest"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "ResearchKeyPoint": {
+        "type": "object",
+        "required": ["text", "quote"],
+        "properties": {
+          "quote": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "ResearchKeyPointsEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ResearchKeyPointsResult"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LlmErrorPayload"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "ResearchKeyPointsRequest": {
+        "type": "object",
+        "required": ["sources"],
+        "properties": {
+          "question": {
+            "type": ["string", "null"]
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResearchSourceInput"
+            }
+          }
+        }
+      },
+      "ResearchKeyPointsResult": {
+        "type": "object",
+        "required": ["sources"],
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResearchSourceResult"
+            }
+          }
+        }
+      },
+      "ResearchSourceInput": {
+        "type": "object",
+        "required": ["id", "body"],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "ResearchSourceResult": {
+        "type": "object",
+        "required": ["id", "summary", "key_points"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key_points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResearchKeyPoint"
+            }
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
       "SaveSourceBodyRequest": {
         "type": "object",
         "required": ["body"],
@@ -756,6 +1022,99 @@
             "type": "string"
           },
           "source_id": {
+            "type": "string"
+          }
+        }
+      },
+      "WriteFromKeyPointsError": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "WriteFromKeyPointsEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WriteFromKeyPointsResponse"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WriteFromKeyPointsError"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "WriteFromKeyPointsRequest": {
+        "type": "object",
+        "required": ["premise", "target_heading_id", "blocks", "sources"],
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArticleBlockRequest"
+            }
+          },
+          "premise": {
+            "$ref": "#/components/schemas/ArticlePremiseRequest"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReferenceSourceRequest"
+            }
+          },
+          "target_heading_id": {
+            "type": "string"
+          }
+        }
+      },
+      "WriteFromKeyPointsResponse": {
+        "type": "object",
+        "required": ["sentences"],
+        "properties": {
+          "sentences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WrittenSentence"
+            }
+          }
+        }
+      },
+      "WrittenSentence": {
+        "type": "object",
+        "required": ["text", "is_factual", "key_point_ids"],
+        "properties": {
+          "is_factual": {
+            "type": "boolean"
+          },
+          "key_point_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "text": {
             "type": "string"
           }
         }

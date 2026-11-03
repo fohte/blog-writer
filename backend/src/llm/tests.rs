@@ -23,6 +23,8 @@ use super::claude_code::ClaudeCodeProvider;
 use super::{CALL_TIMEOUT, LlmEvent, LlmProvider, LlmState, call_to_sse};
 use crate::config::{OpenAiCompatibleConfig, ProviderName};
 
+mod research_key_points;
+mod write_from_key_points;
 #[derive(Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 struct SampleOutput {
     text: String,

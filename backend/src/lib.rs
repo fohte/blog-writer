@@ -11,8 +11,12 @@ pub(crate) mod html;
 mod llm;
 pub mod llm_context;
 pub mod ogp;
+pub(crate) mod research_key_points;
 pub mod safe_fetch;
 pub mod source_bodies;
+pub(crate) mod source_quote;
+pub mod sync;
+pub(crate) mod write_from_key_points;
 
 use std::error::Error;
 use tokio::net::TcpListener;

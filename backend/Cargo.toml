@@ -5,14 +5,14 @@ edition = "2024"
 
 [dependencies]
 base64 = "=0.22.1"
-axum = "=0.8.9"
+axum = { version = "=0.8.9", features = ["ws"] }
 reqwest = { version = "=0.13.5", features = ["json", "stream"] }
 scraper = "=0.24.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 rust-embed = { version = "=8.13.0", features = ["mime-guess"] }
 thiserror = "=2.0.21"
-tokio = { version = "=1.54.1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "=1.54.1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 utoipa = "=6.0.0"
@@ -21,14 +21,17 @@ futures-util = "=0.3.34"
 schemars = "=1.2.3"
 tempfile = "=3.27.0"
 encoding_rs = "=0.8.44"
+unicode-normalization = "=0.1.26"
 dom_smoothie = "=0.19.0"
 sqlx = { version = "=0.9.0", default-features = false, features = ["any", "macros", "migrate", "postgres", "runtime-tokio", "sqlite-bundled", "sqlx-toml", "tls-rustls"] }
+yrs = { version = "=0.28.0", features = ["sync"] }
 
 [dev-dependencies]
 rstest = "=0.26.1"
 indoc = "=2.0.6"
 tower = { version = "=0.5.3", features = ["util"] }
 wiremock = "=0.6.5"
+tokio-tungstenite = "=0.28.0"
 
 [lints.clippy]
 allow_attributes = "warn"
