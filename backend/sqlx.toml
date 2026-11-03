@@ -1,0 +1,2 @@
+[common]
+database-url-var = "TEST_DATABASE_URL"

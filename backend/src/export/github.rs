@@ -581,6 +581,7 @@ mod tests {
         app::router(
             AppState {
                 export: Some(fixture.service.clone()),
+                database: None,
                 ..AppState::default()
             },
             HostOriginPolicy::new(

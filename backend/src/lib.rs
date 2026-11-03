@@ -1,5 +1,6 @@
 pub mod app;
 pub mod config;
+pub mod db;
 pub mod error;
 mod export;
 mod frontend;
@@ -20,7 +21,19 @@ pub fn dump_openapi() -> Result<String, serde_json::Error> {
 }
 
 pub async fn serve(config: Config) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let state = AppState::new(config.export)?;
+    let database = db::initialize(config.database_url.as_deref()).await?;
+    serve_with_database(config, Some(database)).await
+}
+
+pub async fn serve_without_database(config: Config) -> Result<(), Box<dyn Error + Send + Sync>> {
+    serve_with_database(config, None).await
+}
+
+async fn serve_with_database(
+    config: Config,
+    database: Option<sqlx::AnyPool>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let state = AppState::new(config.export, database)?;
     let host_origin_policy =
         host_origin::HostOriginPolicy::new(config.allowed_hosts, config.allowed_origins);
     let app = app::router(state, host_origin_policy);

@@ -13,7 +13,9 @@ subpackages:
     spa: true
     type: node
     vrt: true
--   name: backend
+-   db: true
+    db_migrate: cargo run -q -- --migrate-only
+    name: backend
     type: rust
 type: base
 use_coverage: false

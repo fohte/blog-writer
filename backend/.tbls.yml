@@ -1,0 +1,20 @@
+name: 'blog-writer backend'
+docPath: docs/db
+# Fixed names keep the disposable database name out of generated headings.
+# schema.json includes architecture-specific database_version values.
+disableOutputSchema: true
+er:
+  format: mermaid
+exclude: ['public._sqlx_migrations']
+comments:
+  - table: app_metadata
+    tableComment: Stores backend metadata as key-value pairs.
+    columnComments:
+      metadata_key: Unique metadata key.
+      metadata_value: Metadata value.
+lint:
+  requireTableComment:
+    enabled: true
+  requireColumnComment:
+    enabled: true
+    exclude: [id, created_at, updated_at]

@@ -4,6 +4,7 @@ use axum::{
     Router, middleware,
     routing::{MethodRouter, any, get},
 };
+use sqlx::AnyPool;
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
 use utoipa_axum::router::OpenApiRouter;
 
@@ -27,6 +28,7 @@ struct ApiDefinition;
 #[derive(Clone)]
 pub struct AppState {
     pub export: Option<ExportService>,
+    pub database: Option<AnyPool>,
     pub(crate) safe_fetch: Arc<dyn SafeFetchService>,
 }
 
@@ -34,15 +36,20 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             export: None,
+            database: None,
             safe_fetch: Arc::new(SafeFetcher::new()),
         }
     }
 }
 
 impl AppState {
-    pub fn new(export: Option<ExportConfig>) -> Result<Self, ExportError> {
+    pub fn new(
+        export: Option<ExportConfig>,
+        database: Option<AnyPool>,
+    ) -> Result<Self, ExportError> {
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
+            database,
             safe_fetch: Arc::new(SafeFetcher::new()),
         })
     }
@@ -256,19 +263,22 @@ mod tests {
     #[tokio::test]
     async fn lists_configured_export_destinations() {
         let response = router(
-            AppState::new(Some(ExportConfig {
-                destinations: vec![ExportDestination {
-                    id: "site-one".to_owned(),
-                    repository: "writer/notes".to_owned(),
-                    base_branch: "main".to_owned(),
-                    path_template: "posts/{slug}.mdx".to_owned(),
-                    format: ExportFormat::Mdx,
-                    frontmatter_template: "title: {{ title }}".to_owned(),
-                }],
-                octo_sts_url: "https://sts.example".to_owned(),
-                octo_sts_identity: "writer-export".to_owned(),
-                octo_sts_sa_token_path: "/var/run/token".into(),
-            }))
+            AppState::new(
+                Some(ExportConfig {
+                    destinations: vec![ExportDestination {
+                        id: "site-one".to_owned(),
+                        repository: "writer/notes".to_owned(),
+                        base_branch: "main".to_owned(),
+                        path_template: "posts/{slug}.mdx".to_owned(),
+                        format: ExportFormat::Mdx,
+                        frontmatter_template: "title: {{ title }}".to_owned(),
+                    }],
+                    octo_sts_url: "https://sts.example".to_owned(),
+                    octo_sts_identity: "writer-export".to_owned(),
+                    octo_sts_sa_token_path: "/var/run/token".into(),
+                }),
+                None,
+            )
             .unwrap(),
             policy(),
         )
