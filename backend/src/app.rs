@@ -17,7 +17,7 @@ use crate::{
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
     llm::{self, LlmEvent, LlmState},
-    ogp,
+    ogp, research_key_points,
     safe_fetch::{SafeFetchService, SafeFetcher},
 };
 
@@ -109,6 +109,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(export::router())
         .merge(llm::router())
         .merge(ogp::router())
+        .merge(research_key_points::router())
 }
 
 async fn api_not_found() -> AppError {

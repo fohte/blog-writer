@@ -10,6 +10,7 @@ pub mod host_origin;
 mod llm;
 pub mod llm_context;
 pub mod ogp;
+pub(crate) mod research_key_points;
 pub mod safe_fetch;
 
 use std::error::Error;

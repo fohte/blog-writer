@@ -167,9 +167,23 @@ pub(crate) fn call_to_sse<T>(
 where
     T: DeserializeOwned + JsonSchema + Serialize + Send + 'static,
 {
+    call_to_sse_with::<T, T, _>(state, system_prompt, prompt, |result| result)
+}
+
+pub(crate) fn call_to_sse_with<Input, Output, Transform>(
+    state: LlmState,
+    system_prompt: String,
+    prompt: String,
+    transform: Transform,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>
+where
+    Input: DeserializeOwned + JsonSchema + Send + 'static,
+    Output: Serialize + Send + 'static,
+    Transform: FnOnce(Input) -> Output + Send + 'static,
+{
     let keep_alive_interval = state.keep_alive_interval;
     let stream = stream::once(async move {
-        let event = match call_with_timeout::<T>(
+        let event = match call_with_timeout::<Input>(
             state.provider.as_ref(),
             &system_prompt,
             &prompt,
@@ -177,7 +191,7 @@ where
         )
         .await
         {
-            Ok(result) => match serde_json::to_value(result) {
+            Ok(result) => match serde_json::to_value(transform(result)) {
                 Ok(result) => LlmEvent::Result(result),
                 Err(error) => {
                     tracing::warn!(

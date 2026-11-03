@@ -84,6 +84,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/research/key-points': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['extract_research_key_points']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
 export type webhooks = Record<string, never>
 export interface components {
@@ -146,6 +162,37 @@ export interface components {
     }
     PublishArticleResponse: {
       url: string
+    }
+    ResearchKeyPoint: {
+      quote: string
+      text: string
+    }
+    ResearchKeyPointsEvent:
+      | {
+          data: components['schemas']['ResearchKeyPointsResult']
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['LlmErrorPayload']
+          /** @enum {string} */
+          event: 'error'
+        }
+    ResearchKeyPointsRequest: {
+      question?: string | null
+      sources: components['schemas']['ResearchSourceInput'][]
+    }
+    ResearchKeyPointsResult: {
+      sources: components['schemas']['ResearchSourceResult'][]
+    }
+    ResearchSourceInput: {
+      body: string
+      id: string
+    }
+    ResearchSourceResult: {
+      id: string
+      key_points: components['schemas']['ResearchKeyPoint'][]
+      summary: string
     }
   }
   responses: never
@@ -383,6 +430,30 @@ export interface operations {
         }
         content: {
           'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  extract_research_key_points: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ResearchKeyPointsRequest']
+      }
+    }
+    responses: {
+      /** @description Summaries and source-backed key points */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': components['schemas']['ResearchKeyPointsEvent']
         }
       }
     }
