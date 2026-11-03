@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 : "${BACKEND_ALLOWED_ORIGINS:?Set BACKEND_ALLOWED_ORIGINS to the allowed screen origin}"
 
-export LLM_API_ONLY=1
+export LLM_API_ONLY=true
 export BACKEND_BIND_ADDR="127.0.0.1:${LLM_API_ONLY_PORT:-4312}"
 unset DATABASE_URL TEST_DATABASE_URL
 

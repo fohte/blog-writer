@@ -37,6 +37,10 @@ impl HostOriginPolicy {
 
         origin_allowed(headers, &self.allowed_origins)
     }
+
+    pub(crate) fn allowed_origins(&self) -> &[String] {
+        &self.allowed_origins
+    }
 }
 
 fn request_host(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {

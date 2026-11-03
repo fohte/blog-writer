@@ -41,32 +41,39 @@ async fn serve_with_database(
         tracing::warn!("ANTHROPIC_API_KEY is set; Claude Code will prefer API key authentication");
     }
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let llm_api_only = config.llm_api_only;
+    let host_origin_policy = host_origin::HostOriginPolicy::new(
+        config.allowed_hosts.clone(),
+        config.allowed_origins.clone(),
+    );
     let state =
         AppState::new_with_shutdown(config.export, config.llm, database, shutdown_receiver)?;
-    let host_origin_policy =
-        host_origin::HostOriginPolicy::new(config.allowed_hosts, config.allowed_origins.clone());
-    let app = if config.llm_api_only {
-        app::llm_api_router(state, host_origin_policy, config.allowed_origins)
-    } else {
-        app::router(state, host_origin_policy)
-    };
+    let app = app_for_config(state, llm_api_only, host_origin_policy);
     let listener = TcpListener::bind(config.bind_addr).await?;
 
     tracing::info!(address = %config.bind_addr, "backend listening");
-    if config.llm_api_only {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                shutdown_signal().await;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            if llm_api_only {
                 shutdown_sender.send_replace(true);
-            })
-            .await?;
-    } else {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await?;
-    }
+            }
+        })
+        .await?;
 
     Ok(())
+}
+
+fn app_for_config(
+    state: AppState,
+    llm_api_only: bool,
+    host_origin_policy: host_origin::HostOriginPolicy,
+) -> axum::Router {
+    if llm_api_only {
+        app::llm_api_router(state, host_origin_policy)
+    } else {
+        app::router(state, host_origin_policy)
+    }
 }
 
 async fn initialize_database(config: &Config) -> Result<Option<sqlx::AnyPool>, db::DatabaseError> {
@@ -120,9 +127,58 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::Config;
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
 
-    use super::initialize_database;
+    use crate::{app::AppState, config::Config};
+
+    use super::{app_for_config, initialize_database};
+
+    #[tokio::test]
+    async fn api_only_config_selects_only_the_llm_router() {
+        let mut config = Config::from_bind_addr(None).expect("default config is valid");
+        config.llm_api_only = true;
+        let host_origin_policy = crate::host_origin::HostOriginPolicy::new(
+            config.allowed_hosts.clone(),
+            config.allowed_origins.clone(),
+        );
+        let router = app_for_config(AppState::default(), config.llm_api_only, host_origin_policy);
+        let mut actual = Vec::new();
+
+        for uri in ["/api/health", "/"] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header("host", "127.0.0.1:3000")
+                        .body(Body::empty())
+                        .expect("request is valid"),
+                )
+                .await
+                .expect("router responds");
+            let status = response.status().as_u16();
+            let body: Value = serde_json::from_slice(
+                &to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .expect("response body is readable"),
+            )
+            .expect("response body is JSON");
+            actual.push((status, body));
+        }
+
+        assert_eq!(
+            actual,
+            vec![
+                (404, json!({"error": "Not Found"})),
+                (404, json!({"error": "Not Found"})),
+            ]
+        );
+    }
 
     #[tokio::test]
     async fn skips_database_initialization_in_llm_api_only_mode() {

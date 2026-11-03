@@ -99,6 +99,7 @@ pub(crate) struct LlmState {
 }
 
 impl LlmState {
+    #[cfg(test)]
     pub(crate) fn new(config: LlmConfig) -> Self {
         let (_, shutdown) = watch::channel(false);
         Self::new_with_shutdown(config, shutdown)
@@ -150,7 +151,8 @@ impl LlmState {
 
 impl Default for LlmState {
     fn default() -> Self {
-        Self::new(LlmConfig::default())
+        let (_, shutdown) = watch::channel(false);
+        Self::new_with_shutdown(LlmConfig::default(), shutdown)
     }
 }
 

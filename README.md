@@ -6,7 +6,7 @@
 
 - `BACKEND_BIND_ADDR` sets the listening address. It defaults to `127.0.0.1:3000`; the container image defaults to `0.0.0.0:3000`.
 - `DATABASE_URL` is required to start the backend unless `LLM_API_ONLY` is set. `postgres://` and `postgresql://` URLs connect to PostgreSQL; `sqlite://` URLs use a SQLite file, which is created when it does not exist. Migrations run automatically at startup.
-- `LLM_API_ONLY` starts the backend without a database, embedded frontend, or non-LLM API routes. It must listen on `127.0.0.1`; `BACKEND_BIND_ADDR` can set its port.
+- `LLM_API_ONLY=true` starts the backend without a database, embedded frontend, or non-LLM API routes. `true` and `1` enable the mode; `false` and `0` disable it. It must listen on `127.0.0.1`; `BACKEND_BIND_ADDR` can set its port.
 - `BACKEND_ALLOWED_HOSTS` sets comma-separated Host values, including ports when needed.
 - `BACKEND_ALLOWED_ORIGINS` sets comma-separated origins in `scheme://host[:port]` form.
 - `LLM_PROVIDER` selects the LLM provider. The supported value is `claude_code`, which is also the default.

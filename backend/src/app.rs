@@ -52,6 +52,7 @@ impl Default for AppState {
 }
 
 impl AppState {
+    #[cfg(test)]
     pub fn new(
         export: Option<ExportConfig>,
         llm_config: crate::config::LlmConfig,
@@ -95,17 +96,14 @@ pub fn router(state: AppState, host_origin_policy: HostOriginPolicy) -> Router {
     router_with_frontend_fallback(state, get(frontend::serve), host_origin_policy)
 }
 
-pub fn llm_api_router(
-    state: AppState,
-    host_origin_policy: HostOriginPolicy,
-    allowed_origins: Vec<String>,
-) -> Router {
+pub fn llm_api_router(state: AppState, host_origin_policy: HostOriginPolicy) -> Router {
     let (llm_router, _) = llm::router().split_for_parts();
     let cors = CorsLayer::new()
         .allow_origin(
-            allowed_origins
-                .into_iter()
-                .filter_map(|origin| HeaderValue::from_str(&origin.to_ascii_lowercase()).ok())
+            host_origin_policy
+                .allowed_origins()
+                .iter()
+                .filter_map(|origin| HeaderValue::from_str(origin).ok())
                 .collect::<Vec<_>>(),
         )
         .allow_methods([Method::GET, Method::POST])
@@ -199,7 +197,7 @@ mod tests {
             vec!["localhost:3000".to_owned()],
             vec![
                 "http://localhost:3000".to_owned(),
-                "https://writer.example".to_owned(),
+                "HTTPS://WRITER.EXAMPLE".to_owned(),
             ],
         )
     }
@@ -209,11 +207,7 @@ mod tests {
     }
 
     fn test_llm_api_router(policy: HostOriginPolicy) -> axum::Router {
-        llm_api_router(
-            AppState::default(),
-            policy,
-            vec!["HTTPS://WRITER.EXAMPLE".to_owned()],
-        )
+        llm_api_router(AppState::default(), policy)
     }
 
     #[tokio::test]

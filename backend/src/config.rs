@@ -69,6 +69,8 @@ pub enum ConfigError {
     NonUnicodeBindAddress,
     #[error("{DATABASE_URL_ENV} must contain valid Unicode")]
     NonUnicodeDatabaseUrl,
+    #[error("{LLM_API_ONLY_ENV} must contain valid Unicode")]
+    NonUnicodeLlmApiOnly,
     #[error("{ALLOWED_HOSTS_ENV} must contain valid Unicode")]
     NonUnicodeAllowedHosts,
     #[error("{ALLOWED_ORIGINS_ENV} must contain valid Unicode")]
@@ -91,6 +93,8 @@ pub enum ConfigError {
     MissingOctoStsConfiguration,
     #[error("{LLM_PROVIDER_ENV} must name a supported provider")]
     InvalidLlmProvider,
+    #[error("{LLM_API_ONLY_ENV} must be one of 1, 0, true, or false")]
+    InvalidLlmApiOnly,
     #[error("provider-specific settings cannot be set when {LLM_PROVIDER_LOCKED_ENV} is set")]
     OtherProviderConfigurationWithLockedProvider,
 }
@@ -115,6 +119,18 @@ impl Config {
             ConfigError::NonUnicodeDatabaseUrl,
             &read_env_value,
         )?;
+        let llm_api_only = read_env(
+            LLM_API_ONLY_ENV,
+            ConfigError::NonUnicodeLlmApiOnly,
+            &read_env_value,
+        )?
+        .map(|value| match value.to_ascii_lowercase().as_str() {
+            "1" | "true" => Ok(true),
+            "0" | "false" => Ok(false),
+            _ => Err(ConfigError::InvalidLlmApiOnly),
+        })
+        .transpose()?
+        .unwrap_or(false);
         let allowed_hosts = read_env(
             ALLOWED_HOSTS_ENV,
             ConfigError::NonUnicodeAllowedHosts,
@@ -159,7 +175,7 @@ impl Config {
         Self::from_values(
             ConfigValues {
                 bind_addr: value.as_deref(),
-                llm_api_only: read_env_value(LLM_API_ONLY_ENV).is_some(),
+                llm_api_only,
                 database_url: database_url.as_deref(),
                 allowed_hosts: allowed_hosts.as_deref(),
                 allowed_origins: allowed_origins.as_deref(),
@@ -341,14 +357,26 @@ mod tests {
     }
 
     #[rstest]
-    #[case::unset(false, false)]
-    #[case::set(true, true)]
-    fn reads_llm_api_only_from_environment(#[case] enabled: bool, #[case] expected: bool) {
-        let actual =
-            Config::from_env_with(|name| (name == LLM_API_ONLY_ENV && enabled).then(OsString::new))
-                .map(|config| config.llm_api_only);
+    #[case::unset(None, Ok(false))]
+    #[case::enabled_one(Some("1"), Ok(true))]
+    #[case::enabled_true(Some("true"), Ok(true))]
+    #[case::disabled_zero(Some("0"), Ok(false))]
+    #[case::disabled_false(Some("false"), Ok(false))]
+    #[case::invalid(Some("unexpected"), Err(ConfigError::InvalidLlmApiOnly))]
+    fn reads_llm_api_only_from_environment(
+        #[case] value: Option<&str>,
+        #[case] expected: Result<bool, ConfigError>,
+    ) {
+        let actual = Config::from_env_with(|name| {
+            if name == LLM_API_ONLY_ENV {
+                value.map(OsString::from)
+            } else {
+                None
+            }
+        })
+        .map(|config| config.llm_api_only);
 
-        assert_eq!(actual, Ok(expected));
+        assert_eq!(actual, expected);
     }
 
     #[test]
