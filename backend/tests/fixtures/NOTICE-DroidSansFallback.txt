@@ -1,0 +1,3 @@
+DroidSansFallbackFull.ttf is a Google Inc. font from the Android Open Source Project.
+The PDF fixture embeds a subset of the font. It is licensed under Apache-2.0;
+the license text is included in LICENSE-APACHE-DroidSansFallback.txt.
