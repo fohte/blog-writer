@@ -7,6 +7,7 @@ pub use export::{ExportConfig, ExportDestination, ExportFormat};
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:3000";
 const BIND_ADDR_ENV: &str = "BACKEND_BIND_ADDR";
+const DATABASE_URL_ENV: &str = "DATABASE_URL";
 const ALLOWED_HOSTS_ENV: &str = "BACKEND_ALLOWED_HOSTS";
 const ALLOWED_ORIGINS_ENV: &str = "BACKEND_ALLOWED_ORIGINS";
 const EXPORT_DESTINATIONS_ENV: &str = "BLOG_EXPORT_DESTINATIONS";
@@ -17,6 +18,7 @@ const OCTO_STS_SA_TOKEN_PATH_ENV: &str = "BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub bind_addr: SocketAddr,
+    pub database_url: Option<String>,
     pub allowed_hosts: Vec<String>,
     pub allowed_origins: Vec<String>,
     pub export: Option<ExportConfig>,
@@ -28,6 +30,8 @@ pub enum ConfigError {
     InvalidBindAddress,
     #[error("{BIND_ADDR_ENV} must contain valid Unicode")]
     NonUnicodeBindAddress,
+    #[error("{DATABASE_URL_ENV} must contain valid Unicode")]
+    NonUnicodeDatabaseUrl,
     #[error("{ALLOWED_HOSTS_ENV} must contain valid Unicode")]
     NonUnicodeAllowedHosts,
     #[error("{ALLOWED_ORIGINS_ENV} must contain valid Unicode")]
@@ -59,6 +63,7 @@ impl Config {
             .transpose()?;
 
         let allowed_hosts = read_env(ALLOWED_HOSTS_ENV, ConfigError::NonUnicodeAllowedHosts)?;
+        let database_url = read_env(DATABASE_URL_ENV, ConfigError::NonUnicodeDatabaseUrl)?;
         let allowed_origins = read_env(ALLOWED_ORIGINS_ENV, ConfigError::NonUnicodeAllowedOrigins)?;
         let export_destinations = read_env(
             EXPORT_DESTINATIONS_ENV,
@@ -74,7 +79,7 @@ impl Config {
             ConfigError::NonUnicodeOctoStsSaTokenPath,
         )?;
 
-        Self::from_values(
+        let mut config = Self::from_values(
             value.as_deref(),
             allowed_hosts.as_deref(),
             allowed_origins.as_deref(),
@@ -82,7 +87,9 @@ impl Config {
             octo_sts_url.as_deref(),
             octo_sts_identity.as_deref(),
             octo_sts_sa_token_path.as_deref(),
-        )
+        )?;
+        config.database_url = database_url;
+        Ok(config)
     }
 
     pub fn from_bind_addr(value: Option<&str>) -> Result<Self, ConfigError> {
@@ -110,6 +117,7 @@ impl Config {
 
         Ok(Self {
             bind_addr,
+            database_url: None,
             allowed_hosts: parse_list(allowed_hosts.unwrap_or(&default_hosts)),
             allowed_origins: parse_list(allowed_origins.unwrap_or(&default_origins)),
             export: ExportConfig::from_values(
@@ -150,6 +158,7 @@ mod tests {
         None,
         Ok(Config {
             bind_addr: "127.0.0.1:3000".parse::<SocketAddr>().unwrap(),
+            database_url: None,
             allowed_hosts: vec![
                 "localhost:3000".to_owned(),
                 "127.0.0.1:3000".to_owned(),
@@ -167,6 +176,7 @@ mod tests {
         Some("0.0.0.0:8080"),
         Ok(Config {
             bind_addr: "0.0.0.0:8080".parse::<SocketAddr>().unwrap(),
+            database_url: None,
             allowed_hosts: vec![
                 "localhost:8080".to_owned(),
                 "127.0.0.1:8080".to_owned(),
@@ -197,6 +207,7 @@ mod tests {
         Some("https://Editor.Example, http://preview.example:4312"),
         Ok(Config {
             bind_addr: "127.0.0.1:4312".parse::<SocketAddr>().unwrap(),
+            database_url: None,
             allowed_hosts: vec!["Editor.Example".to_owned(), "preview.example:4312".to_owned()],
             allowed_origins: vec![
                 "https://Editor.Example".to_owned(),
@@ -211,6 +222,7 @@ mod tests {
         Some(""),
         Ok(Config {
             bind_addr: "127.0.0.1:4312".parse::<SocketAddr>().unwrap(),
+            database_url: None,
             allowed_hosts: vec![],
             allowed_origins: vec![],
             export: None,

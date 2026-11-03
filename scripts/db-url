@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  printf 'Usage: %s <pkg> <dev|test>\n' "$0" >&2
+  exit 2
+fi
+
+package="$1"
+environment="$2"
+
+case "$environment" in
+  dev | test) ;;
+  *)
+    printf 'Unknown database environment: %s\n' "$environment" >&2
+    exit 2
+    ;;
+esac
+
+if [ "$package" = "." ]; then
+  database_name="blog_writer_$environment"
+else
+  database_name="blog_writer_${package//-/_}_$environment"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
+if port_output="$(docker compose port db 5432 2> /dev/null)"; then
+  port="${port_output##*:}"
+else
+  port=0
+fi
+
+case "$port" in
+  '' | *[!0-9]*) port=0 ;;
+esac
+
+printf 'postgresql://blog_writer:blog_writer@127.0.0.1:%s/%s\n' "$port" "$database_name"

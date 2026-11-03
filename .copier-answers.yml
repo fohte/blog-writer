@@ -13,7 +13,8 @@ subpackages:
     spa: true
     type: node
     vrt: true
--   name: backend
+-   db: true
+    name: backend
     type: rust
 type: base
 use_coverage: false
