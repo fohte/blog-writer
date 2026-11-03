@@ -204,6 +204,7 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
 #[case::rejected_rate_limit_event(
     indoc! {r#"
         printf '%s\n' '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}'
+        exit 1
     "#},
     indoc! {r#"
         event: error
