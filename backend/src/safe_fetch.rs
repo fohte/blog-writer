@@ -63,10 +63,17 @@ pub enum SafeFetchError {
     Timeout,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FetchResponse {
     pub final_url: Url,
     pub body: Vec<u8>,
+}
+
+pub(crate) type SafeFetchFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<FetchResponse, SafeFetchError>> + Send + 'a>>;
+
+pub(crate) trait SafeFetchService: Send + Sync {
+    fn fetch<'a>(&'a self, url: &'a str) -> SafeFetchFuture<'a>;
 }
 
 #[derive(Clone)]
@@ -179,6 +186,12 @@ impl SafeFetcher {
 impl Default for SafeFetcher {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl SafeFetchService for SafeFetcher {
+    fn fetch<'a>(&'a self, url: &'a str) -> SafeFetchFuture<'a> {
+        Box::pin(SafeFetcher::fetch(self, url))
     }
 }
 
@@ -300,10 +313,7 @@ mod tests {
         sync::Arc,
     };
 
-    use axum::{Router, body::Body, http::Request};
     use rstest::rstest;
-    use serde_json::{Value, json};
-    use tower::ServiceExt;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
     use super::{
@@ -359,55 +369,6 @@ mod tests {
         assert_eq!(
             (response.final_url.as_str(), response.body),
             (url.as_str(), b"<title>Sample</title>".to_vec())
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn returns_ogp_metadata_through_the_api() -> Result<(), Box<dyn std::error::Error>> {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"<meta property="og:title" content="Card title"><meta property="og:image" content="/card.png">"#,
-            ))
-            .mount(&server)
-            .await;
-        let address = server_address(&server)?;
-        let fetcher = test_fetcher([("site.test".to_owned(), vec![address])], |address| {
-            address.is_loopback()
-        });
-        let state = crate::app::AppState {
-            export: None,
-            safe_fetch: fetcher,
-        };
-        let api: Router = crate::ogp::router().split_for_parts().0.with_state(state);
-        let url = format!("http://site.test:{}/article", address.port());
-
-        let response = api
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/ogp")
-                    .header("content-type", "application/json")
-                    .body(Body::from(json!({"url": url}).to_string()))?,
-            )
-            .await?;
-        let status = response.status().as_u16();
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
-        let body: Value = serde_json::from_slice(&bytes)?;
-
-        assert_eq!(
-            (status, body),
-            (
-                200,
-                json!({
-                    "available": true,
-                    "final_url": format!("http://site.test:{}/article", address.port()),
-                    "title": "Card title",
-                    "description": null,
-                    "image": format!("http://site.test:{}/card.png", address.port())
-                })
-            )
         );
         Ok(())
     }

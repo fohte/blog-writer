@@ -89,6 +89,8 @@ fn safe_fetch_error_kind(error: &SafeFetchError) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use axum::{Router, body::Body, http::Request};
     use serde_json::{Value, json};
     use tower::ServiceExt;
@@ -96,7 +98,24 @@ mod tests {
     use crate::{
         app::AppState,
         ogp::{FetchOgpRequest, router},
+        safe_fetch::{FetchResponse, SafeFetchError, SafeFetchFuture, SafeFetchService},
     };
+
+    struct TestFetcher(Option<FetchResponse>);
+
+    impl SafeFetchService for TestFetcher {
+        fn fetch<'a>(&'a self, _url: &'a str) -> SafeFetchFuture<'a> {
+            let response = self.0.clone().ok_or(SafeFetchError::DisallowedAddress);
+            Box::pin(async move { response })
+        }
+    }
+
+    fn test_state(response: Option<FetchResponse>) -> AppState {
+        AppState {
+            export: None,
+            safe_fetch: Arc::new(TestFetcher(response)),
+        }
+    }
 
     async fn post_ogp(
         state: AppState,
@@ -122,7 +141,7 @@ mod tests {
     #[tokio::test]
     async fn returns_an_unavailable_result_for_a_disallowed_address()
     -> Result<(), Box<dyn std::error::Error>> {
-        let state = AppState::default();
+        let state = test_state(None);
 
         let actual = post_ogp(state, "http://127.0.0.1/article").await?;
 
@@ -136,6 +155,31 @@ mod tests {
                     "title": null,
                     "description": null,
                     "image": null
+                })
+            )
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_extracted_metadata_from_the_api() -> Result<(), Box<dyn std::error::Error>> {
+        let state = test_state(Some(FetchResponse {
+            final_url: reqwest::Url::parse("http://site.test/article")?,
+            body: br#"<meta property="og:title" content="Card title"><meta property="og:image" content="/card.png">"#.to_vec(),
+        }));
+
+        let actual = post_ogp(state, "http://site.test/article").await?;
+
+        assert_eq!(
+            actual,
+            (
+                200,
+                json!({
+                    "available": true,
+                    "final_url": "http://site.test/article",
+                    "title": "Card title",
+                    "description": null,
+                    "image": "http://site.test/card.png"
                 })
             )
         );
