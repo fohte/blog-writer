@@ -177,7 +177,7 @@ export interface components {
       title: string | null
     }
     /** @enum {string} */
-    ProviderName: 'claude_code'
+    ProviderName: 'claude_code' | 'openai_compatible'
     PublishArticleRequest: {
       content: string
       sha?: string | null

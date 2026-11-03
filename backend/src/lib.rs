@@ -37,7 +37,7 @@ async fn serve_with_database(
     config: Config,
     database: Option<sqlx::AnyPool>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if config.llm.anthropic_api_key_set {
+    if config.llm.provider == config::ProviderName::ClaudeCode && config.llm.anthropic_api_key_set {
         tracing::warn!("ANTHROPIC_API_KEY is set; Claude Code will prefer API key authentication");
     }
     let state = AppState::new(config.export, config.llm, database)?;

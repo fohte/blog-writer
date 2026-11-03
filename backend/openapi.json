@@ -708,7 +708,7 @@
       },
       "ProviderName": {
         "type": "string",
-        "enum": ["claude_code"]
+        "enum": ["claude_code", "openai_compatible"]
       },
       "PublishArticleRequest": {
         "type": "object",
