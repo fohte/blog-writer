@@ -215,7 +215,8 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
         event: error
         data: {"data":{"message":"failed to start or communicate with the LLM provider"},"event":"error"}
 
-    "#}
+    "#},
+    32
 )]
 #[case::type_mismatch(
     indoc! {r#"
@@ -225,7 +226,8 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
         event: error
         data: {"data":{"message":"LLM output does not match the expected type"},"event":"error"}
 
-    "#}
+    "#},
+    32
 )]
 #[case::missing_structured_output(
     indoc! {r#"
@@ -235,7 +237,8 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
         event: error
         data: {"data":{"message":"LLM provider did not return structured output"},"event":"error"}
 
-    "#}
+    "#},
+    32
 )]
 #[case::invalid_json_line(
     indoc! {r#"
@@ -245,7 +248,8 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
         event: error
         data: {"data":{"message":"LLM provider returned invalid output"},"event":"error"}
 
-    "#}
+    "#},
+    32
 )]
 #[case::error_result_event(
     indoc! {r#"
@@ -255,7 +259,8 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
         event: error
         data: {"data":{"message":"failed to start or communicate with the LLM provider"},"event":"error"}
 
-    "#}
+    "#},
+    32
 )]
 #[case::rejected_rate_limit_event(
     indoc! {r#"
@@ -266,7 +271,8 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
         event: error
         data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
 
-    "#}
+    "#},
+    32
 )]
 #[case::rate_limited_result_event(
     indoc! {r#"
@@ -276,44 +282,33 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
         event: error
         data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
 
-    "#}
+    "#},
+    32
+)]
+#[case::rate_limited_result_event_with_large_prompt(
+    indoc! {r#"
+        printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["rate limit reached"],"api_error_status":429,"structured_output":null}'
+    "#},
+    indoc! {r#"
+        event: error
+        data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
+
+    "#},
+    1_000_000
 )]
 #[tokio::test]
 async fn returns_an_error_event_for_claude_code_failures(
     #[case] script: &str,
     #[case] expected: &str,
+    #[case] prompt_length: usize,
 ) {
     let directory = TempDir::new().expect("temporary directory is available");
     let executable = fake_claude(&directory, script);
+    let prompt = "x".repeat(prompt_length);
     let actual = sse_body(
         ClaudeCodeProvider::new(executable.into_os_string()),
         "Return a concise structured response.",
-        "Return the sample output.",
-        Duration::from_secs(5),
-    )
-    .await;
-
-    assert_eq!(parse_sse_body(&actual), parse_sse_body(expected));
-}
-
-#[tokio::test]
-async fn returns_rate_limit_event_when_claude_code_closes_stdin_early() {
-    let directory = TempDir::new().expect("temporary directory is available");
-    let executable = fake_claude(
-        &directory,
-        indoc! {r#"
-            printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["rate limit reached"],"api_error_status":429,"structured_output":null}'
-        "#},
-    );
-    let expected = indoc! {r#"
-        event: error
-        data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
-
-    "#};
-    let actual = sse_body(
-        ClaudeCodeProvider::new(executable.into_os_string()),
-        "Return a concise structured response.",
-        &"x".repeat(1_000_000),
+        &prompt,
         Duration::from_secs(5),
     )
     .await;
