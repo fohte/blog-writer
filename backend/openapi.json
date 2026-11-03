@@ -254,7 +254,7 @@
     },
     "/api/sync/{doc_id}": {
       "get": {
-        "operationId": "websocket",
+        "operationId": "sync_document",
         "parameters": [
           {
             "name": "doc_id",

@@ -11,11 +11,11 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::{app::AppState, error::AppError};
 
 pub fn router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(websocket))
+    OpenApiRouter::new().routes(routes!(sync_document))
 }
 
 #[utoipa::path(get, path = "/sync/{doc_id}", params(("doc_id" = String, Path, description = "Document identifier")), responses((status = 101, description = "WebSocket connection")))]
-async fn websocket(
+async fn sync_document(
     State(state): State<AppState>,
     Path(doc_id): Path<String>,
     upgrade: WebSocketUpgrade,
@@ -83,7 +83,11 @@ async fn run_socket(
                         }
                     }
                     Err(error) => {
-                        tracing::warn!(%error, "rejected invalid synchronization message");
+                        if matches!(&error, super::SyncError::Database(_)) {
+                            tracing::error!(%error, "failed to persist synchronization update");
+                        } else {
+                            tracing::warn!(%error, "rejected invalid synchronization message");
+                        }
                         return;
                     }
                 },
@@ -101,7 +105,10 @@ async fn run_socket(
                         return;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(skipped, "closing synchronization connection after missed updates");
+                    return;
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
             }
         }

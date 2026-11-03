@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Weak},
+    sync::{Arc, Mutex as StdMutex, Weak},
 };
 
 use sqlx::AnyPool;
@@ -39,7 +39,21 @@ pub struct SyncService {
 struct SyncServiceInner {
     pool: AnyPool,
     kind: DatabaseKind,
-    documents: Mutex<HashMap<String, Weak<DocumentInner>>>,
+    documents: Mutex<HashMap<String, Arc<DocumentSlot>>>,
+}
+
+struct DocumentSlot {
+    document: StdMutex<Weak<DocumentInner>>,
+    load_lock: Mutex<()>,
+}
+
+impl Default for DocumentSlot {
+    fn default() -> Self {
+        Self {
+            document: StdMutex::new(Weak::new()),
+            load_lock: Mutex::new(()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -73,8 +87,29 @@ impl SyncService {
         doc_id: impl Into<String>,
     ) -> Result<SyncDocument, SyncError> {
         let doc_id = doc_id.into();
-        let mut documents = self.inner.documents.lock().await;
-        if let Some(inner) = documents.get(&doc_id).and_then(Weak::upgrade) {
+        let slot = {
+            let mut documents = self.inner.documents.lock().await;
+            documents.retain(|_, slot| {
+                let has_document = slot
+                    .document
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .strong_count()
+                    > 0;
+                has_document || Arc::strong_count(slot) > 1
+            });
+            documents
+                .entry(doc_id.clone())
+                .or_insert_with(|| Arc::new(DocumentSlot::default()))
+                .clone()
+        };
+        let _load_guard = slot.load_lock.lock().await;
+        if let Some(inner) = slot
+            .document
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .upgrade()
+        {
             return Ok(SyncDocument { inner });
         }
 
@@ -89,7 +124,10 @@ impl SyncService {
             update_subscribers,
             protocol_subscribers,
         });
-        documents.insert(doc_id, Arc::downgrade(&inner));
+        *slot
+            .document
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::downgrade(&inner);
 
         Ok(SyncDocument { inner })
     }

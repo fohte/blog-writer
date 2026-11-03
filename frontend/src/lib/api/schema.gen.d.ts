@@ -75,7 +75,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    get: operations['websocket']
+    get: operations['sync_document']
     put?: never
     post?: never
     delete?: never
@@ -338,7 +338,7 @@ export interface operations {
       }
     }
   }
-  websocket: {
+  sync_document: {
     parameters: {
       query?: never
       header?: never

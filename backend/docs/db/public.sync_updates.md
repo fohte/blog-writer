@@ -6,11 +6,11 @@ Stores encoded Yjs updates for each document.
 
 ## Columns
 
-| Name        | Type   | Default                                         | Nullable | Children | Parents | Comment                                             |
-| ----------- | ------ | ----------------------------------------------- | -------- | -------- | ------- | --------------------------------------------------- |
-| update_id   | bigint | nextval('sync_updates_update_id_seq'::regclass) | false    |          |         | Order in which an update was stored for a document. |
-| doc_id      | text   |                                                 | false    |          |         | Identifier of the synchronized document.            |
-| update_data | bytea  |                                                 | false    |          |         | Encoded Yjs document update.                        |
+| Name        | Type   | Default | Nullable | Children | Parents | Comment                                             |
+| ----------- | ------ | ------- | -------- | -------- | ------- | --------------------------------------------------- |
+| update_id   | bigint |         | false    |          |         | Order in which an update was stored for a document. |
+| doc_id      | text   |         | false    |          |         | Identifier of the synchronized document.            |
+| update_data | bytea  |         | false    |          |         | Encoded Yjs document update.                        |
 
 ## Constraints
 

@@ -1,4 +1,4 @@
-use std::{error::Error, time::Duration};
+use std::{collections::HashMap, error::Error, time::Duration};
 
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
@@ -7,12 +7,9 @@ use tokio::{net::TcpListener, task::JoinHandle, time::timeout};
 use tokio_tungstenite::{WebSocketStream, connect_async, tungstenite::Message as ClientMessage};
 use yrs::{
     Doc, GetString, ReadTxn, Transact, Update,
-    sync::{Awareness, Message as YMessage},
+    sync::{Awareness, AwarenessUpdate, Message as YMessage, SyncMessage},
     types::Text,
-    updates::{
-        decoder::Decode,
-        encoder::{Encode, Encoder, EncoderV1},
-    },
+    updates::decoder::Decode,
 };
 
 use crate::{
@@ -57,12 +54,24 @@ async fn start_server(pool: AnyPool) -> TestResult<TestServer> {
 
 async fn open_client(server: &TestServer, doc_id: &str) -> TestResult<(Client, Doc)> {
     let (mut client, _) = connect_async(format!("{}/{doc_id}", server.url)).await?;
-    let _start = receive_binary(&mut client).await?;
+    let start = protocol::decode_messages(&receive_binary(&mut client).await?)?
+        .into_iter()
+        .map(|message| match message {
+            YMessage::Sync(SyncMessage::SyncStep1(_)) => "sync-step-1",
+            YMessage::Awareness(_) => "awareness",
+            YMessage::Sync(SyncMessage::SyncStep2(_)) => "sync-step-2",
+            YMessage::Sync(SyncMessage::Update(_)) => "update",
+            YMessage::Auth(_) => "auth",
+            YMessage::AwarenessQuery => "awareness-query",
+            YMessage::Custom(_, _) => "custom",
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(start, ["sync-step-1", "awareness"]);
     let mut doc = Doc::new();
     let state_vector = doc.transact().state_vector();
     client
         .send(ClientMessage::Binary(
-            encode(&yrs::sync::Message::Sync(
+            protocol::encode_message(&yrs::sync::Message::Sync(
                 yrs::sync::SyncMessage::SyncStep1(state_vector),
             ))
             .into(),
@@ -97,12 +106,6 @@ fn apply_frame(doc: &mut Doc, frame: &[u8]) -> TestResult {
     Ok(())
 }
 
-fn encode(message: &yrs::sync::Message) -> Vec<u8> {
-    let mut encoder = EncoderV1::new();
-    message.encode(&mut encoder);
-    encoder.to_vec()
-}
-
 fn create_text_update(doc: &Doc, index: u32, value: &str) -> Vec<u8> {
     let state_vector = doc.transact().state_vector();
     let text = doc.get_or_insert_text("body");
@@ -116,9 +119,9 @@ fn text_value(doc: &Doc) -> String {
 }
 
 async fn send_update(client: &mut Client, update: Vec<u8>) -> TestResult {
-    let frame = encode(&yrs::sync::Message::Sync(yrs::sync::SyncMessage::Update(
-        update,
-    )));
+    let frame = protocol::encode_message(&yrs::sync::Message::Sync(
+        yrs::sync::SyncMessage::Update(update),
+    ));
     client.send(ClientMessage::Binary(frame.into())).await?;
     let _acknowledgement = receive_binary(client).await?;
     Ok(())
@@ -132,8 +135,8 @@ async fn connect_and_edit_twice(pool: AnyPool) -> TestResult {
     let mut awareness = Awareness::new(first_doc.clone());
     awareness.set_local_state_raw(r#"{"user":"writer"}"#);
     let awareness_update = awareness.update()?;
-    let awareness_message = YMessage::Awareness(awareness_update);
-    let awareness_frame = encode(&awareness_message);
+    let awareness_message = YMessage::Awareness(awareness_update.clone());
+    let awareness_frame = protocol::encode_message(&awareness_message);
     first
         .send(ClientMessage::Binary(awareness_frame.clone().into()))
         .await?;
@@ -166,6 +169,26 @@ async fn connect_and_edit_twice(pool: AnyPool) -> TestResult {
         ("first second".to_owned(), "first second".to_owned()),
     );
     first.close(None).await?;
+    let removal_frame = receive_binary(&mut second).await?;
+    let removal_messages = protocol::decode_messages(&removal_frame)?;
+    let client_id = awareness.client_id();
+    let previous_clock = awareness_update
+        .clients
+        .get(&client_id)
+        .ok_or("awareness client id missing from update")?
+        .clock;
+    assert_eq!(
+        removal_messages,
+        vec![YMessage::Awareness(AwarenessUpdate {
+            clients: HashMap::from([(
+                client_id,
+                yrs::sync::awareness::AwarenessUpdateEntry {
+                    clock: previous_clock + 1,
+                    json: "null".into(),
+                },
+            )]),
+        })],
+    );
     second.close(None).await?;
     server.task.abort();
     Ok(())
@@ -224,6 +247,36 @@ async fn forwards_server_side_updates(pool: AnyPool) -> TestResult {
 
 async fn any_pool(url: &str) -> TestResult<AnyPool> {
     Ok(db::initialize(Some(url)).await?)
+}
+
+#[tokio::test]
+async fn rejects_websocket_when_sync_is_not_configured() -> TestResult {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let host = address.to_string();
+    let policy = HostOriginPolicy::new(vec![host], Vec::new());
+    let app: Router = router(AppState::default(), policy);
+    let task = tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            tracing::error!(%error, "test server failed");
+        }
+    });
+    let response = match connect_async(format!("ws://{address}/api/sync/sample-document")).await {
+        Ok(_) => return Err("unexpected WebSocket upgrade".into()),
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => response,
+        Err(error) => return Err(error.into()),
+    };
+    let actual = (response.status().as_u16(), response.body().clone());
+    task.abort();
+
+    assert_eq!(
+        actual,
+        (
+            503,
+            Some(br#"{"error":"Synchronization is not configured"}"#.to_vec()),
+        ),
+    );
+    Ok(())
 }
 
 #[sqlx::test]

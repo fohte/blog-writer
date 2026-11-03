@@ -1,5 +1,5 @@
 CREATE TABLE sync_updates (
-    update_id BIGSERIAL PRIMARY KEY,
+    update_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     doc_id TEXT NOT NULL,
     update_data BYTEA NOT NULL
 );
