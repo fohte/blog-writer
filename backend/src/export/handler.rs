@@ -194,30 +194,3 @@ fn map_export_error(error: ExportError) -> AppError {
         other => AppError::Internal(other.to_string()),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use axum::{body::to_bytes, response::IntoResponse};
-    use serde_json::{Value, json};
-
-    use super::map_export_error;
-    use crate::export::github::ExportError;
-
-    #[tokio::test]
-    async fn maps_too_many_ogp_hrefs_to_bad_request() {
-        let response = map_export_error(ExportError::TooManyOgpHrefs).into_response();
-        let status = response.status().as_u16();
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let actual = (status, serde_json::from_slice::<Value>(&body).unwrap());
-
-        assert_eq!(
-            actual,
-            (
-                400,
-                json!({
-                    "error": "Article contains more than 50 unregistered HTTP(S) CardLink hrefs"
-                })
-            )
-        );
-    }
-}

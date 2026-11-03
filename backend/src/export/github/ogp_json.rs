@@ -69,36 +69,7 @@ impl ExportService {
         mut prepared: PreparedOgpJson,
         safe_fetch: Arc<dyn SafeFetchService>,
     ) -> Result<(), ExportError> {
-        let mut pending = prepared.missing_hrefs.iter().enumerate();
-        let mut fetches = JoinSet::new();
-        for _ in 0..MAX_CONCURRENT_OGP_FETCHES {
-            let Some((index, href)) = pending.next() else {
-                break;
-            };
-            spawn_ogp_fetch(&mut fetches, Arc::clone(&safe_fetch), index, href.clone());
-        }
-
-        let mut results = Vec::with_capacity(prepared.missing_hrefs.len());
-        while let Some(result) = fetches.join_next().await {
-            let result = result.map_err(|_| ExportError::OgpFetchTask)?;
-            results.push(result);
-            if let Some((index, href)) = pending.next() {
-                spawn_ogp_fetch(&mut fetches, Arc::clone(&safe_fetch), index, href.clone());
-            }
-        }
-        results.sort_by_key(|(index, _, _)| *index);
-
-        for (_, href, metadata) in results {
-            let value = if metadata.available {
-                serde_json::json!({
-                    "title": metadata.title.unwrap_or_default(),
-                    "description": metadata.description.unwrap_or_default(),
-                    "image": metadata.image.unwrap_or_default(),
-                })
-            } else {
-                tracing::warn!(href = %href, "OGP metadata is unavailable");
-                serde_json::json!({ "title": "", "description": "", "image": "" })
-            };
+        for (href, value) in fetch_ogp_entries(&prepared.missing_hrefs, safe_fetch).await? {
             prepared.entries.insert(href, value);
         }
 
@@ -118,6 +89,48 @@ impl ExportService {
         )
         .await
     }
+}
+
+async fn fetch_ogp_entries(
+    hrefs: &[String],
+    safe_fetch: Arc<dyn SafeFetchService>,
+) -> Result<Vec<(String, serde_json::Value)>, ExportError> {
+    let mut pending = hrefs.iter().enumerate();
+    let mut fetches = JoinSet::new();
+    for _ in 0..MAX_CONCURRENT_OGP_FETCHES {
+        let Some((index, href)) = pending.next() else {
+            break;
+        };
+        spawn_ogp_fetch(&mut fetches, Arc::clone(&safe_fetch), index, href.clone());
+    }
+
+    let mut results = Vec::with_capacity(hrefs.len());
+    while let Some(result) = fetches.join_next().await {
+        let result = result.map_err(|_| ExportError::OgpFetchTask)?;
+        results.push(result);
+        if let Some((index, href)) = pending.next() {
+            spawn_ogp_fetch(&mut fetches, Arc::clone(&safe_fetch), index, href.clone());
+        }
+    }
+    results.sort_by_key(|(index, _, _)| *index);
+
+    let entries = results
+        .into_iter()
+        .map(|(_, href, metadata)| {
+            let value = if metadata.available {
+                serde_json::json!({
+                    "title": metadata.title.unwrap_or_default(),
+                    "description": metadata.description.unwrap_or_default(),
+                    "image": metadata.image.unwrap_or_default(),
+                })
+            } else {
+                tracing::warn!(href = %href, "OGP metadata is unavailable");
+                serde_json::json!({ "title": "", "description": "", "image": "" })
+            };
+            (href, value)
+        })
+        .collect();
+    Ok(entries)
 }
 
 fn spawn_ogp_fetch(

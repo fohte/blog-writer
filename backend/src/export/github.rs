@@ -162,9 +162,11 @@ impl ExportService {
         let token = self.exchange_token(owner, repo).await?;
         let branch = article_branch(article_id);
         let pull = self.find_open_pull(owner, repo, &branch, &token).await?;
-        let reference = pull
-            .as_ref()
-            .map_or(destination.base_branch.as_str(), |_| branch.as_str());
+        let reference = article_reference(
+            pull.as_ref(),
+            destination.base_branch.as_str(),
+            branch.as_str(),
+        );
         self.get_contents_file(destination, &destination.file_path(slug), reference, &token)
             .await
     }
@@ -187,24 +189,18 @@ impl ExportService {
         let pull = self.find_open_pull(owner, repo, &branch, &token).await?;
 
         let ogp_update = if let Some(json_path) = &destination.ogp_json_path {
-            let hrefs = ogp_json::card_link_hrefs(&request.content);
-            if hrefs.is_empty() {
-                None
-            } else {
-                let reference = pull
-                    .as_ref()
-                    .map_or(destination.base_branch.as_str(), |_| branch.as_str());
-                self.validate_article_file(
-                    destination,
-                    &destination.file_path(&request.slug),
-                    reference,
-                    request.sha.as_deref(),
-                    &token,
-                )
-                .await?;
-                self.prepare_ogp_json(destination, json_path, reference, hrefs, &token)
-                    .await?
-            }
+            self.prepare_ogp_update(
+                destination,
+                json_path,
+                article_reference(
+                    pull.as_ref(),
+                    destination.base_branch.as_str(),
+                    branch.as_str(),
+                ),
+                request,
+                &token,
+            )
+            .await?
         } else {
             None
         };
@@ -283,6 +279,32 @@ impl ExportService {
         }
 
         Ok(token_response.token)
+    }
+
+    async fn prepare_ogp_update(
+        &self,
+        destination: &ExportDestination,
+        json_path: &str,
+        reference: &str,
+        request: &ArticleContent,
+        token: &str,
+    ) -> Result<Option<ogp_json::PreparedOgpJson>, ExportError> {
+        let hrefs = ogp_json::card_link_hrefs(&request.content);
+        if hrefs.is_empty() {
+            return Ok(None);
+        }
+
+        self.validate_article_file(
+            destination,
+            &destination.file_path(&request.slug),
+            reference,
+            request.sha.as_deref(),
+            token,
+        )
+        .await?;
+
+        self.prepare_ogp_json(destination, json_path, reference, hrefs, token)
+            .await
     }
 
     async fn find_open_pull(
@@ -424,6 +446,14 @@ fn article_branch(article_id: &str) -> String {
     format!("blog-writer/{article_id}")
 }
 
+fn article_reference<'a>(
+    pull: Option<&PullResponse>,
+    base_branch: &'a str,
+    branch: &'a str,
+) -> &'a str {
+    if pull.is_some() { branch } else { base_branch }
+}
+
 fn valid_article_id(article_id: &str) -> bool {
     !article_id.is_empty()
         && article_id
@@ -465,7 +495,7 @@ mod tests {
     use base64::{Engine, engine::general_purpose::STANDARD};
     use indoc::indoc;
     use rstest::rstest;
-    use serde_json::json;
+    use serde_json::{Map, Value, json};
     use tower::ServiceExt;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
@@ -560,6 +590,10 @@ mod tests {
     }
 
     async fn fixture() -> Fixture {
+        fixture_with_destination(destination()).await
+    }
+
+    async fn fixture_with_destination(destination: ExportDestination) -> Fixture {
         let github = MockServer::start().await;
         let octo_sts = MockServer::start().await;
         let token_file = std::env::temp_dir().join(format!(
@@ -570,7 +604,7 @@ mod tests {
         fs::write(&token_file, "service-account-token\n").unwrap();
         let service = ExportService::with_github_api_url(
             ExportConfig {
-                destinations: vec![destination()],
+                destinations: vec![destination],
                 octo_sts_url: octo_sts.uri(),
                 octo_sts_identity: "writer-export".to_owned(),
                 octo_sts_sa_token_path: token_file.clone(),
@@ -1242,6 +1276,118 @@ mod tests {
         assert_eq!(
             (actual, fetcher.calls.lock().unwrap().clone()),
             (Err(ExportError::TooManyOgpHrefs), vec![])
+        );
+        fixture.github.verify().await;
+        fixture.octo_sts.verify().await;
+    }
+
+    #[tokio::test]
+    async fn commits_exactly_50_new_ogp_hrefs() {
+        let fixture = fixture().await;
+        let hrefs = (0..50)
+            .map(|index| format!("https://example.test/{index}"))
+            .collect::<Vec<_>>();
+        let article = hrefs
+            .iter()
+            .map(|href| format!("<CardLink href=\"{href}\" />"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut entries = Map::new();
+        for href in &hrefs {
+            entries.insert(
+                href.clone(),
+                json!({
+                    "title": "Card title",
+                    "description": "Card description",
+                    "image": "https://example.test/card.png"
+                }),
+            );
+        }
+        let expected_content = expected_ogp_content(Value::Object(entries));
+        mock_open_pull_article_commit_with_preflight(&fixture, &article, Some("file-sha"), 200)
+            .await;
+        mock_ogp_json_read(&fixture, None).await;
+        mock_ogp_json_commit(&fixture, &expected_content, None, 201).await;
+
+        let fetcher = TestFetcher::available();
+        let actual = fixture
+            .service
+            .publish_article(
+                &destination_with_ogp_json(),
+                ARTICLE_ID,
+                &ArticleContent {
+                    slug: SLUG.to_owned(),
+                    content: article,
+                    sha: Some("file-sha".to_owned()),
+                },
+                fetcher.clone(),
+            )
+            .await;
+        let mut actual_hrefs = fetcher.calls.lock().unwrap().clone();
+        actual_hrefs.sort();
+        let mut expected_hrefs = hrefs;
+        expected_hrefs.sort();
+
+        assert_eq!(
+            (actual, actual_hrefs),
+            (
+                Ok("https://github.example/writer/notes/pull/12".to_owned()),
+                expected_hrefs
+            )
+        );
+        fixture.github.verify().await;
+        fixture.octo_sts.verify().await;
+    }
+
+    #[tokio::test]
+    async fn publish_endpoint_returns_bad_request_for_more_than_50_new_ogp_hrefs() {
+        let fixture = fixture_with_destination(destination_with_ogp_json()).await;
+        let article = (0..51)
+            .map(|index| format!("<CardLink href=\"https://example.test/{index}\" />"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        mock_token_exchange(&fixture).await;
+        mock_pulls(
+            &fixture,
+            json!([{
+                "html_url": "https://github.example/writer/notes/pull/12",
+                "state": "open"
+            }]),
+        )
+        .await;
+        mock_article_contents_read(&fixture, ARTICLE_BRANCH, Some(&article), Some("file-sha"))
+            .await;
+        mock_ogp_json_read(&fixture, Some("{}")).await;
+        mock_no_github_writes(&fixture).await;
+
+        let response = api_router(&fixture)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/export/site-one/articles/{ARTICLE_ID}"))
+                    .header("host", "localhost:3000")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "slug": SLUG,
+                            "content": article,
+                            "sha": "file-sha"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response_json(response).await,
+            (
+                400,
+                json!({
+                    "error": "Article contains more than 50 unregistered HTTP(S) CardLink hrefs"
+                })
+            )
         );
         fixture.github.verify().await;
         fixture.octo_sts.verify().await;
