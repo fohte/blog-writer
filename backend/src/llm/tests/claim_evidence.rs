@@ -14,7 +14,7 @@ use super::{SseFrame, SseLine, TempDir as TestDirectory, fake_claude, parse_sse_
 use crate::{
     app::{AppState, router},
     host_origin::HostOriginPolicy,
-    llm::{LlmState, ProviderName},
+    llm::LlmState,
 };
 
 #[fixture]
@@ -26,7 +26,6 @@ fn api(executable: std::path::PathBuf) -> axum::Router {
     let state = AppState {
         llm: LlmState::with_provider(
             super::ClaudeCodeProvider::new(executable.into_os_string()),
-            ProviderName::ClaudeCode,
             Duration::from_secs(5),
         ),
         ..AppState::default()
