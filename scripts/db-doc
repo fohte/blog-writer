@@ -53,8 +53,8 @@ run_db_doc() {
       printf 'Skipping database documentation for %s: no db:migrate script\n' "$package" >&2
       return 0
     fi
-  elif [[ "$package_type" == 'rust' && "$migration_command" == 'cargo run -q -- --migrate-only' && ! -d "$package/migrations" ]]; then
-    printf 'Skipping database documentation for %s: no migrations directory\n' "$package" >&2
+  elif [[ "$package_type" == 'rust' && "$migration_command" == 'cargo run -q -p migration -- up' && ! -f "$package/migration/Cargo.toml" ]]; then
+    printf 'Skipping database documentation for %s: no migration crate\n' "$package" >&2
     return 0
   fi
 
