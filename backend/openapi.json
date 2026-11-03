@@ -79,6 +79,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid article ID or slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Destination not found",
             "content": {
@@ -144,6 +154,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid article ID or slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Destination not found",
             "content": {
@@ -199,6 +219,7 @@
     "schemas": {
       "ArticleFileResponse": {
         "type": "object",
+        "required": ["content", "sha"],
         "properties": {
           "content": {
             "type": ["string", "null"]

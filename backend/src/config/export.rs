@@ -86,20 +86,17 @@ fn validate_destinations(
     }
 
     for (index, destination) in destinations.iter().enumerate() {
+        if destinations[..index]
+            .iter()
+            .any(|previous| previous.id == destination.id)
+        {
+            return Err(DestinationValidationError::DuplicateId);
+        }
         if destination.id.trim().is_empty()
             || destination.base_branch.trim().is_empty()
             || !valid_repository(&destination.repository)
             || !valid_path_template(&destination.path_template)
-            || destinations[..index]
-                .iter()
-                .any(|previous| previous.id == destination.id)
         {
-            if destinations[..index]
-                .iter()
-                .any(|previous| previous.id == destination.id)
-            {
-                return Err(DestinationValidationError::DuplicateId);
-            }
             return Err(DestinationValidationError::InvalidValue);
         }
     }

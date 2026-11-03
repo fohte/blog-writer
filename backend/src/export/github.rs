@@ -1,14 +1,11 @@
-use std::fs;
+use std::{fs, time::Duration};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use reqwest::{Client, Response, StatusCode, Url};
+use reqwest::{Client, Method, RequestBuilder, Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{
-    config::{ExportConfig, ExportDestination},
-    export::handler::PublishArticleRequest,
-};
+use crate::config::{ExportConfig, ExportDestination};
 
 const GITHUB_API_URL: &str = "https://api.github.com";
 const GITHUB_ACCEPT: &str = "application/vnd.github+json";
@@ -26,12 +23,25 @@ pub struct RemoteFile {
     pub sha: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArticleContent {
+    pub slug: String,
+    pub content: String,
+    pub sha: Option<String>,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ExportError {
     #[error("GitHub rejected the file update because the remote file changed")]
     RemoteConflict,
     #[error("octo-sts token exchange failed")]
     TokenExchange,
+    #[error("octo-sts returned HTTP status {0}")]
+    TokenExchangeStatus(u16),
+    #[error("remote API returned HTTP status {0}")]
+    HttpStatus(u16),
+    #[error("HTTP client initialization failed")]
+    HttpClient,
     #[error("GitHub API request failed")]
     GitHubRequest,
     #[error("GitHub API returned an invalid response")]
@@ -103,16 +113,25 @@ struct CreatePullRequest<'a> {
 }
 
 impl ExportService {
-    pub fn new(config: ExportConfig) -> Self {
+    pub fn new(config: ExportConfig) -> Result<Self, ExportError> {
         Self::with_github_api_url(config, GITHUB_API_URL.to_owned())
     }
 
-    fn with_github_api_url(config: ExportConfig, github_api_url: String) -> Self {
-        Self {
+    fn with_github_api_url(
+        config: ExportConfig,
+        github_api_url: String,
+    ) -> Result<Self, ExportError> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|_| ExportError::HttpClient)?;
+
+        Ok(Self {
             config,
-            client: Client::new(),
+            client,
             github_api_url,
-        }
+        })
     }
 
     pub fn destinations(&self) -> &[ExportDestination] {
@@ -143,13 +162,8 @@ impl ExportService {
         let mut url = self.github_url(owner, repo, &contents_path)?;
         url.query_pairs_mut().append_pair("ref", reference);
         let response = self
-            .client
-            .get(url)
-            .bearer_auth(token)
-            .header("Accept", GITHUB_ACCEPT)
-            .send()
-            .await
-            .map_err(|_| ExportError::GitHubRequest)?;
+            .send_github(self.github_request(Method::GET, url, &token))
+            .await?;
 
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
@@ -182,7 +196,7 @@ impl ExportService {
         &self,
         destination: &ExportDestination,
         article_id: &str,
-        request: &PublishArticleRequest,
+        request: &ArticleContent,
     ) -> Result<String, ExportError> {
         if !valid_article_id(article_id) || !valid_slug(&request.slug) {
             return Err(ExportError::InvalidInput);
@@ -214,14 +228,8 @@ impl ExportService {
                     body: "Published from blog-writer.".to_owned(),
                 };
                 let response = self
-                    .client
-                    .post(url)
-                    .bearer_auth(&token)
-                    .header("Accept", GITHUB_ACCEPT)
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|_| ExportError::GitHubRequest)?;
+                    .send_github(self.github_request(Method::POST, url, &token).json(&body))
+                    .await?;
                 let response = successful_response(response).await?;
                 response
                     .json::<PullResponse>()
@@ -256,7 +264,10 @@ impl ExportService {
             .map_err(|_| ExportError::TokenExchange)?;
         let response = successful_response(response)
             .await
-            .map_err(|_| ExportError::TokenExchange)?;
+            .map_err(|error| match error {
+                ExportError::HttpStatus(status) => ExportError::TokenExchangeStatus(status),
+                _ => ExportError::TokenExchange,
+            })?;
         let token_response = response
             .json::<TokenResponse>()
             .await
@@ -281,13 +292,8 @@ impl ExportService {
             .append_pair("state", "open")
             .append_pair("head", &head);
         let response = self
-            .client
-            .get(url)
-            .bearer_auth(token)
-            .header("Accept", GITHUB_ACCEPT)
-            .send()
-            .await
-            .map_err(|_| ExportError::GitHubRequest)?;
+            .send_github(self.github_request(Method::GET, url, token))
+            .await?;
         let response = successful_response(response).await?;
         let pulls = response
             .json::<Vec<PullResponse>>()
@@ -332,13 +338,8 @@ impl ExportService {
         path.extend(branch.split('/'));
         let url = self.github_url(owner, repo, &path)?;
         let response = self
-            .client
-            .get(url)
-            .bearer_auth(token)
-            .header("Accept", GITHUB_ACCEPT)
-            .send()
-            .await
-            .map_err(|_| ExportError::GitHubRequest)?;
+            .send_github(self.github_request(Method::GET, url, token))
+            .await?;
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -365,14 +366,8 @@ impl ExportService {
             sha,
         };
         let response = self
-            .client
-            .post(url)
-            .bearer_auth(token)
-            .header("Accept", GITHUB_ACCEPT)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|_| ExportError::GitHubRequest)?;
+            .send_github(self.github_request(Method::POST, url, token).json(&body))
+            .await?;
         successful_response(response).await.map(|_| ())
     }
 
@@ -389,14 +384,8 @@ impl ExportService {
         let url = self.github_url(owner, repo, &path)?;
         let body = UpdateReferenceRequest { sha, force: true };
         let response = self
-            .client
-            .patch(url)
-            .bearer_auth(token)
-            .header("Accept", GITHUB_ACCEPT)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|_| ExportError::GitHubRequest)?;
+            .send_github(self.github_request(Method::PATCH, url, token).json(&body))
+            .await?;
         successful_response(response).await.map(|_| ())
     }
 
@@ -405,7 +394,7 @@ impl ExportService {
         destination: &ExportDestination,
         path: &str,
         branch: &str,
-        request: &PublishArticleRequest,
+        request: &ArticleContent,
         token: &str,
     ) -> Result<(), ExportError> {
         let (owner, repo) = destination
@@ -421,18 +410,25 @@ impl ExportService {
             sha: request.sha.as_deref(),
         };
         let response = self
-            .client
-            .put(url)
-            .bearer_auth(token)
-            .header("Accept", GITHUB_ACCEPT)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|_| ExportError::GitHubRequest)?;
-        if response.status() == StatusCode::CONFLICT {
+            .send_github(self.github_request(Method::PUT, url, token).json(&body))
+            .await?;
+        if response.status() == StatusCode::CONFLICT
+            || (response.status() == StatusCode::UNPROCESSABLE_ENTITY && request.sha.is_none())
+        {
             return Err(ExportError::RemoteConflict);
         }
         successful_response(response).await.map(|_| ())
+    }
+
+    fn github_request(&self, method: Method, url: Url, token: &str) -> RequestBuilder {
+        self.client
+            .request(method, url)
+            .bearer_auth(token)
+            .header("Accept", GITHUB_ACCEPT)
+    }
+
+    async fn send_github(&self, request: RequestBuilder) -> Result<Response, ExportError> {
+        request.send().await.map_err(|_| ExportError::GitHubRequest)
     }
 
     fn github_url(&self, owner: &str, repo: &str, path: &[&str]) -> Result<Url, ExportError> {
@@ -468,7 +464,7 @@ async fn successful_response(response: Response) -> Result<Response, ExportError
     if response.status().is_success() {
         Ok(response)
     } else {
-        Err(ExportError::GitHubRequest)
+        Err(ExportError::HttpStatus(response.status().as_u16()))
     }
 }
 
@@ -480,20 +476,27 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
     };
 
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
     use base64::{Engine, engine::general_purpose::STANDARD};
     use indoc::indoc;
+    use rstest::rstest;
     use serde_json::json;
+    use tower::ServiceExt;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{body_json, header, method, path, query_param},
     };
 
     use crate::{
+        app::{self, AppState},
         config::{ExportConfig, ExportDestination, ExportFormat},
-        export::handler::PublishArticleRequest,
+        host_origin::HostOriginPolicy,
     };
 
-    use super::{ExportError, ExportService};
+    use super::{ArticleContent, ExportError, ExportService};
 
     const ARTICLE_ID: &str = "01f00000-0000-7000-8000-000000000001";
     const SLUG: &str = "sample-entry";
@@ -538,7 +541,8 @@ mod tests {
                 octo_sts_sa_token_path: token_file.clone(),
             },
             github.uri(),
-        );
+        )
+        .unwrap();
 
         Fixture {
             github,
@@ -559,12 +563,32 @@ mod tests {
         }
     }
 
-    fn publish_request(sha: Option<&str>) -> PublishArticleRequest {
-        PublishArticleRequest {
+    fn publish_request(sha: Option<&str>) -> ArticleContent {
+        ArticleContent {
             slug: SLUG.to_owned(),
             content: BODY.to_owned(),
             sha: sha.map(str::to_owned),
         }
+    }
+
+    fn api_router(fixture: &Fixture) -> axum::Router {
+        app::router(
+            AppState {
+                export: Some(fixture.service.clone()),
+            },
+            HostOriginPolicy::new(
+                vec!["localhost:3000".to_owned()],
+                vec!["http://localhost:3000".to_owned()],
+            ),
+        )
+    }
+
+    async fn response_json(response: axum::response::Response) -> (u16, serde_json::Value) {
+        let status = response.status().as_u16();
+        let body =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        (status, body)
     }
 
     async fn mock_token_exchange(fixture: &Fixture) {
@@ -823,13 +847,74 @@ mod tests {
             .mount(&fixture.github)
             .await;
 
+        let response = api_router(&fixture)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/export/site-one/articles/{ARTICLE_ID}"))
+                    .header("host", "localhost:3000")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "slug": SLUG,
+                            "content": BODY,
+                            "sha": "stale-sha"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response_json(response).await,
+            (
+                409,
+                json!({
+                    "error": "The remote file changed. Fetch its current version before publishing again."
+                })
+            )
+        );
+        fixture.github.verify().await;
+        fixture.octo_sts.verify().await;
+    }
+
+    #[tokio::test]
+    async fn treats_missing_sha_for_a_newly_existing_file_as_a_conflict() {
+        let fixture = fixture().await;
+        mock_token_exchange(&fixture).await;
+        mock_pulls(&fixture, json!([])).await;
+        Mock::given(method("GET"))
+            .and(path("/repos/writer/notes/git/ref/heads/main"))
+            .and(github_auth())
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": { "sha": "base-sha" }
+            })))
+            .expect(1)
+            .mount(&fixture.github)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/repos/writer/notes/git/ref/heads/blog-writer/{ARTICLE_ID}"
+            )))
+            .and(github_auth())
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&fixture.github)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/writer/notes/git/refs"))
+            .and(github_auth())
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&fixture.github)
+            .await;
+        mock_contents_commit(&fixture, None, 422).await;
+
         let actual = fixture
             .service
-            .publish_article(
-                &destination(),
-                ARTICLE_ID,
-                &publish_request(Some("stale-sha")),
-            )
+            .publish_article(&destination(), ARTICLE_ID, &publish_request(None))
             .await;
 
         assert_eq!(actual, Err(ExportError::RemoteConflict));
@@ -851,12 +936,24 @@ mod tests {
             .mount(&fixture.github)
             .await;
 
-        let actual = fixture
-            .service
-            .get_article_file(&destination(), ARTICLE_ID, SLUG)
-            .await;
+        let response = api_router(&fixture)
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!(
+                        "/api/export/site-one/articles/{ARTICLE_ID}?slug={SLUG}"
+                    ))
+                    .header("host", "localhost:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
 
-        assert_eq!(actual, Ok(None));
+        assert_eq!(
+            response_json(response).await,
+            (200, json!({ "content": null, "sha": null }))
+        );
         fixture.github.verify().await;
         fixture.octo_sts.verify().await;
     }
@@ -934,5 +1031,55 @@ mod tests {
         );
         fixture.github.verify().await;
         fixture.octo_sts.verify().await;
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum InvalidInputCase {
+        ArticleId,
+        Slug,
+    }
+
+    #[rstest]
+    #[case::invalid_article_id(InvalidInputCase::ArticleId)]
+    #[case::traversal_slug(InvalidInputCase::Slug)]
+    #[tokio::test]
+    async fn rejects_invalid_input_before_external_requests(#[case] case: InvalidInputCase) {
+        let fixture = fixture().await;
+        let result = match case {
+            InvalidInputCase::ArticleId => fixture
+                .service
+                .get_article_file(&destination(), "bad/id", SLUG)
+                .await
+                .map(|_| ()),
+            InvalidInputCase::Slug => {
+                let request = ArticleContent {
+                    slug: "../secret".to_owned(),
+                    content: BODY.to_owned(),
+                    sha: None,
+                };
+                fixture
+                    .service
+                    .publish_article(&destination(), ARTICLE_ID, &request)
+                    .await
+                    .map(|_| ())
+            }
+        };
+        let actual = (
+            result,
+            fixture
+                .octo_sts
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .len(),
+            fixture
+                .github
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .len(),
+        );
+
+        assert_eq!(actual, (Err(ExportError::InvalidInput), 0, 0));
     }
 }

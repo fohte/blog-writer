@@ -57,8 +57,8 @@ export type webhooks = Record<string, never>
 export interface components {
   schemas: {
     ArticleFileResponse: {
-      content?: string | null
-      sha?: string | null
+      content: string | null
+      sha: string | null
     }
     DestinationListResponse: {
       destinations: components['schemas']['DestinationResponse'][]
@@ -148,6 +148,15 @@ export interface operations {
           'application/json': components['schemas']['ArticleFileResponse']
         }
       }
+      /** @description Invalid article ID or slug */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
       /** @description Destination not found */
       404: {
         headers: {
@@ -193,6 +202,15 @@ export interface operations {
         }
         content: {
           'application/json': components['schemas']['PublishArticleResponse']
+        }
+      }
+      /** @description Invalid article ID or slug */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
         }
       }
       /** @description Destination not found */

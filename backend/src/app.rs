@@ -8,7 +8,7 @@ use utoipa_axum::router::OpenApiRouter;
 use crate::{
     config::ExportConfig,
     error::{AppError, ErrorResponse},
-    export::{self, ExportService},
+    export::{self, ExportError, ExportService},
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
 };
@@ -26,10 +26,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(export: Option<ExportConfig>) -> Self {
-        Self {
-            export: export.map(ExportService::new),
-        }
+    pub fn new(export: Option<ExportConfig>) -> Result<Self, ExportError> {
+        Ok(Self {
+            export: export.map(ExportService::new).transpose()?,
+        })
     }
 }
 
@@ -252,7 +252,8 @@ mod tests {
                 octo_sts_url: "https://sts.example".to_owned(),
                 octo_sts_identity: "writer-export".to_owned(),
                 octo_sts_sa_token_path: "/var/run/token".into(),
-            })),
+            }))
+            .unwrap(),
             policy(),
         )
         .oneshot(
