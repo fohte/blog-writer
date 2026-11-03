@@ -636,6 +636,43 @@
         }
       }
     },
+    "/api/research/claim-evidence": {
+      "post": {
+        "operationId": "judge_claim_evidence",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JudgeClaimEvidenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Claim verdict and source quote",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/JudgeClaimEvidenceEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Source IDs must be unique",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/key-points": {
       "post": {
         "operationId": "extract_research_key_points",
@@ -776,6 +813,34 @@
           }
         }
       },
+      "ClaimEvidenceQuote": {
+        "type": "object",
+        "required": ["source_id", "text"],
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "ClaimEvidenceSourceInput": {
+        "type": "object",
+        "required": ["id", "body"],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "ClaimVerdict": {
+        "type": "string",
+        "enum": ["supported", "insufficient", "outdated", "contradicted"]
+      },
       "DestinationListResponse": {
         "type": "object",
         "required": ["destinations"],
@@ -880,6 +945,79 @@
           },
           "title": {
             "type": "string"
+          }
+        }
+      },
+      "JudgeClaimEvidenceEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JudgeClaimEvidenceResult"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LlmErrorPayload"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "JudgeClaimEvidenceRequest": {
+        "type": "object",
+        "required": ["claim", "sources"],
+        "properties": {
+          "after": {
+            "type": ["string", "null"]
+          },
+          "before": {
+            "type": ["string", "null"]
+          },
+          "claim": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClaimEvidenceSourceInput"
+            }
+          }
+        }
+      },
+      "JudgeClaimEvidenceResult": {
+        "type": "object",
+        "required": ["verdict"],
+        "properties": {
+          "quote": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClaimEvidenceQuote"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suggestion": {
+            "type": ["string", "null"]
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/ClaimVerdict"
           }
         }
       },
