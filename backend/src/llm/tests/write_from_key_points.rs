@@ -7,6 +7,7 @@ use std::{
 
 use axum::{Router, body::Body, http::Request};
 use indoc::indoc;
+use rstest::rstest;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -202,7 +203,6 @@ async fn translates_valid_aliases_and_discards_unknown_aliases()
 #[tokio::test]
 async fn prioritizes_target_heading_points_when_selecting_at_most_fifty()
 -> Result<(), Box<dyn std::error::Error>> {
-    let prompt = Arc::new(Mutex::new(None));
     let points = (1..=51)
         .map(|index| {
             point(
@@ -217,41 +217,55 @@ async fn prioritizes_target_heading_points_when_selecting_at_most_fifty()
         .collect();
     let state = LlmState::with_provider(
         FixedProvider {
-            output: json!({"sentences": []}),
-            prompt: prompt.clone(),
+            output: json!({
+                "sentences": [{
+                    "text": "架空の文です。",
+                    "is_factual": true,
+                    "key_point_aliases": [
+                        "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10",
+                        "s11", "s12", "s13", "s14", "s15", "s16", "s17", "s18", "s19", "s20",
+                        "s21", "s22", "s23", "s24", "s25", "s26", "s27", "s28", "s29", "s30",
+                        "s31", "s32", "s33", "s34", "s35", "s36", "s37", "s38", "s39", "s40",
+                        "s41", "s42", "s43", "s44", "s45", "s46", "s47", "s48", "s49", "s50"
+                    ]
+                }]
+            }),
+            prompt: Arc::new(Mutex::new(None)),
         },
         Duration::from_secs(1),
     );
-    let response = post_request(request(points), state).await?;
-    let captured_prompt = prompt
-        .lock()
-        .expect("prompt lock")
-        .clone()
-        .unwrap_or_default();
-    let target_heading_point_is_included =
-        captured_prompt.contains("調査対象見出し: ## 架空の見出し");
-    let selected_point_count = captured_prompt.matches("- [s").count();
+    let actual = post_request(request(points), state).await?;
 
     assert_eq!(
-        (
-            response.0,
-            response.1,
-            target_heading_point_is_included,
-            selected_point_count
-        ),
+        actual,
         (
             200,
-            json!({"data": {"sentences": []}, "event": "result"}),
-            true,
-            50
+            json!({
+                "data": {"sentences": [{
+                    "text": "架空の文です。",
+                    "is_factual": true,
+                    "key_point_ids": [
+                        "point-1", "point-2", "point-3", "point-4", "point-5", "point-6", "point-7", "point-8", "point-9", "point-10",
+                        "point-11", "point-12", "point-13", "point-14", "point-15", "point-16", "point-17", "point-18", "point-19", "point-20",
+                        "point-21", "point-22", "point-23", "point-24", "point-25", "point-26", "point-27", "point-28", "point-29", "point-30",
+                        "point-31", "point-32", "point-33", "point-34", "point-35", "point-36", "point-37", "point-38", "point-39", "point-40",
+                        "point-41", "point-42", "point-43", "point-44", "point-45", "point-46", "point-47", "point-48", "point-49", "point-51"
+                    ]
+                }]},
+                "event": "result"
+            })
         )
     );
     Ok(())
 }
 
-#[tokio::test]
-async fn returns_bad_request_without_calling_the_provider_for_an_unknown_heading()
--> Result<(), Box<dyn std::error::Error>> {
+#[rstest]
+#[test_attr(tokio::test)]
+#[case::unknown_heading("heading-missing")]
+#[case::existing_paragraph("body-target")]
+async fn rejects_targets_that_are_not_headings(
+    #[case] target_heading_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let prompt = Arc::new(Mutex::new(None));
     let state = LlmState::with_provider(
         FixedProvider {
@@ -261,7 +275,7 @@ async fn returns_bad_request_without_calling_the_provider_for_an_unknown_heading
         Duration::from_secs(1),
     );
     let mut request = request(Vec::new());
-    request["target_heading_id"] = json!("heading-missing");
+    request["target_heading_id"] = json!(target_heading_id);
     let actual = post_request(request, state).await?;
     let provider_prompt = prompt.lock().expect("prompt lock").clone();
 
