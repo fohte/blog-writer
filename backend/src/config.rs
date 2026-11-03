@@ -88,6 +88,10 @@ pub enum ConfigError {
     MissingOctoStsConfiguration,
     #[error("{LLM_PROVIDER_ENV} must name a supported provider")]
     InvalidLlmProvider,
+    #[error("{LLM_BASE_URL_ENV} is required when {LLM_PROVIDER_ENV} is openai_compatible")]
+    MissingOpenAiCompatibleBaseUrl,
+    #[error("{LLM_MODEL_ENV} is required when {LLM_PROVIDER_ENV} is openai_compatible")]
+    MissingOpenAiCompatibleModel,
     #[error("provider-specific settings cannot be set when {LLM_PROVIDER_LOCKED_ENV} is set")]
     OtherProviderConfigurationWithLockedProvider,
 }
@@ -332,7 +336,7 @@ mod tests {
         let actual = Config::from_env_with(|name| match name {
             LLM_PROVIDER_ENV => Some(OsString::from("openai_compatible")),
             LLM_BASE_URL_ENV => Some(OsString::from("https://api.example")),
-            LLM_API_KEY_ENV => Some(OsString::from("example-token")),
+            LLM_API_KEY_ENV => Some(OsString::new()),
             LLM_MODEL_ENV => Some(OsString::from("example-model")),
             _ => None,
         })
@@ -344,9 +348,64 @@ mod tests {
                 provider: ProviderName::OpenAiCompatible,
                 openai_compatible: OpenAiCompatibleConfig {
                     base_url: Some("https://api.example".to_owned()),
-                    api_key: Some("example-token".to_owned()),
+                    api_key: None,
                     model: Some("example-model".to_owned()),
                 },
+                ..LlmConfig::default()
+            })
+        );
+    }
+
+    #[rstest]
+    #[case::missing_base_url(
+        None,
+        Some("example-model"),
+        ConfigError::MissingOpenAiCompatibleBaseUrl
+    )]
+    #[case::empty_base_url(
+        Some(""),
+        Some("example-model"),
+        ConfigError::MissingOpenAiCompatibleBaseUrl
+    )]
+    #[case::missing_model(
+        Some("https://api.example"),
+        None,
+        ConfigError::MissingOpenAiCompatibleModel
+    )]
+    #[case::empty_model(
+        Some("https://api.example"),
+        Some(""),
+        ConfigError::MissingOpenAiCompatibleModel
+    )]
+    fn requires_openai_compatible_base_url_and_model_at_startup(
+        #[case] base_url: Option<&str>,
+        #[case] model: Option<&str>,
+        #[case] expected: ConfigError,
+    ) {
+        let actual = Config::from_env_with(|name| match name {
+            LLM_PROVIDER_ENV => Some(OsString::from("openai_compatible")),
+            LLM_BASE_URL_ENV => base_url.map(OsString::from),
+            LLM_MODEL_ENV => model.map(OsString::from),
+            _ => None,
+        });
+
+        assert_eq!(actual, Err(expected));
+    }
+
+    #[test]
+    fn treats_empty_openai_compatible_settings_as_unset_when_claude_code_is_locked() {
+        let actual = Config::from_env_with(|name| match name {
+            LLM_PROVIDER_LOCKED_ENV | LLM_BASE_URL_ENV | LLM_API_KEY_ENV | LLM_MODEL_ENV => {
+                Some(OsString::new())
+            }
+            _ => None,
+        })
+        .map(|config| config.llm);
+
+        assert_eq!(
+            actual,
+            Ok(LlmConfig {
+                locked: true,
                 ..LlmConfig::default()
             })
         );

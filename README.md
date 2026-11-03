@@ -9,7 +9,7 @@
 - `BACKEND_ALLOWED_HOSTS` sets comma-separated Host values, including ports when needed.
 - `BACKEND_ALLOWED_ORIGINS` sets comma-separated origins in `scheme://host[:port]` form.
 - `LLM_PROVIDER` selects the LLM provider. Supported values are `claude_code` (the default) and `openai_compatible`.
-- `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` configure the base URL, optional API key, and model for the OpenAI-compatible provider. It sends streaming chat completion requests to `/v1/chat/completions` and requires `LLM_BASE_URL` and `LLM_MODEL` when making a request.
+- `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` configure the base URL, optional API key, and model for the OpenAI-compatible provider. Set `LLM_BASE_URL` without a `/v1` suffix; the provider appends `/v1/chat/completions` to it. `LLM_BASE_URL` and `LLM_MODEL` are required at startup, and empty values are treated as unset.
 - `LLM_PROVIDER_LOCKED` locks the configured provider when set. The backend exits at startup if settings for another provider are also set.
 - If `ANTHROPIC_API_KEY` is set while `claude_code` is selected, the backend logs a warning because Claude Code prefers API key authentication.
 - `BLOG_EXPORT_DESTINATIONS` enables article export when set to a non-empty JSON array. Each destination has a unique `id`, `repository` (`owner/repo`), `base_branch`, `path_template` with one `{slug}`, `format` (`markdown` or `mdx`), and `frontmatter_template`. The backend returns the `frontmatter_template` to the client as-is. An optional `ogp_json_path` sets a repository-relative JSON file where publishing adds metadata for missing `CardLink` hrefs. An empty or invalid value makes the server fail at startup.

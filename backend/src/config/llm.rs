@@ -67,6 +67,7 @@ impl LlmConfig {
         openai_compatible: OpenAiCompatibleConfig,
     ) -> Result<Self, ConfigError> {
         let provider = provider.map(str::parse).transpose()?.unwrap_or_default();
+        let openai_compatible = openai_compatible.without_empty_values();
         let other_provider_configured = match provider {
             ProviderName::ClaudeCode => openai_compatible.is_configured(),
             ProviderName::OpenAiCompatible => anthropic_api_key_set,
@@ -74,6 +75,15 @@ impl LlmConfig {
 
         if locked && other_provider_configured {
             return Err(ConfigError::OtherProviderConfigurationWithLockedProvider);
+        }
+
+        if provider == ProviderName::OpenAiCompatible {
+            if openai_compatible.base_url.is_none() {
+                return Err(ConfigError::MissingOpenAiCompatibleBaseUrl);
+            }
+            if openai_compatible.model.is_none() {
+                return Err(ConfigError::MissingOpenAiCompatibleModel);
+            }
         }
 
         Ok(Self {
@@ -86,6 +96,14 @@ impl LlmConfig {
 }
 
 impl OpenAiCompatibleConfig {
+    fn without_empty_values(self) -> Self {
+        Self {
+            base_url: self.base_url.filter(|value| !value.is_empty()),
+            api_key: self.api_key.filter(|value| !value.is_empty()),
+            model: self.model.filter(|value| !value.is_empty()),
+        }
+    }
+
     fn is_configured(&self) -> bool {
         self.base_url.is_some() || self.api_key.is_some() || self.model.is_some()
     }
