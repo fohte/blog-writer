@@ -19,7 +19,7 @@ use crate::{
     llm::{self, LlmEvent, LlmState},
     ogp,
     safe_fetch::{SafeFetchService, SafeFetcher},
-    write_from_key_points,
+    source_bodies, write_from_key_points,
 };
 
 #[derive(OpenApi)]
@@ -110,6 +110,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(export::router())
         .merge(llm::router())
         .merge(ogp::router())
+        .merge(source_bodies::router())
         .merge(write_from_key_points::router())
 }
 
