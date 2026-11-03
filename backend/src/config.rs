@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr};
+use std::{env, ffi::OsString, net::SocketAddr};
 
 use thiserror::Error;
 
@@ -54,7 +54,13 @@ pub enum ConfigError {
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
-        let value = env::var_os(BIND_ADDR_ENV)
+        Self::from_env_with(|name| env::var_os(name))
+    }
+
+    fn from_env_with(
+        read_env_value: impl Fn(&str) -> Option<OsString>,
+    ) -> Result<Self, ConfigError> {
+        let value = read_env_value(BIND_ADDR_ENV)
             .map(|value| {
                 value
                     .into_string()
@@ -62,21 +68,40 @@ impl Config {
             })
             .transpose()?;
 
-        let allowed_hosts = read_env(ALLOWED_HOSTS_ENV, ConfigError::NonUnicodeAllowedHosts)?;
-        let database_url = read_env(DATABASE_URL_ENV, ConfigError::NonUnicodeDatabaseUrl)?;
-        let allowed_origins = read_env(ALLOWED_ORIGINS_ENV, ConfigError::NonUnicodeAllowedOrigins)?;
+        let allowed_hosts = read_env(
+            ALLOWED_HOSTS_ENV,
+            ConfigError::NonUnicodeAllowedHosts,
+            &read_env_value,
+        )?;
+        let database_url = read_env(
+            DATABASE_URL_ENV,
+            ConfigError::NonUnicodeDatabaseUrl,
+            &read_env_value,
+        )?;
+        let allowed_origins = read_env(
+            ALLOWED_ORIGINS_ENV,
+            ConfigError::NonUnicodeAllowedOrigins,
+            &read_env_value,
+        )?;
         let export_destinations = read_env(
             EXPORT_DESTINATIONS_ENV,
             ConfigError::NonUnicodeExportDestinations,
+            &read_env_value,
         )?;
-        let octo_sts_url = read_env(OCTO_STS_URL_ENV, ConfigError::NonUnicodeOctoStsUrl)?;
+        let octo_sts_url = read_env(
+            OCTO_STS_URL_ENV,
+            ConfigError::NonUnicodeOctoStsUrl,
+            &read_env_value,
+        )?;
         let octo_sts_identity = read_env(
             OCTO_STS_IDENTITY_ENV,
             ConfigError::NonUnicodeOctoStsIdentity,
+            &read_env_value,
         )?;
         let octo_sts_sa_token_path = read_env(
             OCTO_STS_SA_TOKEN_PATH_ENV,
             ConfigError::NonUnicodeOctoStsSaTokenPath,
+            &read_env_value,
         )?;
 
         let mut config = Self::from_values(
@@ -130,8 +155,12 @@ impl Config {
     }
 }
 
-fn read_env(name: &str, error: ConfigError) -> Result<Option<String>, ConfigError> {
-    env::var_os(name)
+fn read_env(
+    name: &str,
+    error: ConfigError,
+    read_env_value: &impl Fn(&str) -> Option<OsString>,
+) -> Result<Option<String>, ConfigError> {
+    read_env_value(name)
         .map(|value| value.into_string().map_err(|_| error))
         .transpose()
 }
@@ -147,7 +176,7 @@ fn parse_list(value: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, net::SocketAddr};
+    use std::{ffi::OsString, net::SocketAddr};
 
     use rstest::rstest;
 
@@ -202,16 +231,12 @@ mod tests {
 
     #[test]
     fn reads_database_url_from_environment() {
-        let expected = env::var_os(DATABASE_URL_ENV)
-            .map(|value| {
-                value
-                    .into_string()
-                    .map_err(|_| ConfigError::NonUnicodeDatabaseUrl)
-            })
-            .transpose();
-        let actual = Config::from_env().map(|config| config.database_url);
+        let actual = Config::from_env_with(|name| {
+            (name == DATABASE_URL_ENV).then(|| OsString::from("sqlite://sample.db"))
+        })
+        .map(|config| config.database_url);
 
-        assert_eq!(actual, expected);
+        assert_eq!(actual, Ok(Some("sqlite://sample.db".to_owned())));
     }
 
     #[rstest]

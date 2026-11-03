@@ -89,35 +89,29 @@ fn sqlite_url_with_create_if_missing(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use sqlx::{AnyPool, ConnectOptions, postgres::PgPool, sqlite::SqlitePool};
 
     use super::{DatabaseError, DatabaseKind};
 
-    #[tokio::test]
-    async fn rejects_unsupported_database_url_scheme() {
-        let actual = super::initialize(Some("mysql://localhost/sample"))
-            .await
-            .map(|_| ())
-            .err()
-            .map(|error| match error {
-                DatabaseError::UnsupportedScheme(scheme) => scheme,
-                _ => String::new(),
-            });
-
-        assert_eq!(actual, Some("mysql".to_owned()));
-    }
-
-    #[tokio::test]
-    async fn requires_database_url_when_initializing() {
-        let actual = super::initialize(None)
+    #[rstest]
+    #[test_attr(tokio::test)]
+    #[case::unsupported_scheme(Some("mysql://localhost/sample"), Err("mysql".to_owned()))]
+    #[case::missing_url(None, Err("missing".to_owned()))]
+    async fn rejects_invalid_database_urls(
+        #[case] url: Option<&str>,
+        #[case] expected: Result<(), String>,
+    ) {
+        let actual = super::initialize(url)
             .await
             .map(|_| ())
             .map_err(|error| match error {
-                DatabaseError::MissingUrl => "missing",
-                _ => "other",
+                DatabaseError::UnsupportedScheme(scheme) => scheme,
+                DatabaseError::MissingUrl => "missing".to_owned(),
+                _ => "other".to_owned(),
             });
 
-        assert_eq!(actual, Err("missing"));
+        assert_eq!(actual, expected);
     }
 
     #[sqlx::test]
