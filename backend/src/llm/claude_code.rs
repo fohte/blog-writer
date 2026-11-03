@@ -204,6 +204,7 @@ impl ClaudeCodeProvider {
         let mut search_text = String::new();
         let mut search_citations = Vec::new();
         let mut seen_citations = HashSet::new();
+        let mut web_search_performed = false;
         let mut result_error = None;
         while let Some(line) = lines
             .next_line()
@@ -226,6 +227,7 @@ impl ClaudeCodeProvider {
                     &mut search_text,
                     &mut search_citations,
                     &mut seen_citations,
+                    &mut web_search_performed,
                 );
             }
         }
@@ -240,6 +242,9 @@ impl ClaudeCodeProvider {
                 "Claude Code exited unsuccessfully"
             );
             record_event_error(&mut result_error, LlmError::Provider);
+        }
+        if web_search_performed && search_citations.is_empty() {
+            tracing::warn!("Claude Code performed web search but returned no citation URLs");
         }
         if let Some(error) = result_error {
             return Err(error);
@@ -302,6 +307,7 @@ fn process_web_search_event(
     text: &mut String,
     citations: &mut Vec<String>,
     seen_citations: &mut HashSet<String>,
+    web_search_performed: &mut bool,
 ) {
     if let Some(content) = event.pointer("/message/content").and_then(Value::as_array) {
         for block in content {
@@ -309,9 +315,11 @@ fn process_web_search_event(
             let name = block.get("name").and_then(Value::as_str);
             if matches!(block_type, Some("tool_use" | "server_tool_use"))
                 && matches!(name, Some("WebSearch" | "web_search"))
-                && let Some(query) = block.pointer("/input/query").and_then(Value::as_str)
             {
-                let _ = progress.send(query.to_owned());
+                *web_search_performed = true;
+                if let Some(query) = block.pointer("/input/query").and_then(Value::as_str) {
+                    let _ = progress.send(query.to_owned());
+                }
             }
         }
     }

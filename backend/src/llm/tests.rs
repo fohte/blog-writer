@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::Command as StdCommand,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -38,6 +39,40 @@ struct SampleOutput {
 }
 
 struct PendingProvider;
+
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl LogBuffer {
+    fn contents(&self) -> Vec<u8> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for LogBuffer {
+    type Writer = Self;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        self.clone()
+    }
+}
 
 impl LlmProvider for PendingProvider {
     fn generate<'a>(
@@ -771,6 +806,89 @@ async fn claude_code_web_search_streams_progress_and_only_search_result_citation
                 "WebSearch".to_owned(),
             ],
         )
+    );
+}
+
+#[rstest]
+#[case::warns_after_search_without_citations(
+    true,
+    "Claude Code performed web search but returned no citation URLs\n"
+)]
+#[case::does_not_warn_without_a_search(false, "")]
+#[test_attr(tokio::test)]
+async fn warns_only_when_claude_code_search_returns_no_citations(
+    #[case] search_performed: bool,
+    #[case] expected_log: &str,
+) {
+    let logs = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(logs.clone())
+        .without_time()
+        .with_ansi(false)
+        .with_level(false)
+        .with_target(false)
+        .finish();
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let directory = TempDir::new().expect("temporary directory is available");
+    let search_events = if search_performed {
+        indoc! {r#"
+            printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"WebSearch","input":{"query":"example query"}}]}}'
+            printf '%s\n' '{"type":"user","tool_use_result":{"results":[]}}'
+        "#}
+    } else {
+        ""
+    };
+    let executable = fake_claude(
+        &directory,
+        &format!(
+            "{search_events}{}",
+            indoc! {r#"
+                printf '%s\n' '{"type":"result","result":"Answer without source URLs."}'
+            "#}
+        ),
+    );
+    let state = LlmState::with_provider(
+        ClaudeCodeProvider::new(executable.into_os_string()),
+        ProviderName::ClaudeCode,
+        Duration::from_secs(5),
+    );
+    let actual = web_search_sse_body(state, "system instruction", "user request").await;
+    let mut expected_frames = Vec::new();
+    if search_performed {
+        expected_frames.push(SseFrame {
+            lines: vec![
+                SseLine::Raw("event: progress".to_owned()),
+                SseLine::Data {
+                    prefix: "data: ".to_owned(),
+                    value: serde_json::json!({
+                        "event": "progress",
+                        "data": {"query": "example query"}
+                    }),
+                },
+                SseLine::Raw(String::new()),
+            ],
+        });
+    }
+    expected_frames.push(SseFrame {
+        lines: vec![
+            SseLine::Raw("event: result".to_owned()),
+            SseLine::Data {
+                prefix: "data: ".to_owned(),
+                value: serde_json::json!({
+                    "event": "result",
+                    "data": {"text": "Answer without source URLs.", "citations": []}
+                }),
+            },
+            SseLine::Raw(String::new()),
+        ],
+    });
+
+    assert_eq!(
+        (
+            parse_sse_body(&actual),
+            String::from_utf8_lossy(&logs.contents()).into_owned(),
+        ),
+        (expected_frames, expected_log.to_owned())
     );
 }
 
