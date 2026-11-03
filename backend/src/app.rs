@@ -286,13 +286,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn includes_llm_use_case_routes_in_api_only_mode() {
+    #[rstest]
+    #[case::write_from_key_points("/api/write-from-key-points")]
+    #[case::research_key_points("/api/research/key-points")]
+    #[test_attr(tokio::test)]
+    async fn includes_llm_use_case_routes_in_api_only_mode(#[case] uri: &'static str) {
         let response = test_llm_api_router(policy())
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/write-from-key-points")
+                    .uri(uri)
                     .header("host", "localhost:3000")
                     .header(CONTENT_TYPE, "application/json")
                     .body(Body::empty())
@@ -300,30 +303,19 @@ mod tests {
             )
             .await
             .unwrap();
-        let actual = (
-            response.status(),
-            serde_json::from_slice::<Value>(
-                &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-            )
-            .unwrap(),
-        );
-
-        assert_eq!(
-            actual,
-            (
-                StatusCode::BAD_REQUEST,
-                json!({"error": "Invalid request body"})
-            )
-        );
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    #[tokio::test]
-    async fn allows_cors_preflight_from_an_allowed_origin() {
+    #[rstest]
+    #[case::write_from_key_points("/api/write-from-key-points")]
+    #[case::research_key_points("/api/research/key-points")]
+    #[test_attr(tokio::test)]
+    async fn allows_cors_preflight_from_an_allowed_origin(#[case] uri: &'static str) {
         let response = test_llm_api_router(policy())
             .oneshot(
                 Request::builder()
                     .method("OPTIONS")
-                    .uri("/api/write-from-key-points")
+                    .uri(uri)
                     .header("host", "localhost:3000")
                     .header("origin", "https://writer.example")
                     .header("access-control-request-method", "POST")

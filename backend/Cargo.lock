@@ -183,6 +183,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "unicode-normalization",
  "utoipa",
  "utoipa-axum",
  "wiremock",
