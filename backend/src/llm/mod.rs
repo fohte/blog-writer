@@ -6,7 +6,7 @@ mod router;
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use axum::response::sse::{Event, KeepAlive, Sse};
-use futures_util::stream::{self, Stream};
+use futures_util::stream::{self, Stream, StreamExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -207,41 +207,42 @@ where
     call_to_sse_with::<T, T, _>(state, system_prompt, prompt, Ok)
 }
 
-pub(crate) async fn call_web_search_with(
-    state: LlmState,
-    system_prompt: String,
-    prompt: String,
-    mut on_progress: impl FnMut(String),
-) -> Result<WebSearchResult, LlmError> {
-    let (progress_sender, mut progress_receiver) = mpsc::unbounded_channel();
-    let search = state
-        .provider
-        .web_search(system_prompt, prompt, progress_sender);
-    tokio::time::timeout(state.timeout, async move {
-        tokio::pin!(search);
-        loop {
-            tokio::select! {
-                biased;
-                Some(query) = progress_receiver.recv() => on_progress(query),
-                result = &mut search => {
-                    while let Ok(query) = progress_receiver.try_recv() {
-                        on_progress(query);
-                    }
-                    return result;
-                },
-            }
-        }
-    })
-    .await
-    .map_err(|_| LlmError::Timeout)?
+enum WebSearchEvent {
+    Progress(String),
+    Result(WebSearchResult),
+    Error(LlmError),
 }
 
-pub(crate) fn call_web_search_to_sse(
+impl WebSearchEvent {
+    fn into_sse_event(self) -> Event {
+        match self {
+            Self::Progress(query) => LlmEvent::Progress(LlmProgress { query }).into_sse_event(),
+            Self::Result(result) => match serde_json::to_value(result) {
+                Ok(result) => LlmEvent::Result(result).into_sse_event(),
+                Err(error) => {
+                    tracing::warn!(error_kind = ?LlmError::SerializeResult, %error, "failed to serialize web search result");
+                    LlmEvent::Error(LlmErrorPayload {
+                        message: LlmError::SerializeResult.to_string(),
+                    })
+                    .into_sse_event()
+                }
+            },
+            Self::Error(error) => {
+                tracing::warn!(error_kind = ?error, "LLM web search failed");
+                LlmEvent::Error(LlmErrorPayload {
+                    message: error.to_string(),
+                })
+                .into_sse_event()
+            }
+        }
+    }
+}
+
+fn web_search_events(
     state: LlmState,
     system_prompt: String,
     prompt: String,
-) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let keep_alive_interval = state.keep_alive_interval;
+) -> impl Stream<Item = WebSearchEvent> {
     let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
     let provider = state.provider.clone();
     let search = Box::pin(async move {
@@ -256,61 +257,81 @@ pub(crate) fn call_web_search_to_sse(
                 .await
                 .unwrap_or(Err(LlmError::Timeout))
         });
-    let stream = stream::unfold(
-        (Some(search), progress_receiver, None::<LlmEvent>, false),
+    stream::unfold(
+        (
+            Some(search),
+            progress_receiver,
+            None::<WebSearchEvent>,
+            false,
+        ),
         |(mut search, mut progress_receiver, mut result_event, finished)| async move {
             if finished {
                 return None;
             }
             if let Ok(query) = progress_receiver.try_recv() {
                 return Some((
-                    Ok(LlmEvent::Progress(LlmProgress { query }).into_sse_event()),
+                    WebSearchEvent::Progress(query),
                     (search, progress_receiver, result_event, false),
                 ));
             }
             if let Some(event) = result_event.take() {
-                return Some((
-                    Ok(event.into_sse_event()),
-                    (search, progress_receiver, None, true),
-                ));
+                return Some((event, (search, progress_receiver, None, true)));
             }
             let search_future = search.as_mut()?;
             tokio::select! {
                 biased;
                 Some(query) = progress_receiver.recv() => Some((
-                    Ok(LlmEvent::Progress(LlmProgress { query }).into_sse_event()),
+                    WebSearchEvent::Progress(query),
                     (search, progress_receiver, result_event, false),
                 )),
                 result = search_future => {
                     search = None;
                     let event = match result {
-                        Ok(result) => match serde_json::to_value(result) {
-                            Ok(result) => LlmEvent::Result(result),
-                            Err(error) => {
-                                tracing::warn!(error_kind = ?LlmError::SerializeResult, %error, "failed to serialize web search result");
-                                LlmEvent::Error(LlmErrorPayload {
-                                    message: LlmError::SerializeResult.to_string(),
-                                })
-                            }
-                        },
-                        Err(error) => {
-                            tracing::warn!(error_kind = ?error, "LLM web search failed");
-                            LlmEvent::Error(LlmErrorPayload { message: error.to_string() })
-                        }
+                        Ok(result) => WebSearchEvent::Result(result),
+                        Err(error) => WebSearchEvent::Error(error),
                     };
                     if let Ok(query) = progress_receiver.try_recv() {
                         result_event = Some(event);
                         Some((
-                            Ok(LlmEvent::Progress(LlmProgress { query }).into_sse_event()),
+                            WebSearchEvent::Progress(query),
                             (search, progress_receiver, result_event, false),
                         ))
                     } else {
-                        Some((Ok(event.into_sse_event()), (search, progress_receiver, None, true)))
+                        Some((event, (search, progress_receiver, None, true)))
                     }
                 }
             }
         },
-    );
+    )
+}
+
+pub(crate) async fn call_web_search_with(
+    state: LlmState,
+    system_prompt: String,
+    prompt: String,
+    mut on_progress: impl FnMut(String),
+) -> Result<WebSearchResult, LlmError> {
+    let events = web_search_events(state, system_prompt, prompt);
+    futures_util::pin_mut!(events);
+    let mut result = None;
+    while let Some(event) = events.next().await {
+        match event {
+            WebSearchEvent::Progress(query) => on_progress(query),
+            WebSearchEvent::Result(web_search_result) => result = Some(web_search_result),
+            WebSearchEvent::Error(error) => return Err(error),
+        }
+    }
+    result.ok_or(LlmError::InvalidOutput)
+}
+
+pub(crate) fn call_web_search_to_sse(
+    state: LlmState,
+    system_prompt: String,
+    prompt: String,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let keep_alive_interval = state.keep_alive_interval;
+    let stream =
+        web_search_events(state, system_prompt, prompt).map(|event| Ok(event.into_sse_event()));
 
     Sse::new(stream).keep_alive(
         KeepAlive::new()

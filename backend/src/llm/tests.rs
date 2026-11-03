@@ -153,6 +153,30 @@ async fn run_openai_compatible_web_search(
     (server, result, progress)
 }
 
+async fn openai_compatible_web_search_sse(status: u16, body: &str) -> String {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/openai/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(status)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let state = LlmState::new(crate::config::LlmConfig {
+        provider: ProviderName::OpenAiCompatible,
+        openai_compatible: OpenAiCompatibleConfig {
+            base_url: Some(format!("{}/openai", server.uri())),
+            api_key: None,
+            model: Some("example-model".to_owned()),
+        },
+        ..crate::config::LlmConfig::default()
+    });
+    web_search_sse_body(state, "system instruction", "user request").await
+}
+
 fn parse_sse_body(body: &str) -> Vec<SseFrame> {
     let mut frames = Vec::new();
     let mut lines = Vec::new();
@@ -303,6 +327,42 @@ async fn openai_compatible_web_search_returns_annotations_and_streams_search_pro
             },
             vec!["example query".to_owned()],
         )
+    );
+}
+
+#[rstest]
+#[case::usage_limit(429, "", "LLM provider usage limit reached")]
+#[case::missing_answer(
+    200,
+    indoc! {"
+        data: [DONE]
+
+    "},
+    "LLM provider returned invalid output"
+)]
+#[tokio::test]
+async fn openai_compatible_web_search_reports_provider_errors(
+    #[case] status: u16,
+    #[case] body: &str,
+    #[case] message: &str,
+) {
+    let actual = openai_compatible_web_search_sse(status, body).await;
+
+    assert_eq!(
+        parse_sse_body(&actual),
+        vec![SseFrame {
+            lines: vec![
+                SseLine::Raw("event: error".to_owned()),
+                SseLine::Data {
+                    prefix: "data: ".to_owned(),
+                    value: serde_json::json!({
+                        "event": "error",
+                        "data": {"message": message}
+                    }),
+                },
+                SseLine::Raw(String::new()),
+            ],
+        }]
     );
 }
 
@@ -599,8 +659,39 @@ async fn claude_code_web_search_streams_progress_and_only_search_result_citation
                 "--no-session-persistence".to_owned(),
                 "--tools".to_owned(),
                 "WebSearch".to_owned(),
+                "--allowedTools".to_owned(),
+                "WebSearch".to_owned(),
             ],
         )
+    );
+}
+
+#[tokio::test]
+async fn claude_code_web_search_reports_a_missing_answer() {
+    let directory = TempDir::new().expect("temporary directory is available");
+    let executable = fake_claude(&directory, "cat > \"$0.input\"");
+    let state = LlmState::with_provider(
+        ClaudeCodeProvider::new(executable.into_os_string()),
+        ProviderName::ClaudeCode,
+        Duration::from_secs(5),
+    );
+    let actual = web_search_sse_body(state, "system instruction", "user request").await;
+
+    assert_eq!(
+        parse_sse_body(&actual),
+        vec![SseFrame {
+            lines: vec![
+                SseLine::Raw("event: error".to_owned()),
+                SseLine::Data {
+                    prefix: "data: ".to_owned(),
+                    value: serde_json::json!({
+                        "event": "error",
+                        "data": {"message": "LLM provider returned invalid output"}
+                    }),
+                },
+                SseLine::Raw(String::new()),
+            ],
+        }]
     );
 }
 

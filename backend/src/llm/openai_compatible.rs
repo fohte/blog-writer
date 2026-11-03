@@ -267,6 +267,10 @@ async fn read_web_search(
         )?;
     }
     process_web_search_event(&mut event_data, &mut result, &mut seen_citations, &progress)?;
+    if result.text.trim().is_empty() {
+        tracing::warn!("OpenAI-compatible provider did not return a web search answer");
+        return Err(LlmError::InvalidOutput);
+    }
     Ok(result)
 }
 

@@ -15,6 +15,15 @@ enum EventOutcome {
     StructuredOutput(Value),
 }
 
+enum InvocationMode {
+    Structured {
+        schema: Value,
+    },
+    WebSearch {
+        progress: tokio::sync::mpsc::UnboundedSender<String>,
+    },
+}
+
 fn log_provider_error(error: impl Display, operation: &'static str) -> LlmError {
     tracing::warn!(%error, operation, "Claude Code operation failed");
     LlmError::Provider
@@ -98,7 +107,7 @@ impl ClaudeCodeProvider {
         schema: Value,
     ) -> Result<Value, LlmError> {
         match self
-            .invoke(system_prompt, prompt, Some(schema), None)
+            .invoke(system_prompt, prompt, InvocationMode::Structured { schema })
             .await?
         {
             ClaudeOutput::Structured(output) => Ok(output),
@@ -113,7 +122,11 @@ impl ClaudeCodeProvider {
         progress: tokio::sync::mpsc::UnboundedSender<String>,
     ) -> Result<WebSearchResult, LlmError> {
         match self
-            .invoke(system_prompt, prompt, None, Some(progress))
+            .invoke(
+                system_prompt,
+                prompt,
+                InvocationMode::WebSearch { progress },
+            )
             .await?
         {
             ClaudeOutput::WebSearch(result) => Ok(result),
@@ -125,8 +138,7 @@ impl ClaudeCodeProvider {
         &self,
         system_prompt: String,
         prompt: String,
-        schema: Option<Value>,
-        progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+        mode: InvocationMode,
     ) -> Result<ClaudeOutput, LlmError> {
         // A fresh working directory keeps checkout-specific CLAUDE.md and MCP configuration out of the call.
         let working_directory = TempDir::new()
@@ -144,17 +156,22 @@ impl ClaudeCodeProvider {
             OsString::from("--safe-mode"),
             OsString::from("--no-session-persistence"),
         ];
-        if let Some(schema) = schema {
+        if let InvocationMode::Structured { schema } = &mode {
             args.push(OsString::from("--json-schema"));
             args.push(OsString::from(schema.to_string()));
         }
         args.push(OsString::from("--tools"));
-        args.push(if progress.is_some() {
-            OsString::from("WebSearch")
-        } else {
-            // Structured output needs no tool calls.
-            OsString::new()
+        args.push(match &mode {
+            InvocationMode::Structured { .. } => {
+                // Structured output needs no tool calls.
+                OsString::new()
+            }
+            InvocationMode::WebSearch { .. } => OsString::from("WebSearch"),
         });
+        if matches!(&mode, InvocationMode::WebSearch { .. }) {
+            args.push(OsString::from("--allowedTools"));
+            args.push(OsString::from("WebSearch"));
+        }
         let mut child = Command::new(&self.executable)
             .args(args)
             .current_dir(working_directory.path())
@@ -206,7 +223,7 @@ impl ClaudeCodeProvider {
                 EventOutcome::Error(error) => record_event_error(&mut result_error, error),
                 EventOutcome::StructuredOutput(output) => structured_output = Some(output),
             }
-            if let Some(progress) = &progress {
+            if let InvocationMode::WebSearch { progress } = &mode {
                 process_web_search_event(
                     &event,
                     progress,
@@ -231,18 +248,26 @@ impl ClaudeCodeProvider {
         if let Some(error) = result_error {
             return Err(error);
         }
-        if progress.is_some() {
-            Ok(ClaudeOutput::WebSearch(WebSearchResult {
-                text: search_text,
-                citations: search_citations,
-            }))
-        } else {
-            if structured_output.is_none() {
-                tracing::warn!("Claude Code did not return structured output");
+        match mode {
+            InvocationMode::WebSearch { .. } => {
+                if search_text.trim().is_empty() {
+                    tracing::warn!("Claude Code did not return a web search answer");
+                    Err(LlmError::InvalidOutput)
+                } else {
+                    Ok(ClaudeOutput::WebSearch(WebSearchResult {
+                        text: search_text,
+                        citations: search_citations,
+                    }))
+                }
             }
-            structured_output
-                .map(ClaudeOutput::Structured)
-                .ok_or(LlmError::MissingStructuredOutput)
+            InvocationMode::Structured { .. } => {
+                if structured_output.is_none() {
+                    tracing::warn!("Claude Code did not return structured output");
+                }
+                structured_output
+                    .map(ClaudeOutput::Structured)
+                    .ok_or(LlmError::MissingStructuredOutput)
+            }
         }
     }
 }
