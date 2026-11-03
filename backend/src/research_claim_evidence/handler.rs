@@ -45,41 +45,55 @@ pub(crate) async fn judge_claim_evidence(
         });
     }
 
-    let prompt = build_prompt(&input);
+    let JudgeClaimEvidenceRequest {
+        claim,
+        before,
+        after,
+        sources,
+    } = input;
+    let sources = sources
+        .into_iter()
+        .map(|mut source| {
+            source.body = limit_source_body(&source.body);
+            source
+        })
+        .collect::<Vec<_>>();
+    let prompt = build_prompt(&claim, before.as_deref(), after.as_deref(), &sources);
     Ok(call_to_sse_with(
         state,
         SYSTEM_PROMPT.to_owned(),
         prompt,
-        move |response: ModelResponse| build_result(response, input.sources),
+        move |response: ModelResponse| build_result(response, sources),
     ))
 }
 
-fn build_prompt(input: &JudgeClaimEvidenceRequest) -> String {
+fn build_prompt(
+    claim: &str,
+    before: Option<&str>,
+    after: Option<&str>,
+    sources: &[ClaimEvidenceSourceInput],
+) -> String {
     let mut lines = vec!["判定対象".to_owned()];
-    if let Some(before) = input
-        .before
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
+    if let Some(before) = before.filter(|value| !value.trim().is_empty()) {
         lines.push(format!("前の文: {before}"));
     }
-    lines.push(format!("主張: {}", input.claim));
-    if let Some(after) = input
-        .after
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
+    lines.push(format!("主張: {claim}"));
+    if let Some(after) = after.filter(|value| !value.trim().is_empty()) {
         lines.push(format!("後の文: {after}"));
     }
     lines.push(String::new());
     lines.push("資料".to_owned());
-    for source in &input.sources {
+    for source in sources {
         lines.push(String::new());
         lines.push(format!("資料 ID: {}", source.id));
         lines.push("本文:".to_owned());
-        lines.push(source.body.chars().take(MAX_SOURCE_CHARACTERS).collect());
+        lines.push(source.body.clone());
     }
     format!("{}\n", lines.join("\n"))
+}
+
+fn limit_source_body(body: &str) -> String {
+    body.chars().take(MAX_SOURCE_CHARACTERS).collect()
 }
 
 fn build_result(

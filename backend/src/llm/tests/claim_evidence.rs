@@ -106,12 +106,32 @@ fn expected_frame(data: Value) -> Vec<SseFrame> {
     json!({"verdict": "supported", "quote": {"source_id": "source-a", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": "無視される修正案"}),
     json!({"verdict": "supported", "quote": {"source_id": "source-a", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": null})
 )]
+#[case::supported_without_quote_becomes_insufficient(
+    json!({"verdict": "supported", "quote": null, "suggestion": null}),
+    json!({"verdict": "insufficient", "quote": null, "suggestion": null})
+)]
 #[case::unsupported_quote_becomes_insufficient(
     json!({"verdict": "supported", "quote": {"source_id": "source-a", "text": "本文に存在しない引用"}, "suggestion": null}),
     json!({"verdict": "insufficient", "quote": null, "suggestion": null})
 )]
 #[case::unknown_source_quote_becomes_insufficient(
     json!({"verdict": "supported", "quote": {"source_id": "source-unknown", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": null}),
+    json!({"verdict": "insufficient", "quote": null, "suggestion": null})
+)]
+#[case::outdated_quote_absent_from_source_becomes_insufficient(
+    json!({"verdict": "outdated", "quote": {"source_id": "source-a", "text": "本文に存在しない引用"}, "suggestion": "既定の保存期間は30日です。"}),
+    json!({"verdict": "insufficient", "quote": null, "suggestion": null})
+)]
+#[case::outdated_unknown_source_becomes_insufficient(
+    json!({"verdict": "outdated", "quote": {"source_id": "source-unknown", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": "既定の保存期間は30日です。"}),
+    json!({"verdict": "insufficient", "quote": null, "suggestion": null})
+)]
+#[case::contradicted_quote_absent_from_source_becomes_insufficient(
+    json!({"verdict": "contradicted", "quote": {"source_id": "source-a", "text": "本文に存在しない引用"}, "suggestion": "保存期間は30日です。"}),
+    json!({"verdict": "insufficient", "quote": null, "suggestion": null})
+)]
+#[case::contradicted_unknown_source_becomes_insufficient(
+    json!({"verdict": "contradicted", "quote": {"source_id": "source-unknown", "text": "現行の仕様では保存期間は30日です。"}, "suggestion": "保存期間は30日です。"}),
     json!({"verdict": "insufficient", "quote": null, "suggestion": null})
 )]
 #[case::outdated_with_verified_quote(
@@ -151,13 +171,17 @@ async fn validates_the_model_verdict_and_quote(
 
 #[rstest]
 #[test_attr(tokio::test)]
-async fn includes_claim_context_and_limits_each_source_in_the_prompt(directory: TempDir) {
+async fn includes_claim_context_and_verifies_quotes_against_prompt_source(directory: TempDir) {
     let executable = fake_response(
         &directory,
-        json!({"verdict": "insufficient", "quote": null, "suggestion": null}),
+        json!({
+            "verdict": "supported",
+            "quote": {"source_id": "source-a", "text": "範囲外の引用"},
+            "suggestion": null
+        }),
     );
     let mut request = request();
-    request["sources"][0]["body"] = Value::String("文".repeat(10_001));
+    request["sources"][0]["body"] = Value::String(format!("{}範囲外の引用", "文".repeat(10_000)));
     let actual = post(api(executable.clone()), request).await;
     let provider_input = std::fs::read_to_string(format!("{}.input", executable.display()))
         .expect("provider input was captured");
@@ -179,8 +203,16 @@ async fn includes_claim_context_and_limits_each_source_in_the_prompt(directory: 
     expected_prompt.push('\n');
 
     assert_eq!(
-        (actual.0, provider_input),
-        (StatusCode::OK, expected_prompt)
+        (actual.0, parse_sse_body(&actual.1), provider_input),
+        (
+            StatusCode::OK,
+            expected_frame(json!({
+                "verdict": "insufficient",
+                "quote": null,
+                "suggestion": null
+            })),
+            expected_prompt
+        )
     );
 }
 
