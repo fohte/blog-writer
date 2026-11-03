@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-: "${BACKEND_ALLOWED_ORIGINS:?Set BACKEND_ALLOWED_ORIGINS to the allowed screen origin}"
+: "${BACKEND_ALLOWED_ORIGINS:?Set BACKEND_ALLOWED_ORIGINS to the allowed frontend origin}"
 
 export LLM_API_ONLY=true
 export BACKEND_BIND_ADDR="127.0.0.1:${LLM_API_ONLY_PORT:-4312}"

@@ -25,7 +25,7 @@ export BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH=/var/run/secrets/service-token
 
 When `BLOG_EXPORT_DESTINATIONS` is unset, export is disabled and its endpoints return `503 Service Unavailable`.
 
-Run the LLM API-only backend with `mise run llm:api-only`. Set `BACKEND_ALLOWED_ORIGINS` to the screen origin before starting; the task listens on `127.0.0.1:4312` by default and accepts a different port through `LLM_API_ONLY_PORT`. The allowed origins are also used for CORS preflight requests.
+Run the LLM API-only backend with `mise run llm:api-only`. Set `BACKEND_ALLOWED_ORIGINS` to the frontend origin before starting; the task listens on `127.0.0.1:4312` by default and accepts a different port through `LLM_API_ONLY_PORT`. The allowed origins are also used for CORS preflight requests.
 
 ```sh
 BACKEND_ALLOWED_ORIGINS=https://writer.example mise run llm:api-only
