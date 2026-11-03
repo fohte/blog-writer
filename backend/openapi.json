@@ -9,6 +9,195 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/export/destinations": {
+      "get": {
+        "operationId": "list_destinations",
+        "responses": {
+          "200": {
+            "description": "Available export destinations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DestinationListResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Export publishing is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/export/{destination_id}/articles/{article_id}": {
+      "get": {
+        "operationId": "get_article_file",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "description": "Configured export destination ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "query",
+            "description": "Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current file contents, or null when the file does not exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleFileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid article ID or slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Destination not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Export publishing is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "publish_article",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "description": "Configured export destination ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishArticleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pull request URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishArticleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid article ID or slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Destination not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Remote file changed; fetch its current version before retrying",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Export publishing is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "operationId": "get_health",
@@ -29,6 +218,45 @@
   },
   "components": {
     "schemas": {
+      "ArticleFileResponse": {
+        "type": "object",
+        "required": ["content", "sha"],
+        "properties": {
+          "content": {
+            "type": ["string", "null"]
+          },
+          "sha": {
+            "type": ["string", "null"]
+          }
+        }
+      },
+      "DestinationListResponse": {
+        "type": "object",
+        "required": ["destinations"],
+        "properties": {
+          "destinations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DestinationResponse"
+            }
+          }
+        }
+      },
+      "DestinationResponse": {
+        "type": "object",
+        "required": ["id", "format", "frontmatter_template"],
+        "properties": {
+          "format": {
+            "$ref": "#/components/schemas/ExportFormat"
+          },
+          "frontmatter_template": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "required": ["error"],
@@ -38,11 +266,41 @@
           }
         }
       },
+      "ExportFormat": {
+        "type": "string",
+        "enum": ["markdown", "mdx"]
+      },
       "HealthResponse": {
         "type": "object",
         "required": ["status"],
         "properties": {
           "status": {
+            "type": "string"
+          }
+        }
+      },
+      "PublishArticleRequest": {
+        "type": "object",
+        "required": ["slug", "content"],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "sha": {
+            "type": ["string", "null"]
+          },
+          "slug": {
+            "type": "string",
+            "description": "Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens.",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+          }
+        }
+      },
+      "PublishArticleResponse": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": {
             "type": "string"
           }
         }

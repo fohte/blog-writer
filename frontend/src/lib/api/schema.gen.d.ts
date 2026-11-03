@@ -4,6 +4,38 @@
  */
 
 export interface paths {
+  '/api/export/destinations': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['list_destinations']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/export/{destination_id}/articles/{article_id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['get_article_file']
+    put?: never
+    post: operations['publish_article']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/health': {
     parameters: {
       query?: never
@@ -24,11 +56,34 @@ export interface paths {
 export type webhooks = Record<string, never>
 export interface components {
   schemas: {
+    ArticleFileResponse: {
+      content: string | null
+      sha: string | null
+    }
+    DestinationListResponse: {
+      destinations: components['schemas']['DestinationResponse'][]
+    }
+    DestinationResponse: {
+      format: components['schemas']['ExportFormat']
+      frontmatter_template: string
+      id: string
+    }
     ErrorResponse: {
       error: string
     }
+    /** @enum {string} */
+    ExportFormat: 'markdown' | 'mdx'
     HealthResponse: {
       status: string
+    }
+    PublishArticleRequest: {
+      content: string
+      sha?: string | null
+      /** @description Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens. */
+      slug: string
+    }
+    PublishArticleResponse: {
+      url: string
     }
   }
   responses: never
@@ -39,6 +94,155 @@ export interface components {
 }
 export type $defs = Record<string, never>
 export interface operations {
+  list_destinations: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Available export destinations */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['DestinationListResponse']
+        }
+      }
+      /** @description Export publishing is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  get_article_file: {
+    parameters: {
+      query: {
+        /** @description Slug that starts with an ASCII letter or digit and contains only ASCII letters, digits, dots, underscores, or hyphens. */
+        slug: string
+      }
+      header?: never
+      path: {
+        /** @description Configured export destination ID */
+        destination_id: string
+        /** @description Article ID */
+        article_id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Current file contents, or null when the file does not exist */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ArticleFileResponse']
+        }
+      }
+      /** @description Invalid article ID or slug */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Destination not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Export publishing is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  publish_article: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Configured export destination ID */
+        destination_id: string
+        /** @description Article ID */
+        article_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PublishArticleRequest']
+      }
+    }
+    responses: {
+      /** @description Pull request URL */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['PublishArticleResponse']
+        }
+      }
+      /** @description Invalid article ID or slug */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Destination not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Remote file changed; fetch its current version before retrying */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Export publishing is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
   get_health: {
     parameters: {
       query?: never

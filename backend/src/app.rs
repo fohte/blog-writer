@@ -6,7 +6,9 @@ use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::{
+    config::ExportConfig,
     error::{AppError, ErrorResponse},
+    export::{self, ExportError, ExportService},
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
 };
@@ -19,7 +21,17 @@ use crate::{
 struct ApiDefinition;
 
 #[derive(Clone, Default)]
-pub struct AppState {}
+pub struct AppState {
+    pub export: Option<ExportService>,
+}
+
+impl AppState {
+    pub fn new(export: Option<ExportConfig>) -> Result<Self, ExportError> {
+        Ok(Self {
+            export: export.map(ExportService::new).transpose()?,
+        })
+    }
+}
 
 pub fn api() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(ApiDefinition::openapi()).nest("/api", api_routes())
@@ -57,7 +69,9 @@ fn router_with_frontend_fallback(
 }
 
 fn api_routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().merge(health::router())
+    OpenApiRouter::new()
+        .merge(health::router())
+        .merge(export::router())
 }
 
 async fn api_not_found() -> AppError {
@@ -80,6 +94,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{AppState, router, router_with_frontend_fallback};
+    use crate::config::{ExportConfig, ExportDestination, ExportFormat};
     use crate::host_origin::HostOriginPolicy;
 
     #[fixture]
@@ -100,6 +115,13 @@ mod tests {
     #[case::api_root("/api", "GET", "localhost:3000", 404, json!({"error": "Not Found"}))]
     #[case::api_root_slash("/api/", "GET", "localhost:3000", 404, json!({"error": "Not Found"}))]
     #[case::unknown_api("/api/unknown", "GET", "localhost:3000", 404, json!({"error": "Not Found"}))]
+    #[case::export_disabled(
+        "/api/export/destinations",
+        "GET",
+        "localhost:3000",
+        503,
+        json!({"error": "Export publishing is not configured"})
+    )]
     #[case::untrusted_host_on_api(
         "/api/health",
         "GET",
@@ -211,6 +233,55 @@ mod tests {
                 expected_allow,
                 expected_content_type,
                 expected_body.as_bytes().to_vec(),
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn lists_configured_export_destinations() {
+        let response = router(
+            AppState::new(Some(ExportConfig {
+                destinations: vec![ExportDestination {
+                    id: "site-one".to_owned(),
+                    repository: "writer/notes".to_owned(),
+                    base_branch: "main".to_owned(),
+                    path_template: "posts/{slug}.mdx".to_owned(),
+                    format: ExportFormat::Mdx,
+                    frontmatter_template: "title: {{ title }}".to_owned(),
+                }],
+                octo_sts_url: "https://sts.example".to_owned(),
+                octo_sts_identity: "writer-export".to_owned(),
+                octo_sts_sa_token_path: "/var/run/token".into(),
+            }))
+            .unwrap(),
+            policy(),
+        )
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/export/destinations")
+                .header("host", "localhost:3000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let actual_status = response.status().as_u16();
+        let actual_body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+
+        assert_eq!(
+            (actual_status, actual_body),
+            (
+                200,
+                json!({
+                    "destinations": [{
+                        "id": "site-one",
+                        "format": "mdx",
+                        "frontmatter_template": "title: {{ title }}"
+                    }]
+                })
             )
         );
     }

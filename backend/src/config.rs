@@ -2,16 +2,24 @@ use std::{env, net::SocketAddr};
 
 use thiserror::Error;
 
+mod export;
+pub use export::{ExportConfig, ExportDestination, ExportFormat};
+
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:3000";
 const BIND_ADDR_ENV: &str = "BACKEND_BIND_ADDR";
 const ALLOWED_HOSTS_ENV: &str = "BACKEND_ALLOWED_HOSTS";
 const ALLOWED_ORIGINS_ENV: &str = "BACKEND_ALLOWED_ORIGINS";
+const EXPORT_DESTINATIONS_ENV: &str = "BLOG_EXPORT_DESTINATIONS";
+const OCTO_STS_URL_ENV: &str = "BLOG_EXPORT_OCTO_STS_URL";
+const OCTO_STS_IDENTITY_ENV: &str = "BLOG_EXPORT_OCTO_STS_IDENTITY";
+const OCTO_STS_SA_TOKEN_PATH_ENV: &str = "BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub bind_addr: SocketAddr,
     pub allowed_hosts: Vec<String>,
     pub allowed_origins: Vec<String>,
+    pub export: Option<ExportConfig>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -24,6 +32,20 @@ pub enum ConfigError {
     NonUnicodeAllowedHosts,
     #[error("{ALLOWED_ORIGINS_ENV} must contain valid Unicode")]
     NonUnicodeAllowedOrigins,
+    #[error("{EXPORT_DESTINATIONS_ENV} must contain valid Unicode")]
+    NonUnicodeExportDestinations,
+    #[error("{OCTO_STS_URL_ENV} must contain valid Unicode")]
+    NonUnicodeOctoStsUrl,
+    #[error("{OCTO_STS_IDENTITY_ENV} must contain valid Unicode")]
+    NonUnicodeOctoStsIdentity,
+    #[error("{OCTO_STS_SA_TOKEN_PATH_ENV} must contain valid Unicode")]
+    NonUnicodeOctoStsSaTokenPath,
+    #[error("{EXPORT_DESTINATIONS_ENV} must be valid JSON with at least one destination")]
+    InvalidExportDestinations,
+    #[error(
+        "all BLOG_EXPORT_OCTO_STS_* variables are required when {EXPORT_DESTINATIONS_ENV} is set"
+    )]
+    MissingOctoStsConfiguration,
 }
 
 impl Config {
@@ -38,26 +60,43 @@ impl Config {
 
         let allowed_hosts = read_env(ALLOWED_HOSTS_ENV, ConfigError::NonUnicodeAllowedHosts)?;
         let allowed_origins = read_env(ALLOWED_ORIGINS_ENV, ConfigError::NonUnicodeAllowedOrigins)?;
+        let export_destinations = read_env(
+            EXPORT_DESTINATIONS_ENV,
+            ConfigError::NonUnicodeExportDestinations,
+        )?;
+        let octo_sts_url = read_env(OCTO_STS_URL_ENV, ConfigError::NonUnicodeOctoStsUrl)?;
+        let octo_sts_identity = read_env(
+            OCTO_STS_IDENTITY_ENV,
+            ConfigError::NonUnicodeOctoStsIdentity,
+        )?;
+        let octo_sts_sa_token_path = read_env(
+            OCTO_STS_SA_TOKEN_PATH_ENV,
+            ConfigError::NonUnicodeOctoStsSaTokenPath,
+        )?;
 
-        let mut config = Self::from_bind_addr(value.as_deref())?;
-        if let Some(allowed_hosts) = allowed_hosts {
-            config.allowed_hosts = parse_list(&allowed_hosts);
-        }
-        if let Some(allowed_origins) = allowed_origins {
-            config.allowed_origins = parse_list(&allowed_origins);
-        }
-
-        Ok(config)
+        Self::from_values(
+            value.as_deref(),
+            allowed_hosts.as_deref(),
+            allowed_origins.as_deref(),
+            export_destinations.as_deref(),
+            octo_sts_url.as_deref(),
+            octo_sts_identity.as_deref(),
+            octo_sts_sa_token_path.as_deref(),
+        )
     }
 
     pub fn from_bind_addr(value: Option<&str>) -> Result<Self, ConfigError> {
-        Self::from_values(value, None, None)
+        Self::from_values(value, None, None, None, None, None, None)
     }
 
     fn from_values(
         bind_addr: Option<&str>,
         allowed_hosts: Option<&str>,
         allowed_origins: Option<&str>,
+        export_destinations: Option<&str>,
+        octo_sts_url: Option<&str>,
+        octo_sts_identity: Option<&str>,
+        octo_sts_sa_token_path: Option<&str>,
     ) -> Result<Self, ConfigError> {
         let bind_addr = bind_addr.unwrap_or(DEFAULT_BIND_ADDR);
         let bind_addr: SocketAddr = bind_addr
@@ -73,6 +112,12 @@ impl Config {
             bind_addr,
             allowed_hosts: parse_list(allowed_hosts.unwrap_or(&default_hosts)),
             allowed_origins: parse_list(allowed_origins.unwrap_or(&default_origins)),
+            export: ExportConfig::from_values(
+                export_destinations,
+                octo_sts_url,
+                octo_sts_identity,
+                octo_sts_sa_token_path,
+            )?,
         })
     }
 }
@@ -115,6 +160,7 @@ mod tests {
                 "http://127.0.0.1:3000".to_owned(),
                 "http://[::1]:3000".to_owned(),
             ],
+            export: None,
         })
     )]
     #[case::configured(
@@ -131,6 +177,7 @@ mod tests {
                 "http://127.0.0.1:8080".to_owned(),
                 "http://[::1]:8080".to_owned(),
             ],
+            export: None,
         })
     )]
     #[case::invalid(Some("not-an-address"), Err(ConfigError::InvalidBindAddress))]
@@ -138,7 +185,7 @@ mod tests {
         #[case] value: Option<&str>,
         #[case] expected: Result<Config, ConfigError>,
     ) {
-        let actual = Config::from_values(value, None, None);
+        let actual = Config::from_values(value, None, None, None, None, None, None);
 
         assert_eq!(actual, expected);
     }
@@ -155,6 +202,7 @@ mod tests {
                 "https://Editor.Example".to_owned(),
                 "http://preview.example:4312".to_owned(),
             ],
+            export: None,
         })
     )]
     #[case::empty_allow_lists(
@@ -165,6 +213,7 @@ mod tests {
             bind_addr: "127.0.0.1:4312".parse::<SocketAddr>().unwrap(),
             allowed_hosts: vec![],
             allowed_origins: vec![],
+            export: None,
         })
     )]
     fn parses_allow_lists(
@@ -174,7 +223,15 @@ mod tests {
         #[case] expected: Result<Config, ConfigError>,
     ) {
         assert_eq!(
-            Config::from_values(bind_addr, allowed_hosts, allowed_origins),
+            Config::from_values(
+                bind_addr,
+                allowed_hosts,
+                allowed_origins,
+                None,
+                None,
+                None,
+                None
+            ),
             expected
         );
     }
