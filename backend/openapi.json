@@ -217,7 +217,7 @@
     },
     "/api/llm/status": {
       "get": {
-        "operationId": "status",
+        "operationId": "get_llm_status",
         "responses": {
           "200": {
             "description": "Configured LLM provider",

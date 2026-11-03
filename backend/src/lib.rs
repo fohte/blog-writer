@@ -6,10 +6,7 @@ mod export;
 mod frontend;
 pub mod health;
 pub mod host_origin;
-#[expect(
-    dead_code,
-    reason = "the shared call entry is consumed by internal feature handlers"
-)]
+#[expect(dead_code, reason = "no production handler calls the shared entry")]
 mod llm;
 pub mod llm_context;
 pub mod ogp;

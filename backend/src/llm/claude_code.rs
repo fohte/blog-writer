@@ -34,7 +34,10 @@ impl ClaudeCodeProvider {
         schema: Value,
     ) -> Result<Value, LlmError> {
         // A fresh working directory keeps checkout-specific CLAUDE.md and MCP configuration out of the call.
-        let working_directory = TempDir::new().map_err(|_| LlmError::Provider)?;
+        let working_directory = TempDir::new().map_err(|error| {
+            tracing::warn!(%error, "failed to create Claude Code working directory");
+            LlmError::Provider
+        })?;
         let schema = schema.to_string();
         let mut child = Command::new(&self.executable)
             .args([
@@ -62,36 +65,72 @@ impl ClaudeCodeProvider {
             // Dropping the SSE future on client disconnect must stop the CLI process.
             .kill_on_drop(true)
             .spawn()
-            .map_err(|_| LlmError::Provider)?;
+            .map_err(|error| {
+                tracing::warn!(%error, "failed to start Claude Code");
+                LlmError::Provider
+            })?;
 
-        let mut stdin = child.stdin.take().ok_or(LlmError::Provider)?;
-        stdin
-            .write_all(prompt.as_bytes())
-            .await
-            .map_err(|_| LlmError::Provider)?;
-        stdin.shutdown().await.map_err(|_| LlmError::Provider)?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            tracing::warn!("Claude Code stdin was unavailable");
+            LlmError::Provider
+        })?;
+        stdin.write_all(prompt.as_bytes()).await.map_err(|error| {
+            tracing::warn!(%error, "failed to write prompt to Claude Code stdin");
+            LlmError::Provider
+        })?;
+        stdin.shutdown().await.map_err(|error| {
+            tracing::warn!(%error, "failed to close Claude Code stdin");
+            LlmError::Provider
+        })?;
         drop(stdin);
 
-        let stdout = child.stdout.take().ok_or(LlmError::Provider)?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            tracing::warn!("Claude Code stdout was unavailable");
+            LlmError::Provider
+        })?;
         let mut lines = BufReader::new(stdout).lines();
         let mut structured_output = None;
-        while let Some(line) = lines.next_line().await.map_err(|_| LlmError::Provider)? {
-            let event: Value = serde_json::from_str(&line).map_err(|_| LlmError::InvalidOutput)?;
+        let mut result_error = None;
+        while let Some(line) = lines.next_line().await.map_err(|error| {
+            tracing::warn!(%error, "failed to read Claude Code output");
+            LlmError::Provider
+        })? {
+            let event: Value = serde_json::from_str(&line).map_err(|error| {
+                tracing::warn!(%error, "Claude Code emitted invalid stream-json output");
+                LlmError::InvalidOutput
+            })?;
             if event.get("type").and_then(Value::as_str) == Some("rate_limit_event")
                 && event
-                    .pointer("/rate_limit_info/errorCode")
+                    .pointer("/rate_limit_info/status")
                     .and_then(Value::as_str)
-                    == Some("credits_required")
+                    == Some("rejected")
             {
-                return Err(LlmError::UsageLimit);
+                tracing::warn!(
+                    "Claude Code rejected the request because its usage limit was reached"
+                );
+                result_error = Some(LlmError::UsageLimit);
             }
 
             if event.get("type").and_then(Value::as_str) == Some("result") {
-                if event.get("subtype").and_then(Value::as_str) == Some("error_max_budget_usd") {
-                    return Err(LlmError::UsageLimit);
-                }
                 if event.get("is_error").and_then(Value::as_bool) == Some(true) {
-                    return Err(LlmError::Provider);
+                    let api_error_status = event.get("api_error_status").and_then(Value::as_u64);
+                    let subtype = event.get("subtype").and_then(Value::as_str);
+                    if api_error_status == Some(429) {
+                        tracing::warn!(
+                            api_error_status,
+                            subtype = ?subtype,
+                            "Claude Code returned a rate-limit error result"
+                        );
+                        result_error = Some(LlmError::UsageLimit);
+                    } else {
+                        tracing::warn!(
+                            api_error_status = ?api_error_status,
+                            subtype = ?subtype,
+                            "Claude Code returned an error result"
+                        );
+                        result_error.get_or_insert(LlmError::Provider);
+                    }
+                    continue;
                 }
                 structured_output = event
                     .get("structured_output")
@@ -100,10 +139,22 @@ impl ClaudeCodeProvider {
             }
         }
 
-        let status = child.wait().await.map_err(|_| LlmError::Provider)?;
+        let status = child.wait().await.map_err(|error| {
+            tracing::warn!(%error, "failed to wait for Claude Code");
+            LlmError::Provider
+        })?;
         if !status.success() {
-            tracing::warn!(exit_code = ?status.code(), "Claude Code exited unsuccessfully");
-            return Err(LlmError::Provider);
+            tracing::warn!(
+                exit_code = ?status.code(),
+                "Claude Code exited unsuccessfully"
+            );
+            result_error.get_or_insert(LlmError::Provider);
+        }
+        if let Some(error) = result_error {
+            return Err(error);
+        }
+        if structured_output.is_none() {
+            tracing::warn!("Claude Code did not return structured output");
         }
 
         structured_output.ok_or(LlmError::MissingStructuredOutput)

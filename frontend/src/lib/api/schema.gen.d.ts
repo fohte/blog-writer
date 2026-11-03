@@ -59,7 +59,7 @@ export interface paths {
       path?: never
       cookie?: never
     }
-    get: operations['status']
+    get: operations['get_llm_status']
     put?: never
     post?: never
     delete?: never
@@ -325,7 +325,7 @@ export interface operations {
       }
     }
   }
-  status: {
+  get_llm_status: {
     parameters: {
       query?: never
       header?: never

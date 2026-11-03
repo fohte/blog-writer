@@ -201,9 +201,9 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
 
     "#}
 )]
-#[case::max_budget_result_event(
+#[case::rejected_rate_limit_event(
     indoc! {r#"
-        printf '%s\n' '{"type":"result","subtype":"error_max_budget_usd","is_error":true,"errors":["maximum budget reached"],"api_error_status":null,"structured_output":null}'
+        printf '%s\n' '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}'
     "#},
     indoc! {r#"
         event: error
@@ -211,10 +211,9 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
 
     "#}
 )]
-#[case::credits_required_rate_limit_event(
+#[case::rate_limited_result_event(
     indoc! {r#"
-        printf '%s\n' '{"type":"rate_limit_event","rate_limit_info":{"errorCode":"credits_required"}}'
-        exit 1
+        printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["rate limit reached"],"api_error_status":429,"structured_output":null}'
     "#},
     indoc! {r#"
         event: error

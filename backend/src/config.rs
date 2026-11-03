@@ -234,7 +234,10 @@ mod tests {
 
     use rstest::rstest;
 
-    use super::{Config, ConfigError, ConfigValues, DATABASE_URL_ENV, LlmConfig, LlmValues};
+    use super::{
+        Config, ConfigError, ConfigValues, DATABASE_URL_ENV, LLM_BASE_URL_ENV,
+        LLM_PROVIDER_LOCKED_ENV, LlmConfig, LlmValues,
+    };
 
     #[rstest]
     #[case::default(
@@ -299,6 +302,20 @@ mod tests {
         .map(|config| config.database_url);
 
         assert_eq!(actual, Ok(Some("sqlite://sample.db".to_owned())));
+    }
+
+    #[test]
+    fn rejects_other_provider_environment_settings_when_provider_is_locked() {
+        let actual = Config::from_env_with(|name| match name {
+            LLM_PROVIDER_LOCKED_ENV => Some(OsString::new()),
+            LLM_BASE_URL_ENV => Some(OsString::from("https://api.example")),
+            _ => None,
+        });
+
+        assert_eq!(
+            actual,
+            Err(ConfigError::OtherProviderConfigurationWithLockedProvider)
+        );
     }
 
     #[rstest]

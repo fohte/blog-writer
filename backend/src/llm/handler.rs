@@ -14,6 +14,7 @@ pub(crate) struct LlmStatusResponse {
 #[utoipa::path(
     get,
     path = "/llm/status",
+    operation_id = "get_llm_status",
     responses((status = 200, description = "Configured LLM provider", body = LlmStatusResponse))
 )]
 pub async fn status(State(state): State<LlmState>) -> Json<LlmStatusResponse> {
