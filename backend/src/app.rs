@@ -5,6 +5,7 @@ use axum::{
     routing::{MethodRouter, any, get},
 };
 use sqlx::AnyPool;
+use thiserror::Error;
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
 use utoipa_axum::router::OpenApiRouter;
 
@@ -16,6 +17,7 @@ use crate::{
     host_origin::{HostOriginPolicy, enforce_host_origin},
     ogp,
     safe_fetch::{SafeFetchService, SafeFetcher},
+    sync::SyncService,
 };
 
 #[derive(OpenApi)]
@@ -29,7 +31,16 @@ struct ApiDefinition;
 pub struct AppState {
     pub export: Option<ExportService>,
     pub database: Option<AnyPool>,
+    pub sync: Option<SyncService>,
     pub(crate) safe_fetch: Arc<dyn SafeFetchService>,
+}
+
+#[derive(Debug, Error)]
+pub enum AppStateError {
+    #[error(transparent)]
+    Export(#[from] ExportError),
+    #[error(transparent)]
+    Sync(#[from] crate::sync::SyncError),
 }
 
 impl Default for AppState {
@@ -37,6 +48,7 @@ impl Default for AppState {
         Self {
             export: None,
             database: None,
+            sync: None,
             safe_fetch: Arc::new(SafeFetcher::new()),
         }
     }
@@ -46,10 +58,12 @@ impl AppState {
     pub fn new(
         export: Option<ExportConfig>,
         database: Option<AnyPool>,
-    ) -> Result<Self, ExportError> {
+    ) -> Result<Self, AppStateError> {
+        let sync = database.clone().map(SyncService::new).transpose()?;
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
             database,
+            sync,
             safe_fetch: Arc::new(SafeFetcher::new()),
         })
     }
@@ -95,6 +109,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(health::router())
         .merge(export::router())
         .merge(ogp::router())
+        .merge(crate::sync::router())
 }
 
 async fn api_not_found() -> AppError {

@@ -2,9 +2,10 @@
 
 ## Tables
 
-| Name                                          | Columns | Comment                                     | Type       |
-| --------------------------------------------- | ------- | ------------------------------------------- | ---------- |
-| [public.app_metadata](public.app_metadata.md) | 2       | Stores backend metadata as key-value pairs. | BASE TABLE |
+| Name                                          | Columns | Comment                                       | Type       |
+| --------------------------------------------- | ------- | --------------------------------------------- | ---------- |
+| [public.app_metadata](public.app_metadata.md) | 2       | Stores backend metadata as key-value pairs.   | BASE TABLE |
+| [public.sync_updates](public.sync_updates.md) | 3       | Stores encoded Yjs updates for each document. | BASE TABLE |
 
 ## Relations
 
@@ -15,6 +16,11 @@ erDiagram
 "public.app_metadata" {
   text metadata_key
   text metadata_value
+}
+"public.sync_updates" {
+  bigint update_id
+  text doc_id
+  bytea update_data
 }
 ```
 

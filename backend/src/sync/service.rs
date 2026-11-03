@@ -1,0 +1,192 @@
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Weak},
+};
+
+use sqlx::AnyPool;
+use thiserror::Error;
+use tokio::sync::{Mutex, broadcast};
+use yrs::{ClientID, Update, updates::decoder::Decode};
+
+use super::{
+    database::{self, DatabaseError, DatabaseKind},
+    protocol,
+};
+
+#[derive(Debug, Error)]
+pub enum SyncError {
+    #[error(transparent)]
+    Database(Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    Protocol(#[from] yrs::sync::protocol::Error),
+    #[error(transparent)]
+    UpdateDecode(#[from] yrs::encoding::read::Error),
+    #[error(transparent)]
+    Update(#[from] yrs::error::UpdateError),
+}
+
+impl From<DatabaseError> for SyncError {
+    fn from(error: DatabaseError) -> Self {
+        Self::Database(Box::new(error))
+    }
+}
+
+#[derive(Clone)]
+pub struct SyncService {
+    inner: Arc<SyncServiceInner>,
+}
+
+struct SyncServiceInner {
+    pool: AnyPool,
+    kind: DatabaseKind,
+    documents: Mutex<HashMap<String, Weak<DocumentInner>>>,
+}
+
+#[derive(Clone)]
+pub struct SyncDocument {
+    inner: Arc<DocumentInner>,
+}
+
+struct DocumentInner {
+    id: String,
+    pool: AnyPool,
+    kind: DatabaseKind,
+    state: Mutex<protocol::DocumentState>,
+    update_subscribers: broadcast::Sender<Vec<u8>>,
+    protocol_subscribers: broadcast::Sender<Vec<u8>>,
+}
+
+impl SyncService {
+    pub fn new(pool: AnyPool) -> Result<Self, SyncError> {
+        let kind = DatabaseKind::from_pool(&pool)?;
+        Ok(Self {
+            inner: Arc::new(SyncServiceInner {
+                pool,
+                kind,
+                documents: Mutex::new(HashMap::new()),
+            }),
+        })
+    }
+
+    pub async fn open_document(
+        &self,
+        doc_id: impl Into<String>,
+    ) -> Result<SyncDocument, SyncError> {
+        let doc_id = doc_id.into();
+        let mut documents = self.inner.documents.lock().await;
+        if let Some(inner) = documents.get(&doc_id).and_then(Weak::upgrade) {
+            return Ok(SyncDocument { inner });
+        }
+
+        let doc = database::load_and_compact(&self.inner.pool, self.inner.kind, &doc_id).await?;
+        let (update_subscribers, _) = broadcast::channel(128);
+        let (protocol_subscribers, _) = broadcast::channel(128);
+        let inner = Arc::new(DocumentInner {
+            id: doc_id.clone(),
+            pool: self.inner.pool.clone(),
+            kind: self.inner.kind,
+            state: Mutex::new(protocol::DocumentState::new(doc)),
+            update_subscribers,
+            protocol_subscribers,
+        });
+        documents.insert(doc_id, Arc::downgrade(&inner));
+
+        Ok(SyncDocument { inner })
+    }
+}
+
+impl SyncDocument {
+    pub async fn encode_state(&self) -> Vec<u8> {
+        let state = self.inner.state.lock().await;
+        protocol::encode_state(&state)
+    }
+
+    pub fn subscribe_updates(&self) -> broadcast::Receiver<Vec<u8>> {
+        self.inner.update_subscribers.subscribe()
+    }
+
+    pub(super) fn subscribe_protocol(&self) -> broadcast::Receiver<Vec<u8>> {
+        self.inner.protocol_subscribers.subscribe()
+    }
+
+    pub async fn apply_update(&self, update: &[u8]) -> Result<(), SyncError> {
+        let update_value = Update::decode_v1(update)?;
+        let mut state = self.inner.state.lock().await;
+        database::append_update(&self.inner.pool, self.inner.kind, &self.inner.id, update).await?;
+        state.apply_update(update_value)?;
+        let _ = self.inner.update_subscribers.send(update.to_vec());
+        let message = protocol::encode_sync_update(update);
+        let _ = self.inner.protocol_subscribers.send(message);
+        Ok(())
+    }
+
+    pub(super) async fn start_protocol(&self) -> Result<Vec<u8>, SyncError> {
+        let state = self.inner.state.lock().await;
+        protocol::start(&state).map_err(Into::into)
+    }
+
+    pub(super) async fn handle_protocol_frame(
+        &self,
+        data: &[u8],
+        awareness_clients: &mut HashSet<ClientID>,
+    ) -> Result<Vec<Vec<u8>>, SyncError> {
+        let messages = protocol::decode_messages(data)?;
+        let mut responses = Vec::new();
+        for message in messages {
+            match message {
+                yrs::sync::Message::Sync(yrs::sync::SyncMessage::SyncStep2(update))
+                | yrs::sync::Message::Sync(yrs::sync::SyncMessage::Update(update)) => {
+                    self.apply_update(&update).await?;
+                }
+                yrs::sync::Message::Awareness(update) => {
+                    for (client_id, entry) in &update.clients {
+                        if entry.json.as_ref() == "null" {
+                            awareness_clients.remove(client_id);
+                        } else {
+                            awareness_clients.insert(*client_id);
+                        }
+                    }
+                    let response = {
+                        let mut state = self.inner.state.lock().await;
+                        protocol::handle_message(
+                            &mut state,
+                            yrs::sync::Message::Awareness(update.clone()),
+                        )?
+                    };
+                    let frame = protocol::encode_message(&yrs::sync::Message::Awareness(update));
+                    let _ = self.inner.protocol_subscribers.send(frame);
+                    if let Some(response) = response {
+                        responses.push(protocol::encode_message(&response));
+                    }
+                }
+                message => {
+                    let response = {
+                        let mut state = self.inner.state.lock().await;
+                        protocol::handle_message(&mut state, message)?
+                    };
+                    if let Some(response) = response {
+                        responses.push(protocol::encode_message(&response));
+                    }
+                }
+            }
+        }
+        Ok(responses)
+    }
+
+    pub(super) async fn remove_awareness_clients(&self, client_ids: HashSet<ClientID>) {
+        if client_ids.is_empty() {
+            return;
+        }
+        let mut state = self.inner.state.lock().await;
+        for client_id in &client_ids {
+            state.remove_awareness_client(*client_id);
+        }
+        match state.awareness_update(client_ids) {
+            Ok(update) => {
+                let frame = protocol::encode_message(&yrs::sync::Message::Awareness(update));
+                let _ = self.inner.protocol_subscribers.send(frame);
+            }
+            Err(error) => tracing::warn!(%error, "failed to publish awareness disconnect"),
+        }
+    }
+}

@@ -251,6 +251,27 @@
           }
         }
       }
+    },
+    "/api/sync/{doc_id}": {
+      "get": {
+        "operationId": "websocket",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "description": "Document identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket connection"
+          }
+        }
+      }
     }
   },
   "components": {

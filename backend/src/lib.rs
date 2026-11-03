@@ -9,6 +9,7 @@ pub mod host_origin;
 pub mod llm_context;
 pub mod ogp;
 pub mod safe_fetch;
+pub mod sync;
 
 use std::error::Error;
 use tokio::net::TcpListener;

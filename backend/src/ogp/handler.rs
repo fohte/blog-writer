@@ -97,6 +97,7 @@ mod tests {
         AppState {
             export: None,
             database: None,
+            sync: None,
             safe_fetch: Arc::new(TestFetcher(response)),
         }
     }
