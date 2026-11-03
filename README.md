@@ -5,7 +5,8 @@
 ## Backend configuration
 
 - `BACKEND_BIND_ADDR` sets the listening address. It defaults to `127.0.0.1:3000`; the container image defaults to `0.0.0.0:3000`.
-- `DATABASE_URL` is required to start the backend. `postgres://` and `postgresql://` URLs connect to PostgreSQL; `sqlite://` URLs use a SQLite file, which is created when it does not exist. Migrations run automatically at startup.
+- `DATABASE_URL` is required to start the backend unless `LLM_API_ONLY` is set. `postgres://` and `postgresql://` URLs connect to PostgreSQL; `sqlite://` URLs use a SQLite file, which is created when it does not exist. Migrations run automatically at startup.
+- `LLM_API_ONLY` starts the backend without a database, embedded frontend, or non-LLM API routes. It must listen on `127.0.0.1`; `BACKEND_BIND_ADDR` can set its port.
 - `BACKEND_ALLOWED_HOSTS` sets comma-separated Host values, including ports when needed.
 - `BACKEND_ALLOWED_ORIGINS` sets comma-separated origins in `scheme://host[:port]` form.
 - `LLM_PROVIDER` selects the LLM provider. The supported value is `claude_code`, which is also the default.
@@ -23,6 +24,12 @@ export BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH=/var/run/secrets/service-token
 ```
 
 When `BLOG_EXPORT_DESTINATIONS` is unset, export is disabled and its endpoints return `503 Service Unavailable`.
+
+Run the LLM API-only backend with `mise run llm:api-only`. Set `BACKEND_ALLOWED_ORIGINS` to the screen origin before starting; the task listens on `127.0.0.1:4312` by default and accepts a different port through `LLM_API_ONLY_PORT`. The allowed origins are also used for CORS preflight requests.
+
+```sh
+BACKEND_ALLOWED_ORIGINS=https://writer.example mise run llm:api-only
+```
 
 The Vite development proxy preserves the browser's `Host` and `Origin` headers. Add the dev server's host to `BACKEND_ALLOWED_HOSTS` and its origin to `BACKEND_ALLOWED_ORIGINS` to allow proxied HTTP and WebSocket requests. This example uses fictional backend and dev-server hosts:
 

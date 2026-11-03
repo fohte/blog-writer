@@ -26,3 +26,7 @@ file = "scripts/db-up"
 [tasks."db:doc"]
 description = "Generate database documentation from disposable databases"
 file = "scripts/db-doc"
+
+[tasks."llm:api-only"]
+description = "Run the backend with only the LLM API"
+file = "scripts/llm-api-only"

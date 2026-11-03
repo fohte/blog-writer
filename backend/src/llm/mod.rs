@@ -5,11 +5,15 @@ mod router;
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use axum::response::sse::{Event, KeepAlive, Sse};
-use futures_util::stream::{self, Stream};
+use futures_util::{
+    StreamExt,
+    stream::{self, Stream},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
+use tokio::sync::watch;
 use utoipa::ToSchema;
 
 use crate::config::{LlmConfig, ProviderName};
@@ -91,16 +95,23 @@ pub(crate) struct LlmState {
     locked: bool,
     timeout: Duration,
     keep_alive_interval: Duration,
+    shutdown: watch::Receiver<bool>,
 }
 
 impl LlmState {
     pub(crate) fn new(config: LlmConfig) -> Self {
+        let (_, shutdown) = watch::channel(false);
+        Self::new_with_shutdown(config, shutdown)
+    }
+
+    pub(crate) fn new_with_shutdown(config: LlmConfig, shutdown: watch::Receiver<bool>) -> Self {
         Self {
             provider: Arc::new(claude_code::ClaudeCodeProvider::default()),
             provider_name: config.provider,
             locked: config.locked,
             timeout: CALL_TIMEOUT,
             keep_alive_interval: KEEP_ALIVE_INTERVAL,
+            shutdown,
         }
     }
 
@@ -120,7 +131,14 @@ impl LlmState {
             locked: false,
             timeout,
             keep_alive_interval: KEEP_ALIVE_INTERVAL,
+            shutdown: watch::channel(false).1,
         }
+    }
+
+    #[cfg(test)]
+    fn with_shutdown(mut self, shutdown: watch::Receiver<bool>) -> Self {
+        self.shutdown = shutdown;
+        self
     }
 
     #[cfg(test)]
@@ -169,14 +187,17 @@ where
 {
     let keep_alive_interval = state.keep_alive_interval;
     let stream = stream::once(async move {
-        let event = match call_with_timeout::<T>(
-            state.provider.as_ref(),
-            &system_prompt,
-            &prompt,
-            state.timeout,
-        )
-        .await
-        {
+        let mut shutdown = state.shutdown.clone();
+        let result = tokio::select! {
+            result = call_with_timeout::<T>(
+                state.provider.as_ref(),
+                &system_prompt,
+                &prompt,
+                state.timeout,
+            ) => Some(result),
+            _ = wait_for_shutdown(&mut shutdown) => None,
+        }?;
+        let event = match result {
             Ok(result) => match serde_json::to_value(result) {
                 Ok(result) => LlmEvent::Result(result),
                 Err(error) => {
@@ -197,8 +218,9 @@ where
                 })
             }
         };
-        Ok(event.into_sse_event())
-    });
+        Some(Ok(event.into_sse_event()))
+    })
+    .filter_map(futures_util::future::ready);
 
     // Keep long model calls alive through proxies that time out before the first result.
     Sse::new(stream).keep_alive(
@@ -206,4 +228,10 @@ where
             .interval(keep_alive_interval)
             .text("keep-alive"),
     )
+}
+
+async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
+    if !*shutdown.borrow() && shutdown.changed().await.is_err() {
+        std::future::pending::<()>().await;
+    }
 }

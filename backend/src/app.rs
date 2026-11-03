@@ -3,10 +3,13 @@ use std::sync::Arc;
 use axum::{
     Router,
     extract::FromRef,
+    http::{HeaderValue, Method, header::CONTENT_TYPE},
     middleware,
     routing::{MethodRouter, any, get},
 };
 use sqlx::AnyPool;
+use tokio::sync::watch;
+use tower_http::cors::CorsLayer;
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
 use utoipa_axum::router::OpenApiRouter;
 
@@ -54,9 +57,19 @@ impl AppState {
         llm_config: crate::config::LlmConfig,
         database: Option<AnyPool>,
     ) -> Result<Self, ExportError> {
+        let (_, shutdown) = watch::channel(false);
+        Self::new_with_shutdown(export, llm_config, database, shutdown)
+    }
+
+    pub(crate) fn new_with_shutdown(
+        export: Option<ExportConfig>,
+        llm_config: crate::config::LlmConfig,
+        database: Option<AnyPool>,
+        shutdown: watch::Receiver<bool>,
+    ) -> Result<Self, ExportError> {
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
-            llm: LlmState::new(llm_config),
+            llm: LlmState::new_with_shutdown(llm_config, shutdown),
             database,
             safe_fetch: Arc::new(SafeFetcher::new()),
         })
@@ -80,6 +93,41 @@ pub fn openapi() -> ApiDocument {
 
 pub fn router(state: AppState, host_origin_policy: HostOriginPolicy) -> Router {
     router_with_frontend_fallback(state, get(frontend::serve), host_origin_policy)
+}
+
+pub fn llm_api_router(
+    state: AppState,
+    host_origin_policy: HostOriginPolicy,
+    allowed_origins: Vec<String>,
+) -> Router {
+    let (llm_router, _) = llm::router().split_for_parts();
+    let cors = CorsLayer::new()
+        .allow_origin(
+            allowed_origins
+                .into_iter()
+                .filter_map(|origin| HeaderValue::from_str(&origin.to_ascii_lowercase()).ok())
+                .collect::<Vec<_>>(),
+        )
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([CONTENT_TYPE])
+        .allow_private_network(true);
+
+    Router::new()
+        .route("/api", any(api_not_found))
+        .route("/api/", any(api_not_found))
+        .nest(
+            "/api",
+            llm_router
+                .fallback(api_not_found)
+                .method_not_allowed_fallback(api_method_not_allowed),
+        )
+        .fallback(api_not_found)
+        .layer(cors)
+        .with_state(state)
+        .layer(middleware::from_fn_with_state(
+            host_origin_policy,
+            enforce_host_origin,
+        ))
 }
 
 fn router_with_frontend_fallback(
@@ -125,14 +173,20 @@ async fn api_method_not_allowed() -> AppError {
 mod tests {
     use axum::{
         body::{Body, to_bytes},
-        http::{HeaderValue, Request, StatusCode, header::ALLOW, header::CONTENT_TYPE},
+        http::{
+            HeaderValue, Request, StatusCode,
+            header::{
+                ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
+                ACCESS_CONTROL_ALLOW_ORIGIN, ALLOW, CONTENT_TYPE,
+            },
+        },
         routing::get,
     };
     use rstest::{fixture, rstest};
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
-    use super::{AppState, router, router_with_frontend_fallback};
+    use super::{AppState, llm_api_router, router, router_with_frontend_fallback};
     use crate::host_origin::HostOriginPolicy;
     use crate::{
         config::{ExportConfig, ExportDestination, ExportFormat, LlmConfig, ProviderName},
@@ -143,12 +197,159 @@ mod tests {
     fn policy() -> HostOriginPolicy {
         HostOriginPolicy::new(
             vec!["localhost:3000".to_owned()],
-            vec!["http://localhost:3000".to_owned()],
+            vec![
+                "http://localhost:3000".to_owned(),
+                "https://writer.example".to_owned(),
+            ],
         )
     }
 
     fn test_router(policy: HostOriginPolicy) -> axum::Router {
         router(AppState::default(), policy)
+    }
+
+    fn test_llm_api_router(policy: HostOriginPolicy) -> axum::Router {
+        llm_api_router(
+            AppState::default(),
+            policy,
+            vec!["HTTPS://WRITER.EXAMPLE".to_owned()],
+        )
+    }
+
+    #[tokio::test]
+    async fn serves_llm_status_without_database() {
+        let response = test_llm_api_router(policy())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/llm/status")
+                    .header("host", "localhost:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual = (
+            response.status(),
+            serde_json::from_slice::<Value>(
+                &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            )
+            .unwrap(),
+        );
+
+        assert_eq!(
+            actual,
+            (
+                StatusCode::OK,
+                json!({"provider": "claude_code", "locked": false})
+            )
+        );
+    }
+
+    #[rstest]
+    #[case::health("/api/health")]
+    #[case::export("/api/export/destinations")]
+    #[case::frontend_root("/")]
+    #[case::frontend_file("/index.html")]
+    #[test_attr(tokio::test)]
+    async fn does_not_serve_non_llm_routes(#[case] uri: &'static str) {
+        let response = test_llm_api_router(policy())
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("host", "localhost:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual = (
+            response.status(),
+            serde_json::from_slice::<Value>(
+                &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            )
+            .unwrap(),
+        );
+
+        assert_eq!(
+            actual,
+            (StatusCode::NOT_FOUND, json!({"error": "Not Found"}))
+        );
+    }
+
+    #[tokio::test]
+    async fn allows_cors_preflight_from_an_allowed_origin() {
+        let response = test_llm_api_router(policy())
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/llm/future")
+                    .header("host", "localhost:3000")
+                    .header("origin", "https://writer.example")
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", "content-type")
+                    .header("access-control-request-private-network", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual = (
+            response.status(),
+            response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).cloned(),
+            response
+                .headers()
+                .get(ACCESS_CONTROL_ALLOW_METHODS)
+                .cloned(),
+            response
+                .headers()
+                .get(ACCESS_CONTROL_ALLOW_HEADERS)
+                .cloned(),
+            response
+                .headers()
+                .get("access-control-allow-private-network")
+                .cloned(),
+        );
+
+        assert_eq!(
+            actual,
+            (
+                StatusCode::OK,
+                Some(HeaderValue::from_static("https://writer.example")),
+                Some(HeaderValue::from_static("GET,POST")),
+                Some(HeaderValue::from_static("content-type")),
+                Some(HeaderValue::from_static("true")),
+            )
+        );
+    }
+
+    #[rstest]
+    #[case::untrusted_origin("localhost:3000", "https://untrusted.example")]
+    #[case::untrusted_host("untrusted.example", "https://writer.example")]
+    #[test_attr(tokio::test)]
+    async fn rejects_cors_preflight_with_untrusted_host_or_origin(
+        #[case] host: &'static str,
+        #[case] origin: &'static str,
+    ) {
+        let response = test_llm_api_router(policy())
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/llm/future")
+                    .header("host", host)
+                    .header("origin", origin)
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", "content-type")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual = (
+            response.status(),
+            response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).cloned(),
+        );
+
+        assert_eq!(actual, (StatusCode::FORBIDDEN, None));
     }
 
     #[rstest]

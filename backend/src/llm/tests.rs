@@ -1,7 +1,9 @@
 use std::{
     fs,
+    future::Future,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    pin::Pin,
     process::Command as StdCommand,
     time::Duration,
 };
@@ -14,13 +16,27 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::TempDir;
+use tokio::sync::watch;
 
 use super::claude_code::ClaudeCodeProvider;
-use super::{CALL_TIMEOUT, LlmEvent, LlmState, call_to_sse};
+use super::{CALL_TIMEOUT, LlmError, LlmEvent, LlmProvider, LlmState, call_to_sse};
 
 #[derive(Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 struct SampleOutput {
     text: String,
+}
+
+struct PendingProvider;
+
+impl LlmProvider for PendingProvider {
+    fn generate<'a>(
+        &'a self,
+        _: String,
+        _: String,
+        _: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, LlmError>> + Send + 'a>> {
+        Box::pin(std::future::pending())
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -83,6 +99,27 @@ fn parse_sse_body(body: &str) -> Vec<SseFrame> {
     push_sse_frame(&mut frames, &mut lines);
 
     frames
+}
+
+#[tokio::test]
+async fn ends_an_in_flight_call_when_shutdown_is_signaled() {
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let state = LlmState::with_provider(PendingProvider, Duration::from_secs(60))
+        .with_shutdown(shutdown_receiver);
+    let response = call_to_sse::<SampleOutput>(state, String::new(), String::new()).into_response();
+    let body = tokio::spawn(to_bytes(response.into_body(), usize::MAX));
+
+    tokio::task::yield_now().await;
+    shutdown_sender.send_replace(true);
+
+    let actual = tokio::time::timeout(Duration::from_secs(1), body)
+        .await
+        .expect("the SSE body closes after shutdown")
+        .expect("the SSE body task completes")
+        .map(|bytes| bytes.to_vec())
+        .map_err(|_| ());
+
+    assert_eq!(actual, Ok(Vec::new()));
 }
 
 fn push_sse_frame(frames: &mut Vec<SseFrame>, lines: &mut Vec<SseLine>) {
