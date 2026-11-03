@@ -6,6 +6,7 @@ mod frontend;
 pub mod health;
 pub mod host_origin;
 pub mod llm;
+pub mod llm_context;
 pub mod ogp;
 pub mod safe_fetch;
 
