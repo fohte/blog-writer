@@ -214,6 +214,23 @@
           }
         }
       }
+    },
+    "/api/llm/status": {
+      "get": {
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "description": "Configured LLM provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -278,6 +295,59 @@
             "type": "string"
           }
         }
+      },
+      "LlmErrorPayload": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "LlmEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {},
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LlmErrorPayload"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "LlmStatusResponse": {
+        "type": "object",
+        "required": ["provider", "locked"],
+        "properties": {
+          "locked": {
+            "type": "boolean"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderName"
+          }
+        }
+      },
+      "ProviderName": {
+        "type": "string",
+        "enum": ["claude_code"]
       },
       "PublishArticleRequest": {
         "type": "object",

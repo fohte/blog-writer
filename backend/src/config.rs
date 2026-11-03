@@ -3,7 +3,14 @@ use std::{env, net::SocketAddr};
 use thiserror::Error;
 
 mod export;
+mod llm;
 pub use export::{ExportConfig, ExportDestination, ExportFormat};
+pub use llm::{LlmConfig, ProviderName};
+
+use llm::{
+    ANTHROPIC_API_KEY_ENV, LLM_API_KEY_ENV, LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_PROVIDER_ENV,
+    LLM_PROVIDER_LOCKED_ENV,
+};
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:3000";
 const BIND_ADDR_ENV: &str = "BACKEND_BIND_ADDR";
@@ -20,6 +27,24 @@ pub struct Config {
     pub allowed_hosts: Vec<String>,
     pub allowed_origins: Vec<String>,
     pub export: Option<ExportConfig>,
+    pub llm: LlmConfig,
+}
+
+struct ConfigValues<'a> {
+    bind_addr: Option<&'a str>,
+    allowed_hosts: Option<&'a str>,
+    allowed_origins: Option<&'a str>,
+    export_destinations: Option<&'a str>,
+    octo_sts_url: Option<&'a str>,
+    octo_sts_identity: Option<&'a str>,
+    octo_sts_sa_token_path: Option<&'a str>,
+}
+
+struct LlmValues<'a> {
+    provider: Option<&'a str>,
+    locked: bool,
+    other_provider_configured: bool,
+    anthropic_api_key_set: bool,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -34,6 +59,8 @@ pub enum ConfigError {
     NonUnicodeAllowedOrigins,
     #[error("{EXPORT_DESTINATIONS_ENV} must contain valid Unicode")]
     NonUnicodeExportDestinations,
+    #[error("{LLM_PROVIDER_ENV} must contain valid Unicode")]
+    NonUnicodeLlmProvider,
     #[error("{OCTO_STS_URL_ENV} must contain valid Unicode")]
     NonUnicodeOctoStsUrl,
     #[error("{OCTO_STS_IDENTITY_ENV} must contain valid Unicode")]
@@ -46,6 +73,10 @@ pub enum ConfigError {
         "all BLOG_EXPORT_OCTO_STS_* variables are required when {EXPORT_DESTINATIONS_ENV} is set"
     )]
     MissingOctoStsConfiguration,
+    #[error("{LLM_PROVIDER_ENV} must be claude_code")]
+    InvalidLlmProvider,
+    #[error("provider-specific settings cannot be set when {LLM_PROVIDER_LOCKED_ENV} is set")]
+    OtherProviderConfigurationWithLockedProvider,
 }
 
 impl Config {
@@ -73,15 +104,29 @@ impl Config {
             OCTO_STS_SA_TOKEN_PATH_ENV,
             ConfigError::NonUnicodeOctoStsSaTokenPath,
         )?;
+        let llm_provider = read_env(LLM_PROVIDER_ENV, ConfigError::NonUnicodeLlmProvider)?;
+        let llm_provider_locked = env::var_os(LLM_PROVIDER_LOCKED_ENV).is_some();
+        let other_provider_configured = [LLM_BASE_URL_ENV, LLM_API_KEY_ENV, LLM_MODEL_ENV]
+            .into_iter()
+            .any(|name| env::var_os(name).is_some());
+        let anthropic_api_key_set = env::var_os(ANTHROPIC_API_KEY_ENV).is_some();
 
-        Self::from_values(
-            value.as_deref(),
-            allowed_hosts.as_deref(),
-            allowed_origins.as_deref(),
-            export_destinations.as_deref(),
-            octo_sts_url.as_deref(),
-            octo_sts_identity.as_deref(),
-            octo_sts_sa_token_path.as_deref(),
+        Self::from_values_with_llm(
+            ConfigValues {
+                bind_addr: value.as_deref(),
+                allowed_hosts: allowed_hosts.as_deref(),
+                allowed_origins: allowed_origins.as_deref(),
+                export_destinations: export_destinations.as_deref(),
+                octo_sts_url: octo_sts_url.as_deref(),
+                octo_sts_identity: octo_sts_identity.as_deref(),
+                octo_sts_sa_token_path: octo_sts_sa_token_path.as_deref(),
+            },
+            LlmValues {
+                provider: llm_provider.as_deref(),
+                locked: llm_provider_locked,
+                other_provider_configured,
+                anthropic_api_key_set,
+            },
         )
     }
 
@@ -98,7 +143,30 @@ impl Config {
         octo_sts_identity: Option<&str>,
         octo_sts_sa_token_path: Option<&str>,
     ) -> Result<Self, ConfigError> {
-        let bind_addr = bind_addr.unwrap_or(DEFAULT_BIND_ADDR);
+        Self::from_values_with_llm(
+            ConfigValues {
+                bind_addr,
+                allowed_hosts,
+                allowed_origins,
+                export_destinations,
+                octo_sts_url,
+                octo_sts_identity,
+                octo_sts_sa_token_path,
+            },
+            LlmValues {
+                provider: None,
+                locked: false,
+                other_provider_configured: false,
+                anthropic_api_key_set: false,
+            },
+        )
+    }
+
+    fn from_values_with_llm(
+        values: ConfigValues<'_>,
+        llm: LlmValues<'_>,
+    ) -> Result<Self, ConfigError> {
+        let bind_addr = values.bind_addr.unwrap_or(DEFAULT_BIND_ADDR);
         let bind_addr: SocketAddr = bind_addr
             .parse()
             .map_err(|_| ConfigError::InvalidBindAddress)?;
@@ -110,13 +178,19 @@ impl Config {
 
         Ok(Self {
             bind_addr,
-            allowed_hosts: parse_list(allowed_hosts.unwrap_or(&default_hosts)),
-            allowed_origins: parse_list(allowed_origins.unwrap_or(&default_origins)),
+            allowed_hosts: parse_list(values.allowed_hosts.unwrap_or(&default_hosts)),
+            allowed_origins: parse_list(values.allowed_origins.unwrap_or(&default_origins)),
             export: ExportConfig::from_values(
-                export_destinations,
-                octo_sts_url,
-                octo_sts_identity,
-                octo_sts_sa_token_path,
+                values.export_destinations,
+                values.octo_sts_url,
+                values.octo_sts_identity,
+                values.octo_sts_sa_token_path,
+            )?,
+            llm: LlmConfig::from_values(
+                llm.provider,
+                llm.locked,
+                llm.other_provider_configured,
+                llm.anthropic_api_key_set,
             )?,
         })
     }
@@ -143,7 +217,7 @@ mod tests {
 
     use rstest::rstest;
 
-    use super::{Config, ConfigError};
+    use super::{Config, ConfigError, ConfigValues, LlmConfig, LlmValues};
 
     #[rstest]
     #[case::default(
@@ -161,6 +235,7 @@ mod tests {
                 "http://[::1]:3000".to_owned(),
             ],
             export: None,
+            llm: LlmConfig::default(),
         })
     )]
     #[case::configured(
@@ -178,6 +253,7 @@ mod tests {
                 "http://[::1]:8080".to_owned(),
             ],
             export: None,
+            llm: LlmConfig::default(),
         })
     )]
     #[case::invalid(Some("not-an-address"), Err(ConfigError::InvalidBindAddress))]
@@ -203,6 +279,7 @@ mod tests {
                 "http://preview.example:4312".to_owned(),
             ],
             export: None,
+            llm: LlmConfig::default(),
         })
     )]
     #[case::empty_allow_lists(
@@ -214,6 +291,7 @@ mod tests {
             allowed_hosts: vec![],
             allowed_origins: vec![],
             export: None,
+            llm: LlmConfig::default(),
         })
     )]
     fn parses_allow_lists(
@@ -234,5 +312,53 @@ mod tests {
             ),
             expected
         );
+    }
+
+    #[test]
+    fn rejects_other_provider_settings_when_provider_is_locked() {
+        assert_eq!(
+            Config::from_values_with_llm(
+                ConfigValues {
+                    bind_addr: None,
+                    allowed_hosts: None,
+                    allowed_origins: None,
+                    export_destinations: None,
+                    octo_sts_url: None,
+                    octo_sts_identity: None,
+                    octo_sts_sa_token_path: None,
+                },
+                LlmValues {
+                    provider: Some("claude_code"),
+                    locked: true,
+                    other_provider_configured: true,
+                    anthropic_api_key_set: false,
+                },
+            ),
+            Err(ConfigError::OtherProviderConfigurationWithLockedProvider)
+        );
+    }
+
+    #[test]
+    fn accepts_other_provider_settings_when_provider_is_not_locked() {
+        let actual = Config::from_values_with_llm(
+            ConfigValues {
+                bind_addr: None,
+                allowed_hosts: None,
+                allowed_origins: None,
+                export_destinations: None,
+                octo_sts_url: None,
+                octo_sts_identity: None,
+                octo_sts_sa_token_path: None,
+            },
+            LlmValues {
+                provider: Some("claude_code"),
+                locked: false,
+                other_provider_configured: true,
+                anthropic_api_key_set: false,
+            },
+        )
+        .map(|config| config.llm);
+
+        assert_eq!(actual, Ok(LlmConfig::default()));
     }
 }

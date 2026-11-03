@@ -5,6 +5,7 @@ mod export;
 mod frontend;
 pub mod health;
 pub mod host_origin;
+pub mod llm;
 
 use std::error::Error;
 use tokio::net::TcpListener;
@@ -17,7 +18,10 @@ pub fn dump_openapi() -> Result<String, serde_json::Error> {
 }
 
 pub async fn serve(config: Config) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let state = AppState::new(config.export)?;
+    if config.llm.anthropic_api_key_set {
+        tracing::warn!("ANTHROPIC_API_KEY is set; Claude Code will prefer API key authentication");
+    }
+    let state = AppState::new(config.export, config.llm)?;
     let host_origin_policy =
         host_origin::HostOriginPolicy::new(config.allowed_hosts, config.allowed_origins);
     let app = app::router(state, host_origin_policy);

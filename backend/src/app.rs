@@ -1,5 +1,7 @@
 use axum::{
-    Router, middleware,
+    Router,
+    extract::FromRef,
+    middleware,
     routing::{MethodRouter, any, get},
 };
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
@@ -11,25 +13,37 @@ use crate::{
     export::{self, ExportError, ExportService},
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
+    llm::{self, LlmEvent, LlmState},
 };
 
 #[derive(OpenApi)]
 #[openapi(
     info(title = "blog-writer backend API", version = "0.1.0"),
-    components(schemas(ErrorResponse))
+    components(schemas(ErrorResponse, LlmEvent))
 )]
 struct ApiDefinition;
 
 #[derive(Clone, Default)]
 pub struct AppState {
     pub export: Option<ExportService>,
+    pub llm: LlmState,
 }
 
 impl AppState {
-    pub fn new(export: Option<ExportConfig>) -> Result<Self, ExportError> {
+    pub fn new(
+        export: Option<ExportConfig>,
+        llm_config: crate::config::LlmConfig,
+    ) -> Result<Self, ExportError> {
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
+            llm: LlmState::new(llm_config),
         })
+    }
+}
+
+impl FromRef<AppState> for LlmState {
+    fn from_ref(state: &AppState) -> Self {
+        state.llm.clone()
     }
 }
 
@@ -72,6 +86,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(health::router())
         .merge(export::router())
+        .merge(llm::router())
 }
 
 async fn api_not_found() -> AppError {
@@ -94,8 +109,11 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{AppState, router, router_with_frontend_fallback};
-    use crate::config::{ExportConfig, ExportDestination, ExportFormat};
     use crate::host_origin::HostOriginPolicy;
+    use crate::{
+        config::{ExportConfig, ExportDestination, ExportFormat, LlmConfig, ProviderName},
+        llm::LlmState,
+    };
 
     #[fixture]
     fn policy() -> HostOriginPolicy {
@@ -121,6 +139,13 @@ mod tests {
         "localhost:3000",
         503,
         json!({"error": "Export publishing is not configured"})
+    )]
+    #[case::llm_status(
+        "/api/llm/status",
+        "GET",
+        "localhost:3000",
+        200,
+        json!({"provider": "claude_code", "locked": false})
     )]
     #[case::untrusted_host_on_api(
         "/api/health",
@@ -168,6 +193,33 @@ mod tests {
                 .unwrap();
 
         assert_eq!((actual_status, actual_body), (status, expected));
+    }
+
+    #[tokio::test]
+    async fn reports_when_the_provider_is_locked() {
+        let state = AppState {
+            export: None,
+            llm: LlmState::new(LlmConfig {
+                provider: ProviderName::ClaudeCode,
+                locked: true,
+                anthropic_api_key_set: false,
+            }),
+        };
+        let response = router(state, policy())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/llm/status")
+                    .header("host", "localhost:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+
+        assert_eq!(actual, json!({"provider": "claude_code", "locked": true}));
     }
 
     #[rstest]
@@ -240,19 +292,22 @@ mod tests {
     #[tokio::test]
     async fn lists_configured_export_destinations() {
         let response = router(
-            AppState::new(Some(ExportConfig {
-                destinations: vec![ExportDestination {
-                    id: "site-one".to_owned(),
-                    repository: "writer/notes".to_owned(),
-                    base_branch: "main".to_owned(),
-                    path_template: "posts/{slug}.mdx".to_owned(),
-                    format: ExportFormat::Mdx,
-                    frontmatter_template: "title: {{ title }}".to_owned(),
-                }],
-                octo_sts_url: "https://sts.example".to_owned(),
-                octo_sts_identity: "writer-export".to_owned(),
-                octo_sts_sa_token_path: "/var/run/token".into(),
-            }))
+            AppState::new(
+                Some(ExportConfig {
+                    destinations: vec![ExportDestination {
+                        id: "site-one".to_owned(),
+                        repository: "writer/notes".to_owned(),
+                        base_branch: "main".to_owned(),
+                        path_template: "posts/{slug}.mdx".to_owned(),
+                        format: ExportFormat::Mdx,
+                        frontmatter_template: "title: {{ title }}".to_owned(),
+                    }],
+                    octo_sts_url: "https://sts.example".to_owned(),
+                    octo_sts_identity: "writer-export".to_owned(),
+                    octo_sts_sa_token_path: "/var/run/token".into(),
+                }),
+                LlmConfig::default(),
+            )
             .unwrap(),
             policy(),
         )
