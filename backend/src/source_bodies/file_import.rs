@@ -135,9 +135,10 @@ mod tests {
         assert_imported_file("research.txt", bytes, "資料の文章");
     }
 
-    #[test]
-    fn extracts_japanese_text_from_a_pdf_with_a_predefined_cmap() {
-        let bytes = include_bytes!("../../tests/fixtures/japanese-rksj.pdf");
+    #[rstest]
+    #[case::predefined_cmap(&include_bytes!("../../tests/fixtures/japanese-rksj.pdf")[..])]
+    #[case::identity_h_with_subset_font_and_to_unicode(&include_bytes!("../../tests/fixtures/japanese-identity-h.pdf")[..])]
+    fn extracts_japanese_text_from_pdfs_with_different_cmap_encodings(#[case] bytes: &[u8]) {
         assert_imported_file("research.pdf", bytes, "日本語の本文を抽出します。");
     }
 

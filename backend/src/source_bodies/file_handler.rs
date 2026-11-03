@@ -220,7 +220,7 @@ mod tests {
                 upload_request(
                     "research.pdf",
                     "application/pdf",
-                    include_bytes!("../../tests/fixtures/japanese-rksj.pdf"),
+                    include_bytes!("../../tests/fixtures/japanese-identity-h.pdf"),
                 )?,
             )
             .await?,
