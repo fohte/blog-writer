@@ -65,8 +65,9 @@ async fn sse_body(
 fn parse_sse_body(body: &str) -> Vec<SseFrame> {
     let mut frames = Vec::new();
     let mut lines = Vec::new();
-    for line in body.lines() {
+    for line in body.split_terminator('\n') {
         if line.is_empty() {
+            lines.push(SseLine::Raw(String::new()));
             push_sse_frame(&mut frames, &mut lines);
         } else if let Some(("data", raw_value)) = line.split_once(':') {
             let value = raw_value.strip_prefix(' ').unwrap_or(raw_value);
@@ -185,6 +186,7 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
                             "data": {"text": "ready"}
                         }),
                     },
+                    SseLine::Raw(String::new()),
                 ],
             }],
             prompt.to_owned(),
@@ -417,6 +419,7 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
                             "data": {"message": "LLM call exceeded the 10 minute time limit"}
                         }),
                     },
+                    SseLine::Raw(String::new()),
                 ],
             }],
             true,
