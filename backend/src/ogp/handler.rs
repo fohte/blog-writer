@@ -98,6 +98,7 @@ mod tests {
         AppState {
             export: None,
             llm: LlmState::default(),
+            database: None,
             safe_fetch: Arc::new(TestFetcher(response)),
         }
     }

@@ -14,6 +14,12 @@ Prefer creating a new focused file over appending to the largest existing one.
 
 `knip --production` がこの違反を検出する。指摘を `@internal` / `@public` タグや knip の `ignore` 系の設定で隠さない。
 
+## Local database
+
+Run `mise run db:up` to start PostgreSQL and create the development and test databases for each package with `db: true`. The `DATABASE_URL` and `TEST_DATABASE_URL` values are resolved with mise `exec()` on each invocation. Run commands from a database package directory to use its databases; when there is one database package, the root config exposes its URLs too. Set either variable in `.env.local` to override the resolved URL.
+
+Run `mise run db:doc` to regenerate `docs/db` from each database package's migrations. CI regenerates and commits the documentation when schema files or tbls configuration change. Add table and column descriptions to `comments:` in each package's `.tbls.yml`; `tbls lint` fails when required comments are missing. When adopting this task in an existing database project, document its existing tables and columns before the first CI regeneration.
+
 ## Error handling rules
 
 ### Return a `Result` instead of throwing

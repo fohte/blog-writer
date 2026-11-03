@@ -8,9 +8,21 @@ actionlint = "1.7.12"
 node = "24.22.1"
 pinact = "4.1.1"
 "github:fohte/basefmt" = "0.1.0"
+"github:k1LoW/tbls" = "1.95.0"
 shellcheck = "0.11.0"
 shfmt = "3.14.1"
 
 [env]
+DATABASE_URL = "{{ exec(command=config_root ~ '/scripts/db-url backend dev') }}"
+TEST_DATABASE_URL = "{{ exec(command=config_root ~ '/scripts/db-url backend test') }}"
+_.file = ['.env', '.env.local']
 # Share target dir across worktrees to avoid full recompilation
 CARGO_TARGET_DIR = "{{config_root}}/target"
+
+[tasks."db:up"]
+description = "Start the local PostgreSQL databases"
+file = "scripts/db-up"
+
+[tasks."db:doc"]
+description = "Generate database documentation from disposable databases"
+file = "scripts/db-doc"

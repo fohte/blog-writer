@@ -6,6 +6,7 @@ use axum::{
     middleware,
     routing::{MethodRouter, any, get},
 };
+use sqlx::AnyPool;
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
 use utoipa_axum::router::OpenApiRouter;
 
@@ -30,7 +31,8 @@ struct ApiDefinition;
 #[derive(Clone)]
 pub struct AppState {
     pub export: Option<ExportService>,
-    pub llm: LlmState,
+    pub(crate) llm: LlmState,
+    pub database: Option<AnyPool>,
     pub(crate) safe_fetch: Arc<dyn SafeFetchService>,
 }
 
@@ -39,6 +41,7 @@ impl Default for AppState {
         Self {
             export: None,
             llm: LlmState::default(),
+            database: None,
             safe_fetch: Arc::new(SafeFetcher::new()),
         }
     }
@@ -48,10 +51,12 @@ impl AppState {
     pub fn new(
         export: Option<ExportConfig>,
         llm_config: crate::config::LlmConfig,
+        database: Option<AnyPool>,
     ) -> Result<Self, ExportError> {
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
             llm: LlmState::new(llm_config),
+            database,
             safe_fetch: Arc::new(SafeFetcher::new()),
         })
     }
@@ -221,6 +226,7 @@ mod tests {
                 locked: true,
                 anthropic_api_key_set: false,
             }),
+            database: None,
             ..AppState::default()
         };
         let response = router(state, policy())
@@ -325,6 +331,7 @@ mod tests {
                     octo_sts_sa_token_path: "/var/run/token".into(),
                 }),
                 LlmConfig::default(),
+                None,
             )
             .unwrap(),
             policy(),
