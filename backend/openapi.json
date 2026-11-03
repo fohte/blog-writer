@@ -214,6 +214,43 @@
           }
         }
       }
+    },
+    "/api/ogp": {
+      "post": {
+        "operationId": "fetch_ogp",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FetchOgpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Open Graph metadata or an unavailable result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OgpResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -270,12 +307,42 @@
         "type": "string",
         "enum": ["markdown", "mdx"]
       },
+      "FetchOgpRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        }
+      },
       "HealthResponse": {
         "type": "object",
         "required": ["status"],
         "properties": {
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "OgpResponse": {
+        "type": "object",
+        "required": ["available", "final_url", "title", "description", "image"],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "final_url": {
+            "type": ["string", "null"]
+          },
+          "image": {
+            "type": ["string", "null"]
+          },
+          "title": {
+            "type": ["string", "null"]
           }
         }
       },

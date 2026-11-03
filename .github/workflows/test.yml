@@ -253,6 +253,57 @@ jobs:
         working-directory: ${{ matrix.package }}
         run: pnpm run test
 
+  detect-changes:
+    runs-on: ubuntu-slim
+    timeout-minutes: 30
+    outputs:
+      backend: ${{ steps.changes-backend.outputs.any_modified }}
+      workflow: ${{ steps.changes-workflow.outputs.any_modified }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Check for backend changes
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        id: changes-backend
+        with:
+          files: backend/**
+
+      - name: Check for workflow changes
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        id: changes-workflow
+        with:
+          files: .github/workflows/test.yml
+
+  unit-test-backend:
+    needs: detect-changes
+    if: >-
+      needs.detect-changes.outputs.backend == 'true' ||
+      needs.detect-changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+      RUSTC_WRAPPER: 'sccache'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - run: rustup show
+
+      # Run sccache-action before mise-action so that sccache binary is
+      # available when mise installs cargo tools (RUSTC_WRAPPER=sccache).
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.14
+
+      - name: Run tests
+        working-directory: backend
+        run: cargo test
+
   # Fixed name for branch protection: matrix leg names are dynamic, and knip
   # has no `needs`, so this gate (skip == success) stands in for both.
   unit-test:
@@ -262,6 +313,8 @@ jobs:
       - setup
       - unit-test-run
       - knip
+      - detect-changes
+      - unit-test-backend
     if: failure()
     steps:
       - run: exit 1

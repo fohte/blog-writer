@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     Router, middleware,
     routing::{MethodRouter, any, get},
@@ -11,6 +13,8 @@ use crate::{
     export::{self, ExportError, ExportService},
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
+    ogp,
+    safe_fetch::{SafeFetchService, SafeFetcher},
 };
 
 #[derive(OpenApi)]
@@ -20,15 +24,26 @@ use crate::{
 )]
 struct ApiDefinition;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct AppState {
     pub export: Option<ExportService>,
+    pub(crate) safe_fetch: Arc<dyn SafeFetchService>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            export: None,
+            safe_fetch: Arc::new(SafeFetcher::new()),
+        }
+    }
 }
 
 impl AppState {
     pub fn new(export: Option<ExportConfig>) -> Result<Self, ExportError> {
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
+            safe_fetch: Arc::new(SafeFetcher::new()),
         })
     }
 }
@@ -72,6 +87,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(health::router())
         .merge(export::router())
+        .merge(ogp::router())
 }
 
 async fn api_not_found() -> AppError {
