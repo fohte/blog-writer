@@ -539,6 +539,27 @@
         }
       }
     },
+    "/api/sync/{doc_id}": {
+      "get": {
+        "operationId": "sync_document",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "description": "Document identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket connection"
+          }
+        }
+      }
+    },
     "/api/write-from-key-points": {
       "post": {
         "operationId": "write_from_key_points",

@@ -96,6 +96,7 @@ async fn post_request(
         export: None,
         llm: state,
         database: None,
+        sync: None,
         safe_fetch: Arc::new(crate::safe_fetch::SafeFetcher::new()),
     });
     let response = api
