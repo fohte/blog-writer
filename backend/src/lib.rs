@@ -11,6 +11,7 @@ pub(crate) mod html;
 mod llm;
 pub mod llm_context;
 pub mod ogp;
+pub(crate) mod research_claim_evidence;
 pub(crate) mod research_key_points;
 pub mod safe_fetch;
 pub mod source_bodies;
