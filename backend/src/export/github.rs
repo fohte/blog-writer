@@ -581,6 +581,7 @@ mod tests {
         app::router(
             AppState {
                 export: Some(fixture.service.clone()),
+                safe_fetch: crate::safe_fetch::SafeFetcher::new(),
             },
             HostOriginPolicy::new(
                 vec!["localhost:3000".to_owned()],

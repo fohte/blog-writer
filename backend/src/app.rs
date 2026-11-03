@@ -11,6 +11,8 @@ use crate::{
     export::{self, ExportError, ExportService},
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
+    ogp,
+    safe_fetch::SafeFetcher,
 };
 
 #[derive(OpenApi)]
@@ -23,12 +25,14 @@ struct ApiDefinition;
 #[derive(Clone, Default)]
 pub struct AppState {
     pub export: Option<ExportService>,
+    pub safe_fetch: SafeFetcher,
 }
 
 impl AppState {
     pub fn new(export: Option<ExportConfig>) -> Result<Self, ExportError> {
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
+            safe_fetch: SafeFetcher::new(),
         })
     }
 }
@@ -72,6 +76,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(health::router())
         .merge(export::router())
+        .merge(ogp::router())
 }
 
 async fn api_not_found() -> AppError {
