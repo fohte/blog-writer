@@ -5,7 +5,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use indoc::indoc;
-use rstest::rstest;
+use rstest::{fixture, rstest};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -18,6 +18,11 @@ use crate::{
     host_origin::HostOriginPolicy,
     llm::LlmState,
 };
+
+#[fixture]
+fn directory() -> TempDir {
+    TempDir::new().expect("temporary directory is available")
+}
 
 fn api(executable: std::path::PathBuf) -> axum::Router {
     let state = AppState {
@@ -73,9 +78,9 @@ async fn post(api: axum::Router, request_body: Value) -> (StatusCode, String) {
     )
 }
 
-#[tokio::test]
-async fn returns_only_verified_key_points_and_limits_the_prompt_excerpt() {
-    let directory = TempDir::new().expect("temporary directory is available");
+#[rstest]
+#[test_attr(tokio::test)]
+async fn returns_only_key_points_with_quotes_found_in_the_source(directory: TempDir) {
     let executable = fake_response(
         &directory,
         json!({
@@ -86,6 +91,58 @@ async fn returns_only_verified_key_points_and_limits_the_prompt_excerpt() {
                     {"text": "根拠のある要点です。", "quote": "あ"},
                     {"text": "根拠のない要点です。", "quote": "い"}
                 ]
+            }]
+        }),
+    );
+    let actual = post(
+        api(executable),
+        json!({
+            "question": "問いの内容",
+            "sources": [{"id": "source-a", "body": "あ"}]
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        (actual.0, parse_sse_body(&actual.1)),
+        (
+            StatusCode::OK,
+            vec![SseFrame {
+                lines: vec![
+                    SseLine::Raw("event: result".to_owned()),
+                    SseLine::Data {
+                        prefix: "data: ".to_owned(),
+                        value: json!({
+                            "event": "result",
+                            "data": {
+                                "sources": [{
+                                    "id": "source-a",
+                                    "summary": "資料の概要です。",
+                                    "key_points": [{
+                                        "text": "根拠のある要点です。",
+                                        "quote": "あ"
+                                    }]
+                                }]
+                            }
+                        }),
+                    },
+                    SseLine::Raw(String::new()),
+                ],
+            }]
+        )
+    );
+}
+
+#[rstest]
+#[test_attr(tokio::test)]
+async fn limits_source_text_in_the_provider_prompt(directory: TempDir) {
+    let executable = fake_response(
+        &directory,
+        json!({
+            "sources": [{
+                "source_id": "source-a",
+                "summary": "資料の概要です。",
+                "key_points": []
             }]
         }),
     );
@@ -115,32 +172,57 @@ async fn returns_only_verified_key_points_and_limits_the_prompt_excerpt() {
     expected_prompt.push('\n');
 
     assert_eq!(
-        (actual.0, parse_sse_body(&actual.1), provider_input),
+        (actual.0, provider_input),
+        (StatusCode::OK, expected_prompt)
+    );
+}
+
+#[rstest]
+#[case::missing_source(json!({"sources": []}))]
+#[case::duplicate_source_id(json!({
+    "sources": [
+        {"source_id": "source-a", "summary": "資料の概要です。", "key_points": []},
+        {"source_id": "source-a", "summary": "資料の概要です。", "key_points": []}
+    ]
+}))]
+#[case::extra_source(json!({
+    "sources": [
+        {"source_id": "source-a", "summary": "資料の概要です。", "key_points": []},
+        {"source_id": "source-extra", "summary": "追加資料です。", "key_points": []}
+    ]
+}))]
+#[test_attr(tokio::test)]
+async fn emits_an_error_when_model_sources_do_not_match_the_request(
+    directory: TempDir,
+    #[case] structured_output: Value,
+) {
+    let executable = fake_response(&directory, structured_output);
+    let actual = post(
+        api(executable),
+        json!({
+            "question": "問いの内容",
+            "sources": [{"id": "source-a", "body": "本文"}]
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        (actual.0, parse_sse_body(&actual.1)),
         (
             StatusCode::OK,
             vec![SseFrame {
                 lines: vec![
-                    SseLine::Raw("event: result".to_owned()),
+                    SseLine::Raw("event: error".to_owned()),
                     SseLine::Data {
                         prefix: "data: ".to_owned(),
                         value: json!({
-                            "event": "result",
-                            "data": {
-                                "sources": [{
-                                    "id": "source-a",
-                                    "summary": "資料の概要です。",
-                                    "key_points": [{
-                                        "text": "根拠のある要点です。",
-                                        "quote": "あ"
-                                    }]
-                                }]
-                            }
+                            "event": "error",
+                            "data": {"message": "LLM result does not match the request"}
                         }),
                     },
                     SseLine::Raw(String::new()),
                 ],
-            }],
-            expected_prompt,
+            }]
         )
     );
 }
@@ -150,8 +232,10 @@ async fn returns_only_verified_key_points_and_limits_the_prompt_excerpt() {
 #[case::empty_question(Some(""))]
 #[case::whitespace_question(Some(" \t "))]
 #[test_attr(tokio::test)]
-async fn treats_empty_questions_as_summary_only(#[case] question: Option<&str>) {
-    let directory = TempDir::new().expect("temporary directory is available");
+async fn treats_empty_questions_as_summary_only(
+    directory: TempDir,
+    #[case] question: Option<&str>,
+) {
     let executable = fake_response(
         &directory,
         json!({
@@ -211,52 +295,9 @@ async fn treats_empty_questions_as_summary_only(#[case] question: Option<&str>) 
     );
 }
 
-#[tokio::test]
-async fn emits_an_error_when_the_model_omits_a_requested_source() {
-    let directory = TempDir::new().expect("temporary directory is available");
-    let executable = fake_response(
-        &directory,
-        json!({
-            "sources": [{
-                "source_id": "unknown-source",
-                "summary": "資料の概要です。",
-                "key_points": []
-            }]
-        }),
-    );
-    let actual = post(
-        api(executable),
-        json!({
-            "question": "問いの内容",
-            "sources": [{"id": "source-a", "body": "本文"}]
-        }),
-    )
-    .await;
-
-    assert_eq!(
-        (actual.0, parse_sse_body(&actual.1)),
-        (
-            StatusCode::OK,
-            vec![SseFrame {
-                lines: vec![
-                    SseLine::Raw("event: error".to_owned()),
-                    SseLine::Data {
-                        prefix: "data: ".to_owned(),
-                        value: json!({
-                            "event": "error",
-                            "data": {"message": "LLM result does not match the request"}
-                        }),
-                    },
-                    SseLine::Raw(String::new()),
-                ],
-            }]
-        )
-    );
-}
-
-#[tokio::test]
-async fn rejects_duplicate_source_ids() {
-    let directory = TempDir::new().expect("temporary directory is available");
+#[rstest]
+#[test_attr(tokio::test)]
+async fn rejects_duplicate_source_ids(directory: TempDir) {
     let executable = fake_claude(&directory, "exit 1");
     let actual = post(
         api(executable),
