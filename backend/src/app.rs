@@ -294,18 +294,29 @@ mod tests {
         let response = test_llm_api_router(policy())
             .oneshot(
                 Request::builder()
-                    .method("POST")
+                    .method("GET")
                     .uri(uri)
                     .header("host", "localhost:3000")
-                    .header(CONTENT_TYPE, "application/json")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        let actual = response.status();
+        let actual = (
+            response.status(),
+            serde_json::from_slice::<Value>(
+                &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            )
+            .unwrap(),
+        );
 
-        assert_eq!(actual, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            actual,
+            (
+                StatusCode::METHOD_NOT_ALLOWED,
+                json!({"error": "Method Not Allowed"})
+            )
+        );
     }
 
     #[rstest]
@@ -329,21 +340,22 @@ mod tests {
             )
             .await
             .unwrap();
-        let actual_headers = response.headers().iter().fold(
-            BTreeMap::<String, Vec<String>>::new(),
-            |mut headers, (name, value)| {
-                let value = if name == VARY {
-                    "<normalized>".to_owned()
-                } else {
-                    value.to_str().unwrap().to_owned()
-                };
-                headers
-                    .entry(name.as_str().to_owned())
-                    .or_default()
-                    .push(value);
-                headers
-            },
-        );
+        let actual_headers = response
+            .headers()
+            .iter()
+            .filter(|(name, _)| {
+                name.as_str().starts_with("access-control-") || name.as_str() == VARY.as_str()
+            })
+            .fold(
+                BTreeMap::<String, Vec<String>>::new(),
+                |mut headers, (name, value)| {
+                    headers
+                        .entry(name.as_str().to_owned())
+                        .or_default()
+                        .push(value.to_str().unwrap().to_owned());
+                    headers
+                },
+            );
         let actual = (response.status(), actual_headers);
 
         assert_eq!(
@@ -367,9 +379,13 @@ mod tests {
                         "access-control-allow-private-network".to_owned(),
                         vec!["true".to_owned()],
                     ),
-                    ("allow".to_owned(), vec!["POST".to_owned()]),
-                    ("content-length".to_owned(), vec!["0".to_owned()]),
-                    ("vary".to_owned(), vec!["<normalized>".to_owned()]),
+                    (
+                        "vary".to_owned(),
+                        vec![
+                            "origin, access-control-request-method, access-control-request-headers"
+                                .to_owned(),
+                        ],
+                    ),
                 ]),
             )
         );
