@@ -6,7 +6,7 @@ mod export;
 mod frontend;
 pub mod health;
 pub mod host_origin;
-#[expect(dead_code, reason = "no production handler calls the shared entry")]
+#[expect(dead_code, reason = "call_to_sse has no production caller")]
 mod llm;
 pub mod llm_context;
 pub mod ogp;

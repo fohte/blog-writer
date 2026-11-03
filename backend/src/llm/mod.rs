@@ -177,16 +177,25 @@ where
         )
         .await
         {
-            Ok(result) => serde_json::to_value(result)
-                .map(LlmEvent::Result)
-                .unwrap_or_else(|_| {
+            Ok(result) => match serde_json::to_value(result) {
+                Ok(result) => LlmEvent::Result(result),
+                Err(error) => {
+                    tracing::warn!(
+                        error_kind = ?LlmError::SerializeResult,
+                        %error,
+                        "failed to serialize LLM result"
+                    );
                     LlmEvent::Error(LlmErrorPayload {
                         message: LlmError::SerializeResult.to_string(),
                     })
-                }),
-            Err(error) => LlmEvent::Error(LlmErrorPayload {
-                message: error.to_string(),
-            }),
+                }
+            },
+            Err(error) => {
+                tracing::warn!(error_kind = ?error, message = %error, "LLM call failed");
+                LlmEvent::Error(LlmErrorPayload {
+                    message: error.to_string(),
+                })
+            }
         };
         Ok(event.into_sse_event())
     });
