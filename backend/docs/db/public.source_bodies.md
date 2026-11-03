@@ -2,7 +2,7 @@
 
 ## Description
 
-Stores imported Markdown bodies for article sources.
+Stores Markdown bodies for article sources.
 
 ## Columns
 
@@ -14,18 +14,18 @@ Stores imported Markdown bodies for article sources.
 
 ## Constraints
 
-| Name                              | Type        | Definition              |
-| --------------------------------- | ----------- | ----------------------- |
-| source_bodies_article_id_not_null | n           | NOT NULL article_id     |
-| source_bodies_body_not_null       | n           | NOT NULL body           |
-| source_bodies_source_id_not_null  | n           | NOT NULL source_id      |
-| source_bodies_pkey                | PRIMARY KEY | PRIMARY KEY (source_id) |
+| Name                              | Type        | Definition                          |
+| --------------------------------- | ----------- | ----------------------------------- |
+| source_bodies_article_id_not_null | n           | NOT NULL article_id                 |
+| source_bodies_body_not_null       | n           | NOT NULL body                       |
+| source_bodies_source_id_not_null  | n           | NOT NULL source_id                  |
+| source_bodies_pkey                | PRIMARY KEY | PRIMARY KEY (article_id, source_id) |
 
 ## Indexes
 
-| Name               | Definition                                                                             |
-| ------------------ | -------------------------------------------------------------------------------------- |
-| source_bodies_pkey | CREATE UNIQUE INDEX source_bodies_pkey ON public.source_bodies USING btree (source_id) |
+| Name               | Definition                                                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------- |
+| source_bodies_pkey | CREATE UNIQUE INDEX source_bodies_pkey ON public.source_bodies USING btree (article_id, source_id) |
 
 ## Relations
 

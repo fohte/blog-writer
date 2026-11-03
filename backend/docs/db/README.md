@@ -2,10 +2,10 @@
 
 ## Tables
 
-| Name                                            | Columns | Comment                                              | Type       |
-| ----------------------------------------------- | ------- | ---------------------------------------------------- | ---------- |
-| [public.app_metadata](public.app_metadata.md)   | 2       | Stores backend metadata as key-value pairs.          | BASE TABLE |
-| [public.source_bodies](public.source_bodies.md) | 3       | Stores imported Markdown bodies for article sources. | BASE TABLE |
+| Name                                            | Columns | Comment                                     | Type       |
+| ----------------------------------------------- | ------- | ------------------------------------------- | ---------- |
+| [public.app_metadata](public.app_metadata.md)   | 2       | Stores backend metadata as key-value pairs. | BASE TABLE |
+| [public.source_bodies](public.source_bodies.md) | 3       | Stores Markdown bodies for article sources. | BASE TABLE |
 
 ## Relations
 

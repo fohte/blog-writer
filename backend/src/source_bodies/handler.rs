@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 use crate::{
     app::AppState,
     error::{ApiJson, AppError, ErrorResponse},
-    ogp::metadata,
+    html,
 };
 
 use super::{extractor, storage};
@@ -72,7 +72,7 @@ pub async fn fetch_from_url(
                 message: "Source URL could not be fetched".to_owned(),
             }
         })?;
-    if !metadata::is_html_content_type(response.content_type.as_deref()) {
+    if !html::is_html_content_type(response.content_type.as_deref()) {
         return Err(AppError::Client {
             status: StatusCode::UNSUPPORTED_MEDIA_TYPE,
             message: "Source URL did not return HTML".to_owned(),
@@ -80,11 +80,18 @@ pub async fn fetch_from_url(
     }
 
     let final_url = response.final_url.to_string();
-    let html = metadata::decode_html(&response.body, response.content_type.as_deref());
-    let extracted = extractor::extract(&html, &final_url).map_err(|_| AppError::Client {
-        status: StatusCode::UNPROCESSABLE_ENTITY,
-        message: "Readable article content could not be extracted".to_owned(),
-    })?;
+    let html = html::decode_html(&response.body, response.content_type.as_deref());
+    let document_url = final_url.clone();
+    let extracted = tokio::task::spawn_blocking(move || extractor::extract(&html, &document_url))
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "source content extraction task failed");
+            AppError::Internal("Source content extraction failed".to_owned())
+        })?
+        .map_err(|_| AppError::Client {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: "Readable article content could not be extracted".to_owned(),
+        })?;
 
     store_body(pool, &source_id, &article_id, &extracted.body).await?;
     Ok(Json(FetchSourceBodyResponse {
@@ -137,7 +144,13 @@ pub async fn get_body(
     storage::get(database(&state)?, &source_id, &article_id)
         .await
         .map_err(storage_error)?
-        .map(Json)
+        .map(|stored| {
+            Json(SourceBodyResponse {
+                source_id: stored.source_id,
+                article_id: stored.article_id,
+                body: stored.body,
+            })
+        })
         .ok_or(AppError::NotFound)
 }
 
@@ -198,7 +211,7 @@ mod tests {
     use indoc::indoc;
     use reqwest::Url;
     use serde_json::{Value, json};
-    use sqlx::{ConnectOptions, postgres::PgPool, sqlite::SqlitePool};
+    use sqlx::{AnyPool, ConnectOptions, postgres::PgPool, sqlite::SqlitePool};
     use tower::ServiceExt;
 
     use crate::{
@@ -235,33 +248,62 @@ mod tests {
 
     async fn verify_source_body_api(database_url: &str) -> Result<(), Box<dyn std::error::Error>> {
         let pool = initialize(Some(database_url)).await?;
-        let state = AppState {
-            database: Some(pool),
-            safe_fetch: Arc::new(TestFetcher(Some(FetchResponse {
+        let api = test_api(
+            pool.clone(),
+            Some(FetchResponse {
                 final_url: Url::parse("https://example.test/articles/sample")?,
                 body: br#"<html><head><title>Sample article</title></head><body><article><h1>Sample article</h1><p>This is the first paragraph with enough text for the reader extraction to identify the main article content.</p><p>Read the <a href="/guide">reference guide</a> for the complete explanation of this example.</p></article></body></html>"#.to_vec(),
                 content_type: Some("text/html; charset=utf-8".to_owned()),
-            }))),
-            ..AppState::default()
-        };
-        let api: Router = router().split_for_parts().0.with_state(state);
+            }),
+        );
+        let fetch_error_api = test_api(pool.clone(), None);
+        let non_html_api = test_api(
+            pool,
+            Some(FetchResponse {
+                final_url: Url::parse("https://example.test/files/document")?,
+                body: b"PDF document".to_vec(),
+                content_type: Some("application/pdf".to_owned()),
+            }),
+        );
+        let extracted_body = indoc! {"
+            This is the first paragraph with enough text for the reader extraction to identify the main article content.
+
+            Read the [reference guide](https://example.test/guide) for the complete explanation of this example.
+        "}
+        .trim_end()
+        .to_owned();
 
         let actual = vec![
+            call_json(fetch_error_api, url_request()?).await?,
+            call_json(non_html_api, url_request()?).await?,
+            call_json(api.clone(), url_request()?).await?,
             call_json(
                 api.clone(),
                 Request::builder()
-                    .method("POST")
-                    .uri("/articles/article-test/source-bodies/source-test/url")
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("PUT")
+                    .uri("/articles/article-other/source-bodies/source-test")
                     .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"url":"https://example.test/articles/sample"}"#,
-                    ))?,
+                    .body(Body::from(r#"{"body":"Other article body"}"#))?,
             )
             .await?,
             call_json(
                 api.clone(),
                 Request::builder()
                     .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-other/source-bodies/source-test")
                     .body(Body::empty())?,
             )
             .await?,
@@ -290,9 +332,16 @@ mod tests {
             )
             .await?,
             call_json(
-                api,
+                api.clone(),
                 Request::builder()
                     .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api,
+                Request::builder()
+                    .uri("/articles/article-other/source-bodies/source-test")
                     .body(Body::empty())?,
             )
             .await?,
@@ -301,6 +350,8 @@ mod tests {
         assert_eq!(
             actual,
             vec![
+                (502, json!({"error": "Source URL could not be fetched"})),
+                (415, json!({"error": "Source URL did not return HTML"})),
                 (
                     200,
                     json!({
@@ -314,12 +365,24 @@ mod tests {
                     json!({
                         "source_id": "source-test",
                         "article_id": "article-test",
-                        "body": indoc! {"
-                            This is the first paragraph with enough text for the reader extraction to identify the main article content.
-
-                            Read the [reference guide](https://example.test/guide) for the complete explanation of this example.
-                        "}
-                        .trim_end()
+                        "body": extracted_body
+                    })
+                ),
+                (204, Value::Null),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-test",
+                        "body": extracted_body
+                    })
+                ),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-other",
+                        "body": "Other article body"
                     })
                 ),
                 (204, Value::Null),
@@ -333,10 +396,37 @@ mod tests {
                 ),
                 (204, Value::Null),
                 (404, json!({"error": "Not Found"})),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-other",
+                        "body": "Other article body"
+                    })
+                ),
             ]
         );
 
         Ok(())
+    }
+
+    fn test_api(pool: AnyPool, response: Option<FetchResponse>) -> Router {
+        let state = AppState {
+            database: Some(pool),
+            safe_fetch: Arc::new(TestFetcher(response)),
+            ..AppState::default()
+        };
+        router().split_for_parts().0.with_state(state)
+    }
+
+    fn url_request() -> Result<Request<Body>, axum::http::Error> {
+        Request::builder()
+            .method("POST")
+            .uri("/articles/article-test/source-bodies/source-test/url")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"url":"https://example.test/articles/sample"}"#,
+            ))
     }
 
     async fn call_json(

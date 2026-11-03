@@ -1,6 +1,11 @@
 use sqlx::{AnyPool, Row};
 
-use super::handler::SourceBodyResponse;
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct StoredSourceBody {
+    pub source_id: String,
+    pub article_id: String,
+    pub body: String,
+}
 
 pub(crate) async fn upsert(
     pool: &AnyPool,
@@ -10,7 +15,7 @@ pub(crate) async fn upsert(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO source_bodies (source_id, article_id, body) VALUES ($1, $2, $3) \
-         ON CONFLICT (source_id) DO UPDATE SET article_id = excluded.article_id, body = excluded.body",
+         ON CONFLICT (article_id, source_id) DO UPDATE SET body = excluded.body",
     )
     .bind(source_id)
     .bind(article_id)
@@ -25,7 +30,7 @@ pub(crate) async fn get(
     pool: &AnyPool,
     source_id: &str,
     article_id: &str,
-) -> Result<Option<SourceBodyResponse>, sqlx::Error> {
+) -> Result<Option<StoredSourceBody>, sqlx::Error> {
     let row = sqlx::query(
         "SELECT source_id, article_id, body FROM source_bodies WHERE source_id = $1 AND article_id = $2",
     )
@@ -35,7 +40,7 @@ pub(crate) async fn get(
     .await?;
 
     row.map(|row| {
-        Ok(SourceBodyResponse {
+        Ok(StoredSourceBody {
             source_id: row.try_get("source_id")?,
             article_id: row.try_get("article_id")?,
             body: row.try_get("body")?,

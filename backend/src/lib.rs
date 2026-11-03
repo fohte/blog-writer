@@ -6,6 +6,7 @@ mod export;
 mod frontend;
 pub mod health;
 pub mod host_origin;
+pub(crate) mod html;
 #[expect(dead_code, reason = "call_to_sse has no production caller")]
 mod llm;
 pub mod llm_context;

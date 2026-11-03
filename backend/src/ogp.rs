@@ -1,5 +1,5 @@
 mod handler;
-pub(crate) mod metadata;
+mod metadata;
 mod router;
 
 pub(crate) use handler::fetch_metadata;
