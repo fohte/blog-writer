@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 
 use crate::{
     error::{ApiJson, AppError, ErrorResponse},
-    llm::{LlmState, call_to_sse_map},
+    llm::{LlmState, call_to_sse_with},
     llm_context::{
         ArticleBlock, ArticlePremise, BlockScope, ContextInput, HEADING_BLOCK_KIND, ReferencePoint,
         ReferenceSource, SYSTEM_PROMPT, assemble,
@@ -174,12 +174,16 @@ pub(crate) async fn write_from_key_points(
     );
 
     let aliases = context.point_aliases;
-    Ok(
-        call_to_sse_map::<GeneratedDraft, WriteFromKeyPointsResponse>(
-            state,
-            SYSTEM_PROMPT.to_owned(),
-            prompt,
-            move |generated| WriteFromKeyPointsResponse {
+    Ok(call_to_sse_with::<
+        GeneratedDraft,
+        WriteFromKeyPointsResponse,
+        _,
+    >(
+        state,
+        SYSTEM_PROMPT.to_owned(),
+        prompt,
+        move |generated| {
+            Ok(WriteFromKeyPointsResponse {
                 sentences: generated
                     .sentences
                     .into_iter()
@@ -198,9 +202,9 @@ pub(crate) async fn write_from_key_points(
                         }
                     })
                     .collect(),
-            },
-        ),
-    )
+            })
+        },
+    ))
 }
 
 fn target_heading_not_found() -> AppError {

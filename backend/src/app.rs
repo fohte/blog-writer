@@ -18,7 +18,7 @@ use crate::{
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
     llm::{self, LlmEvent, LlmState},
-    ogp,
+    ogp, research_key_points,
     safe_fetch::{SafeFetchService, SafeFetcher},
     source_bodies,
     sync::SyncService,
@@ -126,6 +126,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(llm::router())
         .merge(ogp::router())
         .merge(source_bodies::router())
+        .merge(research_key_points::router())
         .merge(crate::sync::router())
         .merge(write_from_key_points::router())
 }
