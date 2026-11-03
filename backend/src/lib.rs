@@ -6,12 +6,14 @@ mod export;
 mod frontend;
 pub mod health;
 pub mod host_origin;
+pub(crate) mod html;
 #[expect(dead_code, reason = "call_to_sse has no production caller")]
 mod llm;
 pub mod llm_context;
 pub mod ogp;
 pub(crate) mod research_key_points;
 pub mod safe_fetch;
+pub mod source_bodies;
 
 use std::error::Error;
 use tokio::net::TcpListener;

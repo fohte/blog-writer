@@ -4,6 +4,38 @@
  */
 
 export interface paths {
+  '/api/articles/{article_id}/source-bodies/{source_id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['get_body']
+    put: operations['save_body']
+    post?: never
+    delete: operations['delete_body']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/articles/{article_id}/source-bodies/{source_id}/url': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['fetch_from_url']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/export/destinations': {
     parameters: {
       query?: never
@@ -124,6 +156,14 @@ export interface components {
     FetchOgpRequest: {
       url: string
     }
+    FetchSourceBodyRequest: {
+      url: string
+    }
+    FetchSourceBodyResponse: {
+      final_url: string
+      source_id: string
+      title: string
+    }
     HealthResponse: {
       status: string
     }
@@ -194,6 +234,14 @@ export interface components {
       key_points: components['schemas']['ResearchKeyPoint'][]
       summary: string
     }
+    SaveSourceBodyRequest: {
+      body: string
+    }
+    SourceBodyResponse: {
+      article_id: string
+      body: string
+      source_id: string
+    }
   }
   responses: never
   parameters: never
@@ -203,6 +251,209 @@ export interface components {
 }
 export type $defs = Record<string, never>
 export interface operations {
+  get_body: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+        /** @description Source ID */
+        source_id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Stored Markdown source body */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['SourceBodyResponse']
+        }
+      }
+      /** @description Source body not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body storage is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  save_body: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+        /** @description Source ID */
+        source_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SaveSourceBodyRequest']
+      }
+    }
+    responses: {
+      /** @description Source body stored */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body storage is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  delete_body: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+        /** @description Source ID */
+        source_id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Source body deleted */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Source body not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body storage is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  fetch_from_url: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+        /** @description Source ID */
+        source_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['FetchSourceBodyRequest']
+      }
+    }
+    responses: {
+      /** @description Extracted title and final URL; the Markdown body is stored */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['FetchSourceBodyResponse']
+        }
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description The fetched page is not HTML */
+      415: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description The page does not contain readable article content */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description The source URL could not be fetched */
+      502: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body storage is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
   list_destinations: {
     parameters: {
       query?: never
