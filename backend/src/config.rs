@@ -3,7 +3,14 @@ use std::{env, ffi::OsString, net::SocketAddr};
 use thiserror::Error;
 
 mod export;
+mod llm;
 pub use export::{ExportConfig, ExportDestination, ExportFormat};
+pub use llm::{LlmConfig, ProviderName};
+
+use llm::{
+    ANTHROPIC_API_KEY_ENV, LLM_API_KEY_ENV, LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_PROVIDER_ENV,
+    LLM_PROVIDER_LOCKED_ENV,
+};
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:3000";
 const BIND_ADDR_ENV: &str = "BACKEND_BIND_ADDR";
@@ -22,6 +29,27 @@ pub struct Config {
     pub allowed_hosts: Vec<String>,
     pub allowed_origins: Vec<String>,
     pub export: Option<ExportConfig>,
+    pub llm: LlmConfig,
+}
+
+#[derive(Default)]
+struct ConfigValues<'a> {
+    bind_addr: Option<&'a str>,
+    database_url: Option<&'a str>,
+    allowed_hosts: Option<&'a str>,
+    allowed_origins: Option<&'a str>,
+    export_destinations: Option<&'a str>,
+    octo_sts_url: Option<&'a str>,
+    octo_sts_identity: Option<&'a str>,
+    octo_sts_sa_token_path: Option<&'a str>,
+}
+
+#[derive(Default)]
+struct LlmValues<'a> {
+    provider: Option<&'a str>,
+    locked: bool,
+    other_provider_configured: bool,
+    anthropic_api_key_set: bool,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -38,6 +66,8 @@ pub enum ConfigError {
     NonUnicodeAllowedOrigins,
     #[error("{EXPORT_DESTINATIONS_ENV} must contain valid Unicode")]
     NonUnicodeExportDestinations,
+    #[error("{LLM_PROVIDER_ENV} must contain valid Unicode")]
+    NonUnicodeLlmProvider,
     #[error("{OCTO_STS_URL_ENV} must contain valid Unicode")]
     NonUnicodeOctoStsUrl,
     #[error("{OCTO_STS_IDENTITY_ENV} must contain valid Unicode")]
@@ -50,6 +80,10 @@ pub enum ConfigError {
         "all BLOG_EXPORT_OCTO_STS_* variables are required when {EXPORT_DESTINATIONS_ENV} is set"
     )]
     MissingOctoStsConfiguration,
+    #[error("{LLM_PROVIDER_ENV} must name a supported provider")]
+    InvalidLlmProvider,
+    #[error("provider-specific settings cannot be set when {LLM_PROVIDER_LOCKED_ENV} is set")]
+    OtherProviderConfigurationWithLockedProvider,
 }
 
 impl Config {
@@ -67,15 +101,14 @@ impl Config {
                     .map_err(|_| ConfigError::NonUnicodeBindAddress)
             })
             .transpose()?;
-
-        let allowed_hosts = read_env(
-            ALLOWED_HOSTS_ENV,
-            ConfigError::NonUnicodeAllowedHosts,
-            &read_env_value,
-        )?;
         let database_url = read_env(
             DATABASE_URL_ENV,
             ConfigError::NonUnicodeDatabaseUrl,
+            &read_env_value,
+        )?;
+        let allowed_hosts = read_env(
+            ALLOWED_HOSTS_ENV,
+            ConfigError::NonUnicodeAllowedHosts,
             &read_env_value,
         )?;
         let allowed_origins = read_env(
@@ -103,34 +136,49 @@ impl Config {
             ConfigError::NonUnicodeOctoStsSaTokenPath,
             &read_env_value,
         )?;
-
-        let mut config = Self::from_values(
-            value.as_deref(),
-            allowed_hosts.as_deref(),
-            allowed_origins.as_deref(),
-            export_destinations.as_deref(),
-            octo_sts_url.as_deref(),
-            octo_sts_identity.as_deref(),
-            octo_sts_sa_token_path.as_deref(),
+        let llm_provider = read_env(
+            LLM_PROVIDER_ENV,
+            ConfigError::NonUnicodeLlmProvider,
+            &read_env_value,
         )?;
-        config.database_url = database_url;
-        Ok(config)
+        let llm_provider_locked = read_env_value(LLM_PROVIDER_LOCKED_ENV).is_some();
+        let other_provider_configured = [LLM_BASE_URL_ENV, LLM_API_KEY_ENV, LLM_MODEL_ENV]
+            .into_iter()
+            .any(|name| read_env_value(name).is_some());
+        let anthropic_api_key_set = read_env_value(ANTHROPIC_API_KEY_ENV).is_some();
+
+        Self::from_values(
+            ConfigValues {
+                bind_addr: value.as_deref(),
+                database_url: database_url.as_deref(),
+                allowed_hosts: allowed_hosts.as_deref(),
+                allowed_origins: allowed_origins.as_deref(),
+                export_destinations: export_destinations.as_deref(),
+                octo_sts_url: octo_sts_url.as_deref(),
+                octo_sts_identity: octo_sts_identity.as_deref(),
+                octo_sts_sa_token_path: octo_sts_sa_token_path.as_deref(),
+            },
+            LlmValues {
+                provider: llm_provider.as_deref(),
+                locked: llm_provider_locked,
+                other_provider_configured,
+                anthropic_api_key_set,
+            },
+        )
     }
 
     pub fn from_bind_addr(value: Option<&str>) -> Result<Self, ConfigError> {
-        Self::from_values(value, None, None, None, None, None, None)
+        Self::from_values(
+            ConfigValues {
+                bind_addr: value,
+                ..ConfigValues::default()
+            },
+            LlmValues::default(),
+        )
     }
 
-    fn from_values(
-        bind_addr: Option<&str>,
-        allowed_hosts: Option<&str>,
-        allowed_origins: Option<&str>,
-        export_destinations: Option<&str>,
-        octo_sts_url: Option<&str>,
-        octo_sts_identity: Option<&str>,
-        octo_sts_sa_token_path: Option<&str>,
-    ) -> Result<Self, ConfigError> {
-        let bind_addr = bind_addr.unwrap_or(DEFAULT_BIND_ADDR);
+    fn from_values(values: ConfigValues<'_>, llm: LlmValues<'_>) -> Result<Self, ConfigError> {
+        let bind_addr = values.bind_addr.unwrap_or(DEFAULT_BIND_ADDR);
         let bind_addr: SocketAddr = bind_addr
             .parse()
             .map_err(|_| ConfigError::InvalidBindAddress)?;
@@ -142,14 +190,20 @@ impl Config {
 
         Ok(Self {
             bind_addr,
-            database_url: None,
-            allowed_hosts: parse_list(allowed_hosts.unwrap_or(&default_hosts)),
-            allowed_origins: parse_list(allowed_origins.unwrap_or(&default_origins)),
+            database_url: values.database_url.map(str::to_owned),
+            allowed_hosts: parse_list(values.allowed_hosts.unwrap_or(&default_hosts)),
+            allowed_origins: parse_list(values.allowed_origins.unwrap_or(&default_origins)),
             export: ExportConfig::from_values(
-                export_destinations,
-                octo_sts_url,
-                octo_sts_identity,
-                octo_sts_sa_token_path,
+                values.export_destinations,
+                values.octo_sts_url,
+                values.octo_sts_identity,
+                values.octo_sts_sa_token_path,
+            )?,
+            llm: LlmConfig::from_values(
+                llm.provider,
+                llm.locked,
+                llm.other_provider_configured,
+                llm.anthropic_api_key_set,
             )?,
         })
     }
@@ -180,7 +234,10 @@ mod tests {
 
     use rstest::rstest;
 
-    use super::{Config, ConfigError, DATABASE_URL_ENV};
+    use super::{
+        Config, ConfigError, ConfigValues, DATABASE_URL_ENV, LLM_BASE_URL_ENV,
+        LLM_PROVIDER_LOCKED_ENV, LlmConfig, LlmValues,
+    };
 
     #[rstest]
     #[case::default(
@@ -199,6 +256,7 @@ mod tests {
                 "http://[::1]:3000".to_owned(),
             ],
             export: None,
+            llm: LlmConfig::default(),
         })
     )]
     #[case::configured(
@@ -217,6 +275,7 @@ mod tests {
                 "http://[::1]:8080".to_owned(),
             ],
             export: None,
+            llm: LlmConfig::default(),
         })
     )]
     #[case::invalid(Some("not-an-address"), Err(ConfigError::InvalidBindAddress))]
@@ -224,7 +283,13 @@ mod tests {
         #[case] value: Option<&str>,
         #[case] expected: Result<Config, ConfigError>,
     ) {
-        let actual = Config::from_values(value, None, None, None, None, None, None);
+        let actual = Config::from_values(
+            ConfigValues {
+                bind_addr: value,
+                ..ConfigValues::default()
+            },
+            LlmValues::default(),
+        );
 
         assert_eq!(actual, expected);
     }
@@ -237,6 +302,20 @@ mod tests {
         .map(|config| config.database_url);
 
         assert_eq!(actual, Ok(Some("sqlite://sample.db".to_owned())));
+    }
+
+    #[test]
+    fn rejects_other_provider_environment_settings_when_provider_is_locked() {
+        let actual = Config::from_env_with(|name| match name {
+            LLM_PROVIDER_LOCKED_ENV => Some(OsString::new()),
+            LLM_BASE_URL_ENV => Some(OsString::from("https://api.example")),
+            _ => None,
+        });
+
+        assert_eq!(
+            actual,
+            Err(ConfigError::OtherProviderConfigurationWithLockedProvider)
+        );
     }
 
     #[rstest]
@@ -253,6 +332,7 @@ mod tests {
                 "http://preview.example:4312".to_owned(),
             ],
             export: None,
+            llm: LlmConfig::default(),
         })
     )]
     #[case::empty_allow_lists(
@@ -265,6 +345,7 @@ mod tests {
             allowed_hosts: vec![],
             allowed_origins: vec![],
             export: None,
+            llm: LlmConfig::default(),
         })
     )]
     fn parses_allow_lists(
@@ -275,15 +356,58 @@ mod tests {
     ) {
         assert_eq!(
             Config::from_values(
-                bind_addr,
-                allowed_hosts,
-                allowed_origins,
-                None,
-                None,
-                None,
-                None
+                ConfigValues {
+                    bind_addr,
+                    allowed_hosts,
+                    allowed_origins,
+                    ..ConfigValues::default()
+                },
+                LlmValues::default(),
             ),
             expected
         );
+    }
+
+    #[rstest]
+    #[case::locked_with_other_provider_config(
+        Some("claude_code"),
+        true,
+        true,
+        false,
+        Err(ConfigError::OtherProviderConfigurationWithLockedProvider)
+    )]
+    #[case::unlocked_with_other_provider_config(
+        Some("claude_code"),
+        false,
+        true,
+        false,
+        Ok(LlmConfig::default())
+    )]
+    #[case::unsupported_provider(
+        Some("unknown_provider"),
+        false,
+        false,
+        false,
+        Err(ConfigError::InvalidLlmProvider)
+    )]
+    fn validates_llm_configuration(
+        #[case] provider: Option<&str>,
+        #[case] locked: bool,
+        #[case] other_provider_configured: bool,
+        #[case] anthropic_api_key_set: bool,
+        #[case] expected: Result<LlmConfig, ConfigError>,
+    ) {
+        let actual = Config::from_values(
+            ConfigValues::default(),
+            LlmValues {
+                provider,
+                locked,
+                other_provider_configured,
+                anthropic_api_key_set,
+            },
+        )
+        .map(|config| config.llm);
+
+        assert_eq!(actual, expected);
     }
 }

@@ -47,9 +47,14 @@ pub async fn fetch_ogp(
     State(state): State<AppState>,
     ApiJson(request): ApiJson<FetchOgpRequest>,
 ) -> Json<OgpResponse> {
-    Json(response_for_fetch(
-        state.safe_fetch.fetch(&request.url).await,
-    ))
+    Json(fetch_metadata(state.safe_fetch.as_ref(), &request.url).await)
+}
+
+pub(crate) async fn fetch_metadata(
+    safe_fetch: &dyn crate::safe_fetch::SafeFetchService,
+    url: &str,
+) -> OgpResponse {
+    response_for_fetch(safe_fetch.fetch(url).await)
 }
 
 fn response_for_fetch(
@@ -80,6 +85,7 @@ mod tests {
 
     use crate::{
         app::AppState,
+        llm::LlmState,
         ogp::{FetchOgpRequest, router},
         safe_fetch::{FetchResponse, SafeFetchError, SafeFetchFuture, SafeFetchService},
     };
@@ -96,6 +102,7 @@ mod tests {
     fn test_state(response: Option<FetchResponse>) -> AppState {
         AppState {
             export: None,
+            llm: LlmState::default(),
             database: None,
             sync: None,
             safe_fetch: Arc::new(TestFetcher(response)),

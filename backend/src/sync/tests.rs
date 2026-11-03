@@ -32,7 +32,7 @@ async fn start_server(pool: AnyPool) -> TestResult<TestServer> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let host = address.to_string();
-    let state = AppState::new(None, Some(pool))?;
+    let state = AppState::new(None, crate::config::LlmConfig::default(), Some(pool))?;
     let sync = state
         .sync
         .clone()

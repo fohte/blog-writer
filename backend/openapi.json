@@ -156,7 +156,7 @@
             }
           },
           "400": {
-            "description": "Invalid article ID or slug",
+            "description": "Invalid article ID or slug, or more than 50 unregistered HTTP(S) CardLink hrefs",
             "content": {
               "application/json": {
                 "schema": {
@@ -177,6 +177,16 @@
           },
           "409": {
             "description": "Remote file changed; fetch its current version before retrying",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Export failed, including a conflict while updating OGP metadata after the article commit",
             "content": {
               "application/json": {
                 "schema": {
@@ -208,6 +218,23 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/llm/status": {
+      "get": {
+        "operationId": "get_llm_status",
+        "responses": {
+          "200": {
+            "description": "Configured LLM provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmStatusResponse"
                 }
               }
             }
@@ -346,6 +373,55 @@
           }
         }
       },
+      "LlmErrorPayload": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "LlmEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {},
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LlmErrorPayload"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "LlmStatusResponse": {
+        "type": "object",
+        "required": ["provider", "locked"],
+        "properties": {
+          "locked": {
+            "type": "boolean"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderName"
+          }
+        }
+      },
       "OgpResponse": {
         "type": "object",
         "required": ["available", "final_url", "title", "description", "image"],
@@ -366,6 +442,10 @@
             "type": ["string", "null"]
           }
         }
+      },
+      "ProviderName": {
+        "type": "string",
+        "enum": ["claude_code"]
       },
       "PublishArticleRequest": {
         "type": "object",

@@ -6,6 +6,8 @@ mod export;
 mod frontend;
 pub mod health;
 pub mod host_origin;
+#[expect(dead_code, reason = "call_to_sse has no production caller")]
+mod llm;
 pub mod llm_context;
 pub mod ogp;
 pub mod safe_fetch;
@@ -34,7 +36,10 @@ async fn serve_with_database(
     config: Config,
     database: Option<sqlx::AnyPool>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let state = AppState::new(config.export, database)?;
+    if config.llm.anthropic_api_key_set {
+        tracing::warn!("ANTHROPIC_API_KEY is set; Claude Code will prefer API key authentication");
+    }
+    let state = AppState::new(config.export, config.llm, database)?;
     let host_origin_policy =
         host_origin::HostOriginPolicy::new(config.allowed_hosts, config.allowed_origins);
     let app = app::router(state, host_origin_policy);
