@@ -167,7 +167,7 @@ pub(crate) fn call_to_sse<T>(
 where
     T: DeserializeOwned + JsonSchema + Serialize + Send + 'static,
 {
-    call_to_sse_with::<T, T, _>(state, system_prompt, prompt, |result| result)
+    call_to_sse_with::<T, T, _>(state, system_prompt, prompt, Ok)
 }
 
 pub(crate) fn call_to_sse_with<Input, Output, Transform>(
@@ -179,7 +179,7 @@ pub(crate) fn call_to_sse_with<Input, Output, Transform>(
 where
     Input: DeserializeOwned + JsonSchema + Send + 'static,
     Output: Serialize + Send + 'static,
-    Transform: FnOnce(Input) -> Output + Send + 'static,
+    Transform: FnOnce(Input) -> Result<Output, ()> + Send + 'static,
 {
     let keep_alive_interval = state.keep_alive_interval;
     let stream = stream::once(async move {
@@ -191,16 +191,27 @@ where
         )
         .await
         {
-            Ok(result) => match serde_json::to_value(transform(result)) {
-                Ok(result) => LlmEvent::Result(result),
-                Err(error) => {
+            Ok(result) => match transform(result) {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => LlmEvent::Result(result),
+                    Err(error) => {
+                        tracing::warn!(
+                            error_kind = ?LlmError::SerializeResult,
+                            %error,
+                            "failed to serialize LLM result"
+                        );
+                        LlmEvent::Error(LlmErrorPayload {
+                            message: LlmError::SerializeResult.to_string(),
+                        })
+                    }
+                },
+                Err(()) => {
                     tracing::warn!(
-                        error_kind = ?LlmError::SerializeResult,
-                        %error,
-                        "failed to serialize LLM result"
+                        error_kind = ?LlmError::InvalidResponse,
+                        "LLM result did not match the request"
                     );
                     LlmEvent::Error(LlmErrorPayload {
-                        message: LlmError::SerializeResult.to_string(),
+                        message: LlmError::InvalidResponse.to_string(),
                     })
                 }
             },

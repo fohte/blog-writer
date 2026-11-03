@@ -1,5 +1,5 @@
 mod handler;
-pub(crate) mod model;
+mod model;
 mod quote;
 mod router;
 

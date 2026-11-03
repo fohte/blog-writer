@@ -302,6 +302,16 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Source IDs must be unique",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }

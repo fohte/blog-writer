@@ -1,13 +1,20 @@
-use std::convert::Infallible;
+use std::{
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+};
 
 use axum::{
     Json,
     extract::State,
+    http::StatusCode,
     response::sse::{Event, Sse},
 };
 use futures_util::stream::Stream;
 
-use crate::llm::{LlmState, call_to_sse_with};
+use crate::{
+    error::AppError,
+    llm::{LlmState, call_to_sse_with},
+};
 
 use super::{model::*, quote::quote_exists};
 
@@ -20,86 +27,115 @@ const SYSTEM_PROMPT: &str = "資料をもとに日本語で要約と要点を抽
     operation_id = "extract_research_key_points",
     request_body = ResearchKeyPointsRequest,
     responses(
-        (status = 200, description = "Summaries and source-backed key points", content_type = "text/event-stream", body = ResearchKeyPointsEvent)
+        (status = 200, description = "Summaries and source-backed key points", content_type = "text/event-stream", body = ResearchKeyPointsEvent),
+        (status = 400, description = "Source IDs must be unique", body = crate::error::ErrorResponse)
     )
 )]
 pub(crate) async fn extract_key_points(
     State(state): State<LlmState>,
     Json(input): Json<ResearchKeyPointsRequest>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let prompt = build_prompt(&input);
-    let question_was_provided = input.question.is_some();
-    call_to_sse_with(
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let source_ids = input
+        .sources
+        .iter()
+        .map(|source| source.id.as_str())
+        .collect::<HashSet<_>>();
+    if source_ids.len() != input.sources.len() {
+        return Err(AppError::Client {
+            status: StatusCode::BAD_REQUEST,
+            message: "Source IDs must be unique".to_owned(),
+        });
+    }
+
+    let question = input
+        .question
+        .as_deref()
+        .map(str::trim)
+        .filter(|question| !question.is_empty())
+        .map(str::to_owned);
+    let prompt = build_prompt(question.as_deref(), &input.sources);
+    Ok(call_to_sse_with(
         state,
         SYSTEM_PROMPT.to_owned(),
         prompt,
-        move |response: ModelResponse| build_result(response, input.sources, question_was_provided),
-    )
+        move |response: ModelResponse| build_result(response, input.sources, question.is_some()),
+    ))
 }
 
-pub(super) fn build_prompt(input: &ResearchKeyPointsRequest) -> String {
-    let mut prompt = String::from("依頼");
-    prompt.push('\n');
-    match input.question.as_deref() {
-        Some(question) => {
-            prompt.push_str("問い: ");
-            prompt.push_str(question);
-            prompt.push('\n');
-        }
-        None => prompt.push_str("問い: なし。要約のみを作り、要点は空にしてください。\n"),
+fn build_prompt(question: Option<&str>, sources: &[ResearchSourceInput]) -> String {
+    let question = question.map_or_else(
+        || "問い: なし。要約のみを作り、要点は空にしてください。".to_owned(),
+        |question| format!("問い: {question}"),
+    );
+    let mut lines = vec![
+        "依頼".to_owned(),
+        question,
+        String::new(),
+        "資料".to_owned(),
+    ];
+    for source in sources {
+        lines.push(String::new());
+        lines.push(format!("資料 ID: {}", source.id));
+        lines.push("本文:".to_owned());
+        lines.push(source.body.chars().take(MAX_SOURCE_CHARACTERS).collect());
     }
-    prompt.push('\n');
-    prompt.push_str("資料");
-    prompt.push('\n');
-    for source in &input.sources {
-        prompt.push('\n');
-        prompt.push_str("資料 ID: ");
-        prompt.push_str(&source.id);
-        prompt.push('\n');
-        prompt.push_str("本文:");
-        prompt.push('\n');
-        prompt.extend(source.body.chars().take(MAX_SOURCE_CHARACTERS));
-        prompt.push('\n');
-    }
-    prompt
+    let newline = "\n";
+    format!("{}{newline}", lines.join(newline))
 }
 
-pub(super) fn build_result(
+fn build_result(
     response: ModelResponse,
     sources: Vec<ResearchSourceInput>,
     question_was_provided: bool,
-) -> ResearchKeyPointsResult {
-    let results = sources
-        .into_iter()
-        .map(|source| {
-            let model_source = response
-                .sources
-                .iter()
-                .find(|candidate| candidate.source_id == source.id);
-            let summary = model_source
-                .map(|candidate| candidate.summary.clone())
-                .unwrap_or_default();
-            let key_points = if question_was_provided {
-                model_source
-                    .into_iter()
-                    .flat_map(|candidate| candidate.key_points.iter())
-                    .filter(|point| quote_exists(&source.body, &point.quote))
-                    .map(|point| ResearchKeyPoint {
-                        text: point.text.clone(),
-                        quote: point.quote.clone(),
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+) -> Result<ResearchKeyPointsResult, ()> {
+    let mut model_sources = HashMap::with_capacity(response.sources.len());
+    for mut model_source in response.sources {
+        let source_id = std::mem::take(&mut model_source.source_id);
+        if model_sources.insert(source_id, model_source).is_some() {
+            return Err(());
+        }
+    }
 
-            ResearchSourceResult {
-                id: source.id,
-                summary,
-                key_points,
+    let mut results = Vec::with_capacity(sources.len());
+    for source in sources {
+        let Some(model_source) = model_sources.remove(&source.id) else {
+            return Err(());
+        };
+        let ModelSource {
+            summary,
+            key_points: model_points,
+            ..
+        } = model_source;
+        let mut key_points = Vec::new();
+        let mut rejected_points = 0;
+        if question_was_provided {
+            for point in model_points {
+                if quote_exists(&source.body, &point.quote) {
+                    key_points.push(ResearchKeyPoint {
+                        text: point.text,
+                        quote: point.quote,
+                    });
+                } else {
+                    rejected_points += 1;
+                }
             }
-        })
-        .collect();
+        }
+        if rejected_points > 0 {
+            tracing::warn!(
+                rejected_points,
+                "discarded key points with quotes absent from source text"
+            );
+        }
 
-    ResearchKeyPointsResult { sources: results }
+        results.push(ResearchSourceResult {
+            id: source.id,
+            summary,
+            key_points,
+        });
+    }
+    if !model_sources.is_empty() {
+        return Err(());
+    }
+
+    Ok(ResearchKeyPointsResult { sources: results })
 }

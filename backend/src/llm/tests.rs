@@ -17,7 +17,8 @@ use tempfile::TempDir;
 
 use super::claude_code::ClaudeCodeProvider;
 use super::{CALL_TIMEOUT, LlmEvent, LlmState, call_to_sse};
-use crate::research_key_points::model::ModelResponse;
+
+mod research_key_points;
 
 #[derive(Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 struct SampleOutput {
@@ -206,57 +207,6 @@ async fn returns_a_schema_validated_result_event_from_claude_code() {
             ],
             expected_schema,
         )
-    );
-}
-
-#[tokio::test]
-async fn deserializes_research_key_points_from_the_provider_response() {
-    let directory = TempDir::new().expect("temporary directory is available");
-    let executable = fake_claude(
-        &directory,
-        indoc! {r#"
-            printf '%s\n' '{"type":"result","structured_output":{"sources":[{"source_id":"source-a","summary":"設定の概要です。","key_points":[{"text":"設定は保存後に反映されます。","quote":"Changes take effect after saving."}]}]}}'
-        "#},
-    );
-    let state = LlmState::with_provider(
-        ClaudeCodeProvider::new(executable.into_os_string()),
-        Duration::from_secs(5),
-    );
-    let response = call_to_sse::<ModelResponse>(
-        state,
-        "Return source summaries and key points.".to_owned(),
-        "Analyze source-a.".to_owned(),
-    )
-    .into_response();
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("SSE body is readable");
-    let actual = parse_sse_body(std::str::from_utf8(&body).expect("SSE body is UTF-8"));
-
-    assert_eq!(
-        actual,
-        vec![SseFrame {
-            lines: vec![
-                SseLine::Raw("event: result".to_owned()),
-                SseLine::Data {
-                    prefix: "data: ".to_owned(),
-                    value: serde_json::json!({
-                        "event": "result",
-                        "data": {
-                            "sources": [{
-                                "source_id": "source-a",
-                                "summary": "設定の概要です。",
-                                "key_points": [{
-                                    "text": "設定は保存後に反映されます。",
-                                    "quote": "Changes take effect after saving."
-                                }]
-                            }]
-                        }
-                    }),
-                },
-                SseLine::Raw(String::new()),
-            ],
-        }]
     );
 }
 

@@ -456,6 +456,15 @@ export interface operations {
           'text/event-stream': components['schemas']['ResearchKeyPointsEvent']
         }
       }
+      /** @description Source IDs must be unique */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
     }
   }
 }

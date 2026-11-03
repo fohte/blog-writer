@@ -14,43 +14,43 @@ pub(crate) struct ResearchSourceInput {
     pub body: String,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ModelResponse {
     pub sources: Vec<ModelSource>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ModelSource {
     pub source_id: String,
     pub summary: String,
     pub key_points: Vec<ModelKeyPoint>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ModelKeyPoint {
     pub text: String,
     pub quote: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ResearchKeyPointsResult {
     pub sources: Vec<ResearchSourceResult>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ResearchSourceResult {
     pub id: String,
     pub summary: String,
     pub key_points: Vec<ResearchKeyPoint>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ResearchKeyPoint {
     pub text: String,
     pub quote: String,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, ToSchema)]
 #[expect(dead_code, reason = "used as the OpenAPI response schema")]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub(crate) enum ResearchKeyPointsEvent {
