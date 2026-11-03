@@ -7,11 +7,11 @@
 - `BACKEND_BIND_ADDR` sets the listening address. It defaults to `127.0.0.1:3000`.
 - `BACKEND_ALLOWED_HOSTS` sets comma-separated Host values, including ports when needed.
 - `BACKEND_ALLOWED_ORIGINS` sets comma-separated origins in `scheme://host[:port]` form.
-- `BLOG_EXPORT_DESTINATIONS` enables article export when set to a non-empty JSON array. Each destination has a unique `id`, `repository` (`owner/repo`), `base_branch`, `path_template` with one `{slug}`, `format` (`markdown` or `mdx`), and `frontmatter_template`. The backend returns the `frontmatter_template` to the client as-is. An empty or invalid value makes the server fail at startup.
+- `BLOG_EXPORT_DESTINATIONS` enables article export when set to a non-empty JSON array. Each destination has a unique `id`, `repository` (`owner/repo`), `base_branch`, `path_template` with one `{slug}`, `format` (`markdown` or `mdx`), and `frontmatter_template`. The backend returns the `frontmatter_template` to the client as-is. An optional `ogp_json_path` sets a repository-relative JSON file where publishing adds metadata for missing `CardLink` hrefs. An empty or invalid value makes the server fail at startup.
 - `BLOG_EXPORT_OCTO_STS_URL`, `BLOG_EXPORT_OCTO_STS_IDENTITY`, and `BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH` configure the per-request GitHub App token exchange. All three are required when destinations are configured.
 
 ```sh
-export BLOG_EXPORT_DESTINATIONS='[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}"}]'
+export BLOG_EXPORT_DESTINATIONS='[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}","ogp_json_path":"data/link-cards.json"}]'
 export BLOG_EXPORT_OCTO_STS_URL=https://sts.example
 export BLOG_EXPORT_OCTO_STS_IDENTITY=writer-export
 export BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH=/var/run/secrets/service-token

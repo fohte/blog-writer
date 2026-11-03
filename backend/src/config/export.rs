@@ -148,6 +148,7 @@ mod tests {
     use crate::config::{ConfigError, ExportFormat};
 
     const DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}"}]"#;
+    const DESTINATIONS_WITH_OGP_PATH: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}","ogp_json_path":"data/link-cards.json"}]"#;
     const DESTINATIONS_WITH_INVALID_OGP_PATH: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"","ogp_json_path":"../cards.json"}]"#;
     const DUPLICATE_ID_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":""},{"id":"site-one","repository":"writer/other","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":""}]"#;
     const TRAVERSAL_PATH_DESTINATIONS: &str = r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/../{slug}.mdx","format":"mdx","frontmatter_template":""}]"#;
@@ -232,10 +233,15 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    #[test]
-    fn parses_valid_destination() {
+    #[rstest]
+    #[case::without_ogp_path(DESTINATIONS, None)]
+    #[case::with_ogp_path(DESTINATIONS_WITH_OGP_PATH, Some("data/link-cards.json"))]
+    fn parses_valid_destination(
+        #[case] raw_destinations: &str,
+        #[case] ogp_json_path: Option<&str>,
+    ) {
         let actual = ExportConfig::from_values(
-            Some(DESTINATIONS),
+            Some(raw_destinations),
             Some("https://sts.example"),
             Some("writer-export"),
             Some("/var/run/token"),
@@ -251,37 +257,7 @@ mod tests {
                     path_template: "posts/{slug}.mdx".to_owned(),
                     format: ExportFormat::Mdx,
                     frontmatter_template: "title: {{ title }}".to_owned(),
-                    ogp_json_path: None,
-                }],
-                octo_sts_url: "https://sts.example".to_owned(),
-                octo_sts_identity: "writer-export".to_owned(),
-                octo_sts_sa_token_path: "/var/run/token".into(),
-            }))
-        );
-    }
-
-    #[test]
-    fn parses_an_optional_ogp_json_path() {
-        let actual = ExportConfig::from_values(
-            Some(
-                r#"[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}","ogp_json_path":"data/link-cards.json"}]"#,
-            ),
-            Some("https://sts.example"),
-            Some("writer-export"),
-            Some("/var/run/token"),
-        );
-
-        assert_eq!(
-            actual,
-            Ok(Some(ExportConfig {
-                destinations: vec![super::ExportDestination {
-                    id: "site-one".to_owned(),
-                    repository: "writer/notes".to_owned(),
-                    base_branch: "main".to_owned(),
-                    path_template: "posts/{slug}.mdx".to_owned(),
-                    format: ExportFormat::Mdx,
-                    frontmatter_template: "title: {{ title }}".to_owned(),
-                    ogp_json_path: Some("data/link-cards.json".to_owned()),
+                    ogp_json_path: ogp_json_path.map(str::to_owned),
                 }],
                 octo_sts_url: "https://sts.example".to_owned(),
                 octo_sts_identity: "writer-export".to_owned(),

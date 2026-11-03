@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -143,11 +145,11 @@ pub async fn publish_article(
         sha: request.sha,
     };
     let url = export
-        .publish_article_with_fetcher(
+        .publish_article(
             destination,
             &article_id,
             &article,
-            state.safe_fetch.as_ref(),
+            Arc::clone(&state.safe_fetch),
         )
         .await
         .map_err(map_export_error)?;

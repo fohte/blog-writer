@@ -1,10 +1,17 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-use crate::{config::ExportDestination, ogp, safe_fetch::SafeFetchService};
+use crate::{
+    config::ExportDestination,
+    ogp::{self, OgpResponse},
+    safe_fetch::SafeFetchService,
+};
+use tokio::task::JoinSet;
 
 use super::{ExportError, ExportService, PutContentsRequest};
+
+const MAX_CONCURRENT_OGP_FETCHES: usize = 4;
 
 impl ExportService {
     pub(super) async fn update_ogp_json(
@@ -14,7 +21,7 @@ impl ExportService {
         branch: &str,
         article_content: &str,
         token: &str,
-        safe_fetch: &dyn SafeFetchService,
+        safe_fetch: Arc<dyn SafeFetchService>,
     ) -> Result<(), ExportError> {
         let hrefs = card_link_hrefs(article_content);
         if hrefs.is_empty() {
@@ -33,12 +40,34 @@ impl ExportService {
             return Err(ExportError::InvalidResponse);
         };
 
-        let mut changed = false;
-        for href in hrefs {
-            if object.contains_key(&href) {
-                continue;
+        let missing_hrefs: Vec<_> = hrefs
+            .into_iter()
+            .filter(|href| !object.contains_key(href))
+            .collect();
+        if missing_hrefs.is_empty() {
+            return Ok(());
+        }
+
+        let mut pending = missing_hrefs.iter().enumerate();
+        let mut fetches = JoinSet::new();
+        for _ in 0..MAX_CONCURRENT_OGP_FETCHES {
+            let Some((index, href)) = pending.next() else {
+                break;
+            };
+            spawn_ogp_fetch(&mut fetches, Arc::clone(&safe_fetch), index, href.clone());
+        }
+
+        let mut results = Vec::with_capacity(missing_hrefs.len());
+        while let Some(result) = fetches.join_next().await {
+            let result = result.map_err(|_| ExportError::OgpFetchTask)?;
+            results.push(result);
+            if let Some((index, href)) = pending.next() {
+                spawn_ogp_fetch(&mut fetches, Arc::clone(&safe_fetch), index, href.clone());
             }
-            let metadata = ogp::fetch_metadata(safe_fetch, &href).await;
+        }
+        results.sort_by_key(|(index, _, _)| *index);
+
+        for (_, href, metadata) in results {
             let value = if metadata.available {
                 serde_json::json!({
                     "title": metadata.title.unwrap_or_default(),
@@ -46,14 +75,10 @@ impl ExportService {
                     "image": metadata.image.unwrap_or_default(),
                 })
             } else {
+                tracing::warn!(href = %href, "OGP metadata is unavailable");
                 serde_json::json!({ "title": "", "description": "", "image": "" })
             };
             object.insert(href, value);
-            changed = true;
-        }
-
-        if !changed {
-            return Ok(());
         }
 
         let mut content =
@@ -69,10 +94,21 @@ impl ExportService {
                 sha: remote_file.as_ref().map(|file| file.sha.as_str()),
             },
             token,
-            false,
         )
         .await
     }
+}
+
+fn spawn_ogp_fetch(
+    fetches: &mut JoinSet<(usize, String, OgpResponse)>,
+    safe_fetch: Arc<dyn SafeFetchService>,
+    index: usize,
+    href: String,
+) {
+    fetches.spawn(async move {
+        let metadata = ogp::fetch_metadata(safe_fetch.as_ref(), &href).await;
+        (index, href, metadata)
+    });
 }
 
 fn card_link_hrefs(content: &str) -> Vec<String> {
