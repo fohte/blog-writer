@@ -71,10 +71,14 @@ async fn sse_state_body(state: LlmState, system_prompt: &str, prompt: &str) -> S
     String::from_utf8(body.to_vec()).expect("SSE body is UTF-8")
 }
 
-async fn mock_openai_response(status: u16, body: &str) -> (MockServer, String) {
+async fn run_openai_compatible_call(
+    status: u16,
+    body: &str,
+    api_key: Option<&str>,
+) -> (MockServer, String) {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
+        .and(path("/openai/v1/chat/completions"))
         .respond_with(
             ResponseTemplate::new(status)
                 .insert_header("content-type", "text/event-stream")
@@ -87,8 +91,8 @@ async fn mock_openai_response(status: u16, body: &str) -> (MockServer, String) {
         LlmState::new(crate::config::LlmConfig {
             provider: ProviderName::OpenAiCompatible,
             openai_compatible: OpenAiCompatibleConfig {
-                base_url: Some(server.uri()),
-                api_key: Some("example-token".to_owned()),
+                base_url: Some(format!("{}/openai", server.uri())),
+                api_key: api_key.map(str::to_owned),
                 model: Some("example-model".to_owned()),
             },
             ..crate::config::LlmConfig::default()
@@ -149,7 +153,7 @@ async fn openai_compatible_provider_sends_a_streaming_function_tool_request() {
         data: [DONE]
     "#}
     .replace('\n', "\r\n");
-    let (server, actual) = mock_openai_response(200, &body).await;
+    let (server, actual) = run_openai_compatible_call(200, &body, Some("example-token")).await;
     let requests = server
         .received_requests()
         .await
@@ -191,7 +195,7 @@ async fn openai_compatible_provider_sends_a_streaming_function_tool_request() {
         (
             1,
             "POST",
-            "/v1/chat/completions",
+            "/openai/v1/chat/completions",
             Some("Bearer example-token"),
             expected_body,
             vec![SseFrame {
@@ -247,7 +251,7 @@ async fn openai_compatible_provider_reports_provider_errors(
     #[case] body: &str,
     #[case] message: &str,
 ) {
-    let (_, actual) = mock_openai_response(status, body).await;
+    let (_, actual) = run_openai_compatible_call(status, body, Some("example-token")).await;
 
     assert_eq!(
         parse_sse_body(&actual),
@@ -261,6 +265,43 @@ async fn openai_compatible_provider_reports_provider_errors(
                 SseLine::Raw(String::new()),
             ],
         }]
+    );
+}
+
+#[tokio::test]
+async fn openai_compatible_provider_omits_auth_when_no_api_key_is_configured() {
+    let body = indoc! {r#"
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"structured_output","arguments":"{\"text\":\"generated\"}"}}]}}]}
+
+        data: [DONE]
+
+    "#};
+    let (server, actual) = run_openai_compatible_call(200, body, None).await;
+    let requests = server
+        .received_requests()
+        .await
+        .expect("provider request was received");
+    let authorization = requests[0]
+        .headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok());
+
+    assert_eq!(
+        (requests.len(), authorization, parse_sse_body(&actual)),
+        (
+            1,
+            None,
+            vec![SseFrame {
+                lines: vec![
+                    SseLine::Raw("event: result".to_owned()),
+                    SseLine::Data {
+                        prefix: "data: ".to_owned(),
+                        value: serde_json::json!({"event":"result","data":{"text":"generated"}}),
+                    },
+                    SseLine::Raw(String::new()),
+                ],
+            }],
+        )
     );
 }
 
