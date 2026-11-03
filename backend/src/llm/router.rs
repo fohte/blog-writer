@@ -6,5 +6,7 @@ use crate::{
 };
 
 pub fn router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(status))
+    OpenApiRouter::new()
+        .routes(routes!(status))
+        .merge(crate::write_from_key_points::router())
 }

@@ -8,6 +8,7 @@ use axum::{
     routing::{MethodRouter, any, get},
 };
 use sqlx::AnyPool;
+use thiserror::Error;
 use tokio::sync::watch;
 use tower_http::cors::CorsLayer;
 use utoipa::{OpenApi, openapi::OpenApi as ApiDocument};
@@ -23,6 +24,7 @@ use crate::{
     ogp,
     safe_fetch::{SafeFetchService, SafeFetcher},
     source_bodies,
+    sync::SyncService,
 };
 
 #[derive(OpenApi)]
@@ -37,7 +39,16 @@ pub struct AppState {
     pub export: Option<ExportService>,
     pub(crate) llm: LlmState,
     pub database: Option<AnyPool>,
+    pub sync: Option<SyncService>,
     pub(crate) safe_fetch: Arc<dyn SafeFetchService>,
+}
+
+#[derive(Debug, Error)]
+pub enum AppStateError {
+    #[error(transparent)]
+    Export(#[from] ExportError),
+    #[error(transparent)]
+    Sync(#[from] crate::sync::SyncError),
 }
 
 impl Default for AppState {
@@ -46,6 +57,7 @@ impl Default for AppState {
             export: None,
             llm: LlmState::default(),
             database: None,
+            sync: None,
             safe_fetch: Arc::new(SafeFetcher::new()),
         }
     }
@@ -57,7 +69,7 @@ impl AppState {
         export: Option<ExportConfig>,
         llm_config: crate::config::LlmConfig,
         database: Option<AnyPool>,
-    ) -> Result<Self, ExportError> {
+    ) -> Result<Self, AppStateError> {
         let (_, shutdown) = watch::channel(false);
         Self::new_with_shutdown(export, llm_config, database, shutdown)
     }
@@ -67,11 +79,13 @@ impl AppState {
         llm_config: crate::config::LlmConfig,
         database: Option<AnyPool>,
         shutdown: watch::Receiver<bool>,
-    ) -> Result<Self, ExportError> {
+    ) -> Result<Self, AppStateError> {
+        let sync = database.clone().map(SyncService::new).transpose()?;
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
             llm: LlmState::new_with_shutdown(llm_config, shutdown),
             database,
+            sync,
             safe_fetch: Arc::new(SafeFetcher::new()),
         })
     }
@@ -157,6 +171,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(llm::router())
         .merge(ogp::router())
         .merge(source_bodies::router())
+        .merge(crate::sync::router())
 }
 
 async fn api_not_found() -> AppError {
@@ -242,6 +257,7 @@ mod tests {
     #[rstest]
     #[case::health("/api/health")]
     #[case::export("/api/export/destinations")]
+    #[case::sync("/api/sync/document-one")]
     #[case::frontend_root("/")]
     #[case::frontend_file("/index.html")]
     #[test_attr(tokio::test)]
@@ -271,12 +287,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn includes_llm_use_case_routes_in_api_only_mode() {
+        let response = test_llm_api_router(policy())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/write-from-key-points")
+                    .header("host", "localhost:3000")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual = (
+            response.status(),
+            serde_json::from_slice::<Value>(
+                &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            )
+            .unwrap(),
+        );
+
+        assert_eq!(
+            actual,
+            (
+                StatusCode::BAD_REQUEST,
+                json!({"error": "Invalid request body"})
+            )
+        );
+    }
+
+    #[tokio::test]
     async fn allows_cors_preflight_from_an_allowed_origin() {
         let response = test_llm_api_router(policy())
             .oneshot(
                 Request::builder()
                     .method("OPTIONS")
-                    .uri("/api/llm/future")
+                    .uri("/api/write-from-key-points")
                     .header("host", "localhost:3000")
                     .header("origin", "https://writer.example")
                     .header("access-control-request-method", "POST")
@@ -328,7 +375,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("OPTIONS")
-                    .uri("/api/llm/future")
+                    .uri("/api/write-from-key-points")
                     .header("host", host)
                     .header("origin", origin)
                     .header("access-control-request-method", "POST")
