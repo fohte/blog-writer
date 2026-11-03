@@ -191,7 +191,7 @@ where
                 }
             },
             Err(error) => {
-                tracing::warn!(error_kind = ?error, message = %error, "LLM call failed");
+                tracing::warn!(error_kind = ?error, "LLM call failed");
                 LlmEvent::Error(LlmErrorPayload {
                     message: error.to_string(),
                 })
