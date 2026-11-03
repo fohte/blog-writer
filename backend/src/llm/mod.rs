@@ -1,5 +1,6 @@
 mod claude_code;
 mod handler;
+mod openai_compatible;
 mod router;
 
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
@@ -32,7 +33,7 @@ trait LlmProvider: Send + Sync {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-enum LlmError {
+pub(crate) enum LlmError {
     #[error("failed to start or communicate with the LLM provider")]
     Provider,
     #[error("LLM provider returned invalid output")]
@@ -45,6 +46,8 @@ enum LlmError {
     Timeout,
     #[error("LLM output does not match the expected type")]
     InvalidResponse,
+    #[error("LLM result does not match the request")]
+    InvalidResult,
     #[error("LLM result could not be serialized")]
     SerializeResult,
 }
@@ -95,8 +98,14 @@ pub(crate) struct LlmState {
 
 impl LlmState {
     pub(crate) fn new(config: LlmConfig) -> Self {
+        let provider: Arc<dyn LlmProvider> = match config.provider {
+            ProviderName::ClaudeCode => Arc::new(claude_code::ClaudeCodeProvider::default()),
+            ProviderName::OpenAiCompatible => Arc::new(
+                openai_compatible::OpenAiCompatibleProvider::new(config.openai_compatible),
+            ),
+        };
         Self {
-            provider: Arc::new(claude_code::ClaudeCodeProvider::default()),
+            provider,
             provider_name: config.provider,
             locked: config.locked,
             timeout: CALL_TIMEOUT,
@@ -113,10 +122,14 @@ impl LlmState {
     }
 
     #[cfg(test)]
-    fn with_provider(provider: impl LlmProvider + 'static, timeout: Duration) -> Self {
+    fn with_provider(
+        provider: impl LlmProvider + 'static,
+        provider_name: ProviderName,
+        timeout: Duration,
+    ) -> Self {
         Self {
             provider: Arc::new(provider),
-            provider_name: ProviderName::ClaudeCode,
+            provider_name,
             locked: false,
             timeout,
             keep_alive_interval: KEEP_ALIVE_INTERVAL,
@@ -167,22 +180,23 @@ pub(crate) fn call_to_sse<T>(
 where
     T: DeserializeOwned + JsonSchema + Serialize + Send + 'static,
 {
-    call_to_sse_map::<T, T>(state, system_prompt, prompt, std::convert::identity)
+    call_to_sse_with::<T, T, _>(state, system_prompt, prompt, Ok)
 }
 
-pub(crate) fn call_to_sse_map<T, U>(
+pub(crate) fn call_to_sse_with<Input, Output, Transform>(
     state: LlmState,
     system_prompt: String,
     prompt: String,
-    map_result: impl FnOnce(T) -> U + Send + 'static,
+    transform: Transform,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>
 where
-    T: DeserializeOwned + JsonSchema + Send + 'static,
-    U: Serialize + Send + 'static,
+    Input: DeserializeOwned + JsonSchema + Send + 'static,
+    Output: Serialize + Send + 'static,
+    Transform: FnOnce(Input) -> Result<Output, LlmError> + Send + 'static,
 {
     let keep_alive_interval = state.keep_alive_interval;
     let stream = stream::once(async move {
-        let event = match call_with_timeout::<T>(
+        let event = match call_with_timeout::<Input>(
             state.provider.as_ref(),
             &system_prompt,
             &prompt,
@@ -190,16 +204,24 @@ where
         )
         .await
         {
-            Ok(result) => match serde_json::to_value(map_result(result)) {
-                Ok(result) => LlmEvent::Result(result),
+            Ok(result) => match transform(result) {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => LlmEvent::Result(result),
+                    Err(error) => {
+                        tracing::warn!(
+                            error_kind = ?LlmError::SerializeResult,
+                            %error,
+                            "failed to serialize LLM result"
+                        );
+                        LlmEvent::Error(LlmErrorPayload {
+                            message: LlmError::SerializeResult.to_string(),
+                        })
+                    }
+                },
                 Err(error) => {
-                    tracing::warn!(
-                        error_kind = ?LlmError::SerializeResult,
-                        %error,
-                        "failed to serialize LLM result"
-                    );
+                    tracing::warn!(error_kind = ?error, "failed to transform LLM result");
                     LlmEvent::Error(LlmErrorPayload {
-                        message: LlmError::SerializeResult.to_string(),
+                        message: error.to_string(),
                     })
                 }
             },

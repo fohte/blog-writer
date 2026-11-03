@@ -18,7 +18,7 @@ use crate::{
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
     llm::{self, LlmEvent, LlmState},
-    ogp,
+    ogp, research_key_points,
     safe_fetch::{SafeFetchService, SafeFetcher},
     source_bodies,
     sync::SyncService,
@@ -126,6 +126,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(llm::router())
         .merge(ogp::router())
         .merge(source_bodies::router())
+        .merge(research_key_points::router())
         .merge(crate::sync::router())
         .merge(write_from_key_points::router())
 }
@@ -244,6 +245,7 @@ mod tests {
                 provider: ProviderName::ClaudeCode,
                 locked: true,
                 anthropic_api_key_set: false,
+                openai_compatible: Default::default(),
             }),
             database: None,
             ..AppState::default()
@@ -263,6 +265,42 @@ mod tests {
                 .unwrap();
 
         assert_eq!(actual, json!({"provider": "claude_code", "locked": true}));
+    }
+
+    #[tokio::test]
+    async fn reports_the_openai_compatible_provider() {
+        let state = AppState {
+            export: None,
+            llm: LlmState::new(LlmConfig {
+                provider: ProviderName::OpenAiCompatible,
+                openai_compatible: crate::config::OpenAiCompatibleConfig {
+                    base_url: Some("https://api.example".to_owned()),
+                    model: Some("example-model".to_owned()),
+                    ..Default::default()
+                },
+                ..LlmConfig::default()
+            }),
+            database: None,
+            ..AppState::default()
+        };
+        let response = router(state, policy())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/llm/status")
+                    .header("host", "localhost:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+
+        assert_eq!(
+            actual,
+            json!({"provider": "openai_compatible", "locked": false})
+        );
     }
 
     #[rstest]

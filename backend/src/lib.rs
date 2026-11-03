@@ -11,8 +11,10 @@ pub(crate) mod html;
 mod llm;
 pub mod llm_context;
 pub mod ogp;
+pub(crate) mod research_key_points;
 pub mod safe_fetch;
 pub mod source_bodies;
+pub(crate) mod source_quote;
 pub mod sync;
 pub(crate) mod write_from_key_points;
 
@@ -39,7 +41,7 @@ async fn serve_with_database(
     config: Config,
     database: Option<sqlx::AnyPool>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if config.llm.anthropic_api_key_set {
+    if config.llm.provider == config::ProviderName::ClaudeCode && config.llm.anthropic_api_key_set {
         tracing::warn!("ANTHROPIC_API_KEY is set; Claude Code will prefer API key authentication");
     }
     let state = AppState::new(config.export, config.llm, database)?;
