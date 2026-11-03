@@ -148,13 +148,39 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/write-from-key-points': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['write_from_key_points']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
 export type webhooks = Record<string, never>
 export interface components {
   schemas: {
+    ArticleBlockRequest: {
+      id: string
+      kind: string
+      markdown: string
+    }
     ArticleFileResponse: {
       content: string | null
       sha: string | null
+    }
+    ArticlePremiseRequest: {
+      audience: string
+      purpose: string
+      thesis: string
     }
     DestinationListResponse: {
       destinations: components['schemas']['DestinationResponse'][]
@@ -219,6 +245,19 @@ export interface components {
     PublishArticleResponse: {
       url: string
     }
+    ReferencePointRequest: {
+      id: string
+      quote?: string | null
+      researched_heading_id: string
+      text: string
+    }
+    ReferenceSourceRequest: {
+      fetched_at: string
+      key_points: components['schemas']['ReferencePointRequest'][]
+      summary: string
+      title: string
+      url: string
+    }
     ResearchKeyPoint: {
       quote: string
       text: string
@@ -257,6 +296,34 @@ export interface components {
       article_id: string
       body: string
       source_id: string
+    }
+    WriteFromKeyPointsError: {
+      message: string
+    }
+    WriteFromKeyPointsEvent:
+      | {
+          data: components['schemas']['WriteFromKeyPointsResponse']
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['WriteFromKeyPointsError']
+          /** @enum {string} */
+          event: 'error'
+        }
+    WriteFromKeyPointsRequest: {
+      blocks: components['schemas']['ArticleBlockRequest'][]
+      premise: components['schemas']['ArticlePremiseRequest']
+      sources: components['schemas']['ReferenceSourceRequest'][]
+      target_heading_id: string
+    }
+    WriteFromKeyPointsResponse: {
+      sentences: components['schemas']['WrittenSentence'][]
+    }
+    WrittenSentence: {
+      is_factual: boolean
+      key_point_ids: string[]
+      text: string
     }
   }
   responses: never
@@ -752,6 +819,39 @@ export interface operations {
           [name: string]: unknown
         }
         content?: never
+      }
+    }
+  }
+  write_from_key_points: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['WriteFromKeyPointsRequest']
+      }
+    }
+    responses: {
+      /** @description Generated sentences with key point citations */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': components['schemas']['WriteFromKeyPointsEvent']
+        }
+      }
+      /** @description Invalid request body or target heading */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
       }
     }
   }
