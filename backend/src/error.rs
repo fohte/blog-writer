@@ -16,6 +16,8 @@ pub enum AppError {
     MethodNotAllowed,
     #[error("Export publishing is not configured")]
     ExportUnavailable,
+    #[error("Source body storage is not configured")]
+    SourceBodyStorageUnavailable,
     #[error("{message}")]
     Client { status: StatusCode, message: String },
     #[error("{0}")]
@@ -70,6 +72,10 @@ impl IntoResponse for AppError {
             Self::ExportUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Export publishing is not configured".to_owned(),
+            ),
+            Self::SourceBodyStorageUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Source body storage is not configured".to_owned(),
             ),
             Self::Client { status, message } => (status, message),
             Self::Internal(message) => {

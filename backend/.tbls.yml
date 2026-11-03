@@ -18,6 +18,12 @@ comments:
       update_id: Order in which an update was stored for a document.
       doc_id: Identifier of the synchronized document.
       update_data: Encoded Yjs document update.
+  - table: source_bodies
+    tableComment: Stores Markdown bodies for article sources.
+    columnComments:
+      source_id: Unique source identifier stored in the article document.
+      article_id: Article identifier from the article document.
+      body: Imported or user-provided Markdown body.
 lint:
   requireTableComment:
     enabled: true

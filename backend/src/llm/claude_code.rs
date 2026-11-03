@@ -1,4 +1,4 @@
-use std::{ffi::OsString, fmt::Display, process::Stdio};
+use std::{ffi::OsString, fmt::Display, io::ErrorKind, process::Stdio};
 
 use serde_json::Value;
 use tempfile::TempDir;
@@ -133,14 +133,16 @@ impl ClaudeCodeProvider {
             .stdin
             .take()
             .ok_or_else(|| log_missing_pipe("stdin"))?;
-        stdin
-            .write_all(prompt.as_bytes())
-            .await
-            .map_err(|error| log_provider_error(error, "write prompt to stdin"))?;
-        stdin
-            .shutdown()
-            .await
-            .map_err(|error| log_provider_error(error, "close stdin"))?;
+        if let Err(error) = stdin.write_all(prompt.as_bytes()).await
+            && error.kind() != ErrorKind::BrokenPipe
+        {
+            return Err(log_provider_error(error, "write prompt to stdin"));
+        }
+        if let Err(error) = stdin.shutdown().await
+            && error.kind() != ErrorKind::BrokenPipe
+        {
+            return Err(log_provider_error(error, "close stdin"));
+        }
         drop(stdin);
 
         let stdout = child
