@@ -10,6 +10,7 @@ pub(crate) mod html;
 #[expect(dead_code, reason = "LLM call helpers have no production callers yet")]
 mod llm;
 pub mod llm_context;
+pub mod local_file_sync;
 pub mod ogp;
 pub(crate) mod research_claim_evidence;
 pub(crate) mod research_key_points;
@@ -51,8 +52,16 @@ async fn serve_with_database(
         config.allowed_hosts.clone(),
         config.allowed_origins.clone(),
     );
-    let state =
-        AppState::new_with_shutdown(config.export, config.llm, database, shutdown_receiver)?;
+    let state = AppState::new_with_shutdown(
+        config.export,
+        config.llm,
+        database,
+        config.sync_directory,
+        shutdown_receiver,
+    )?;
+    if let Some(file_sync) = &state.file_sync {
+        file_sync.start().await?;
+    }
     let app = app_for_config(state, llm_api_only, host_origin_policy);
     let listener = TcpListener::bind(config.bind_addr).await?;
 
