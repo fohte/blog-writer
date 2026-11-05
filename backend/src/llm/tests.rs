@@ -1,7 +1,7 @@
 use std::{
     fs,
     future::Future,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::symlink,
     path::{Path, PathBuf},
     pin::Pin,
     process::Command as StdCommand,
@@ -122,14 +122,14 @@ enum SseLine {
 
 fn fake_claude(directory: &TempDir, body: &str) -> PathBuf {
     let path = directory.path().join("fake-claude");
-    let header = indoc! {"
-        #!/bin/sh
-        set -eu
-    "};
-    fs::write(&path, format!("{header}{body}\n")).expect("script is writable");
-    let mut permissions = fs::metadata(&path).expect("script exists").permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&path, permissions).expect("script is executable");
+    let mut body_path = path.as_os_str().to_os_string();
+    body_path.push(".body");
+    fs::write(PathBuf::from(body_path), format!("{body}\n")).expect("script body is writable");
+    symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/llm/tests/fake_claude.sh"),
+        &path,
+    )
+    .expect("fake claude symlink is available");
     path
 }
 
