@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cdp } from 'vitest/browser'
+import { cdp, userEvent } from 'vitest/browser'
 
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
 
@@ -7,6 +7,18 @@ type MarkdownEditorOutput = {
   body: string
   lines: (string | null)[]
   visible: string | undefined
+}
+
+interface ComposeOptions {
+  after?: 'backspace' | 'newline'
+  beforeBackspace?: MarkdownEditorOutput
+}
+
+interface ComposeOutput {
+  afterBackspace?: MarkdownEditorOutput
+  afterNewline?: MarkdownEditorOutput
+  duringComposition: MarkdownEditorOutput
+  committed: MarkdownEditorOutput
 }
 
 function readOutput(
@@ -22,52 +34,6 @@ function readOutput(
   }
 }
 
-function readCompositionOutput(
-  duringComposition: MarkdownEditorOutput,
-  committed: MarkdownEditorOutput,
-): {
-  duringComposition: MarkdownEditorOutput
-  committed: MarkdownEditorOutput
-} {
-  return { duringComposition, committed }
-}
-
-function readNewlineOutput(
-  duringComposition: MarkdownEditorOutput,
-  committed: MarkdownEditorOutput,
-  afterNewline: MarkdownEditorOutput,
-): {
-  duringComposition: MarkdownEditorOutput
-  committed: MarkdownEditorOutput
-  afterNewline: MarkdownEditorOutput
-} {
-  return { duringComposition, committed, afterNewline }
-}
-
-function readBackspaceOutput(
-  afterBackspace: MarkdownEditorOutput,
-  duringComposition: MarkdownEditorOutput,
-  committed: MarkdownEditorOutput,
-): {
-  afterBackspace: MarkdownEditorOutput
-  duringComposition: MarkdownEditorOutput
-  committed: MarkdownEditorOutput
-} {
-  return { afterBackspace, duringComposition, committed }
-}
-
-function readCompositionBackspaceOutput(
-  duringComposition: MarkdownEditorOutput,
-  committed: MarkdownEditorOutput,
-  afterBackspace: MarkdownEditorOutput,
-): {
-  duringComposition: MarkdownEditorOutput
-  committed: MarkdownEditorOutput
-  afterBackspace: MarkdownEditorOutput
-} {
-  return { duringComposition, committed, afterBackspace }
-}
-
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
@@ -76,56 +42,95 @@ function nextFrame(): Promise<void> {
   })
 }
 
-async function pressKey(key: string, modifiers = 0): Promise<void> {
+const isChromium = navigator.userAgent.includes('Chrome')
+
+async function pressKey(key: string): Promise<void> {
+  if (!isChromium) {
+    await userEvent.keyboard(`{${key}}`)
+    return
+  }
+
   await cdp().send('Input.dispatchKeyEvent', {
     type: 'keyDown',
     key,
     code: key,
-    modifiers,
   })
-  await cdp().send('Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key,
-    code: key,
-    modifiers,
-  })
+  await cdp().send('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key })
 }
 
 async function compose(
   body: ReturnType<typeof mountMarkdownEditor>['body'],
   content: ReturnType<typeof mountMarkdownEditor>['content'],
   text: string,
-): Promise<{
-  committed: MarkdownEditorOutput
-  duringComposition: MarkdownEditorOutput
-}> {
-  await cdp().send('Input.imeSetComposition', {
-    text,
-    selectionStart: text.length,
-    selectionEnd: text.length,
-  })
-  await nextFrame()
-  const duringComposition = readOutput(body, content)
+  options: ComposeOptions = {},
+): Promise<ComposeOutput> {
+  let duringComposition: MarkdownEditorOutput
+  let committed: MarkdownEditorOutput
 
-  await cdp().send('Input.insertText', { text })
-  await nextFrame()
+  if (isChromium) {
+    await cdp().send('Input.imeSetComposition', {
+      text,
+      selectionStart: text.length,
+      selectionEnd: text.length,
+    })
+    await nextFrame()
+    duringComposition = readOutput(body, content)
 
-  return { committed: readOutput(body, content), duringComposition }
+    await cdp().send('Input.insertText', { text })
+    await nextFrame()
+    committed = readOutput(body, content)
+  } else {
+    content?.dispatchEvent(
+      new CompositionEvent('compositionstart', { bubbles: true, data: '' }),
+    )
+    content?.dispatchEvent(
+      new CompositionEvent('compositionupdate', {
+        bubbles: true,
+        data: text,
+      }),
+    )
+    content?.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: text,
+        inputType: 'insertCompositionText',
+      }),
+    )
+    await userEvent.keyboard(text)
+    await nextFrame()
+    duringComposition = readOutput(body, content)
+
+    content?.dispatchEvent(
+      new CompositionEvent('compositionend', { bubbles: true, data: text }),
+    )
+    await nextFrame()
+    committed = readOutput(body, content)
+  }
+
+  const output: ComposeOutput = { duringComposition, committed }
+  if (options.beforeBackspace) output.afterBackspace = options.beforeBackspace
+  if (options.after === 'newline') {
+    await pressKey('Enter')
+    await nextFrame()
+    output.afterNewline = readOutput(body, content)
+  }
+  if (options.after === 'backspace') {
+    await pressKey('Backspace')
+    await nextFrame()
+    output.afterBackspace = readOutput(body, content)
+  }
+
+  return output
 }
 
-describe('MarkdownEditor IME in Chromium', () => {
+describe('MarkdownEditor IME', () => {
   it('keeps a closed emphasis marker visible while composing after it', async () => {
     const { body, content } = mountMarkdownEditor('**word**')
     content?.focus()
     await pressKey('End')
 
-    const { committed, duringComposition } = await compose(
-      body,
-      content,
-      '日本語',
-    )
-    const actual = readCompositionOutput(duringComposition, committed)
-
+    const actual = await compose(body, content, '日本語')
     expect(actual).toEqual({
       duringComposition: {
         body: '**word**日本語',
@@ -145,13 +150,7 @@ describe('MarkdownEditor IME in Chromium', () => {
     content?.focus()
     await pressKey('Home')
 
-    const { committed, duringComposition } = await compose(
-      body,
-      content,
-      '日本語',
-    )
-    const actual = readCompositionOutput(duringComposition, committed)
-
+    const actual = await compose(body, content, '日本語')
     expect(actual).toEqual({
       duringComposition: {
         body: '日本語plain **bold**',
@@ -171,19 +170,9 @@ describe('MarkdownEditor IME in Chromium', () => {
     content?.focus()
     await pressKey('Home')
 
-    const { committed, duringComposition } = await compose(
-      body,
-      content,
-      '日本語',
-    )
-    await pressKey('Enter')
-    await nextFrame()
-    const actual = readNewlineOutput(
-      duringComposition,
-      committed,
-      readOutput(body, content),
-    )
-
+    const actual = await compose(body, content, '日本語', {
+      after: 'newline',
+    })
     expect(actual).toEqual({
       duringComposition: {
         body: '日本語plain',
@@ -208,13 +197,7 @@ describe('MarkdownEditor IME in Chromium', () => {
     content?.focus()
     await pressKey('End')
 
-    const { committed, duringComposition } = await compose(
-      body,
-      content,
-      '日本語',
-    )
-    const actual = readCompositionOutput(duringComposition, committed)
-
+    const actual = await compose(body, content, '日本語')
     expect(actual).toEqual({
       duringComposition: {
         body: '`code`日本語',
@@ -236,13 +219,7 @@ describe('MarkdownEditor IME in Chromium', () => {
     content?.focus()
     await pressKey('End')
 
-    const { committed, duringComposition } = await compose(
-      body,
-      content,
-      '日本語',
-    )
-    const actual = readCompositionOutput(duringComposition, committed)
-
+    const actual = await compose(body, content, '日本語')
     expect(actual).toEqual({
       duringComposition: {
         body: 'before日本語\n```ts\nconst value = 1\n```\nafter',
@@ -264,13 +241,7 @@ describe('MarkdownEditor IME in Chromium', () => {
     content?.focus()
     for (let line = 0; line < 4; line += 1) await pressKey('ArrowDown')
 
-    const { committed, duringComposition } = await compose(
-      body,
-      content,
-      '日本語',
-    )
-    const actual = readCompositionOutput(duringComposition, committed)
-
+    const actual = await compose(body, content, '日本語')
     expect(actual).toEqual({
       duringComposition: {
         body: 'before\n```ts\nconst value = 1\n```\n日本語after',
@@ -291,19 +262,9 @@ describe('MarkdownEditor IME in Chromium', () => {
     await pressKey('End')
     await pressKey('Backspace')
     await pressKey('Backspace')
-    const afterBackspace = readOutput(body, content)
-
-    const { committed, duringComposition } = await compose(
-      body,
-      content,
-      '日本語',
-    )
-    const actual = readBackspaceOutput(
-      afterBackspace,
-      duringComposition,
-      committed,
-    )
-
+    const actual = await compose(body, content, '日本語', {
+      beforeBackspace: readOutput(body, content),
+    })
     expect(actual).toEqual({
       afterBackspace: { body: '', lines: [''], visible: '' },
       duringComposition: {
@@ -324,20 +285,9 @@ describe('MarkdownEditor IME in Chromium', () => {
     content?.focus()
     await pressKey('End')
 
-    const { committed, duringComposition } = await compose(
-      body,
-      content,
-      '日本語',
-    )
-    await pressKey('Backspace')
-    await nextFrame()
-    const afterBackspace = readOutput(body, content)
-    const actual = readCompositionBackspaceOutput(
-      duringComposition,
-      committed,
-      afterBackspace,
-    )
-
+    const actual = await compose(body, content, '日本語', {
+      after: 'backspace',
+    })
     expect(actual).toEqual({
       duringComposition: {
         body: '## Heading日本語',
@@ -362,13 +312,7 @@ describe('MarkdownEditor IME in Chromium', () => {
     content?.focus()
     await pressKey('End')
 
-    const { committed, duringComposition } = await compose(
-      body,
-      content,
-      '、　日本語。',
-    )
-    const actual = readCompositionOutput(duringComposition, committed)
-
+    const actual = await compose(body, content, '、　日本語。')
     expect(actual).toEqual({
       duringComposition: {
         body: 'prefix、　日本語。',

@@ -48,7 +48,7 @@ export default mergeConfig(
           extends: true,
           test: {
             name: 'browser-ime-chromium',
-            include: ['src/**/*.chromium.ime.browser.test.tsx'],
+            include: ['src/editor/markdown-editor.ime.browser.test.tsx'],
             browser: {
               enabled: true,
               api: { allowWrite: true, allowExec: true },
@@ -64,7 +64,7 @@ export default mergeConfig(
           extends: true,
           test: {
             name: 'browser-ime-webkit',
-            include: ['src/**/*.webkit.ime.browser.test.tsx'],
+            include: ['src/editor/markdown-editor.ime.browser.test.tsx'],
             browser: {
               enabled: true,
               provider: playwright({

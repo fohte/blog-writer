@@ -1,3 +1,4 @@
+import { EditorView } from '@codemirror/view'
 import { describe, expect, it, vi } from 'vitest'
 
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
@@ -17,6 +18,14 @@ describe('Markdown rendering', () => {
         new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
       )
     }
+
+    expect(content?.textContent).toEqual('before [label](url) after')
+  })
+
+  it('shows the editable link source while a selection intersects the link', () => {
+    const { content } = mountMarkdownEditor('before [label](url) after')
+    const view = content ? EditorView.findFromDOM(content) : null
+    view?.dispatch({ selection: { anchor: 8, head: 13 } })
 
     expect(content?.textContent).toEqual('before [label](url) after')
   })
