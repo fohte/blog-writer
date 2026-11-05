@@ -8,7 +8,11 @@
       "ignoreBinaries": ["playwright"]
     },
     "frontend": {
-      "entry": ["src/lib/utils.ts!", "service-worker.js!"],
+      "entry": [
+        "src/lib/utils.ts!",
+        "src/article/index.ts!",
+        "service-worker.js!"
+      ],
       "ignoreDependencies": [
         "reg-suit",
         "reg-publish-s3-plugin",
