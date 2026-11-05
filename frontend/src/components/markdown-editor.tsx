@@ -44,7 +44,7 @@ export const MarkdownEditor = forwardRef<
   const viewRef = useRef<EditorView | null>(null)
   const undoManagerRef = useRef<Y.UndoManager | null>(null)
   const extensionsCompartment = useRef(new Compartment()).current
-  const initialSelectionRef = useRef(initialSelection).current
+  const initialSelectionAtMount = useRef(initialSelection).current
 
   useImperativeHandle(
     ref,
@@ -67,7 +67,9 @@ export const MarkdownEditor = forwardRef<
       parent: host,
       state: EditorState.create({
         doc: text.toJSON(),
-        selection: initialSelectionRef ?? { anchor: 0 },
+        ...(initialSelectionAtMount
+          ? { selection: initialSelectionAtMount }
+          : {}),
         extensions: [
           markdown({ extensions: GFM, codeLanguages: languages }),
           syntaxHighlighting(markdownHighlightStyle),

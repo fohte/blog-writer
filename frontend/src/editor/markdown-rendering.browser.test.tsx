@@ -66,6 +66,14 @@ describe('Markdown rendering', () => {
     },
   )
 
+  it('shows all markers when the selection is inside formatted text', () => {
+    const { content } = mountMarkdownEditor('**bold**')
+    const view = content ? EditorView.findFromDOM(content) : null
+    view?.dispatch({ selection: { anchor: 3, head: 5 } })
+
+    expect(content?.textContent).toEqual('**bold**')
+  })
+
   it('colors language-aware code tokens with shared CSS variables', async () => {
     const { content } = mountMarkdownEditor('```js\nconst value = "text"\n```')
     content?.style.setProperty('--tint-green-foreground', '#123456')

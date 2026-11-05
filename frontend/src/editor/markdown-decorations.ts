@@ -35,11 +35,42 @@ function selectionIntersects(
   )
 }
 
+function shouldHideMark(
+  state: EditorState,
+  name: string,
+  from: number,
+  to: number,
+  parent: { name: string; from: number; to: number } | null,
+): boolean {
+  if (selectionTouches(state, from, to)) return false
+
+  switch (name) {
+    case 'HeaderMark':
+      if (!parent || !/^ATXHeading[1-6]$/u.test(parent.name)) return true
+      return !selectionIntersects(state, parent.from, parent.to)
+    case 'EmphasisMark':
+    case 'StrikethroughMark':
+      return !parent || !selectionIntersects(state, parent.from, parent.to)
+    case 'CodeMark':
+      return (
+        parent?.name === 'InlineCode' &&
+        !selectionIntersects(state, parent.from, parent.to)
+      )
+    case 'LinkMark': {
+      if (parent?.name !== 'Link') return true
+
+      const mark = state.doc.sliceString(from, to)
+      if (mark === '(' || mark === ')') return false
+      return !selectionIntersects(state, parent.from, parent.to)
+    }
+    default:
+      return false
+  }
+}
+
 function buildDecorations(state: EditorState): DecorationSet {
   const decorations = []
   const cursor = syntaxTree(state).cursor()
-  const selected = (from: number, to: number) =>
-    selectionTouches(state, from, to)
 
   while (cursor.next()) {
     if (/^ATXHeading[1-6]$/u.test(cursor.name)) {
@@ -81,41 +112,14 @@ function buildDecorations(state: EditorState): DecorationSet {
       }
     }
 
-    const isInlineCodeMark =
-      cursor.name === 'CodeMark' && cursor.node.parent?.name === 'InlineCode'
-    const parentLink =
-      cursor.name === 'LinkMark' && cursor.node.parent?.name === 'Link'
-        ? cursor.node.parent
-        : null
-    const isLinkMark = parentLink !== null
-    const isLinkParenthesis =
-      isLinkMark &&
-      ['(', ')'].includes(state.doc.sliceString(cursor.from, cursor.to))
-    const isActiveLink =
-      parentLink !== null &&
-      selectionIntersects(state, parentLink.from, parentLink.to)
-    const isHiddenMark =
-      cursor.name === 'HeaderMark' ||
-      cursor.name === 'EmphasisMark' ||
-      cursor.name === 'StrikethroughMark' ||
-      cursor.name === 'LinkMark' ||
-      isInlineCodeMark
-    const markupParent = cursor.node.parent
-    const isEditableMarkup =
-      markupParent !== null &&
-      ((cursor.name === 'HeaderMark' &&
-        /^ATXHeading[1-6]$/u.test(markupParent.name)) ||
-        cursor.name === 'EmphasisMark' ||
-        cursor.name === 'StrikethroughMark' ||
-        isInlineCodeMark) &&
-      selectionIntersects(state, markupParent.from, markupParent.to)
-
     if (
-      isHiddenMark &&
-      !selected(cursor.from, cursor.to) &&
-      !isEditableMarkup &&
-      !isLinkParenthesis &&
-      !(isLinkMark && isActiveLink)
+      shouldHideMark(
+        state,
+        cursor.name,
+        cursor.from,
+        cursor.to,
+        cursor.node.parent,
+      )
     ) {
       const to =
         cursor.name === 'HeaderMark' &&
