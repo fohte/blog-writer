@@ -9,15 +9,18 @@ type MarkdownEditorOutput = {
   visible: string | undefined
 }
 
-interface ComposeOptions {
-  after?: 'backspace' | 'newline'
-}
-
 interface ComposeOutput {
-  afterBackspace?: MarkdownEditorOutput
-  afterNewline?: MarkdownEditorOutput
   duringComposition: MarkdownEditorOutput
   committed: MarkdownEditorOutput
+}
+
+interface ImeDriver {
+  pressKey(key: string): Promise<void>
+  compose(
+    body: ReturnType<typeof mountMarkdownEditor>['body'],
+    content: ReturnType<typeof mountMarkdownEditor>['content'],
+    text: string,
+  ): Promise<ComposeOutput>
 }
 
 function readOutput(
@@ -33,6 +36,14 @@ function readOutput(
   }
 }
 
+function withAfterStep(
+  composition: ComposeOutput,
+  key: 'afterNewline' | 'afterBackspace',
+  output: MarkdownEditorOutput,
+) {
+  return Object.assign({}, composition, { [key]: output })
+}
+
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
@@ -41,44 +52,11 @@ function nextFrame(): Promise<void> {
   })
 }
 
-const isChromium = navigator.userAgent.includes('Chrome')
-
-async function pressKey(key: string): Promise<void> {
-  if (!isChromium) {
+const webkitDriver: ImeDriver = {
+  async pressKey(key) {
     await userEvent.keyboard(`{${key}}`)
-    return
-  }
-
-  await cdp().send('Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key,
-    code: key,
-  })
-  await cdp().send('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key })
-}
-
-async function compose(
-  body: ReturnType<typeof mountMarkdownEditor>['body'],
-  content: ReturnType<typeof mountMarkdownEditor>['content'],
-  text: string,
-  options: ComposeOptions = {},
-): Promise<ComposeOutput> {
-  let duringComposition: MarkdownEditorOutput
-  let committed: MarkdownEditorOutput
-
-  if (isChromium) {
-    await cdp().send('Input.imeSetComposition', {
-      text,
-      selectionStart: text.length,
-      selectionEnd: text.length,
-    })
-    await nextFrame()
-    duringComposition = readOutput(body, content)
-
-    await cdp().send('Input.insertText', { text })
-    await nextFrame()
-    committed = readOutput(body, content)
-  } else {
+  },
+  async compose(body, content, text) {
     content?.dispatchEvent(
       new CompositionEvent('compositionstart', { bubbles: true, data: '' }),
     )
@@ -98,28 +76,60 @@ async function compose(
     )
     await userEvent.keyboard(text)
     await nextFrame()
-    duringComposition = readOutput(body, content)
+    const duringComposition = readOutput(body, content)
 
     content?.dispatchEvent(
       new CompositionEvent('compositionend', { bubbles: true, data: text }),
     )
     await nextFrame()
-    committed = readOutput(body, content)
-  }
+    const committed = readOutput(body, content)
+    return { duringComposition, committed }
+  },
+}
 
-  const output: ComposeOutput = { duringComposition, committed }
-  if (options.after === 'newline') {
-    await pressKey('Enter')
+const chromiumDriver: ImeDriver = {
+  async pressKey(key) {
+    await cdp().send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key,
+      code: key,
+    })
+    await cdp().send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key,
+      code: key,
+    })
+  },
+  async compose(body, content, text) {
+    await cdp().send('Input.imeSetComposition', {
+      text,
+      selectionStart: text.length,
+      selectionEnd: text.length,
+    })
     await nextFrame()
-    output.afterNewline = readOutput(body, content)
-  }
-  if (options.after === 'backspace') {
-    await pressKey('Backspace')
-    await nextFrame()
-    output.afterBackspace = readOutput(body, content)
-  }
+    const duringComposition = readOutput(body, content)
 
-  return output
+    await cdp().send('Input.insertText', { text })
+    await nextFrame()
+    const committed = readOutput(body, content)
+    return { duringComposition, committed }
+  },
+}
+
+const imeDriver = navigator.userAgent.includes('Chrome')
+  ? chromiumDriver
+  : webkitDriver
+
+async function pressKey(key: string): Promise<void> {
+  await imeDriver.pressKey(key)
+}
+
+async function compose(
+  body: ReturnType<typeof mountMarkdownEditor>['body'],
+  content: ReturnType<typeof mountMarkdownEditor>['content'],
+  text: string,
+): Promise<ComposeOutput> {
+  return imeDriver.compose(body, content, text)
 }
 
 describe('MarkdownEditor IME', () => {
@@ -168,10 +178,12 @@ describe('MarkdownEditor IME', () => {
     content?.focus()
     await pressKey('Home')
 
-    const actual = await compose(body, content, '日本語', {
-      after: 'newline',
-    })
-    expect(actual).toEqual({
+    const composition = await compose(body, content, '日本語')
+    await pressKey('Enter')
+    await nextFrame()
+    expect(
+      withAfterStep(composition, 'afterNewline', readOutput(body, content)),
+    ).toEqual({
       duringComposition: {
         body: '日本語plain',
         lines: ['日本語plain'],
@@ -301,10 +313,12 @@ describe('MarkdownEditor IME', () => {
     content?.focus()
     await pressKey('End')
 
-    const actual = await compose(body, content, '日本語', {
-      after: 'backspace',
-    })
-    expect(actual).toEqual({
+    const composition = await compose(body, content, '日本語')
+    await pressKey('Backspace')
+    await nextFrame()
+    expect(
+      withAfterStep(composition, 'afterBackspace', readOutput(body, content)),
+    ).toEqual({
       duringComposition: {
         body: '## Heading日本語',
         lines: ['Heading日本語'],

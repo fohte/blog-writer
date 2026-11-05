@@ -40,8 +40,12 @@ describe('diff', () => {
   })
 
   it('replaces the remaining span when the diff work limit is reached', () => {
-    expect(diff('a'.repeat(600), 'b'.repeat(600))).toEqual([
-      { from: 0, to: 600, insert: 'b'.repeat(600) },
+    const unchanged = ' anchor '
+    const previous = `${'a'.repeat(400)}${unchanged}${'a'.repeat(400)}\n`
+    const next = `${'b'.repeat(400)}${unchanged}${'b'.repeat(400)}\n`
+
+    expect(diff(previous, next)).toEqual([
+      { from: 0, to: previous.length - 1, insert: next.slice(0, -1) },
     ])
   })
 })

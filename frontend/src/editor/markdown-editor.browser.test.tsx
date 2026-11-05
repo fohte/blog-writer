@@ -112,8 +112,9 @@ describe('MarkdownEditor', () => {
   })
 
   it('applies a capped body replacement in one Yjs undo step', () => {
-    const previous = 'a'.repeat(600)
-    const replacement = 'b'.repeat(600)
+    const unchanged = ' anchor '
+    const previous = `${'a'.repeat(400)}${unchanged}${'a'.repeat(400)}\n`
+    const replacement = `${'b'.repeat(400)}${unchanged}${'b'.repeat(400)}\n`
     const { body, content, editor } = mountMarkdownEditor(previous)
 
     act(() => {
