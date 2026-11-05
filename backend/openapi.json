@@ -9,6 +9,206 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/articles/{article_id}/file-sync": {
+      "get": {
+        "operationId": "get_article_file",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current synchronization file and state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleFileSyncResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "File synchronization is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "set_article_file",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetArticleFileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Synchronization file selected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleFileSyncResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid synchronization file path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "File synchronization is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/articles/{article_id}/file-sync/overwrite": {
+      "post": {
+        "operationId": "overwrite_article_file",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Article body written to the synchronization file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleFileSyncResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No synchronization file is selected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "File synchronization is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/articles/{article_id}/file-sync/resume": {
+      "post": {
+        "operationId": "resume_article_file_sync",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeArticleFileSyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "File synchronization resumed after import",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleFileSyncResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The file changed after it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "File synchronization is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/articles/{article_id}/source-bodies/{source_id}": {
       "get": {
         "operationId": "get_body",
@@ -565,6 +765,23 @@
         }
       }
     },
+    "/api/file-sync/configuration": {
+      "get": {
+        "operationId": "get_configuration",
+        "responses": {
+          "200": {
+            "description": "File synchronization configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileSyncConfigurationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "operationId": "get_health",
@@ -798,6 +1015,28 @@
           }
         }
       },
+      "ArticleFileSyncResponse": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "content": {
+            "type": ["string", "null"]
+          },
+          "content_hash": {
+            "type": ["string", "null"]
+          },
+          "path": {
+            "type": ["string", "null"]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ArticleFileSyncStatus"
+          }
+        }
+      },
+      "ArticleFileSyncStatus": {
+        "type": "string",
+        "enum": ["unset", "synced", "external_changed"]
+      },
       "ArticlePremiseRequest": {
         "type": "object",
         "required": ["audience", "purpose", "thesis"],
@@ -911,6 +1150,18 @@
           },
           "title": {
             "type": "string"
+          }
+        }
+      },
+      "FileSyncConfigurationResponse": {
+        "type": "object",
+        "required": ["enabled"],
+        "properties": {
+          "directory": {
+            "type": ["string", "null"]
+          },
+          "enabled": {
+            "type": "boolean"
           }
         }
       },
@@ -1287,11 +1538,29 @@
           }
         }
       },
+      "ResumeArticleFileSyncRequest": {
+        "type": "object",
+        "required": ["hash"],
+        "properties": {
+          "hash": {
+            "type": "string"
+          }
+        }
+      },
       "SaveSourceBodyRequest": {
         "type": "object",
         "required": ["body"],
         "properties": {
           "body": {
+            "type": "string"
+          }
+        }
+      },
+      "SetArticleFileRequest": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {
             "type": "string"
           }
         }

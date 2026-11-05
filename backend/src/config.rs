@@ -2,6 +2,7 @@ use std::{
     env,
     ffi::OsString,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
 };
 
 use thiserror::Error;
@@ -23,6 +24,7 @@ const LLM_API_ONLY_ENV: &str = "LLM_API_ONLY";
 const ALLOWED_HOSTS_ENV: &str = "BACKEND_ALLOWED_HOSTS";
 const ALLOWED_ORIGINS_ENV: &str = "BACKEND_ALLOWED_ORIGINS";
 const EXPORT_DESTINATIONS_ENV: &str = "BLOG_EXPORT_DESTINATIONS";
+const SYNC_DIRECTORY_ENV: &str = "BLOG_SYNC_DIRECTORY";
 const OCTO_STS_URL_ENV: &str = "BLOG_EXPORT_OCTO_STS_URL";
 const OCTO_STS_IDENTITY_ENV: &str = "BLOG_EXPORT_OCTO_STS_IDENTITY";
 const OCTO_STS_SA_TOKEN_PATH_ENV: &str = "BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH";
@@ -35,6 +37,7 @@ pub struct Config {
     pub allowed_hosts: Vec<String>,
     pub allowed_origins: Vec<String>,
     pub export: Option<ExportConfig>,
+    pub sync_directory: Option<PathBuf>,
     pub llm: LlmConfig,
 }
 
@@ -49,6 +52,7 @@ struct ConfigValues<'a> {
     octo_sts_url: Option<&'a str>,
     octo_sts_identity: Option<&'a str>,
     octo_sts_sa_token_path: Option<&'a str>,
+    sync_directory: Option<&'a str>,
 }
 
 #[derive(Default)]
@@ -77,6 +81,10 @@ pub enum ConfigError {
     NonUnicodeAllowedOrigins,
     #[error("{EXPORT_DESTINATIONS_ENV} must contain valid Unicode")]
     NonUnicodeExportDestinations,
+    #[error("{SYNC_DIRECTORY_ENV} must contain valid Unicode")]
+    NonUnicodeSyncDirectory,
+    #[error("{SYNC_DIRECTORY_ENV} must be a non-empty path")]
+    InvalidSyncDirectory,
     #[error("{LLM_PROVIDER_ENV} must contain valid Unicode")]
     NonUnicodeLlmProvider,
     #[error("{LLM_BASE_URL_ENV} must contain valid Unicode")]
@@ -156,6 +164,11 @@ impl Config {
             ConfigError::NonUnicodeExportDestinations,
             &read_env_value,
         )?;
+        let sync_directory = read_env(
+            SYNC_DIRECTORY_ENV,
+            ConfigError::NonUnicodeSyncDirectory,
+            &read_env_value,
+        )?;
         let octo_sts_url = read_env(
             OCTO_STS_URL_ENV,
             ConfigError::NonUnicodeOctoStsUrl,
@@ -202,6 +215,7 @@ impl Config {
                 allowed_hosts: allowed_hosts.as_deref(),
                 allowed_origins: allowed_origins.as_deref(),
                 export_destinations: export_destinations.as_deref(),
+                sync_directory: sync_directory.as_deref(),
                 octo_sts_url: octo_sts_url.as_deref(),
                 octo_sts_identity: octo_sts_identity.as_deref(),
                 octo_sts_sa_token_path: octo_sts_sa_token_path.as_deref(),
@@ -243,6 +257,17 @@ impl Config {
         let default_origins =
             format!("http://localhost:{port},http://127.0.0.1:{port},http://[::1]:{port}");
 
+        let sync_directory = values
+            .sync_directory
+            .map(|directory| {
+                if directory.is_empty() {
+                    Err(ConfigError::InvalidSyncDirectory)
+                } else {
+                    Ok(PathBuf::from(directory))
+                }
+            })
+            .transpose()?;
+
         Ok(Self {
             bind_addr,
             llm_api_only: values.llm_api_only,
@@ -255,6 +280,7 @@ impl Config {
                 values.octo_sts_identity,
                 values.octo_sts_sa_token_path,
             )?,
+            sync_directory,
             llm: LlmConfig::from_values(
                 llm.provider,
                 llm.locked,
@@ -293,7 +319,7 @@ mod tests {
     use super::{
         Config, ConfigError, ConfigValues, DATABASE_URL_ENV, LLM_API_KEY_ENV, LLM_API_ONLY_ENV,
         LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_PROVIDER_ENV, LLM_PROVIDER_LOCKED_ENV, LlmConfig,
-        LlmValues, OpenAiCompatibleConfig, ProviderName,
+        LlmValues, OpenAiCompatibleConfig, ProviderName, SYNC_DIRECTORY_ENV,
     };
 
     #[rstest]
@@ -314,6 +340,7 @@ mod tests {
                 "http://[::1]:3000".to_owned(),
             ],
             export: None,
+            sync_directory: None,
             llm: LlmConfig::default(),
         })
     )]
@@ -334,6 +361,7 @@ mod tests {
                 "http://[::1]:8080".to_owned(),
             ],
             export: None,
+            sync_directory: None,
             llm: LlmConfig::default(),
         })
     )]
@@ -381,6 +409,36 @@ mod tests {
         .map(|config| config.database_url);
 
         assert_eq!(actual, Ok(Some("sqlite://sample.db".to_owned())));
+    }
+
+    #[rstest]
+    #[case::unset(None, None)]
+    #[case::configured(Some("/notes"), Some("/notes"))]
+    fn reads_sync_directory_from_environment(
+        #[case] value: Option<&str>,
+        #[case] expected: Option<&str>,
+    ) {
+        let actual = Config::from_env_with(|name| {
+            if name == SYNC_DIRECTORY_ENV {
+                value.map(OsString::from)
+            } else {
+                None
+            }
+        })
+        .map(|config| {
+            config
+                .sync_directory
+                .map(|path| path.to_string_lossy().into_owned())
+        });
+
+        assert_eq!(actual, Ok(expected.map(str::to_owned)));
+    }
+
+    #[test]
+    fn rejects_an_empty_sync_directory() {
+        let actual = Config::from_env_with(|name| (name == SYNC_DIRECTORY_ENV).then(OsString::new));
+
+        assert_eq!(actual, Err(ConfigError::InvalidSyncDirectory));
     }
 
     #[rstest]
@@ -515,6 +573,7 @@ mod tests {
                 "http://preview.example:4312".to_owned(),
             ],
             export: None,
+            sync_directory: None,
             llm: LlmConfig::default(),
         })
     )]
@@ -529,6 +588,7 @@ mod tests {
             allowed_hosts: vec![],
             allowed_origins: vec![],
             export: None,
+            sync_directory: None,
             llm: LlmConfig::default(),
         })
     )]

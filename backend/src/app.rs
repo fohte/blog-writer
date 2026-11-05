@@ -21,6 +21,7 @@ use crate::{
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
     llm::{self, LlmEvent, LlmState},
+    local_file_sync::LocalFileSyncService,
     ogp,
     safe_fetch::{SafeFetchService, SafeFetcher},
     source_bodies,
@@ -40,6 +41,7 @@ pub struct AppState {
     pub(crate) llm: LlmState,
     pub database: Option<AnyPool>,
     pub sync: Option<SyncService>,
+    pub file_sync: Option<LocalFileSyncService>,
     pub(crate) safe_fetch: Arc<dyn SafeFetchService>,
 }
 
@@ -58,6 +60,7 @@ impl Default for AppState {
             llm: LlmState::default(),
             database: None,
             sync: None,
+            file_sync: None,
             safe_fetch: Arc::new(SafeFetcher::new()),
         }
     }
@@ -71,21 +74,27 @@ impl AppState {
         database: Option<AnyPool>,
     ) -> Result<Self, AppStateError> {
         let (_, shutdown) = watch::channel(false);
-        Self::new_with_shutdown(export, llm_config, database, shutdown)
+        Self::new_with_shutdown(export, llm_config, database, None, shutdown)
     }
 
     pub(crate) fn new_with_shutdown(
         export: Option<ExportConfig>,
         llm_config: crate::config::LlmConfig,
         database: Option<AnyPool>,
+        sync_directory: Option<std::path::PathBuf>,
         shutdown: watch::Receiver<bool>,
     ) -> Result<Self, AppStateError> {
         let sync = database.clone().map(SyncService::new).transpose()?;
+        let file_sync = sync
+            .as_ref()
+            .zip(sync_directory)
+            .map(|(sync, directory)| LocalFileSyncService::new(sync.clone(), directory));
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
             llm: LlmState::new_with_shutdown(llm_config, shutdown),
             database,
             sync,
+            file_sync,
             safe_fetch: Arc::new(SafeFetcher::new()),
         })
     }
@@ -172,6 +181,7 @@ fn api_routes() -> OpenApiRouter<AppState> {
         .merge(ogp::router())
         .merge(source_bodies::router())
         .merge(crate::sync::router())
+        .merge(crate::local_file_sync::router())
 }
 
 async fn api_not_found() -> AppError {

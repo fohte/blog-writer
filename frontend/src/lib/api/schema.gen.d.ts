@@ -4,6 +4,54 @@
  */
 
 export interface paths {
+  '/api/articles/{article_id}/file-sync': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['get_article_file']
+    put: operations['set_article_file']
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/articles/{article_id}/file-sync/overwrite': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['overwrite_article_file']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/articles/{article_id}/file-sync/resume': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['resume_article_file_sync']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/articles/{article_id}/source-bodies/{source_id}': {
     parameters: {
       query?: never
@@ -78,6 +126,22 @@ export interface paths {
     get: operations['get_article_file']
     put?: never
     post: operations['publish_article']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/file-sync/configuration': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['get_configuration']
+    put?: never
+    post?: never
     delete?: never
     options?: never
     head?: never
@@ -209,6 +273,14 @@ export interface components {
       content: string | null
       sha: string | null
     }
+    ArticleFileSyncResponse: {
+      content?: string | null
+      content_hash?: string | null
+      path?: string | null
+      status: components['schemas']['ArticleFileSyncStatus']
+    }
+    /** @enum {string} */
+    ArticleFileSyncStatus: 'unset' | 'synced' | 'external_changed'
     ArticlePremiseRequest: {
       audience: string
       purpose: string
@@ -247,6 +319,10 @@ export interface components {
       final_url: string
       source_id: string
       title: string
+    }
+    FileSyncConfigurationResponse: {
+      directory?: string | null
+      enabled: boolean
     }
     FileUploadRequest: {
       /** Format: binary */
@@ -371,8 +447,14 @@ export interface components {
       key_points: components['schemas']['ResearchKeyPoint'][]
       summary: string
     }
+    ResumeArticleFileSyncRequest: {
+      hash: string
+    }
     SaveSourceBodyRequest: {
       body: string
+    }
+    SetArticleFileRequest: {
+      path: string
     }
     SourceBodyResponse: {
       article_id: string
@@ -416,6 +498,169 @@ export interface components {
 }
 export type $defs = Record<string, never>
 export interface operations {
+  get_article_file: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Current synchronization file and state */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ArticleFileSyncResponse']
+        }
+      }
+      /** @description File synchronization is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  set_article_file: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SetArticleFileRequest']
+      }
+    }
+    responses: {
+      /** @description Synchronization file selected */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ArticleFileSyncResponse']
+        }
+      }
+      /** @description Invalid synchronization file path */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description File synchronization is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  overwrite_article_file: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Article body written to the synchronization file */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ArticleFileSyncResponse']
+        }
+      }
+      /** @description No synchronization file is selected */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description File synchronization is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  resume_article_file_sync: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ResumeArticleFileSyncRequest']
+      }
+    }
+    responses: {
+      /** @description File synchronization resumed after import */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ArticleFileSyncResponse']
+        }
+      }
+      /** @description The file changed after it was read */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description File synchronization is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
   get_body: {
     parameters: {
       query?: never
@@ -847,6 +1092,26 @@ export interface operations {
         }
         content: {
           'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  get_configuration: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description File synchronization configuration */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['FileSyncConfigurationResponse']
         }
       }
     }

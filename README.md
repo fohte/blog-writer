@@ -15,12 +15,14 @@
 - If `ANTHROPIC_API_KEY` is set while `claude_code` is selected, the backend logs a warning because Claude Code prefers API key authentication.
 - `BLOG_EXPORT_DESTINATIONS` enables article export when set to a non-empty JSON array. Each destination has a unique `id`, `repository` (`owner/repo`), `base_branch`, `path_template` with one `{slug}`, `format` (`markdown` or `mdx`), and `frontmatter_template`. The backend returns the `frontmatter_template` to the client as-is. An optional `ogp_json_path` sets a repository-relative JSON file where publishing adds metadata for missing `CardLink` hrefs. An empty or invalid value makes the server fail at startup.
 - `BLOG_EXPORT_OCTO_STS_URL`, `BLOG_EXPORT_OCTO_STS_IDENTITY`, and `BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH` configure the per-request GitHub App token exchange. All three are required when destinations are configured.
+- `BLOG_SYNC_DIRECTORY` enables local Markdown file synchronization for article bodies. Article paths are relative to this directory; when unset, article file synchronization endpoints return `503 Service Unavailable` and the configuration endpoint reports `enabled: false`.
 
 ```sh
 export BLOG_EXPORT_DESTINATIONS='[{"id":"site-one","repository":"writer/notes","base_branch":"main","path_template":"posts/{slug}.mdx","format":"mdx","frontmatter_template":"title: {{ title }}","ogp_json_path":"data/link-cards.json"}]'
 export BLOG_EXPORT_OCTO_STS_URL=https://sts.example
 export BLOG_EXPORT_OCTO_STS_IDENTITY=writer-export
 export BLOG_EXPORT_OCTO_STS_SA_TOKEN_PATH=/var/run/secrets/service-token
+export BLOG_SYNC_DIRECTORY=/path/to/notes
 ```
 
 When `BLOG_EXPORT_DESTINATIONS` is unset, export is disabled and its endpoints return `503 Service Unavailable`.
