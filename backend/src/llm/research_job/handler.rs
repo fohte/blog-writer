@@ -2,6 +2,7 @@ use std::convert::Infallible;
 
 use axum::{
     extract::State,
+    http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
 };
 use futures_util::stream;
@@ -22,16 +23,17 @@ use super::{model::ResearchJobRequest, pipeline};
     request_body = ResearchJobRequest,
     responses(
         (status = 200, description = "Research progress and source-backed result", content_type = "text/event-stream", body = super::model::ResearchJobEvent),
-        (status = 400, description = "Invalid request body", body = ErrorResponse)
+        (status = 400, description = "Invalid request body or blank question or claim", body = ErrorResponse)
     )
 )]
 pub(crate) async fn run_research_job(
     State(app_state): State<AppState>,
     ApiJson(request): ApiJson<ResearchJobRequest>,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let request = validate_request(request)?;
     let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
     let keep_alive_interval = app_state.llm.keep_alive_interval;
-    let future = pipeline::start(app_state.llm.clone(), app_state, request, progress_sender);
+    let future = pipeline::start(app_state, request, progress_sender);
     let events = stream::unfold(
         ResearchJobStream {
             future,
@@ -60,13 +62,19 @@ pub(crate) async fn run_research_job(
                         Some(match result {
                             Ok(result) => match serde_json::to_value(result) {
                                 Ok(result) => LlmEvent::Result(result),
-                                Err(_) => LlmEvent::Error(LlmErrorPayload {
-                                    message: "LLM result could not be serialized".to_owned(),
-                                }),
+                                Err(error) => {
+                                    tracing::warn!(%error, "research job result serialization failed");
+                                    LlmEvent::Error(LlmErrorPayload {
+                                        message: "LLM result could not be serialized".to_owned(),
+                                    })
+                                }
                             },
-                            Err(error) => LlmEvent::Error(LlmErrorPayload {
-                                message: error.to_string(),
-                            }),
+                            Err(error) => {
+                                tracing::warn!(error_kind = ?error, "research job failed");
+                                LlmEvent::Error(LlmErrorPayload {
+                                    message: error.to_string(),
+                                })
+                            }
                         })
                     }
                 };
@@ -82,6 +90,38 @@ pub(crate) async fn run_research_job(
             .interval(keep_alive_interval)
             .text("keep-alive"),
     ))
+}
+
+fn validate_request(request: ResearchJobRequest) -> Result<ResearchJobRequest, AppError> {
+    let message = "Question or claim must not be empty";
+    let client_error = || AppError::Client {
+        status: StatusCode::BAD_REQUEST,
+        message: message.to_owned(),
+    };
+    match request {
+        ResearchJobRequest::KeyPoints { question } => {
+            let question = question.trim().to_owned();
+            if question.is_empty() {
+                return Err(client_error());
+            }
+            Ok(ResearchJobRequest::KeyPoints { question })
+        }
+        ResearchJobRequest::ClaimEvidence {
+            claim,
+            before,
+            after,
+        } => {
+            let claim = claim.trim().to_owned();
+            if claim.is_empty() {
+                return Err(client_error());
+            }
+            Ok(ResearchJobRequest::ClaimEvidence {
+                claim,
+                before,
+                after,
+            })
+        }
+    }
 }
 
 struct ResearchJobStream {

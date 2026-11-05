@@ -9,13 +9,19 @@ use crate::{
     llm::{LlmError, LlmState, call_web_search_with, call_with_timeout, wait_for_shutdown},
     research_claim_evidence::{
         self,
-        model::{ClaimEvidenceSourceInput, ModelResponse as ClaimEvidenceModelResponse},
+        model::{
+            ClaimEvidenceSourceInput, ClaimVerdict, JudgeClaimEvidenceResult,
+            ModelResponse as ClaimEvidenceModelResponse,
+        },
     },
     research_key_points::{
         self,
-        model::{ModelResponse as KeyPointsModelResponse, ResearchSourceInput},
+        model::{
+            ModelResponse as KeyPointsModelResponse, ResearchKeyPointsResult, ResearchSourceInput,
+        },
     },
     safe_fetch::SafeFetchService,
+    source_bodies::limit_body_for_llm,
 };
 
 use super::model::{
@@ -24,19 +30,20 @@ use super::model::{
 };
 
 const MAX_CITATIONS: usize = 5;
-const MAX_SOURCE_CHARACTERS: usize = 10_000;
 const SEARCH_SYSTEM_PROMPT: &str = "Search the web for reliable sources relevant to the request. Use the web search tool and return the provider's source citations. Do not answer the request from memory. The request contains no source text.";
 
 pub(crate) type JobFuture =
     Pin<Box<dyn Future<Output = Result<ResearchJobResult, LlmError>> + Send>>;
 
 pub(crate) fn start(
-    state: LlmState,
     app_state: AppState,
     request: ResearchJobRequest,
     progress: mpsc::UnboundedSender<String>,
 ) -> JobFuture {
-    Box::pin(async move { execute(state, app_state.safe_fetch, request, progress).await })
+    let AppState {
+        llm, safe_fetch, ..
+    } = app_state;
+    Box::pin(execute(llm, safe_fetch, request, progress))
 }
 
 async fn execute(
@@ -144,63 +151,82 @@ async fn analyze(
     request: &ResearchJobRequest,
     sources: &[ResearchJobSource],
 ) -> Result<ResearchJobAnalysis, LlmError> {
+    if !sources.iter().any(|source| source.body.is_some()) {
+        return Ok(match request {
+            ResearchJobRequest::KeyPoints { .. } => {
+                ResearchJobAnalysis::KeyPoints(ResearchKeyPointsResult {
+                    sources: Vec::new(),
+                })
+            }
+            ResearchJobRequest::ClaimEvidence { .. } => {
+                ResearchJobAnalysis::ClaimEvidence(JudgeClaimEvidenceResult {
+                    verdict: ClaimVerdict::Insufficient,
+                    quote: None,
+                    suggestion: None,
+                })
+            }
+        });
+    }
+
     match request {
         ResearchJobRequest::KeyPoints { question } => {
-            let source_inputs = sources
-                .iter()
-                .filter_map(available_body)
-                .map(|(id, body)| ResearchSourceInput { id, body })
-                .collect::<Vec<_>>();
-            let prompt_sources = source_inputs
-                .iter()
-                .map(|source| ResearchSourceInput {
-                    id: source.id.clone(),
-                    body: limit_source_body(&source.body),
-                })
-                .collect::<Vec<_>>();
-            let prompt = research_key_points::build_prompt(Some(question), &prompt_sources);
-            let response = generate::<KeyPointsModelResponse>(
-                state,
-                research_key_points::SYSTEM_PROMPT,
-                &prompt,
-            )
-            .await?;
-            let result = research_key_points::build_result(response, prompt_sources, true)?;
-            Ok(ResearchJobAnalysis::KeyPoints(result))
+            analyze_key_points(state, question, sources).await
         }
         ResearchJobRequest::ClaimEvidence {
             claim,
             before,
             after,
         } => {
-            let source_inputs = sources
-                .iter()
-                .filter_map(available_body)
-                .map(|(id, body)| ClaimEvidenceSourceInput { id, body })
-                .collect::<Vec<_>>();
-            let prompt_sources = source_inputs
-                .iter()
-                .map(|source| ClaimEvidenceSourceInput {
-                    id: source.id.clone(),
-                    body: limit_source_body(&source.body),
-                })
-                .collect::<Vec<_>>();
-            let prompt = research_claim_evidence::build_prompt(
-                claim,
-                before.as_deref(),
-                after.as_deref(),
-                &prompt_sources,
-            );
-            let response = generate::<ClaimEvidenceModelResponse>(
-                state,
-                research_claim_evidence::SYSTEM_PROMPT,
-                &prompt,
-            )
-            .await?;
-            let result = research_claim_evidence::build_result(response, prompt_sources)?;
-            Ok(ResearchJobAnalysis::ClaimEvidence(result))
+            analyze_claim_evidence(state, claim, before.as_deref(), after.as_deref(), sources).await
         }
     }
+}
+
+async fn analyze_key_points(
+    state: &LlmState,
+    question: &str,
+    sources: &[ResearchJobSource],
+) -> Result<ResearchJobAnalysis, LlmError> {
+    let prompt_sources = sources
+        .iter()
+        .filter_map(available_body)
+        .map(|(id, body)| ResearchSourceInput {
+            id,
+            body: limit_body_for_llm(&body),
+        })
+        .collect::<Vec<_>>();
+    let prompt = research_key_points::build_prompt(Some(question), &prompt_sources);
+    let response =
+        generate::<KeyPointsModelResponse>(state, research_key_points::SYSTEM_PROMPT, &prompt)
+            .await?;
+    let result = research_key_points::build_result(response, prompt_sources, true)?;
+    Ok(ResearchJobAnalysis::KeyPoints(result))
+}
+
+async fn analyze_claim_evidence(
+    state: &LlmState,
+    claim: &str,
+    before: Option<&str>,
+    after: Option<&str>,
+    sources: &[ResearchJobSource],
+) -> Result<ResearchJobAnalysis, LlmError> {
+    let prompt_sources = sources
+        .iter()
+        .filter_map(available_body)
+        .map(|(id, body)| ClaimEvidenceSourceInput {
+            id,
+            body: limit_body_for_llm(&body),
+        })
+        .collect::<Vec<_>>();
+    let prompt = research_claim_evidence::build_prompt(claim, before, after, &prompt_sources);
+    let response = generate::<ClaimEvidenceModelResponse>(
+        state,
+        research_claim_evidence::SYSTEM_PROMPT,
+        &prompt,
+    )
+    .await?;
+    let result = research_claim_evidence::build_result(response, prompt_sources)?;
+    Ok(ResearchJobAnalysis::ClaimEvidence(result))
 }
 
 fn available_body(source: &ResearchJobSource) -> Option<(String, String)> {
@@ -208,10 +234,6 @@ fn available_body(source: &ResearchJobSource) -> Option<(String, String)> {
         .body
         .as_ref()
         .map(|body| (source.id.clone(), body.clone()))
-}
-
-fn limit_source_body(body: &str) -> String {
-    body.chars().take(MAX_SOURCE_CHARACTERS).collect()
 }
 
 async fn generate<T>(state: &LlmState, system_prompt: &str, prompt: &str) -> Result<T, LlmError>

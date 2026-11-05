@@ -1395,7 +1395,7 @@ export interface operations {
           'text/event-stream': components['schemas']['ResearchJobEvent']
         }
       }
-      /** @description Invalid request body */
+      /** @description Invalid request body or blank question or claim */
       400: {
         headers: {
           [name: string]: unknown

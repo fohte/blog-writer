@@ -1005,7 +1005,7 @@
             }
           },
           "400": {
-            "description": "Invalid request body",
+            "description": "Invalid request body or blank question or claim",
             "content": {
               "application/json": {
                 "schema": {
