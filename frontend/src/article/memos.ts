@@ -21,6 +21,15 @@ function getMemosMap(doc: Y.Doc): Y.Map<MemoData> {
   return doc.getMap('memos')
 }
 
+export function observeMemos(doc: Y.Doc, listener: () => void): () => void {
+  const memos = getMemosMap(doc)
+  memos.observeDeep(listener)
+
+  return () => {
+    memos.unobserveDeep(listener)
+  }
+}
+
 function getMemoMap(doc: Y.Doc, id: string): MemoData | undefined {
   return getMemosMap(doc).get(id)
 }

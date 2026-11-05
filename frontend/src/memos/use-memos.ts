@@ -9,6 +9,7 @@ import {
   dismissMemo,
   getBody,
   listMemos,
+  observeMemos,
   restoreMemo,
   updateMemoOrder,
 } from '#article/index'
@@ -55,8 +56,8 @@ function haveSameMemos(left: Memo[], right: Memo[]): boolean {
 function createMemoStore(doc: Y.Doc): MemoStore {
   let snapshot = listMemos(doc)
   const listeners = new Set<() => void>()
-  const memos = doc.getMap('memos')
   const body = getBody(doc)
+  let stopObservingMemos: (() => void) | undefined
 
   const refresh = () => {
     const nextSnapshot = listMemos(doc)
@@ -73,7 +74,7 @@ function createMemoStore(doc: Y.Doc): MemoStore {
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
       if (listeners.size === 0) {
-        memos.observeDeep(refresh)
+        stopObservingMemos = observeMemos(doc, refresh)
         body.observe(onBodyUpdate)
       }
       listeners.add(listener)
@@ -82,7 +83,8 @@ function createMemoStore(doc: Y.Doc): MemoStore {
       return () => {
         listeners.delete(listener)
         if (listeners.size === 0) {
-          memos.unobserveDeep(refresh)
+          stopObservingMemos?.()
+          stopObservingMemos = undefined
           body.unobserve(onBodyUpdate)
         }
       }
