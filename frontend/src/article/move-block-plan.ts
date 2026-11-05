@@ -25,6 +25,9 @@ type PlannedMove = {
   insertion: MoveInsertion
   seam: number
   sourcePrefix: string
+  plannedMarkdown: string
+  insertedFrom: number
+  insertedTo: number
 }
 function findBlockRange(
   blocks: MarkdownBlockRange[],
@@ -387,6 +390,10 @@ export function planBlockMove(input: {
           prefixLength: replacement.prefix.length,
           contentLength: replacement.text.length,
         }
+  const plannedMarkdown =
+    sourceSeparator.text.slice(0, insertionIndex) +
+    insertion.text +
+    sourceSeparator.text.slice(insertionIndex)
   return {
     deletionFrom,
     removedLength,
@@ -402,5 +409,8 @@ export function planBlockMove(input: {
       insertion,
     }),
     sourcePrefix: sourceSeparator.removed,
+    plannedMarkdown,
+    insertedFrom: insertionIndex + insertion.prefixLength,
+    insertedTo: insertionIndex + insertion.text.length,
   }
 }

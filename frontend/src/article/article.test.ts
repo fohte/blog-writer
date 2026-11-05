@@ -533,20 +533,49 @@ Alpha
   it.each([
     {
       name: 'a shallower same-position heading change',
-      markdown: `### H0\n\n### H1\n\n# H2\n\n### H3\n\n## H4\n\n## H5`,
+      markdown: `### H0
+
+### H1
+
+# H2
+
+### H3
+
+## H4
+
+## H5`,
       from: (markdown: string) => markdown.indexOf('## H4'),
       destination: (markdown: string) => markdown.indexOf('## H4'),
       headingLevel: 1,
     },
     {
       name: 'a list at the destination',
-      markdown: `- l0\n\n\n# H1\n\nP2\n\n\n- l3\n\n- l4\n`,
+      markdown: `- l0
+
+
+# H1
+
+P2
+
+
+- l3
+
+- l4
+`,
       from: (markdown: string) => markdown.indexOf('- l0'),
       destination: (markdown: string) => markdown.indexOf('- l3'),
     },
     {
       name: 'a list at the source',
-      markdown: `- l0\n\nP1\n\n\n- l2\n\n\nP3`,
+      markdown: `- l0
+
+P1
+
+
+- l2
+
+
+P3`,
       from: (markdown: string) => markdown.indexOf('P1'),
       destination: () => 0,
     },

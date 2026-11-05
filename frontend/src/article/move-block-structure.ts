@@ -66,6 +66,33 @@ export function findHeadingSection(
   }
 }
 
+type TextRange = { from: number; to: number }
+type PlannedMoveStructure = {
+  originalMarkdown: string
+  originalRange: TextRange
+  plannedMarkdown: string
+  movedRange: TextRange
+  isSection: boolean
+}
+
+function blocksIn(
+  blocks: MarkdownBlockRange[],
+  range: TextRange,
+): MarkdownBlockRange[] {
+  return blocks.filter(
+    (block) => block.from >= range.from && block.from < range.to,
+  )
+}
+
+function blocksOutside(
+  blocks: MarkdownBlockRange[],
+  range: TextRange,
+): MarkdownBlockRange[] {
+  return blocks.filter(
+    (block) => block.from < range.from || block.from >= range.to,
+  )
+}
+
 function hasSameBlocks(
   actualMarkdown: string,
   actualBlocks: MarkdownBlockRange[],
@@ -86,78 +113,90 @@ function hasSameBlocks(
   )
 }
 
-export function validatePlannedMoveStructure(input: {
-  originalMarkdown: string
-  originalFrom: number
-  originalTo: number
-  plannedMarkdown: string
-  movedFrom: number
-  movedTo: number
-  isSection: boolean
-}): InvalidBlockMoveError | undefined {
-  const {
-    originalMarkdown,
-    originalFrom,
-    originalTo,
-    plannedMarkdown,
-    movedFrom,
-    movedTo,
-    isSection,
-  } = input
-  const originalBlocks = topLevelBlocks(originalMarkdown)
-  const plannedBlocks = topLevelBlocks(plannedMarkdown)
-  const insertedMarkdown = plannedMarkdown.slice(movedFrom, movedTo)
-  const insertedBlocks = topLevelBlocks(insertedMarkdown)
-  const movedBlocks = plannedBlocks.filter(
-    (block) => block.from >= movedFrom && block.from < movedTo,
-  )
+function validateMovedBlocks(
+  input: PlannedMoveStructure,
+  plannedBlocks: MarkdownBlockRange[],
+  insertedMarkdown: string,
+  insertedBlocks: MarkdownBlockRange[],
+): boolean {
+  const movedBlocks = blocksIn(plannedBlocks, input.movedRange)
   const mergedIntoPrevious = plannedBlocks.some(
-    (block) => block.from < movedFrom && block.contentTo > movedFrom,
+    (block) =>
+      block.from < input.movedRange.from &&
+      block.contentTo > input.movedRange.from,
   )
 
-  const invalidStructure = () =>
-    new InvalidBlockMoveError('The move would change Markdown block structure')
-
-  if (
-    mergedIntoPrevious ||
-    !hasSameBlocks(
-      plannedMarkdown,
+  return (
+    !mergedIntoPrevious &&
+    hasSameBlocks(
+      input.plannedMarkdown,
       movedBlocks,
       insertedMarkdown,
       insertedBlocks,
     )
-  ) {
-    return invalidStructure()
-  }
+  )
+}
 
-  if (isSection) {
+function validateMovedShape(
+  input: PlannedMoveStructure,
+  originalBlocks: MarkdownBlockRange[],
+  insertedBlocks: MarkdownBlockRange[],
+): boolean {
+  if (input.isSection) {
     const section = findHeadingSection(
-      plannedMarkdown,
-      collectHeadings(plannedMarkdown),
-      movedFrom,
+      input.plannedMarkdown,
+      collectHeadings(input.plannedMarkdown),
+      input.movedRange.from,
     )
-    if (!section || section.from !== movedFrom || section.to !== movedTo)
-      return invalidStructure()
-  } else {
-    const originalMovedBlocks = originalBlocks.filter(
-      (block) => block.from >= originalFrom && block.from < originalTo,
+    return (
+      section?.from === input.movedRange.from &&
+      section.to === input.movedRange.to
     )
-    if (originalMovedBlocks.length !== 1 || insertedBlocks.length !== 1)
-      return invalidStructure()
   }
 
-  const originalRemaining = originalBlocks.filter(
-    (block) => block.from < originalFrom || block.from >= originalTo,
+  return (
+    blocksIn(originalBlocks, input.originalRange).length === 1 &&
+    insertedBlocks.length === 1
   )
-  const plannedRemaining = plannedBlocks.filter(
-    (block) => block.from < movedFrom || block.from >= movedTo,
-  )
+}
+
+function validateRemainingBlocks(
+  input: PlannedMoveStructure,
+  originalBlocks: MarkdownBlockRange[],
+  plannedBlocks: MarkdownBlockRange[],
+): boolean {
   return hasSameBlocks(
-    plannedMarkdown,
-    plannedRemaining,
-    originalMarkdown,
-    originalRemaining,
+    input.plannedMarkdown,
+    blocksOutside(plannedBlocks, input.movedRange),
+    input.originalMarkdown,
+    blocksOutside(originalBlocks, input.originalRange),
   )
+}
+
+export function validatePlannedMoveStructure(
+  input: PlannedMoveStructure,
+): InvalidBlockMoveError | undefined {
+  const { originalMarkdown, plannedMarkdown } = input
+  const originalBlocks = topLevelBlocks(originalMarkdown)
+  const plannedBlocks = topLevelBlocks(plannedMarkdown)
+  const insertedMarkdown = plannedMarkdown.slice(
+    input.movedRange.from,
+    input.movedRange.to,
+  )
+  const insertedBlocks = topLevelBlocks(insertedMarkdown)
+
+  const isValid =
+    validateMovedBlocks(
+      input,
+      plannedBlocks,
+      insertedMarkdown,
+      insertedBlocks,
+    ) &&
+    validateMovedShape(input, originalBlocks, insertedBlocks) &&
+    validateRemainingBlocks(input, originalBlocks, plannedBlocks)
+  return isValid
     ? undefined
-    : invalidStructure()
+    : new InvalidBlockMoveError(
+        'The move would change Markdown block structure',
+      )
 }

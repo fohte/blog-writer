@@ -218,24 +218,23 @@ function applyMoveBlock(
       ? {}
       : { replacement: options.replacement }),
   })
-  const { deletionFrom, removedLength, insertionIndex, insertion, seam } =
-    plannedMove
-  const remainingMarkdown =
-    markdown.slice(0, deletionFrom) +
-    markdown.slice(deletionFrom + removedLength)
-  const plannedMarkdown =
-    remainingMarkdown.slice(0, insertionIndex) +
-    insertion.text +
-    remainingMarkdown.slice(insertionIndex)
-  const newFrom = insertionIndex + insertion.prefixLength
+  const {
+    deletionFrom,
+    removedLength,
+    insertionIndex,
+    insertion,
+    seam,
+    plannedMarkdown,
+    insertedFrom,
+    insertedTo,
+  } = plannedMove
+  const newFrom = insertedFrom
   const newTo = newFrom + insertion.contentLength
   const structureError = validatePlannedMoveStructure({
     originalMarkdown: markdown,
-    originalFrom: range.from,
-    originalTo: range.to,
+    originalRange: { from: range.from, to: range.to },
     plannedMarkdown,
-    movedFrom: newFrom,
-    movedTo: insertionIndex + insertion.text.length,
+    movedRange: { from: insertedFrom, to: insertedTo },
     isSection: range.headingLevel !== undefined,
   })
   if (structureError) return err(structureError)
