@@ -1,0 +1,60 @@
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use crate::{
+    llm::{LlmErrorPayload, LlmProgress},
+    research_claim_evidence::model::JudgeClaimEvidenceResult,
+    research_key_points::model::ResearchKeyPointsResult,
+};
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(tag = "task", rename_all = "snake_case")]
+pub(crate) enum ResearchJobRequest {
+    KeyPoints {
+        question: String,
+    },
+    ClaimEvidence {
+        claim: String,
+        before: Option<String>,
+        after: Option<String>,
+    },
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "task", content = "data", rename_all = "snake_case")]
+pub(crate) enum ResearchJobAnalysis {
+    KeyPoints(ResearchKeyPointsResult),
+    ClaimEvidence(JudgeClaimEvidenceResult),
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ResearchJobResult {
+    pub analysis: ResearchJobAnalysis,
+    pub sources: Vec<ResearchJobSource>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ResearchJobSource {
+    pub id: String,
+    pub url: String,
+    pub final_url: Option<String>,
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub status: ResearchJobSourceStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ResearchJobSourceStatus {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, ToSchema)]
+#[expect(dead_code, reason = "used as the OpenAPI response schema")]
+#[serde(tag = "event", content = "data", rename_all = "snake_case")]
+pub(crate) enum ResearchJobEvent {
+    Progress(LlmProgress),
+    Result(ResearchJobResult),
+    Error(LlmErrorPayload),
+}

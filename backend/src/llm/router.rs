@@ -12,5 +12,6 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(status))
         .merge(research_claim_evidence::router())
         .merge(research_key_points::router())
+        .merge(super::research_job::router())
         .merge(crate::write_from_key_points::router())
 }

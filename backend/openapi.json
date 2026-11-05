@@ -980,6 +980,43 @@
         }
       }
     },
+    "/api/research/jobs": {
+      "post": {
+        "operationId": "run_research_job",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Research progress and source-backed result",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchJobEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body or blank question or claim",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/key-points": {
       "post": {
         "operationId": "extract_research_key_points",
@@ -1528,6 +1565,158 @@
             "type": "string"
           }
         }
+      },
+      "ResearchJobAnalysis": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "task"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ResearchKeyPointsResult"
+              },
+              "task": {
+                "type": "string",
+                "enum": ["key_points"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "task"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JudgeClaimEvidenceResult"
+              },
+              "task": {
+                "type": "string",
+                "enum": ["claim_evidence"]
+              }
+            }
+          }
+        ]
+      },
+      "ResearchJobEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LlmProgress"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["progress"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ResearchJobResult"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/LlmErrorPayload"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "ResearchJobRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["question", "task"],
+            "properties": {
+              "question": {
+                "type": "string"
+              },
+              "task": {
+                "type": "string",
+                "enum": ["key_points"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["claim", "task"],
+            "properties": {
+              "after": {
+                "type": ["string", "null"]
+              },
+              "before": {
+                "type": ["string", "null"]
+              },
+              "claim": {
+                "type": "string"
+              },
+              "task": {
+                "type": "string",
+                "enum": ["claim_evidence"]
+              }
+            }
+          }
+        ]
+      },
+      "ResearchJobResult": {
+        "type": "object",
+        "required": ["analysis", "sources"],
+        "properties": {
+          "analysis": {
+            "$ref": "#/components/schemas/ResearchJobAnalysis"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResearchJobSource"
+            }
+          }
+        }
+      },
+      "ResearchJobSource": {
+        "type": "object",
+        "required": ["id", "url", "status"],
+        "properties": {
+          "body": {
+            "type": ["string", "null"]
+          },
+          "final_url": {
+            "type": ["string", "null"]
+          },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ResearchJobSourceStatus"
+          },
+          "title": {
+            "type": ["string", "null"]
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "ResearchJobSourceStatus": {
+        "type": "string",
+        "enum": ["available", "unavailable"]
       },
       "ResearchKeyPoint": {
         "type": "object",
