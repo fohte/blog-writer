@@ -19,6 +19,7 @@ const meta = {
     onPasteTarget: () => {},
     onPastedBodyChange: () => {},
     onSavePastedBody: () => {},
+    onRetrySource: () => {},
   },
 } satisfies Meta<typeof SourcePanelView>
 
@@ -81,6 +82,21 @@ export const AnalysisFailed: Story = {
       },
     ],
     expandedSourceId: readySource.id,
+  },
+}
+
+export const RetryingAnalysis: Story = {
+  name: '保存済み本文から要約をやり直している',
+  args: {
+    sources: [
+      {
+        ...readySource,
+        status: 'analysisFailed',
+        summary: '',
+      },
+    ],
+    expandedSourceId: readySource.id,
+    pending: [{ id: readySource.id, label: readySource.title }],
   },
 }
 

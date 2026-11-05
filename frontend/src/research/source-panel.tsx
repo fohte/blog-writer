@@ -272,6 +272,23 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
         setPasteTargetId(id)
         setPastedBody('')
       }}
+      onRetrySource={(source) => {
+        beginImport(
+          source.id,
+          source.title,
+          {
+            kind: 'stored',
+            source: {
+              kind: source.kind,
+              title: source.title,
+              url: source.url,
+              fileName: source.fileName,
+            },
+          },
+          source,
+          source,
+        )
+      }}
       onSavePastedBody={(source) => {
         const body = pastedBody.trim()
         if (body.length === 0) return

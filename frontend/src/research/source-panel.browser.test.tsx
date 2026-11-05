@@ -305,6 +305,12 @@ function readAnalysisFailureOutput(doc: Y.Doc) {
     pasteActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
       (button) => button.textContent === '本文を貼り付け',
     ),
+    retryActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
+      (button) => button.textContent === '要約をやり直す',
+    ),
+    emptyFindingsNoticeVisible: [...(host?.querySelectorAll('p') ?? [])].some(
+      (paragraph) => paragraph.textContent === '要点はありません。',
+    ),
     fetchCalls: readFetchCalls(),
   }
 }
@@ -322,6 +328,12 @@ function readExistingAnalysisFailureOutput(doc: Y.Doc) {
     pasteActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
       (button) => button.textContent === '本文を貼り付け',
     ),
+    retryActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
+      (button) => button.textContent === '要約をやり直す',
+    ),
+    emptyFindingsNoticeVisible: [...(host?.querySelectorAll('p') ?? [])].some(
+      (paragraph) => paragraph.textContent === '要点はありません。',
+    ),
     savedBodies,
     fetchCalls: readFetchCalls(),
   }
@@ -336,6 +348,32 @@ function readRecoveryCycleOutput(
   doc: Y.Doc,
 ) {
   return { failedImport, recovered: readBodyRecoveryOutput(doc) }
+}
+
+async function clickRetrySourceAnalysis() {
+  const startingCallCount = fetchMock.mock.calls.length
+  await act(async () => {
+    ;[...(host?.querySelectorAll('button') ?? [])]
+      .find((button) => button.textContent === '要約をやり直す')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await vi.waitFor(() => {
+      if (fetchMock.mock.calls.length < startingCallCount + 2)
+        throw new Error('source analysis retry has not reached the LLM API')
+    })
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  })
+}
+
+function readAnalysisRetryCycleOutput(
+  initialFailure: ReturnType<typeof readAnalysisFailureOutput>,
+  retriedFailure: ReturnType<typeof readAnalysisFailureOutput>,
+  doc: Y.Doc,
+) {
+  return {
+    initialFailure,
+    retriedFailure,
+    recovered: { ...readOutput(doc), fetchCalls: readFetchCalls() },
+  }
 }
 
 beforeEach(() => {
@@ -756,6 +794,8 @@ describe('SourcePanel', () => {
         '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
       analysisNotice: '本文は保存済みですが、要約と要点の作成に失敗しました。',
       pasteActionVisible: false,
+      retryActionVisible: true,
+      emptyFindingsNoticeVisible: false,
       fetchCalls: [
         {
           url: '/api/articles/article-a/source-bodies/generated-source/url',
@@ -767,6 +807,149 @@ describe('SourcePanel', () => {
         },
         { url: '/api/research/key-points', method: 'POST' },
       ],
+    })
+    doc.destroy()
+  })
+
+  it('retries analysis from the stored body and stays failed until it succeeds', async () => {
+    const doc = new Y.Doc()
+    researchStatus = 500
+    mountSourcePanel(doc)
+    dispatchPaste(
+      host?.querySelector('[aria-labelledby="source-panel-heading"]'),
+      'https://data.example.invalid/report',
+    )
+    await settleUi(doc)
+    const initialFailure = readAnalysisFailureOutput(doc)
+
+    await clickRetrySourceAnalysis()
+    await settleUi(doc)
+    const retriedFailure = readAnalysisFailureOutput(doc)
+
+    researchStatus = 200
+    await clickRetrySourceAnalysis()
+    await settleUi(doc)
+
+    expect(
+      readAnalysisRetryCycleOutput(initialFailure, retriedFailure, doc),
+    ).toEqual({
+      initialFailure: {
+        sources: [
+          {
+            id: 'generated-source',
+            kind: 'url',
+            title: '資料のタイトル',
+            url: 'https://data.example.invalid/report',
+            fileName: null,
+            checkedAt: 'normalized-date',
+            status: 'analysisFailed',
+            summary: '',
+          },
+        ],
+        findings: [],
+        renderedTitle: '資料のタイトル',
+        alert:
+          '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
+        analysisNotice:
+          '本文は保存済みですが、要約と要点の作成に失敗しました。',
+        pasteActionVisible: false,
+        retryActionVisible: true,
+        emptyFindingsNoticeVisible: false,
+        fetchCalls: [
+          {
+            url: '/api/articles/article-a/source-bodies/generated-source/url',
+            method: 'POST',
+          },
+          {
+            url: '/api/articles/article-a/source-bodies/generated-source',
+            method: 'GET',
+          },
+          { url: '/api/research/key-points', method: 'POST' },
+        ],
+      },
+      retriedFailure: {
+        sources: [
+          {
+            id: 'generated-source',
+            kind: 'url',
+            title: '資料のタイトル',
+            url: 'https://data.example.invalid/report',
+            fileName: null,
+            checkedAt: 'normalized-date',
+            status: 'analysisFailed',
+            summary: '',
+          },
+        ],
+        findings: [],
+        renderedTitle: '資料のタイトル',
+        alert:
+          '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
+        analysisNotice:
+          '本文は保存済みですが、要約と要点の作成に失敗しました。',
+        pasteActionVisible: false,
+        retryActionVisible: true,
+        emptyFindingsNoticeVisible: false,
+        fetchCalls: [
+          {
+            url: '/api/articles/article-a/source-bodies/generated-source/url',
+            method: 'POST',
+          },
+          {
+            url: '/api/articles/article-a/source-bodies/generated-source',
+            method: 'GET',
+          },
+          { url: '/api/research/key-points', method: 'POST' },
+          {
+            url: '/api/articles/article-a/source-bodies/generated-source',
+            method: 'GET',
+          },
+          { url: '/api/research/key-points', method: 'POST' },
+        ],
+      },
+      recovered: {
+        sources: [
+          {
+            id: 'generated-source',
+            kind: 'url',
+            title: '資料のタイトル',
+            url: 'https://data.example.invalid/report',
+            fileName: null,
+            checkedAt: 'normalized-date',
+            status: 'ready',
+            summary: '利用者数は増加しました。',
+          },
+        ],
+        findings: [
+          {
+            id: 'generated-finding',
+            sourceId: 'generated-source',
+            text: '利用者数が増加しました。',
+            quote: '利用者数は増加しました。',
+          },
+        ],
+        renderedTitle: '資料のタイトル',
+        fetchCalls: [
+          {
+            url: '/api/articles/article-a/source-bodies/generated-source/url',
+            method: 'POST',
+          },
+          {
+            url: '/api/articles/article-a/source-bodies/generated-source',
+            method: 'GET',
+          },
+          { url: '/api/research/key-points', method: 'POST' },
+          {
+            url: '/api/articles/article-a/source-bodies/generated-source',
+            method: 'GET',
+          },
+          { url: '/api/research/key-points', method: 'POST' },
+          {
+            url: '/api/articles/article-a/source-bodies/generated-source',
+            method: 'GET',
+          },
+          { url: '/api/research/key-points', method: 'POST' },
+        ],
+      },
     })
     doc.destroy()
   })
@@ -820,6 +1003,8 @@ describe('SourcePanel', () => {
         '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
       analysisNotice: '本文は保存済みですが、要約と要点の作成に失敗しました。',
       pasteActionVisible: false,
+      retryActionVisible: true,
+      emptyFindingsNoticeVisible: false,
       savedBodies: [body],
       fetchCalls: [
         {

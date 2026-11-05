@@ -28,6 +28,7 @@ type SourcePanelViewProps = {
   onPasteTarget: (id: string | null) => void
   onPastedBodyChange: (body: string) => void
   onSavePastedBody: (source: Source) => void
+  onRetrySource: (source: Source) => void
 }
 
 function getSourceLocation(source: Source): string {
@@ -60,6 +61,7 @@ export function SourcePanelView({
   onPasteTarget,
   onPastedBodyChange,
   onSavePastedBody,
+  onRetrySource,
 }: SourcePanelViewProps) {
   return (
     <section
@@ -204,15 +206,28 @@ export function SourcePanelView({
                         ) : null}
                       </div>
                     ) : source.status === 'analysisFailed' ? (
-                      <p className="text-sm text-muted-foreground">
-                        本文は保存済みですが、要約と要点の作成に失敗しました。
-                      </p>
+                      <div className="flex flex-col items-start gap-2">
+                        <p className="text-sm text-muted-foreground">
+                          本文は保存済みですが、要約と要点の作成に失敗しました。
+                        </p>
+                        <Button
+                          disabled={isPending}
+                          onClick={() => {
+                            onRetrySource(source)
+                          }}
+                          type="button"
+                          variant="outline"
+                        >
+                          要約をやり直す
+                        </Button>
+                      </div>
                     ) : (
                       <p className="whitespace-pre-wrap text-sm text-muted-foreground">
                         {source.summary || '要約はありません。'}
                       </p>
                     )}
-                    {sourceFindings.length === 0 ? (
+                    {source.status ===
+                    'analysisFailed' ? null : sourceFindings.length === 0 ? (
                       <p className="text-sm text-muted-foreground">
                         要点はありません。
                       </p>

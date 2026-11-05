@@ -79,6 +79,7 @@ export type SourceInput =
   | { kind: 'url'; url: string }
   | { kind: 'file'; file: File }
   | { kind: 'pasted'; title: string; body: string; url: string | null }
+  | { kind: 'stored'; source: SourceMetadata }
 
 function researchApiUrl(settings: LlmSettings): string {
   if (settings.route === 'server') return '/api/research/key-points'
@@ -173,6 +174,12 @@ export function importSource(
         ),
       ),
     )
+  }
+
+  if (input.kind === 'stored') {
+    return withBodyImportError(
+      getSourceBody(fetcher, articleId, sourceId, signal),
+    ).andThen((stored) => finish(input.source, stored.body))
   }
 
   return withBodyImportError(
