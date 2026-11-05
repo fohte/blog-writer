@@ -93,6 +93,7 @@ pub async fn get_configuration(
     responses(
         (status = 200, description = "Current synchronization file and state", body = ArticleFileSyncResponse),
         (status = 400, description = "Invalid synchronization file path", body = ErrorResponse),
+        (status = 404, description = "Article was not found", body = ErrorResponse),
         (status = 422, description = "Synchronization file is not valid UTF-8", body = ErrorResponse),
         (status = 503, description = "File synchronization is not configured", body = ErrorResponse)
     )
@@ -118,6 +119,7 @@ pub async fn get_article_file(
     responses(
         (status = 200, description = "Synchronization file selected", body = ArticleFileSyncResponse),
         (status = 400, description = "Invalid synchronization file path", body = ErrorResponse),
+        (status = 404, description = "Article was not found", body = ErrorResponse),
         (status = 422, description = "Synchronization file is not valid UTF-8", body = ErrorResponse),
         (status = 503, description = "File synchronization is not configured", body = ErrorResponse)
     )
@@ -143,6 +145,7 @@ pub async fn set_article_file(
     responses(
         (status = 200, description = "File synchronization resumed after import", body = ArticleFileSyncResponse),
         (status = 400, description = "No synchronization file is selected", body = ErrorResponse),
+        (status = 404, description = "Article was not found", body = ErrorResponse),
         (status = 409, description = "The file changed after it was read", body = ErrorResponse),
         (status = 422, description = "Synchronization file is not valid UTF-8", body = ErrorResponse),
         (status = 503, description = "File synchronization is not configured", body = ErrorResponse)
@@ -168,6 +171,7 @@ pub async fn resume_article_file_sync(
     responses(
         (status = 200, description = "Article body written to the synchronization file", body = ArticleFileSyncResponse),
         (status = 400, description = "No synchronization file is selected", body = ErrorResponse),
+        (status = 404, description = "Article was not found", body = ErrorResponse),
         (status = 503, description = "File synchronization is not configured", body = ErrorResponse)
     )
 )]
@@ -192,6 +196,7 @@ fn service(state: &AppState) -> Result<&LocalFileSyncService, AppError> {
 
 fn map_error(error: FileSyncError) -> AppError {
     match error {
+        FileSyncError::ArticleNotFound => AppError::NotFound,
         FileSyncError::InvalidPath => AppError::Client {
             status: StatusCode::BAD_REQUEST,
             message: "Invalid synchronization file request".to_owned(),

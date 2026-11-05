@@ -5,10 +5,11 @@ use indoc::indoc;
 use rstest::rstest;
 use serde_json::{Value, json};
 use tempfile::TempDir;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tower::ServiceExt;
 use yrs::{
-    Doc, Map, MapPrelim, ReadTxn, StateVector, Text, Transact, Update, updates::decoder::Decode,
+    Any, Doc, Map, MapPrelim, MapRef, Out, ReadTxn, StateVector, Text, Transact, Update,
+    updates::decoder::Decode,
 };
 
 use crate::{
@@ -24,7 +25,7 @@ use crate::{
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 struct Fixture {
-    _directory: TempDir,
+    directory: TempDir,
     service: LocalFileSyncService,
     sync: SyncService,
 }
@@ -40,7 +41,7 @@ async fn fixture(delay: Duration) -> TestResult<Fixture> {
     seed_document(&sync, "article-example", "初期本文").await?;
     seed_index_entry(&sync, "article-example").await?;
     Ok(Fixture {
-        _directory: directory,
+        directory,
         service,
         sync,
     })
@@ -73,6 +74,84 @@ async fn seed_index_entry(sync: &SyncService, article_id: &str) -> TestResult {
         .apply_update(&update)
         .await?;
     Ok(())
+}
+
+async fn set_index_file_state(
+    sync: &SyncService,
+    article_id: &str,
+    path: Option<&str>,
+    hash: Option<&str>,
+    status: &str,
+) -> TestResult {
+    let document = sync.open_document("article-index").await?;
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    let articles = doc.get_or_insert_map("articles");
+    let article = {
+        let transaction = doc.transact();
+        articles
+            .get(&transaction, article_id)
+            .and_then(|entry| MapRef::try_from(entry).ok())
+    }
+    .ok_or_else(|| std::io::Error::other("article entry was not seeded"))?;
+    if let Some(path) = path {
+        article.insert(&mut doc.transact_mut(), "syncFilePath", path);
+    } else {
+        article.remove(&mut doc.transact_mut(), "syncFilePath");
+    }
+    if let Some(hash) = hash {
+        article.insert(&mut doc.transact_mut(), "syncFileHash", hash);
+    } else {
+        article.remove(&mut doc.transact_mut(), "syncFileHash");
+    }
+    article.insert(&mut doc.transact_mut(), "syncFileStatus", status);
+    let update = doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    document.apply_update(&update).await?;
+    Ok(())
+}
+
+async fn delete_index_entry(sync: &SyncService, article_id: &str) -> TestResult {
+    let document = sync.open_document("article-index").await?;
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    let articles = doc.get_or_insert_map("articles");
+    articles.remove(&mut doc.transact_mut(), article_id);
+    let update = doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    document.apply_update(&update).await?;
+    Ok(())
+}
+
+async fn article_index_client_count(sync: &SyncService) -> TestResult<usize> {
+    let document = sync.open_document("article-index").await?;
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    Ok(doc.transact().state_vector().len())
+}
+
+async fn article_index_sync_status(sync: &SyncService, article_id: &str) -> TestResult<String> {
+    let document = sync.open_document("article-index").await?;
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    let transaction = doc.transact();
+    let articles = transaction
+        .get_map("articles")
+        .ok_or_else(|| std::io::Error::other("article index was not initialized"))?;
+    let article = articles
+        .get(&transaction, article_id)
+        .and_then(|entry| MapRef::try_from(entry).ok())
+        .ok_or_else(|| std::io::Error::other("article entry was not initialized"))?;
+    match article.get(&transaction, "syncFileStatus") {
+        Some(Out::Any(Any::String(status))) => Ok(status.to_string()),
+        _ => Err(std::io::Error::other("article sync status was not initialized").into()),
+    }
 }
 
 async fn replace_body(sync: &SyncService, article_id: &str, body: &str) -> TestResult {
@@ -157,6 +236,179 @@ async fn writes_article_body_after_debounce_without_waiting_for_the_production_d
     Ok(())
 }
 
+#[tokio::test]
+async fn watches_article_index_entries_added_after_startup() -> TestResult {
+    let fixture = fixture(Duration::ZERO).await?;
+    fs::create_dir_all(fixture.service.directory())?;
+    fs::write(fixture.service.directory().join("late.md"), "初期本文")?;
+    fixture.service.start().await?;
+    set_index_file_state(
+        &fixture.sync,
+        "article-example",
+        Some("late.md"),
+        Some("39c33819cc10ba4f2b8b5034f95024385e56272d48013713727f08892bdd9775"),
+        "synced",
+    )
+    .await?;
+    replace_body(&fixture.sync, "article-example", "更新後の本文").await?;
+
+    let result = wait_for(&fixture, |snapshot| {
+        snapshot.state.content.as_deref() == Some("更新後の本文")
+    })
+    .await?;
+
+    assert_eq!(
+        result.state,
+        ArticleFileContent {
+            state: ArticleFileState {
+                path: Some("late.md".to_owned()),
+                hash: Some(
+                    "5d324ce69241e29162b91edbe082760b1c04337b925aaa9f6941e426178e8394".to_owned()
+                ),
+                status: FileSyncStatus::Synced,
+            },
+            content: Some("更新後の本文".to_owned()),
+            content_hash: Some(
+                "5d324ce69241e29162b91edbe082760b1c04337b925aaa9f6941e426178e8394".to_owned()
+            ),
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn coalesces_article_edits_during_the_debounce_window() -> TestResult {
+    let fixture = fixture(Duration::from_millis(80)).await?;
+    fixture
+        .service
+        .set_article_file("article-example", "debounced.md")
+        .await?;
+    fixture.service.start().await?;
+    let index = fixture.sync.open_document("article-index").await?;
+    let mut index_updates = index.subscribe_updates();
+    replace_body(&fixture.sync, "article-example", "途中の本文").await?;
+    sleep(Duration::from_millis(10)).await;
+    replace_body(&fixture.sync, "article-example", "更新後の本文").await?;
+
+    let result = wait_for(&fixture, |snapshot| {
+        snapshot.state.content.as_deref() == Some("更新後の本文")
+    })
+    .await?;
+    sleep(Duration::from_millis(120)).await;
+    let index_update_count = std::iter::from_fn(|| index_updates.try_recv().ok()).count();
+
+    assert_eq!(
+        (result.state, index_update_count),
+        (
+            ArticleFileContent {
+                state: ArticleFileState {
+                    path: Some("debounced.md".to_owned()),
+                    hash: Some(
+                        "5d324ce69241e29162b91edbe082760b1c04337b925aaa9f6941e426178e8394"
+                            .to_owned()
+                    ),
+                    status: FileSyncStatus::Synced,
+                },
+                content: Some("更新後の本文".to_owned()),
+                content_hash: Some(
+                    "5d324ce69241e29162b91edbe082760b1c04337b925aaa9f6941e426178e8394".to_owned()
+                ),
+            },
+            1,
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn replaces_the_article_watcher_when_the_file_path_changes() -> TestResult {
+    let fixture = fixture(Duration::from_millis(10)).await?;
+    fixture.service.start().await?;
+    fixture
+        .service
+        .set_article_file("article-example", "first.md")
+        .await?;
+    replace_body(&fixture.sync, "article-example", "途中の本文").await?;
+    wait_for(&fixture, |snapshot| {
+        snapshot.state.content.as_deref() == Some("途中の本文")
+    })
+    .await?;
+    fixture
+        .service
+        .set_article_file("article-example", "second.md")
+        .await?;
+    replace_body(&fixture.sync, "article-example", "更新後の本文").await?;
+    let result = wait_for(&fixture, |snapshot| {
+        snapshot.state.state.path.as_deref() == Some("second.md")
+            && snapshot.state.content.as_deref() == Some("更新後の本文")
+    })
+    .await?;
+    sleep(Duration::from_millis(50)).await;
+
+    assert_eq!(
+        (
+            result.state,
+            fs::read(fixture.service.directory().join("first.md"))?,
+            fs::read(fixture.service.directory().join("second.md"))?,
+        ),
+        (
+            ArticleFileContent {
+                state: ArticleFileState {
+                    path: Some("second.md".to_owned()),
+                    hash: Some(
+                        "5d324ce69241e29162b91edbe082760b1c04337b925aaa9f6941e426178e8394"
+                            .to_owned()
+                    ),
+                    status: FileSyncStatus::Synced,
+                },
+                content: Some("更新後の本文".to_owned()),
+                content_hash: Some(
+                    "5d324ce69241e29162b91edbe082760b1c04337b925aaa9f6941e426178e8394".to_owned()
+                ),
+            },
+            "途中の本文".as_bytes().to_vec(),
+            "更新後の本文".as_bytes().to_vec(),
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn stops_watching_when_the_article_index_entry_is_removed() -> TestResult {
+    let fixture = fixture(Duration::from_millis(10)).await?;
+    fixture.service.start().await?;
+    fixture
+        .service
+        .set_article_file("article-example", "removed.md")
+        .await?;
+    replace_body(&fixture.sync, "article-example", "本文削除前").await?;
+    wait_for(&fixture, |snapshot| {
+        snapshot.state.content.as_deref() == Some("本文削除前")
+    })
+    .await?;
+    delete_index_entry(&fixture.sync, "article-example").await?;
+    replace_body(&fixture.sync, "article-example", "本文削除後").await?;
+    sleep(Duration::from_millis(80)).await;
+    let state = fixture
+        .service
+        .article_file_state("article-example")
+        .await
+        .map(|_| "found")
+        .map_err(|error| error.to_string());
+
+    assert_eq!(
+        (
+            state,
+            fs::read(fixture.service.directory().join("removed.md"))?,
+        ),
+        (
+            Err("article was not found".to_owned()),
+            "本文削除前".as_bytes().to_vec(),
+        )
+    );
+    Ok(())
+}
+
 #[rstest]
 #[case::changed_file(true)]
 #[case::missing_file(false)]
@@ -197,6 +449,46 @@ async fn leaves_external_file_untouched_and_records_conflict(
                 "499d60bfe334d4bee39f140cd07b623c00e5157d302ed296e2c18a58e2b1d84f".to_owned()
             }),
         }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn treats_a_missing_hash_as_an_external_change() -> TestResult {
+    let fixture = fixture(Duration::ZERO).await?;
+    fixture.service.start().await?;
+    set_index_file_state(
+        &fixture.sync,
+        "article-example",
+        Some("missing-hash.md"),
+        None,
+        "synced",
+    )
+    .await?;
+    replace_body(&fixture.sync, "article-example", "アプリの変更").await?;
+
+    let result = wait_for(&fixture, |snapshot| {
+        snapshot.state.state.status == FileSyncStatus::ExternalChanged
+    })
+    .await?;
+
+    assert_eq!(
+        (
+            result.state,
+            fixture.service.directory().join("missing-hash.md").exists(),
+        ),
+        (
+            ArticleFileContent {
+                state: ArticleFileState {
+                    path: Some("missing-hash.md".to_owned()),
+                    hash: None,
+                    status: FileSyncStatus::ExternalChanged,
+                },
+                content: None,
+                content_hash: None,
+            },
+            false,
+        )
     );
     Ok(())
 }
@@ -245,6 +537,28 @@ async fn selecting_a_missing_file_initializes_and_an_existing_file_conflicts() -
             },
         )
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn reuses_one_server_client_id_for_index_state_updates() -> TestResult {
+    let fixture = fixture(Duration::ZERO).await?;
+    fixture
+        .service
+        .set_article_file("article-example", "first.md")
+        .await?;
+    let initial_client_count = article_index_client_count(&fixture.sync).await?;
+    fixture
+        .service
+        .set_article_file("article-example", "second.md")
+        .await?;
+    fixture
+        .service
+        .set_article_file("article-example", "third.md")
+        .await?;
+    let final_client_count = article_index_client_count(&fixture.sync).await?;
+
+    assert_eq!((initial_client_count, final_client_count), (2, 2));
     Ok(())
 }
 
@@ -406,6 +720,91 @@ async fn overwrite_preserves_crlf_and_removes_the_temporary_file() -> TestResult
     Ok(())
 }
 
+#[tokio::test]
+async fn debounced_article_updates_preserve_crlf_line_endings() -> TestResult {
+    let fixture = fixture(Duration::from_millis(20)).await?;
+    fs::create_dir_all(fixture.service.directory())?;
+    let file = fixture.service.directory().join("crlf.md");
+    let previous = indoc! {"
+        old
+        text
+    "}
+    .replace('\n', "\r\n");
+    fs::write(&file, previous.as_bytes())?;
+    let selected = fixture
+        .service
+        .set_article_file("article-example", "crlf.md")
+        .await?;
+    let imported_hash = selected
+        .content_hash
+        .as_deref()
+        .ok_or("selected file did not return a hash")?;
+    fixture
+        .service
+        .resume_article_file_sync("article-example", imported_hash)
+        .await?;
+    fixture.service.start().await?;
+    let body = indoc! {"
+        新しい本文
+        次の行
+    "}
+    .trim_end_matches('\n');
+    replace_body(&fixture.sync, "article-example", body).await?;
+    let result = wait_for(&fixture, |snapshot| {
+        snapshot.state.content.as_deref() == Some("新しい本文\r\n次の行")
+    })
+    .await?;
+    let entries = fs::read_dir(fixture.service.directory())?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    assert_eq!(
+        (result.state, fs::read(file)?, entries),
+        (
+            ArticleFileContent {
+                state: ArticleFileState {
+                    path: Some("crlf.md".to_owned()),
+                    hash: Some(
+                        "9653fdfc444daab6a0ee318ba9cacb6921a261f3485df5455c20ce9c04226556"
+                            .to_owned()
+                    ),
+                    status: FileSyncStatus::Synced,
+                },
+                content: Some("新しい本文\r\n次の行".to_owned()),
+                content_hash: Some(
+                    "9653fdfc444daab6a0ee318ba9cacb6921a261f3485df5455c20ce9c04226556".to_owned()
+                ),
+            },
+            "新しい本文\r\n次の行".as_bytes().to_vec(),
+            vec![std::ffi::OsString::from("crlf.md")],
+        )
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sets_new_file_permissions_and_preserves_existing_permissions() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = fixture(Duration::ZERO).await?;
+    fixture
+        .service
+        .set_article_file("article-example", "permissions.md")
+        .await?;
+    let file = fixture.service.directory().join("permissions.md");
+    let created_mode = fs::metadata(&file)?.permissions().mode() & 0o777;
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o640))?;
+    fixture
+        .service
+        .overwrite_article_file("article-example")
+        .await?;
+    let overwritten_mode = fs::metadata(&file)?.permissions().mode() & 0o777;
+
+    assert_eq!((created_mode, overwritten_mode), (0o644, 0o640));
+    Ok(())
+}
+
 #[rstest]
 #[case::absolute("/outside/example.md")]
 #[case::parent("../example.md")]
@@ -434,7 +833,7 @@ async fn rejects_symlinks_that_leave_the_sync_directory() -> TestResult {
 
     let fixture = fixture(Duration::ZERO).await?;
     fs::create_dir_all(fixture.service.directory())?;
-    let outside = fixture._directory.path().join("outside");
+    let outside = fixture.directory.path().join("outside");
     fs::create_dir(&outside)?;
     symlink(&outside, fixture.service.directory().join("linked"))?;
     let actual = fixture
@@ -445,6 +844,33 @@ async fn rejects_symlinks_that_leave_the_sync_directory() -> TestResult {
         .map_err(|error| error.to_string());
 
     assert_eq!(actual, Err("invalid synchronization file path".to_owned()));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn rejects_a_file_symlink_that_leaves_the_sync_directory() -> TestResult {
+    use std::os::unix::fs::symlink;
+
+    let fixture = fixture(Duration::ZERO).await?;
+    fs::create_dir_all(fixture.service.directory())?;
+    let outside = fixture.directory.path().join("outside.md");
+    fs::write(&outside, "保護する本文")?;
+    symlink(&outside, fixture.service.directory().join("linked.md"))?;
+    let actual = fixture
+        .service
+        .set_article_file("article-example", "linked.md")
+        .await
+        .map(|_| "accepted")
+        .map_err(|error| error.to_string());
+
+    assert_eq!(
+        (actual, fs::read(outside)?),
+        (
+            Err("invalid synchronization file path".to_owned()),
+            "保護する本文".as_bytes().to_vec(),
+        )
+    );
     Ok(())
 }
 
@@ -465,6 +891,50 @@ async fn rejects_symlinks_that_resolve_into_git_metadata() -> TestResult {
         .map_err(|error| error.to_string());
 
     assert_eq!(actual, Err("invalid synchronization file path".to_owned()));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pauses_sync_after_a_selected_file_becomes_an_unsafe_symlink() -> TestResult {
+    use std::os::unix::fs::symlink;
+
+    let fixture = fixture(Duration::from_millis(10)).await?;
+    fixture.service.start().await?;
+    fixture
+        .service
+        .set_article_file("article-example", "guarded.md")
+        .await?;
+    let outside = fixture.directory.path().join("outside.md");
+    fs::write(&outside, "外部ファイル")?;
+    let selected_path = fixture.service.directory().join("guarded.md");
+    fs::remove_file(&selected_path)?;
+    symlink(&outside, &selected_path)?;
+    replace_body(&fixture.sync, "article-example", "最初の編集").await?;
+
+    let status = timeout(Duration::from_secs(3), async {
+        loop {
+            let status = article_index_sync_status(&fixture.sync, "article-example")
+                .await
+                .ok()?;
+            if status == "external_changed" {
+                return Some(status);
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?
+    .ok_or("unsafe file change was not recorded")?;
+    replace_body(&fixture.sync, "article-example", "次の編集").await?;
+    sleep(Duration::from_millis(40)).await;
+
+    assert_eq!(
+        (status, fs::read(outside)?),
+        (
+            "external_changed".to_owned(),
+            "外部ファイル".as_bytes().to_vec()
+        )
+    );
     Ok(())
 }
 
@@ -516,6 +986,59 @@ async fn reports_disabled_configuration_and_unavailable_article_endpoints() -> T
 }
 
 #[tokio::test]
+async fn returns_not_found_for_article_ids_missing_from_the_index() -> TestResult {
+    let fixture = fixture(Duration::ZERO).await?;
+    let app = router(
+        AppState {
+            file_sync: Some(fixture.service.clone()),
+            ..AppState::default()
+        },
+        HostOriginPolicy::new(vec!["localhost:3000".to_owned()], Vec::new()),
+    );
+    let get = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/articles/missing-article/file-sync")
+                .header("host", "localhost:3000")
+                .body(Body::empty())?,
+        )
+        .await?;
+    let get_status = get.status().as_u16();
+    let get_body: Value = serde_json::from_slice(&to_bytes(get.into_body(), usize::MAX).await?)?;
+    let put = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PUT")
+                .uri("/api/articles/missing-article/file-sync")
+                .header("host", "localhost:3000")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"path": "orphan.md"}).to_string()))?,
+        )
+        .await?;
+    let put_status = put.status().as_u16();
+    let put_body: Value = serde_json::from_slice(&to_bytes(put.into_body(), usize::MAX).await?)?;
+
+    assert_eq!(
+        (
+            get_status,
+            get_body,
+            put_status,
+            put_body,
+            fixture.service.directory().exists()
+        ),
+        (
+            404,
+            json!({"error": "Not Found"}),
+            404,
+            json!({"error": "Not Found"}),
+            false,
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn rejects_an_import_hash_that_changed_before_the_resume_request() -> TestResult {
     let fixture = fixture(Duration::ZERO).await?;
     let initial = fixture
@@ -561,14 +1084,11 @@ async fn rejects_an_import_hash_that_changed_before_the_resume_request() -> Test
 #[tokio::test]
 async fn returns_unprocessable_entity_for_non_utf8_file_content() -> TestResult {
     let fixture = fixture(Duration::ZERO).await?;
-    fs::create_dir_all(fixture.service.directory())?;
-    fs::write(fixture.service.directory().join("invalid.md"), [0xff])?;
-    let selection = fixture
+    fixture
         .service
         .set_article_file("article-example", "invalid.md")
-        .await
-        .map(|_| "selected")
-        .map_err(|error| error.to_string());
+        .await?;
+    fs::write(fixture.service.directory().join("invalid.md"), [0xff])?;
     let app = router(
         AppState {
             file_sync: Some(fixture.service.clone()),
@@ -586,13 +1106,14 @@ async fn returns_unprocessable_entity_for_non_utf8_file_content() -> TestResult 
         .await?;
     let status = response.status().as_u16();
     let body: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+    let sync_status = article_index_sync_status(&fixture.sync, "article-example").await?;
 
     assert_eq!(
-        (selection, status, body),
+        (status, body, sync_status),
         (
-            Err("synchronization file is not valid UTF-8".to_owned()),
             422,
             json!({"error": "Synchronization file is not valid UTF-8"}),
+            "external_changed".to_owned(),
         )
     );
     Ok(())

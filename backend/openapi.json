@@ -44,6 +44,16 @@
               }
             }
           },
+          "404": {
+            "description": "Article was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Synchronization file is not valid UTF-8",
             "content": {
@@ -110,6 +120,16 @@
               }
             }
           },
+          "404": {
+            "description": "Article was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Synchronization file is not valid UTF-8",
             "content": {
@@ -168,6 +188,16 @@
               }
             }
           },
+          "404": {
+            "description": "Article was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "503": {
             "description": "File synchronization is not configured",
             "content": {
@@ -218,6 +248,16 @@
           },
           "400": {
             "description": "No synchronization file is selected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Article was not found",
             "content": {
               "application/json": {
                 "schema": {

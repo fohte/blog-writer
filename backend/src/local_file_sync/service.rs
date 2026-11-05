@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Weak},
     time::Duration,
 };
 
@@ -12,20 +12,11 @@ use tokio::{
     task::JoinHandle,
     time::sleep,
 };
-use yrs::{
-    Any, Doc, GetString, Map, MapPrelim, MapRef, Out, ReadTxn, Transact, Update, WriteTxn,
-    updates::decoder::Decode,
-};
+use yrs::{Doc, GetString, ReadTxn, Transact};
 
-use crate::sync::{SyncDocument, SyncService};
+use crate::sync::SyncService;
 
-use super::storage;
-
-const ARTICLE_INDEX_ID: &str = "article-index";
-const ARTICLE_INDEX_MAP: &str = "articles";
-pub const PATH_KEY: &str = "syncFilePath";
-pub const HASH_KEY: &str = "syncFileHash";
-pub const STATUS_KEY: &str = "syncFileStatus";
+use super::{state, storage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileSyncStatus {
@@ -35,7 +26,7 @@ pub enum FileSyncStatus {
 }
 
 impl FileSyncStatus {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Unset => "unset",
             Self::Synced => "synced",
@@ -43,7 +34,7 @@ impl FileSyncStatus {
         }
     }
 
-    fn from_str(value: &str) -> Self {
+    pub(super) fn from_str(value: &str) -> Self {
         match value {
             "synced" => Self::Synced,
             "external_changed" => Self::ExternalChanged,
@@ -74,6 +65,8 @@ pub enum FileSyncError {
     FileChanged,
     #[error("synchronization file is not valid UTF-8")]
     NonUtf8,
+    #[error("article was not found")]
+    ArticleNotFound,
     #[error("synchronization document failed: {0}")]
     Sync(#[from] crate::sync::SyncError),
     #[error("invalid synchronization document: {0}")]
@@ -93,7 +86,9 @@ struct LocalFileSyncInner {
     sync: SyncService,
     directory: PathBuf,
     delay: Duration,
-    operations: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    index_client_id: u64,
+    index_state_lock: Mutex<()>,
+    operations: Mutex<HashMap<String, Weak<Mutex<()>>>>,
     watchers: Mutex<HashMap<String, ActiveWatcher>>,
 }
 
@@ -109,11 +104,14 @@ impl LocalFileSyncService {
     }
 
     pub(super) fn with_delay(sync: SyncService, directory: PathBuf, delay: Duration) -> Self {
+        let index_client_id = Doc::new().client_id().get();
         Self {
             inner: Arc::new(LocalFileSyncInner {
                 sync,
                 directory,
                 delay,
+                index_client_id,
+                index_state_lock: Mutex::new(()),
                 operations: Mutex::new(HashMap::new()),
                 watchers: Mutex::new(HashMap::new()),
             }),
@@ -125,11 +123,16 @@ impl LocalFileSyncService {
     }
 
     pub async fn start(&self) -> Result<(), FileSyncError> {
-        let index = self.inner.sync.open_document(ARTICLE_INDEX_ID).await?;
+        let index = self
+            .inner
+            .sync
+            .open_document(state::ARTICLE_INDEX_ID)
+            .await?;
         let mut index_updates = index.subscribe_updates();
         self.refresh_watchers().await?;
         let service = self.clone();
         tokio::spawn(async move {
+            let _index_document_guard = index;
             loop {
                 match index_updates.recv().await {
                     Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -149,14 +152,8 @@ impl LocalFileSyncService {
         article_id: &str,
     ) -> Result<ArticleFileContent, FileSyncError> {
         let _guard = self.operation_lock(article_id).await.lock_owned().await;
-        let mut content = self.article_file_state_unlocked(self.read_state(article_id).await?)?;
-        if content.state.status == FileSyncStatus::Synced
-            && content.content_hash.as_deref() != content.state.hash.as_deref()
-        {
-            content.state.status = FileSyncStatus::ExternalChanged;
-            self.write_state(article_id, &content.state).await?;
-        }
-        Ok(content)
+        let state = state::read_state(&self.inner.sync, article_id).await?;
+        self.article_file_state_unlocked(article_id, state).await
     }
 
     pub async fn set_article_file(
@@ -165,6 +162,7 @@ impl LocalFileSyncService {
         path: &str,
     ) -> Result<ArticleFileContent, FileSyncError> {
         let _guard = self.operation_lock(article_id).await.lock_owned().await;
+        state::read_state(&self.inner.sync, article_id).await?;
         storage::validate_path(&self.inner.directory, path)?;
         let existing = storage::read_file(&self.inner.directory, path)?;
         let state = if existing.is_some() {
@@ -183,9 +181,9 @@ impl LocalFileSyncService {
                 status: FileSyncStatus::Synced,
             }
         };
-        self.write_state(article_id, &state).await?;
+        self.persist_state(article_id, &state).await?;
         self.refresh_watchers().await?;
-        self.article_file_state_unlocked(state)
+        self.article_file_state_unlocked(article_id, state).await
     }
 
     pub async fn resume_article_file_sync(
@@ -194,7 +192,7 @@ impl LocalFileSyncService {
         imported_hash: &str,
     ) -> Result<ArticleFileContent, FileSyncError> {
         let _guard = self.operation_lock(article_id).await.lock_owned().await;
-        let mut state = self.read_state(article_id).await?;
+        let mut state = state::read_state(&self.inner.sync, article_id).await?;
         let path = state.path.as_deref().ok_or(FileSyncError::InvalidPath)?;
         let bytes =
             storage::read_file(&self.inner.directory, path)?.ok_or(FileSyncError::FileChanged)?;
@@ -205,8 +203,8 @@ impl LocalFileSyncService {
         }
         state.hash = Some(actual_hash);
         state.status = FileSyncStatus::Synced;
-        self.write_state(article_id, &state).await?;
-        self.article_file_state_unlocked(state)
+        self.persist_state(article_id, &state).await?;
+        self.article_file_state_unlocked(article_id, state).await
     }
 
     pub async fn overwrite_article_file(
@@ -214,7 +212,7 @@ impl LocalFileSyncService {
         article_id: &str,
     ) -> Result<ArticleFileContent, FileSyncError> {
         let _guard = self.operation_lock(article_id).await.lock_owned().await;
-        let mut state = self.read_state(article_id).await?;
+        let mut state = state::read_state(&self.inner.sync, article_id).await?;
         let path = state.path.as_deref().ok_or(FileSyncError::InvalidPath)?;
         let previous = storage::read_file(&self.inner.directory, path)?;
         let body = self.read_article_body(article_id).await?;
@@ -222,13 +220,14 @@ impl LocalFileSyncService {
         storage::atomic_write(&self.inner.directory, path, &bytes)?;
         state.hash = Some(storage::sha256_hex(&bytes));
         state.status = FileSyncStatus::Synced;
-        self.write_state(article_id, &state).await?;
-        self.article_file_state_unlocked(state)
+        self.persist_state(article_id, &state).await?;
+        self.article_file_state_unlocked(article_id, state).await
     }
 
-    fn article_file_state_unlocked(
+    async fn article_file_state_unlocked(
         &self,
-        state: ArticleFileState,
+        article_id: &str,
+        mut state: ArticleFileState,
     ) -> Result<ArticleFileContent, FileSyncError> {
         let Some(path) = state.path.as_deref() else {
             return Ok(ArticleFileContent {
@@ -237,9 +236,15 @@ impl LocalFileSyncService {
                 content_hash: None,
             });
         };
-        let content = storage::read_file(&self.inner.directory, path)?;
-        let content_hash = content.as_deref().map(storage::sha256_hex);
-        let content = content
+        let bytes = storage::read_file(&self.inner.directory, path)?;
+        let content_hash = bytes.as_deref().map(storage::sha256_hex);
+        if state.status == FileSyncStatus::Synced
+            && (state.hash.is_none() || content_hash.as_deref() != state.hash.as_deref())
+        {
+            state.status = FileSyncStatus::ExternalChanged;
+            self.persist_state(article_id, &state).await?;
+        }
+        let content = bytes
             .map(|bytes| String::from_utf8(bytes).map_err(|_| FileSyncError::NonUtf8))
             .transpose()?;
         Ok(ArticleFileContent {
@@ -250,9 +255,13 @@ impl LocalFileSyncService {
     }
 
     async fn refresh_watchers(&self) -> Result<(), FileSyncError> {
-        let index = self.inner.sync.open_document(ARTICLE_INDEX_ID).await?;
-        let entries = read_index_entries(&index).await?;
+        let index = self
+            .inner
+            .sync
+            .open_document(state::ARTICLE_INDEX_ID)
+            .await?;
         let mut watchers = self.inner.watchers.lock().await;
+        let entries = state::read_index_entries(&index).await?;
         watchers.retain(|article_id, watcher| {
             if entries.get(article_id) == Some(&watcher.path) {
                 true
@@ -307,7 +316,10 @@ impl LocalFileSyncService {
                             }
                         }
                         if let Err(error) = self.process_article_update(&article_id).await {
-                            tracing::error!(article_id, %error, "failed to synchronize article file");
+                            match error {
+                                FileSyncError::ArticleNotFound => return,
+                                error => tracing::error!(article_id, %error, "failed to synchronize article file"),
+                            }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
@@ -318,29 +330,49 @@ impl LocalFileSyncService {
 
     async fn process_article_update(&self, article_id: &str) -> Result<(), FileSyncError> {
         let _guard = self.operation_lock(article_id).await.lock_owned().await;
-        let state = self.read_state(article_id).await?;
+        let state = state::read_state(&self.inner.sync, article_id).await?;
         if state.status != FileSyncStatus::Synced {
             return Ok(());
         }
         let path = state.path.as_deref().ok_or(FileSyncError::InvalidPath)?;
-        let current = storage::read_file(&self.inner.directory, path)?;
-        if current.as_deref().map(storage::sha256_hex) != state.hash {
+        let current = match storage::read_file(&self.inner.directory, path) {
+            Ok(current) => current,
+            Err(error) if is_file_error(&error) => {
+                let mut updated = state;
+                updated.status = FileSyncStatus::ExternalChanged;
+                self.persist_state(article_id, &updated).await?;
+                tracing::warn!(article_id, %error, "paused article file synchronization after a file error");
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        let current_hash = current.as_deref().map(storage::sha256_hex);
+        if state.hash.is_none() || current_hash != state.hash {
             let mut updated = state;
             updated.status = FileSyncStatus::ExternalChanged;
-            self.write_state(article_id, &updated).await?;
+            self.persist_state(article_id, &updated).await?;
             return Ok(());
         }
         let body = self.read_article_body(article_id).await?;
         let bytes = storage::line_endings(body.as_bytes(), current.as_deref());
-        storage::atomic_write(&self.inner.directory, path, &bytes)?;
+        if let Err(error) = storage::atomic_write(&self.inner.directory, path, &bytes) {
+            if is_file_error(&error) {
+                let mut updated = state;
+                updated.status = FileSyncStatus::ExternalChanged;
+                self.persist_state(article_id, &updated).await?;
+                tracing::warn!(article_id, %error, "paused article file synchronization after a file error");
+                return Ok(());
+            }
+            return Err(error);
+        }
         let mut updated = state;
         updated.hash = Some(storage::sha256_hex(&bytes));
-        self.write_state(article_id, &updated).await
+        self.persist_state(article_id, &updated).await
     }
 
     async fn read_article_body(&self, article_id: &str) -> Result<String, FileSyncError> {
         let document = self.inner.sync.open_document(article_id.to_owned()).await?;
-        let doc = decode_document(&document.encode_state().await)?;
+        let doc = state::decode_document(&document.encode_state().await)?;
         let transaction = doc.transact();
         Ok(transaction
             .get_text("body")
@@ -348,98 +380,33 @@ impl LocalFileSyncService {
             .unwrap_or_default())
     }
 
-    async fn read_state(&self, article_id: &str) -> Result<ArticleFileState, FileSyncError> {
-        let document = self.inner.sync.open_document(ARTICLE_INDEX_ID).await?;
-        let doc = decode_document(&document.encode_state().await)?;
-        let transaction = doc.transact();
-        let article = transaction
-            .get_map(ARTICLE_INDEX_MAP)
-            .and_then(|articles| articles.get(&transaction, article_id))
-            .and_then(|entry| MapRef::try_from(entry).ok());
-        let Some(article) = article else {
-            return Ok(ArticleFileState {
-                path: None,
-                hash: None,
-                status: FileSyncStatus::Unset,
-            });
-        };
-        let path = map_string(&article, &transaction, PATH_KEY);
-        let hash = map_string(&article, &transaction, HASH_KEY);
-        let status = map_string(&article, &transaction, STATUS_KEY)
-            .map(|value| FileSyncStatus::from_str(&value))
-            .unwrap_or(FileSyncStatus::Unset);
-        Ok(ArticleFileState { path, hash, status })
+    async fn operation_lock(&self, article_id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.inner.operations.lock().await;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(article_id).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(article_id.to_owned(), Arc::downgrade(&lock));
+        lock
     }
 
-    async fn write_state(
+    async fn persist_state(
         &self,
         article_id: &str,
         state: &ArticleFileState,
     ) -> Result<(), FileSyncError> {
-        let document = self.inner.sync.open_document(ARTICLE_INDEX_ID).await?;
-        let current = decode_document(&document.encode_state().await)?;
-        let state_vector = current.transact().state_vector();
-        let mut transaction = current.transact_mut();
-        let articles = transaction.get_or_insert_map(ARTICLE_INDEX_MAP);
-        let article = articles
-            .get(&transaction, article_id)
-            .and_then(|entry| MapRef::try_from(entry).ok())
-            .unwrap_or_else(|| articles.insert(&mut transaction, article_id, MapPrelim::default()));
-        if let Some(path) = &state.path {
-            article.try_update(&mut transaction, PATH_KEY, path.as_str());
-        }
-        if let Some(hash) = &state.hash {
-            article.try_update(&mut transaction, HASH_KEY, hash.as_str());
-        } else {
-            article.remove(&mut transaction, HASH_KEY);
-        }
-        article.try_update(&mut transaction, STATUS_KEY, state.status.as_str());
-        let update = transaction.encode_diff_v1(&state_vector);
-        drop(transaction);
-        if !update.is_empty() {
-            document.apply_update(&update).await?;
-        }
-        Ok(())
-    }
-
-    async fn operation_lock(&self, article_id: &str) -> Arc<Mutex<()>> {
-        let mut locks = self.inner.operations.lock().await;
-        locks
-            .entry(article_id.to_owned())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+        let _guard = self.inner.index_state_lock.lock().await;
+        state::write_state(
+            &self.inner.sync,
+            article_id,
+            state,
+            self.inner.index_client_id,
+        )
+        .await
     }
 }
 
-async fn read_index_entries(
-    document: &SyncDocument,
-) -> Result<HashMap<String, String>, FileSyncError> {
-    let doc = decode_document(&document.encode_state().await)?;
-    let transaction = doc.transact();
-    let Some(articles) = transaction.get_map(ARTICLE_INDEX_MAP) else {
-        return Ok(HashMap::new());
-    };
-    Ok(articles
-        .iter(&transaction)
-        .filter_map(|(article_id, entry)| {
-            let entry = MapRef::try_from(entry).ok()?;
-            map_string(&entry, &transaction, PATH_KEY).map(|path| (article_id.to_owned(), path))
-        })
-        .collect())
-}
-
-fn decode_document(update: &[u8]) -> Result<Doc, FileSyncError> {
-    let doc = Doc::new();
-    if !update.is_empty() {
-        doc.transact_mut()
-            .apply_update(Update::decode_v1(update)?)?;
-    }
-    Ok(doc)
-}
-
-fn map_string<T: ReadTxn>(map: &MapRef, transaction: &T, key: &str) -> Option<String> {
-    match map.get(transaction, key)? {
-        Out::Any(Any::String(value)) => Some(value.to_string()),
-        _ => None,
-    }
+fn is_file_error(error: &FileSyncError) -> bool {
+    matches!(error, FileSyncError::InvalidPath | FileSyncError::Io(_))
 }

@@ -35,7 +35,7 @@ pub(super) fn atomic_write(
     let parent = path.parent().ok_or(FileSyncError::InvalidPath)?;
     let permissions = match fs::metadata(&path) {
         Ok(metadata) => Some(metadata.permissions()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => new_file_permissions(),
         Err(error) => return Err(error.into()),
     };
     let mut temporary = NamedTempFile::new_in(parent)?;
@@ -46,6 +46,18 @@ pub(super) fn atomic_write(
     }
     temporary.persist(&path).map_err(|error| error.error)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn new_file_permissions() -> Option<fs::Permissions> {
+    use std::os::unix::fs::PermissionsExt;
+
+    Some(fs::Permissions::from_mode(0o644))
+}
+
+#[cfg(not(unix))]
+fn new_file_permissions() -> Option<fs::Permissions> {
+    None
 }
 
 pub(super) fn validate_path(directory: &Path, relative: &str) -> Result<(), FileSyncError> {

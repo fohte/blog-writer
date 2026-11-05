@@ -528,6 +528,15 @@ export interface operations {
           'application/json': components['schemas']['ErrorResponse']
         }
       }
+      /** @description Article was not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
       /** @description Synchronization file is not valid UTF-8 */
       422: {
         headers: {
@@ -575,6 +584,15 @@ export interface operations {
       }
       /** @description Invalid synchronization file path */
       400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Article was not found */
+      404: {
         headers: {
           [name: string]: unknown
         }
@@ -632,6 +650,15 @@ export interface operations {
           'application/json': components['schemas']['ErrorResponse']
         }
       }
+      /** @description Article was not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
       /** @description File synchronization is not configured */
       503: {
         headers: {
@@ -670,6 +697,15 @@ export interface operations {
       }
       /** @description No synchronization file is selected */
       400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Article was not found */
+      404: {
         headers: {
           [name: string]: unknown
         }
