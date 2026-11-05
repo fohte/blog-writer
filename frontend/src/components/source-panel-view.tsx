@@ -136,6 +136,10 @@ export function SourcePanelView({
                     <Chip size="sm" tone="strong">
                       取得できず
                     </Chip>
+                  ) : source.status === 'analysisFailed' ? (
+                    <Chip size="sm" tone="strong">
+                      要約失敗
+                    </Chip>
                   ) : (
                     <Chip size="sm" tone="faint">
                       {checkedAt === undefined
@@ -199,6 +203,10 @@ export function SourcePanelView({
                           </div>
                         ) : null}
                       </div>
+                    ) : source.status === 'analysisFailed' ? (
+                      <p className="text-sm text-muted-foreground">
+                        本文は保存済みですが、要約と要点の作成に失敗しました。
+                      </p>
                     ) : (
                       <p className="whitespace-pre-wrap text-sm text-muted-foreground">
                         {source.summary || '要約はありません。'}

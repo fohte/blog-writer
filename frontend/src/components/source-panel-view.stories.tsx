@@ -70,6 +70,20 @@ export const Unavailable: Story = {
   },
 }
 
+export const AnalysisFailed: Story = {
+  name: '本文保存後に要約と要点の作成に失敗した資料を示す',
+  args: {
+    sources: [
+      {
+        ...readySource,
+        status: 'analysisFailed',
+        summary: '',
+      },
+    ],
+    expandedSourceId: readySource.id,
+  },
+}
+
 export const Ready: Story = {
   name: '取得済み資料を一覧に表示する',
   args: {

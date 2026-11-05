@@ -20,7 +20,7 @@ import { loadLlmSettings } from '#lib/llm-settings'
 import { deleteSourceBody } from '#lib/source-api'
 import { getSourceHost } from '#research/source-format'
 import type { SourceInput } from '#research/source-ingestion'
-import { importSource } from '#research/source-ingestion'
+import { importSource, SourceImportError } from '#research/source-ingestion'
 
 type SourcePanelProps = {
   articleId: string
@@ -142,8 +142,35 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
         },
         (importError) => {
           if (controller.signal.aborted) return
-          setError(importError.message)
-          if (!existingSource) {
+          const analysisFailed =
+            importError instanceof SourceImportError &&
+            importError.phase === 'analysis'
+          setError(
+            analysisFailed
+              ? `資料本文は保存済みですが、要約と要点の作成に失敗しました: ${importError.message}`
+              : importError.message,
+          )
+          if (analysisFailed) {
+            setPastedBody('')
+            setPasteTargetId(null)
+            const source = importError.source ?? fallback
+            const failedSource = {
+              ...source,
+              checkedAt: new Date().toISOString(),
+              status: 'analysisFailed' as const,
+              summary: '',
+            }
+            const saved = existingSource
+              ? updateSource(doc, id, failedSource)
+              : addSource(doc, { id, ...failedSource })
+            saved.match(
+              () => undefined,
+              () => {
+                setError('資料を保存できませんでした。')
+              },
+            )
+            setExpandedSourceId(id)
+          } else if (!existingSource) {
             const added = addSource(doc, {
               id,
               ...fallback,

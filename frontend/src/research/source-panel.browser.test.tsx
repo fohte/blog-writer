@@ -17,6 +17,7 @@ let root: Root | undefined
 let fetchMock: ReturnType<typeof sourceFetchMock>
 let deleteStatus = 204
 let urlStatus = 200
+let researchStatus = 200
 let savedBodies: string[] = []
 
 function isUnknownArray(value: unknown): value is unknown[] {
@@ -110,7 +111,10 @@ function sourceFetchMock() {
         ),
       )
     }
-    if (url === '/api/research/key-points') {
+    if (url.endsWith('/api/research/key-points')) {
+      if (researchStatus !== 200) {
+        return Promise.resolve(new Response(null, { status: researchStatus }))
+      }
       const request = getResearchRequest(init?.body)
       return Promise.resolve(
         eventResponse({
@@ -207,6 +211,10 @@ function readFetchCalls() {
   })
 }
 
+function readRouteOutput(doc: Y.Doc) {
+  return { ...readOutput(doc), fetchCalls: readFetchCalls() }
+}
+
 function dispatchPaste(target: Element | null | undefined, text: string) {
   const transfer = new DataTransfer()
   transfer.setData('text/plain', text)
@@ -288,6 +296,19 @@ function readImportFailureOutput(doc: Y.Doc) {
   }
 }
 
+function readAnalysisFailureOutput(doc: Y.Doc) {
+  const sourceRow = host?.querySelector('[role="listitem"]')
+  return {
+    ...readOutput(doc),
+    alert: host?.querySelector('[role="alert"]')?.textContent,
+    analysisNotice: sourceRow?.querySelector('p')?.textContent,
+    pasteActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
+      (button) => button.textContent === '本文を貼り付け',
+    ),
+    fetchCalls: readFetchCalls(),
+  }
+}
+
 function readBodyRecoveryOutput(doc: Y.Doc) {
   return { ...readOutput(doc), savedBodies, fetchCalls: readFetchCalls() }
 }
@@ -303,7 +324,9 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   deleteStatus = 204
   urlStatus = 200
+  researchStatus = 200
   savedBodies = []
+  window.localStorage.clear()
   fetchMock = sourceFetchMock()
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -395,6 +418,60 @@ describe('SourcePanel', () => {
         },
       ],
       renderedTitle: 'annual-summary',
+    })
+    doc.destroy()
+  })
+
+  it('sends LLM requests to the local bridge while source bodies stay on the server', async () => {
+    const doc = new Y.Doc()
+    window.localStorage.setItem('blog-writer.llm.route', 'local')
+    window.localStorage.setItem(
+      'blog-writer.llm.bridge-url',
+      'http://127.0.0.1:4123/',
+    )
+    mountSourcePanel(doc)
+    dispatchPaste(
+      host?.querySelector('[aria-labelledby="source-panel-heading"]'),
+      'https://data.example.invalid/report',
+    )
+    await settleUi(doc)
+
+    expect(readRouteOutput(doc)).toEqual({
+      sources: [
+        {
+          id: 'generated-source',
+          kind: 'url',
+          title: '資料のタイトル',
+          url: 'https://data.example.invalid/report',
+          fileName: null,
+          checkedAt: 'normalized-date',
+          status: 'ready',
+          summary: '利用者数は増加しました。',
+        },
+      ],
+      findings: [
+        {
+          id: 'generated-finding',
+          sourceId: 'generated-source',
+          text: '利用者数が増加しました。',
+          quote: '利用者数は増加しました。',
+        },
+      ],
+      renderedTitle: '資料のタイトル',
+      fetchCalls: [
+        {
+          url: '/api/articles/article-a/source-bodies/generated-source/url',
+          method: 'POST',
+        },
+        {
+          url: '/api/articles/article-a/source-bodies/generated-source',
+          method: 'GET',
+        },
+        {
+          url: 'http://127.0.0.1:4123/api/research/key-points',
+          method: 'POST',
+        },
+      ],
     })
     doc.destroy()
   })
@@ -628,6 +705,50 @@ describe('SourcePanel', () => {
           { url: '/api/research/key-points', method: 'POST' },
         ],
       },
+    })
+    doc.destroy()
+  })
+
+  it('distinguishes a failed LLM request after the source body is stored', async () => {
+    const doc = new Y.Doc()
+    researchStatus = 500
+    mountSourcePanel(doc)
+    dispatchPaste(
+      host?.querySelector('[aria-labelledby="source-panel-heading"]'),
+      'https://data.example.invalid/report',
+    )
+    await settleUi(doc)
+
+    expect(readAnalysisFailureOutput(doc)).toEqual({
+      sources: [
+        {
+          id: 'generated-source',
+          kind: 'url',
+          title: '資料のタイトル',
+          url: 'https://data.example.invalid/report',
+          fileName: null,
+          checkedAt: 'normalized-date',
+          status: 'analysisFailed',
+          summary: '',
+        },
+      ],
+      findings: [],
+      renderedTitle: '資料のタイトル',
+      alert:
+        '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
+      analysisNotice: '本文は保存済みですが、要約と要点の作成に失敗しました。',
+      pasteActionVisible: false,
+      fetchCalls: [
+        {
+          url: '/api/articles/article-a/source-bodies/generated-source/url',
+          method: 'POST',
+        },
+        {
+          url: '/api/articles/article-a/source-bodies/generated-source',
+          method: 'GET',
+        },
+        { url: '/api/research/key-points', method: 'POST' },
+      ],
     })
     doc.destroy()
   })

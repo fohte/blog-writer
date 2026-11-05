@@ -45,6 +45,7 @@ export function observeSources(doc: Y.Doc, listener: () => void): () => void {
 function readSource(id: string, source: SourceData): Source {
   const value = (key: string): unknown => source.get(key)
   const kind = value('kind')
+  const status = value('status')
   return {
     id,
     kind: isSourceKind(kind) ? kind : 'url',
@@ -52,7 +53,10 @@ function readSource(id: string, source: SourceData): Source {
     url: asNullableString(value('url')),
     fileName: asNullableString(value('fileName')),
     checkedAt: asNullableString(value('checkedAt')),
-    status: value('status') === 'unavailable' ? 'unavailable' : 'ready',
+    status:
+      status === 'unavailable' || status === 'analysisFailed'
+        ? status
+        : 'ready',
     summary: asString(value('summary')),
   }
 }

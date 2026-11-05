@@ -34,13 +34,34 @@ function isKeyPointsResult(value: unknown): value is KeyPointsResult {
   )
 }
 
-export type ImportedSource = {
+type SourceMetadata = {
   kind: SourceKind
   title: string
   url: string | null
   fileName: string | null
+}
+
+type ImportedSource = SourceMetadata & {
   summary: string
   findings: { text: string; quote: string }[]
+}
+
+export class SourceImportError extends Error {
+  constructor(
+    readonly phase: 'body' | 'analysis',
+    cause: Error,
+    readonly source?: SourceMetadata,
+  ) {
+    super(cause.message, { cause })
+    this.name = 'SourceImportError'
+  }
+}
+
+function withImportPhase<T>(
+  result: ResultAsync<T, Error>,
+  phase: SourceImportError['phase'],
+): ResultAsync<T, SourceImportError> {
+  return result.mapErr((cause) => new SourceImportError(phase, cause))
 }
 
 export type SourceInput =
@@ -89,29 +110,29 @@ export function importSource(
   signal: AbortSignal,
 ): ResultAsync<ImportedSource, Error> {
   const finish = (
-    source: Omit<ImportedSource, 'summary' | 'findings'>,
+    source: SourceMetadata,
     body: string,
-  ): ResultAsync<ImportedSource, Error> =>
-    extractSummary(fetcher, settings, sourceId, body, signal).map(
-      (summary) => ({
+  ): ResultAsync<ImportedSource, SourceImportError> =>
+    extractSummary(fetcher, settings, sourceId, body, signal)
+      .map((summary) => ({
         ...source,
         summary: summary.summary,
         findings: summary.key_points.map(({ text, quote }) => ({
           text,
           quote,
         })),
-      }),
-    )
+      }))
+      .mapErr((cause) => new SourceImportError('analysis', cause, source))
 
   if (input.kind === 'url') {
-    return fetchSourceUrl(
-      fetcher,
-      articleId,
-      sourceId,
-      input.url,
-      signal,
+    return withImportPhase(
+      fetchSourceUrl(fetcher, articleId, sourceId, input.url, signal),
+      'body',
     ).andThen((response) =>
-      getSourceBody(fetcher, articleId, sourceId, signal).andThen((stored) =>
+      withImportPhase(
+        getSourceBody(fetcher, articleId, sourceId, signal),
+        'body',
+      ).andThen((stored) =>
         finish(
           {
             kind: 'url',
@@ -126,14 +147,14 @@ export function importSource(
   }
 
   if (input.kind === 'file') {
-    return uploadSourceFile(
-      fetcher,
-      articleId,
-      sourceId,
-      input.file,
-      signal,
+    return withImportPhase(
+      uploadSourceFile(fetcher, articleId, sourceId, input.file, signal),
+      'body',
     ).andThen((response) =>
-      getSourceBody(fetcher, articleId, sourceId, signal).andThen((stored) =>
+      withImportPhase(
+        getSourceBody(fetcher, articleId, sourceId, signal),
+        'body',
+      ).andThen((stored) =>
         finish(
           {
             kind: 'file',
@@ -147,12 +168,9 @@ export function importSource(
     )
   }
 
-  return saveSourceBody(
-    fetcher,
-    articleId,
-    sourceId,
-    input.body,
-    signal,
+  return withImportPhase(
+    saveSourceBody(fetcher, articleId, sourceId, input.body, signal),
+    'body',
   ).andThen(() =>
     finish(
       {
