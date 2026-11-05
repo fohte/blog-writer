@@ -17,24 +17,27 @@ import {
 } from '#article/index'
 
 describe('article model', () => {
-  it('reads and writes body and premise fields', () => {
+  it('reads and writes body text', () => {
+    const doc = new Y.Doc()
+    setBody(doc, '# Draft')
+
+    expect(readBody(doc)).toEqual('# Draft')
+  })
+
+  it('reads and writes premise fields', () => {
     const doc = new Y.Doc()
     doc.getMap('references').set('source', 'external root')
-
-    setBody(doc, '# Draft')
     setPremise(doc, 'audience', 'new readers')
     setPremise(doc, 'purpose', 'explain a topic')
     setPremise(doc, 'claim', 'a clear claim')
     setPremise(doc, 'purpose', null)
 
-    const actual = Object.fromEntries([
-      ['body', readBody(doc)],
-      ['premise', getPremise(doc)],
-      ['otherRoot', doc.getMap('references').get('source')],
-    ])
-
-    expect(actual).toEqual({
-      body: '# Draft',
+    expect(
+      Object.fromEntries([
+        ['premise', getPremise(doc)],
+        ['otherRoot', doc.getMap('references').get('source')],
+      ]),
+    ).toEqual({
       premise: {
         audience: 'new readers',
         purpose: null,
@@ -44,40 +47,106 @@ describe('article model', () => {
     })
   })
 
-  it('adds, orders, dismisses, and restores memos', () => {
+  it('adds a memo', () => {
+    const doc = new Y.Doc()
+    addMemo(doc, { id: 'memo-a', text: 'first memo', order: 2 })
+
+    expect(listMemos(doc)).toEqual([
+      {
+        id: 'memo-a',
+        text: 'first memo',
+        order: 2,
+        state: { kind: 'unorganized' },
+      },
+    ])
+  })
+
+  it('updates a memo order', () => {
     const doc = new Y.Doc()
     addMemo(doc, { id: 'memo-a', text: 'first memo', order: 2 })
     addMemo(doc, { id: 'memo-b', text: 'second memo', order: 1 })
     updateMemoOrder(doc, 'memo-a', 0)
+
+    expect(listMemos(doc).map(({ id, order }) => ({ id, order }))).toEqual([
+      { id: 'memo-a', order: 0 },
+      { id: 'memo-b', order: 1 },
+    ])
+  })
+
+  it('dismisses a memo', () => {
+    const doc = new Y.Doc()
+    addMemo(doc, { id: 'memo-a', text: 'first memo', order: 0 })
     dismissMemo(doc, 'memo-a')
 
-    const dismissed = listMemos(doc)
+    expect(
+      getMemoState(doc, 'memo-a').match(
+        (state) => state,
+        (error) => error.name,
+      ),
+    ).toEqual({
+      kind: 'dismissed',
+    })
+  })
+
+  it('restores a dismissed memo to unorganized', () => {
+    const doc = new Y.Doc()
+    addMemo(doc, { id: 'memo-a', text: 'first memo', order: 0 })
+    dismissMemo(doc, 'memo-a')
     restoreMemo(doc, 'memo-a')
 
-    const actual = Object.fromEntries([
-      [
-        'dismissed',
-        dismissed.map(({ id, order, state }) => ({
-          id,
-          order,
-          state: state.kind,
-        })),
-      ],
-      [
-        'restored',
-        listMemos(doc).map(({ id, state }) => ({ id, state: state.kind })),
-      ],
-    ])
+    expect(
+      getMemoState(doc, 'memo-a').match(
+        (state) => state,
+        (error) => error.name,
+      ),
+    ).toEqual({
+      kind: 'unorganized',
+    })
+  })
 
-    expect(actual).toEqual({
-      dismissed: [
-        { id: 'memo-a', order: 0, state: 'dismissed' },
-        { id: 'memo-b', order: 1, state: 'unorganized' },
-      ],
-      restored: [
-        { id: 'memo-a', state: 'unorganized' },
-        { id: 'memo-b', state: 'unorganized' },
-      ],
+  it('restores an adopted memo to unorganized', () => {
+    const doc = new Y.Doc()
+    setBody(doc, '# Section')
+    addMemo(doc, { id: 'memo-a', text: 'section memo', order: 0 })
+    setMemoAdoptedTo(doc, 'memo-a', 0)
+    restoreMemo(doc, 'memo-a')
+
+    expect(
+      getMemoState(doc, 'memo-a').match(
+        (state) => state,
+        (error) => error.name,
+      ),
+    ).toEqual({
+      kind: 'unorganized',
+    })
+  })
+
+  it('rejects a non-heading marker without changing memo state', () => {
+    const doc = new Y.Doc()
+    setBody(doc, 'Intro')
+    addMemo(doc, { id: 'memo-a', text: 'first memo', order: 0 })
+    const result = setMemoAdoptedTo(doc, 'memo-a', 0)
+
+    expect(
+      Object.fromEntries([
+        [
+          'result',
+          result.match(
+            () => 'ok',
+            (error) => error.name,
+          ),
+        ],
+        [
+          'state',
+          getMemoState(doc, 'memo-a').match(
+            (state) => state,
+            (error) => error.name,
+          ),
+        ],
+      ]),
+    ).toEqual({
+      result: 'InvalidHeadingError',
+      state: { kind: 'unorganized' },
     })
   })
 
@@ -108,23 +177,24 @@ describe('article model', () => {
     })
   })
 
-  it('returns memos to unorganized when the adopted marker is deleted and replaced', () => {
+  it('returns a memo to unorganized when its adopted marker is deleted and replaced', () => {
     const doc = new Y.Doc()
     setBody(doc, '# Section')
     addMemo(doc, { id: 'memo-a', text: 'section memo', order: 0 })
     setMemoAdoptedTo(doc, 'memo-a', 0)
-
     setBody(doc, '# Replacement')
 
     expect(
       getMemoState(doc, 'memo-a').match(
-        (state) => state.kind,
+        (state) => state,
         (error) => error.name,
       ),
-    ).toEqual('unorganized')
+    ).toEqual({
+      kind: 'unorganized',
+    })
   })
 
-  it('keeps adopted state after the Y.Doc update is applied to another document', () => {
+  it('keeps adopted state after a Y.Doc update is applied to another document', () => {
     const doc = new Y.Doc()
     setBody(doc, '# Section')
     addMemo(doc, { id: 'memo-a', text: 'section memo', order: 0 })
@@ -135,10 +205,13 @@ describe('article model', () => {
 
     expect(
       getMemoState(replica, 'memo-a').match(
-        (state) => state.kind,
+        (state) => state,
         (error) => error.name,
       ),
-    ).toEqual('adopted')
+    ).toEqual({
+      kind: 'adopted',
+      heading: { level: 1, text: 'Section', from: 0, to: 9, children: [] },
+    })
   })
 
   it('derives a hierarchy from ATX headings and ignores non-heading syntax', () => {

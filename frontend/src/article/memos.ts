@@ -1,6 +1,7 @@
 import { err, ok, Result } from 'neverthrow'
 import * as Y from 'yjs'
 
+import { getBody } from '#article/body'
 import {
   InvalidHeadingError,
   InvalidMemoError,
@@ -27,7 +28,7 @@ function getMemoMap(doc: Y.Doc, id: string): MemoData | undefined {
 function memoState(doc: Y.Doc, memo: MemoData): MemoState {
   if (memo.get('dismissed') === true) return { kind: 'dismissed' }
 
-  const body = doc.getText('body')
+  const body = getBody(doc)
   const relativePositionValue = memo.get('adoptedTo')
   if (
     relativePositionValue === null ||
@@ -159,7 +160,7 @@ export function setMemoAdoptedTo(
   id: string,
   markerIndex: number,
 ): Result<void, MemoNotFoundError | InvalidHeadingError> {
-  const body = doc.getText('body')
+  const body = getBody(doc)
   const heading = findHeadingAtMarker(body.toJSON(), markerIndex)
   if (!heading) return err(new InvalidHeadingError(markerIndex))
 
