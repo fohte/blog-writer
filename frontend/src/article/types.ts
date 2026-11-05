@@ -25,3 +25,28 @@ export type Heading = {
 }
 
 export type MemoData = Y.Map<unknown>
+
+export type SourceKind = 'url' | 'file' | 'pasted'
+
+export type SourceStatus = 'ready' | 'unavailable' | 'analysisFailed'
+
+export type Source = {
+  id: string
+  kind: SourceKind
+  title: string
+  url: string | null
+  fileName: string | null
+  checkedAt: string | null
+  status: SourceStatus
+  summary: string
+}
+
+export type Finding = {
+  id: string
+  sourceId: string
+  text: string
+  quote: string
+}
+
+export type SourceData = Y.Map<unknown>
+export type FindingData = Y.Map<unknown>

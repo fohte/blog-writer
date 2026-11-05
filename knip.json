@@ -13,6 +13,7 @@
         "src/article/index.ts!",
         "src/editor/index.ts!",
         "src/memos/memo-panel.tsx!",
+        "src/research/source-panel.tsx!",
         "service-worker.js!"
       ],
       "ignoreDependencies": [
