@@ -84,8 +84,12 @@ Beta text
         throw new Error(error.message)
       },
     )
+    const movedBody = readBody(doc)
+    const movedMemos = listMemos(doc)
+    const moveTransactionCount = transactionCount
+    const moveTransactionOrigin = transactionOrigin
     const editorTransaction = EditorState.create({ doc: markdown }).update({
-      changes: { from: 0, to: markdown.length, insert: readBody(doc) },
+      changes: { from: 0, to: markdown.length, insert: movedBody },
       annotations: move.annotations,
     })
     const finalReference = referenceData.get('anchor')
@@ -96,13 +100,16 @@ Beta text
             doc,
           )
         : null
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
 
     expect(
       Object.fromEntries([
-        ['body', readBody(doc)],
-        ['memo', listMemos(doc)],
+        ['body', movedBody],
+        ['restoredBody', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+        ['memo', movedMemos],
         ['referenceIndex', finalAbsolute?.index],
-        ['transactionCount', transactionCount],
+        ['transactionCount', moveTransactionCount],
         ['annotation', move.annotations[0].value],
         ['editorAnnotation', editorTransaction.annotation(blockMoved)],
         [
@@ -111,8 +118,8 @@ Beta text
         ],
         [
           'originAnnotations',
-          Array.isArray(transactionOrigin)
-            ? transactionOrigin.map(
+          Array.isArray(moveTransactionOrigin)
+            ? moveTransactionOrigin.map(
                 (annotation: { value: unknown }) => annotation.value,
               )
             : null,
@@ -125,6 +132,7 @@ Beta text
       body: `# Beta
 
 Beta text
+
 # Alpha
 
 Alpha text
@@ -132,8 +140,9 @@ Alpha text
 ## Nested
 
 Nested text
-
 `,
+      restoredBody: markdown,
+      undoEvent: 'undo',
       memo: [
         {
           id: 'memo-a',
@@ -144,21 +153,21 @@ Nested text
             heading: {
               level: 2,
               text: 'Nested',
-              from: 39,
-              to: 48,
+              from: 40,
+              to: 49,
               children: [],
             },
           },
         },
       ],
-      referenceIndex: 51,
+      referenceIndex: 52,
       transactionCount: 1,
-      annotation: { from: 18, to: 63, seam: 0 },
-      editorAnnotation: { from: 18, to: 63, seam: 0 },
+      annotation: { from: 19, to: 63, seam: 0 },
+      editorAnnotation: { from: 19, to: 63, seam: 0 },
       editorUserEvent: 'move',
-      originAnnotations: [{ from: 18, to: 63, seam: 0 }, 'move'],
+      originAnnotations: [{ from: 19, to: 63, seam: 0 }, 'move'],
       oldMarker: 32,
-      newMarker: 50,
+      newMarker: 51,
       annotationType: true,
     })
   })
@@ -196,10 +205,52 @@ After.
 First paragraph.
 
 After.
-Second paragraph.
 
+Second paragraph.
 `,
-      moved: { from: 36, to: 55, seam: 29 },
+      moved: { from: 37, to: 55, seam: 29 },
+    })
+  })
+
+  it('keeps an unregistered marker at the source seam when its block moves', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Heading
+
+Stay.
+
+Move me.
+
+After.
+`
+    setBody(doc, markdown)
+    const body = doc.getText('body')
+    const marker = Y.createRelativePositionFromTypeIndex(
+      body,
+      markdown.indexOf('Move me.') + 1,
+      -1,
+    )
+
+    moveBlock(doc, {
+      from: markdown.indexOf('Move me.'),
+      destination: markdown.length,
+    })._unsafeUnwrap()
+
+    const absolute = Y.createAbsolutePositionFromRelativePosition(marker, doc)
+    expect(
+      Object.fromEntries([
+        ['body', readBody(doc)],
+        ['markerIndex', absolute?.index],
+      ]),
+    ).toEqual({
+      body: `# Heading
+
+Stay.
+
+After.
+
+Move me.
+`,
+      markerIndex: 18,
     })
   })
 
@@ -226,7 +277,6 @@ Beta`
       afterMove: `Beta
 
 Alpha
-
 `,
       restored: markdown,
       undoEvent: 'undo',
@@ -261,6 +311,60 @@ Alpha
     ).toEqual({
       result: 'InvalidBlockMoveError',
       body: markdown,
+    })
+  })
+
+  it('rejects child destinations outside the parent section or inside a block', () => {
+    const markdown = `# Parent
+
+Parent text.
+
+# Other
+
+# Moved
+`
+    const outsideDoc = new Y.Doc()
+    setBody(outsideDoc, markdown)
+    const parentFrom = markdown.indexOf('# Parent')
+    const movedFrom = markdown.indexOf('# Moved')
+    const outside = moveBlock(outsideDoc, {
+      from: movedFrom,
+      destination: markdown.length,
+      childOf: parentFrom,
+    })
+
+    const insideDoc = new Y.Doc()
+    setBody(insideDoc, markdown)
+    const inside = moveBlock(insideDoc, {
+      from: movedFrom,
+      destination: markdown.indexOf('Parent text.') + 3,
+      childOf: parentFrom,
+    })
+
+    expect(
+      Object.fromEntries([
+        [
+          'outside',
+          outside.match(
+            () => 'ok',
+            (error) => error.message,
+          ),
+        ],
+        ['outsideBody', readBody(outsideDoc)],
+        [
+          'inside',
+          inside.match(
+            () => 'ok',
+            (error) => error.message,
+          ),
+        ],
+        ['insideBody', readBody(insideDoc)],
+      ]),
+    ).toEqual({
+      outside: 'The child destination is outside the parent section',
+      outsideBody: markdown,
+      inside: 'The child destination is inside a Markdown block',
+      insideBody: markdown,
     })
   })
 
@@ -360,11 +464,12 @@ Alpha
 ## Moved
 
 ### Child
+
 # Sibling
 
 `,
       afterUndo: markdown,
-      move: [{ from: 10, to: 30, seam: 41 }, 'move'],
+      move: [{ from: 10, to: 30, seam: 42 }, 'move'],
       undo: [{ from: 21, to: 39, seam: 10 }, 'undo'],
       undoEvent: 'undo',
       editorUndoEvent: 'undo',

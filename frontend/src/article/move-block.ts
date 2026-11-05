@@ -59,12 +59,13 @@ type AnchoredTextRange = {
 type MoveHistory = {
   movedFrom: Y.RelativePosition
   seam: Y.RelativePosition
-  movedText: string
+  selectedText: string
+  restoreText: string
   separators: AnchoredTextRange[]
 }
 type ApplyMoveOptions = {
   expectedText?: string
-  exactInsertion?: boolean
+  insertionText?: string
   removeRanges?: AnchoredTextRange[]
 }
 
@@ -107,6 +108,7 @@ function rememberMove(
   move: MoveBlockResult,
   insertionIndex: number,
   insertion: { text: string; prefixLength: number; contentLength: number },
+  restoreText: string,
 ): void {
   const prefix = insertion.text.slice(0, insertion.prefixLength)
   const suffix = insertion.text.slice(
@@ -135,7 +137,8 @@ function rememberMove(
   historyByMove.set(move, {
     movedFrom: Y.createRelativePositionFromTypeIndex(body, move.from, 1),
     seam: Y.createRelativePositionFromTypeIndex(body, move.seam, 1),
-    movedText: body.toJSON().slice(move.from, move.to),
+    selectedText: insertion.text.slice(insertion.prefixLength),
+    restoreText,
     separators,
   })
 }
@@ -182,6 +185,7 @@ function applyMoveBlock(
     headings,
   )
   const movedText = transformedText(markdown, range, replacements)
+  const restoreText = markdown.slice(range.from, range.to)
   const removeRanges = (options.removeRanges ?? []).map((anchoredRange) =>
     resolveTextRange(doc, body, markdown, anchoredRange),
   )
@@ -206,9 +210,13 @@ function applyMoveBlock(
       : input.destination
   const remaining = markdown.slice(0, removeFrom) + markdown.slice(removeTo)
   const insertion =
-    options.exactInsertion === true
-      ? { text: movedText, prefixLength: 0, contentLength: movedText.length }
-      : getInsertionText(remaining, insertionIndex, movedText)
+    options.insertionText === undefined
+      ? getInsertionText(remaining, insertionIndex, movedText)
+      : {
+          text: options.insertionText,
+          prefixLength: 0,
+          contentLength: options.insertionText.length,
+        }
   const newFrom = insertionIndex + insertion.prefixLength
   const newTo = newFrom + insertion.contentLength
   const seam =
@@ -250,7 +258,7 @@ function applyMoveBlock(
       ? {}
       : { originalHeadingLevel: range.headingLevel }),
   }
-  rememberMove(body, move, insertionIndex, insertion)
+  rememberMove(body, move, insertionIndex, insertion, restoreText)
   return ok(move)
 }
 
@@ -288,8 +296,8 @@ export function reverseBlockMove(
       userEvent: 'undo',
     },
     {
-      expectedText: history.movedText,
-      exactInsertion: true,
+      expectedText: history.selectedText,
+      insertionText: history.restoreText,
       removeRanges: history.separators,
     },
   )

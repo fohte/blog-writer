@@ -50,7 +50,7 @@ function findBlockRange(markdown: string, position: number): Range | undefined {
   return undefined
 }
 
-export function flattenHeadings(headings: Heading[]): Heading[] {
+function flattenHeadings(headings: Heading[]): Heading[] {
   return headings.flatMap((heading) => [
     heading,
     ...flattenHeadings(heading.children),
@@ -61,7 +61,7 @@ export function collectHeadings(markdown: string): Heading[] {
   return flattenHeadings(deriveHeadingTree(markdown))
 }
 
-export function findRange(
+function findRange(
   markdown: string,
   from: number,
   headings: Heading[],
@@ -111,6 +111,17 @@ function validateDestination(
   return undefined
 }
 
+function isInsideBlock(markdown: string, position: number): boolean {
+  const cursor = markdownParser.parse(markdown).cursor()
+  if (!cursor.firstChild()) return false
+
+  do {
+    if (cursor.from < position && position < cursor.to) return true
+  } while (cursor.nextSibling())
+
+  return false
+}
+
 export function validateMove(
   markdown: string,
   input: MoveBlockInput,
@@ -141,6 +152,24 @@ export function validateMove(
     if (target.from >= range.from && target.from < range.to)
       return err(
         new InvalidBlockMoveError('A section cannot become its own child'),
+      )
+    const targetRange = findHeadingSection(markdown, headings, target.from)
+    if (
+      !targetRange ||
+      input.destination <= targetRange.from ||
+      input.destination > targetRange.to
+    ) {
+      return err(
+        new InvalidBlockMoveError(
+          'The child destination is outside the parent section',
+        ),
+      )
+    }
+    if (isInsideBlock(markdown, input.destination))
+      return err(
+        new InvalidBlockMoveError(
+          'The child destination is inside a Markdown block',
+        ),
       )
     targetLevel = target.level + 1
   }
@@ -226,18 +255,31 @@ export function getInsertionText(
 ): { text: string; prefixLength: number; contentLength: number } {
   const before = remaining.slice(0, insertionIndex)
   const after = remaining.slice(insertionIndex)
-  const prefix =
-    before.length > 0 && !before.endsWith('\n') && !movedText.startsWith('\n')
-      ? '\n\n'
-      : ''
-  const suffix =
-    after.length > 0 && !movedText.endsWith('\n') && !after.startsWith('\n')
-      ? '\n\n'
-      : ''
+  const contentText = movedText.replace(/\n+$/, '\n')
+  const trailingNewlineCount = (text: string) =>
+    text.length - text.replace(/\n+$/, '').length
+  const leadingNewlineCount = (text: string) =>
+    text.length - text.replace(/^\n+/, '').length
+  const prefixLength =
+    before.length === 0
+      ? 0
+      : Math.max(
+          0,
+          2 - trailingNewlineCount(before) - leadingNewlineCount(contentText),
+        )
+  const suffixLength =
+    after.length === 0
+      ? 0
+      : Math.max(
+          0,
+          2 - trailingNewlineCount(contentText) - leadingNewlineCount(after),
+        )
+  const prefix = '\n'.repeat(prefixLength)
+  const suffix = '\n'.repeat(suffixLength)
 
   return {
-    text: prefix + movedText + suffix,
-    prefixLength: prefix.length,
-    contentLength: movedText.length,
+    text: prefix + contentText + suffix,
+    prefixLength,
+    contentLength: contentText.length,
   }
 }
