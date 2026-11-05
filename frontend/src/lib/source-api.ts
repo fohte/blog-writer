@@ -1,14 +1,11 @@
 import { errAsync, okAsync, ResultAsync } from 'neverthrow'
 
 import type { components } from '#lib/api/schema.gen.d.ts'
+import { isRecord } from '#lib/guards'
 
 type SourceBody = components['schemas']['SourceBodyResponse']
 type FetchSourceBodyResponse = components['schemas']['FetchSourceBodyResponse']
 type ImportFileResponse = components['schemas']['ImportFileResponse']
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
 
 function isStringRecord(
   value: unknown,

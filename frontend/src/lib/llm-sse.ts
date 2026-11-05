@@ -1,5 +1,7 @@
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 
+import { isRecord } from '#lib/guards'
+
 type LlmStreamEnvelope = {
   event: string
   data: unknown
@@ -15,10 +17,6 @@ type LlmStreamOptions<TBody, TResult> = {
   fetcher?: typeof fetch
   onEvent?: (event: string, data: unknown) => void
   isResult: (data: unknown) => data is TResult
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
 }
 
 function parseEnvelope(

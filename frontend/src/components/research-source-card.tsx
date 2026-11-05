@@ -1,6 +1,7 @@
 import { Popover, PopoverContent, PopoverTrigger } from '@fohte/ui/popover'
 
 import type { Finding, Source } from '#article/index'
+import { formatCheckedAt } from '#research/source-format'
 
 type ResearchSourceCardProps = {
   source: Source
@@ -8,21 +9,12 @@ type ResearchSourceCardProps = {
   open?: boolean | undefined
 }
 
-function getCheckedAt(source: Source): string | undefined {
-  if (source.checkedAt === null || source.checkedAt.length === 0) {
-    return undefined
-  }
-  const parsed = new Date(source.checkedAt)
-  if (Number.isNaN(parsed.getTime())) return undefined
-  return parsed.toLocaleDateString('ja-JP', { timeZone: 'UTC' })
-}
-
 export function ResearchSourceCard({
   source,
   finding,
   open,
 }: ResearchSourceCardProps) {
-  const checkedAt = getCheckedAt(source)
+  const checkedAt = formatCheckedAt(source.checkedAt)
   return (
     <Popover open={open}>
       <PopoverTrigger className="w-full py-2 text-left text-sm">

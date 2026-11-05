@@ -2,6 +2,7 @@ import { errAsync, okAsync, ResultAsync } from 'neverthrow'
 
 import type { SourceKind } from '#article/types'
 import type { components } from '#lib/api/schema.gen.d.ts'
+import { isRecord } from '#lib/guards'
 import type { LlmSettings } from '#lib/llm-settings'
 import { postLlmResult } from '#lib/llm-sse'
 import {
@@ -12,10 +13,6 @@ import {
 } from '#lib/source-api'
 
 type KeyPointsResult = components['schemas']['ResearchKeyPointsResult']
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
 
 function isKeyPointsResult(value: unknown): value is KeyPointsResult {
   return (

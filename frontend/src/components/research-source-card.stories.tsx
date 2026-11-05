@@ -31,3 +31,8 @@ type Story = StoryObj<typeof meta>
 export const Open: Story = {
   name: '資料カードに引用と要約を表示する',
 }
+
+export const Closed: Story = {
+  name: '要点だけを表示して資料カードを閉じる',
+  args: { open: false },
+}

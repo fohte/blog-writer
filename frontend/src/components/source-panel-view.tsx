@@ -7,6 +7,7 @@ import type { ClipboardEvent, DragEvent } from 'react'
 
 import type { Finding, Source } from '#article/index'
 import { ResearchSourceCard } from '#components/research-source-card'
+import { formatCheckedAt, getSourceHost } from '#research/source-format'
 
 export type PendingSource = { id: string; label: string }
 
@@ -31,7 +32,7 @@ type SourcePanelViewProps = {
 
 function getSourceLocation(source: Source): string {
   if (source.url !== null) {
-    return source.url.match(/^https?:\/\/([^/:?#]+)/i)?.[1] ?? 'Web ページ'
+    return getSourceHost(source.url) ?? 'Web ページ'
   }
   if (source.fileName !== null) {
     const extension = source.fileName.split('.').at(-1)
@@ -40,14 +41,6 @@ function getSourceLocation(source: Source): string {
       : 'ファイル'
   }
   return '貼り付けた資料'
-}
-
-function getCheckedAt(source: Source): string {
-  if (source.checkedAt === null || source.checkedAt.length === 0) return ''
-  const parsed = new Date(source.checkedAt)
-  return Number.isNaN(parsed.getTime())
-    ? ''
-    : parsed.toLocaleDateString('ja-JP', { timeZone: 'UTC' })
 }
 
 export function SourcePanelView({
@@ -116,7 +109,7 @@ export function SourcePanelView({
             )
             const isPending = pending.some((item) => item.id === source.id)
             const expanded = expandedSourceId === source.id
-            const checkedAt = getCheckedAt(source)
+            const checkedAt = formatCheckedAt(source.checkedAt)
             return (
               <div
                 className="border-b border-border py-3 last:border-b-0"
@@ -145,7 +138,9 @@ export function SourcePanelView({
                     </Chip>
                   ) : (
                     <Chip size="sm" tone="faint">
-                      {checkedAt.length > 0 ? `確認 ${checkedAt}` : '確認済み'}
+                      {checkedAt === undefined
+                        ? '確認済み'
+                        : `確認 ${checkedAt}`}
                     </Chip>
                   )}
                   <Button

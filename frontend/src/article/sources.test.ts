@@ -37,6 +37,23 @@ function readSourceDeletionOutput(
   return { mergedSource, removed, sources, findings }
 }
 
+function readDuplicateSourceOutput(
+  result: ReturnType<typeof addSource>,
+  sources: ReturnType<typeof listSources>,
+) {
+  return {
+    result: result.match(
+      () => ({ kind: 'ok' as const }),
+      (error) => ({
+        kind: 'error' as const,
+        name: error.name,
+        message: error.message,
+      }),
+    ),
+    sources,
+  }
+}
+
 describe('article sources', () => {
   it('stores typed source and finding data in the document maps', () => {
     const doc = new Y.Doc()
@@ -51,7 +68,6 @@ describe('article sources', () => {
     const findings = setFindings(doc, 'source-a', [
       {
         id: 'finding-a',
-        sourceId: 'source-a',
         text: '利用者数は増加しました。',
         quote: '利用者数は 12% 増加しました。',
       },
@@ -127,7 +143,6 @@ describe('article sources', () => {
     setFindings(first, 'source-a', [
       {
         id: 'finding-a',
-        sourceId: 'source-a',
         text: '要点です。',
         quote: '本文の引用です。',
       },
@@ -162,5 +177,46 @@ describe('article sources', () => {
     })
     first.destroy()
     second.destroy()
+  })
+
+  it('preserves the original source when an ID is already present', () => {
+    const doc = new Y.Doc()
+    addSource(doc, {
+      id: 'source-a',
+      kind: 'url',
+      title: '元の資料',
+      url: 'https://data.example.invalid/report',
+      fileName: null,
+      checkedAt: null,
+    })
+    const duplicate = addSource(doc, {
+      id: 'source-a',
+      kind: 'file',
+      title: '別の資料',
+      url: null,
+      fileName: 'overview.pdf',
+      checkedAt: null,
+    })
+
+    expect(readDuplicateSourceOutput(duplicate, listSources(doc))).toEqual({
+      result: {
+        kind: 'error',
+        name: 'SourceAlreadyExistsError',
+        message: 'Source already exists: source-a',
+      },
+      sources: [
+        {
+          id: 'source-a',
+          kind: 'url',
+          title: '元の資料',
+          url: 'https://data.example.invalid/report',
+          fileName: null,
+          checkedAt: null,
+          status: 'ready',
+          summary: '',
+        },
+      ],
+    })
+    doc.destroy()
   })
 })

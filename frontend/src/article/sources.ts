@@ -20,7 +20,7 @@ export type AddSourceInput = Omit<Source, 'status' | 'summary'> & {
   summary?: string
 }
 
-export type AddFindingInput = Omit<Finding, 'id'> & { id?: string }
+export type AddFindingInput = Omit<Finding, 'id' | 'sourceId'> & { id?: string }
 
 function getSourcesMap(doc: Y.Doc): Y.Map<SourceData> {
   return doc.getMap('sources')

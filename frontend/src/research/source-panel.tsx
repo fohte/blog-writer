@@ -1,3 +1,4 @@
+import { errAsync } from 'neverthrow'
 import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 
@@ -15,8 +16,9 @@ import {
   type PendingSource,
   SourcePanelView,
 } from '#components/source-panel-view'
-import { defaultLlmSettings, loadLlmSettings } from '#lib/llm-settings'
+import { loadLlmSettings } from '#lib/llm-settings'
 import { deleteSourceBody } from '#lib/source-api'
+import { getSourceHost } from '#research/source-format'
 import type { SourceInput } from '#research/source-ingestion'
 import { importSource } from '#research/source-ingestion'
 
@@ -38,13 +40,20 @@ function extractUrls(text: string): string[] {
 }
 
 function urlLabel(url: string): string {
-  return url.match(/^https?:\/\/([^/:?#]+)/i)?.[1] ?? url
+  return getSourceHost(url) ?? url
 }
 
 function loadSettings() {
-  return loadLlmSettings(() => window.localStorage).match(
-    (settings) => settings,
-    () => defaultLlmSettings,
+  return loadLlmSettings(() => window.localStorage).mapErr(
+    (cause) => new Error('LLM 設定を読み込めませんでした。', { cause }),
+  )
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLInputElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
   )
 }
 
@@ -84,14 +93,12 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
     requests.current.set(id, controller)
     setError(undefined)
     setPending((current) => [...current, { id, label }])
-    void importSource(
-      fetch,
-      articleId,
-      id,
-      input,
-      loadSettings(),
-      controller.signal,
+    const importResult = loadSettings().match(
+      (settings) =>
+        importSource(fetch, articleId, id, input, settings, controller.signal),
+      (settingsError) => errAsync(settingsError),
     )
+    void importResult
       .match(
         (imported) => {
           if (controller.signal.aborted) return
@@ -119,7 +126,6 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
               id,
               imported.findings.map((finding, index) => ({
                 id: `${id}-${index.toString()}`,
-                sourceId: id,
                 ...finding,
               })),
             )
@@ -215,20 +221,15 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
         )
       }}
       onDragOver={(event) => {
+        if (isEditableTarget(event.target)) return
         if (event.dataTransfer.types.length > 0) event.preventDefault()
       }}
       onDrop={(event) => {
+        if (isEditableTarget(event.target)) return
         if (handleTransfer(event.dataTransfer)) event.preventDefault()
       }}
       onPaste={(event) => {
-        const target = event.target
-        if (
-          target instanceof HTMLTextAreaElement ||
-          target instanceof HTMLInputElement ||
-          (target instanceof HTMLElement && target.isContentEditable)
-        ) {
-          return
-        }
+        if (isEditableTarget(event.target)) return
         if (handleTransfer(event.clipboardData)) event.preventDefault()
       }}
       onPastedBodyChange={setPastedBody}
