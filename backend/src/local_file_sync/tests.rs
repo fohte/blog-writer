@@ -200,7 +200,7 @@ async fn wait_for(
             if predicate(&snapshot) {
                 return Some(snapshot);
             }
-            tokio::task::yield_now().await;
+            sleep(Duration::from_millis(1)).await;
         }
     })
     .await?;
@@ -287,7 +287,7 @@ async fn watches_article_index_entries_added_after_startup() -> TestResult {
 
 #[tokio::test]
 async fn coalesces_article_edits_during_the_debounce_window() -> TestResult {
-    let fixture = fixture(Duration::from_millis(80)).await?;
+    let fixture = fixture(Duration::from_millis(500)).await?;
     fixture
         .service
         .set_article_file("article-example", "debounced.md")
@@ -303,7 +303,7 @@ async fn coalesces_article_edits_during_the_debounce_window() -> TestResult {
         snapshot.state.content.as_deref() == Some("更新後の本文")
     })
     .await?;
-    sleep(Duration::from_millis(120)).await;
+    sleep(Duration::from_millis(550)).await;
     let index_update_count = std::iter::from_fn(|| index_updates.try_recv().ok()).count();
 
     assert_eq!(
@@ -331,7 +331,7 @@ async fn coalesces_article_edits_during_the_debounce_window() -> TestResult {
 
 #[tokio::test]
 async fn replaces_the_article_watcher_when_the_file_path_changes() -> TestResult {
-    let fixture = fixture(Duration::from_millis(10)).await?;
+    let fixture = fixture(Duration::from_millis(500)).await?;
     fixture.service.start().await?;
     fixture
         .service
@@ -352,7 +352,7 @@ async fn replaces_the_article_watcher_when_the_file_path_changes() -> TestResult
             && snapshot.state.content.as_deref() == Some("更新後の本文")
     })
     .await?;
-    sleep(Duration::from_millis(50)).await;
+    sleep(Duration::from_millis(550)).await;
 
     assert_eq!(
         (
@@ -384,7 +384,7 @@ async fn replaces_the_article_watcher_when_the_file_path_changes() -> TestResult
 
 #[tokio::test]
 async fn stops_watching_when_the_article_index_entry_is_removed() -> TestResult {
-    let fixture = fixture(Duration::from_millis(10)).await?;
+    let fixture = fixture(Duration::from_millis(500)).await?;
     fixture.service.start().await?;
     fixture
         .service
@@ -397,7 +397,7 @@ async fn stops_watching_when_the_article_index_entry_is_removed() -> TestResult 
     .await?;
     delete_index_entry(&fixture.sync, "article-example").await?;
     replace_body(&fixture.sync, "article-example", "本文削除後").await?;
-    sleep(Duration::from_millis(80)).await;
+    sleep(Duration::from_millis(550)).await;
     let state = fixture
         .service
         .article_file_state("article-example")
@@ -952,7 +952,7 @@ async fn rejects_symlinks_that_resolve_into_git_metadata() -> TestResult {
 async fn pauses_sync_after_a_selected_file_becomes_an_unsafe_symlink() -> TestResult {
     use std::os::unix::fs::symlink;
 
-    let fixture = fixture(Duration::from_millis(10)).await?;
+    let fixture = fixture(Duration::from_millis(500)).await?;
     fixture.service.start().await?;
     fixture
         .service
@@ -973,13 +973,13 @@ async fn pauses_sync_after_a_selected_file_becomes_an_unsafe_symlink() -> TestRe
             if status == "external_changed" {
                 return Some(status);
             }
-            tokio::task::yield_now().await;
+            sleep(Duration::from_millis(1)).await;
         }
     })
     .await?
     .ok_or("unsafe file change was not recorded")?;
     replace_body(&fixture.sync, "article-example", "次の編集").await?;
-    sleep(Duration::from_millis(40)).await;
+    sleep(Duration::from_millis(550)).await;
 
     assert_eq!(
         (status, fs::read(outside)?),

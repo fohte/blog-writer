@@ -283,7 +283,9 @@ impl LocalFileSyncService {
         if state.status != FileSyncStatus::Synced {
             return Ok(());
         }
-        let path = state.path.as_deref().ok_or(FileSyncError::InvalidPath)?;
+        let Some(path) = state.path.as_deref() else {
+            return Ok(());
+        };
         let current = match storage::read_file(&self.inner.directory, path) {
             Ok(current) => current,
             Err(error) if is_file_error(&error) => {
