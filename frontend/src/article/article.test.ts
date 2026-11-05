@@ -5,9 +5,11 @@ import {
   addMemo,
   deriveHeadingTree,
   dismissMemo,
+  getBody,
   getMemoState,
   getPremise,
   listMemos,
+  observeMemos,
   readBody,
   restoreMemo,
   setBody,
@@ -59,6 +61,23 @@ describe('article model', () => {
         state: { kind: 'unorganized' },
       },
     ])
+  })
+
+  it('observes memo changes and stops after unsubscribe', () => {
+    const doc = new Y.Doc()
+    const snapshots: string[][] = []
+    const stopObserving = observeMemos(doc, () => {
+      snapshots.push(
+        listMemos(doc).map((memo) => `${memo.id}:${memo.state.kind}`),
+      )
+    })
+
+    addMemo(doc, { id: 'memo-a', text: 'first memo', order: 0 })
+    dismissMemo(doc, 'memo-a')
+    stopObserving()
+    restoreMemo(doc, 'memo-a')
+
+    expect(snapshots).toEqual([['memo-a:unorganized'], ['memo-a:dismissed']])
   })
 
   it('updates a memo order', () => {
@@ -262,7 +281,7 @@ describe('article model', () => {
     const markerIndex = readBody(doc).indexOf('#')
     setMemoAdoptedTo(doc, 'memo-a', markerIndex)
 
-    const body = doc.getText('body')
+    const body = getBody(doc)
     body.insert(markerIndex + 1, '#')
     body.delete(markerIndex + 3, 'Section'.length)
     body.insert(markerIndex + 3, 'Updated')
