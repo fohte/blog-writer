@@ -25,7 +25,7 @@ export type MoveConflict = {
   target: number
 }
 
-export type MoveConflictDetail = {
+type MoveConflictDetail = {
   conflict: MoveConflict
   recordId: string
   target: TrackedTarget
@@ -114,46 +114,27 @@ function sourceOffsetFromAnchor(
   if (!anchorItem.deleted) return undefined
   const itemIndex = index.positionByItem.get(anchorItem)
   if (itemIndex === undefined) return undefined
-  if (side === 'before') {
-    for (
-      let clock = anchor.clock + 1;
-      clock < anchorItem.id.clock + anchorItem.length;
-      clock += 1
-    ) {
-      const offset = locate(record, anchor.client, clock)
-      if (offset !== undefined) return offset
-    }
-    for (
-      let position = itemIndex + 1;
-      position < index.items.length;
-      position += 1
-    ) {
-      const item = index.items[position]
-      if (!item) continue
-      if (!item.deleted) break
-      const offset = locate(record, item.id.client, item.id.clock)
-      if (offset !== undefined) return offset
-    }
-  } else {
-    for (
-      let clock = anchor.clock - 1;
-      clock >= anchorItem.id.clock;
-      clock -= 1
-    ) {
-      const offset = locate(record, anchor.client, clock)
-      if (offset !== undefined) return offset
-    }
-    for (let position = itemIndex - 1; position >= 0; position -= 1) {
-      const item = index.items[position]
-      if (!item) continue
-      if (!item.deleted) break
-      const offset = locate(
-        record,
-        item.id.client,
-        item.id.clock + item.length - 1,
-      )
-      if (offset !== undefined) return offset
-    }
+  const direction = side === 'before' ? 1 : -1
+  for (
+    let clock = anchor.clock + direction;
+    clock >= anchorItem.id.clock &&
+    clock < anchorItem.id.clock + anchorItem.length;
+    clock += direction
+  ) {
+    const offset = locate(record, anchor.client, clock)
+    if (offset !== undefined) return offset
+  }
+  for (
+    let position = itemIndex + direction;
+    position >= 0 && position < index.items.length;
+    position += direction
+  ) {
+    const item = index.items[position]
+    if (!item) continue
+    if (!item.deleted) break
+    const clock = item.id.clock + (direction < 0 ? item.length - 1 : 0)
+    const offset = locate(record, item.id.client, clock)
+    if (offset !== undefined) return offset
   }
   return undefined
 }

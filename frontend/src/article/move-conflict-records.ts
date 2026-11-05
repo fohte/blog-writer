@@ -251,6 +251,24 @@ export function isAcknowledged(
   return clock >= (ack ?? Number.POSITIVE_INFINITY)
 }
 
+function deleteSetIntersectsSource(
+  record: MoveRecord,
+  deleteSet: Y.Transaction['deleteSet'],
+): boolean {
+  return record.src.some(([client, clock, length, visible]) => {
+    if (visible === 0) return false
+    return (
+      deleteSet.clients
+        .get(client)
+        ?.some(
+          (deletion) =>
+            deletion.clock < clock + length &&
+            clock < deletion.clock + deletion.len,
+        ) ?? false
+    )
+  })
+}
+
 function repairDeletedMoveCharacters(
   doc: Y.Doc,
   record: MoveRecord,
@@ -342,6 +360,12 @@ function observeMoveRecords(doc: Y.Doc): () => void {
   }
   let knownRecordIds = new Set(currentRecords.map(moveId))
   const observe = (transaction: Y.Transaction) => {
+    if (
+      !transaction.changed.has(records) &&
+      transaction.deleteSet.clients.size === 0
+    ) {
+      return
+    }
     const allRecords = records.toArray().filter(isMoveRecord)
     const allRecordIds = new Set(allRecords.map(moveId))
     const addedRecordIds = new Set(
@@ -355,7 +379,10 @@ function observeMoveRecords(doc: Y.Doc): () => void {
       if (record.copy[0] === doc.clientID) continue
       if (record.createdAt <= Date.now() - RETENTION_MS) continue
       const recordWasAdded = addedRecordIds.has(moveId(record))
-      if (recordWasAdded || transaction.deleteSet.clients.size > 0) {
+      if (
+        recordWasAdded ||
+        deleteSetIntersectsSource(record, transaction.deleteSet)
+      ) {
         repairDeletedMoveCharacters(
           doc,
           record,

@@ -55,7 +55,7 @@ function insertInsideSection(replica: TestReplica): void {
   const position = randomInteger(from + 5, to - 1)
   text.insert(
     position,
-    pick(['xx', 'yy', 'zz', 'ab', 'Q', 'lorem ', 'ipsum\n', 'k']),
+    pick(['xx', 'yy', 'zz', 'ab', 'Q', 'lorem ', 'ipsum\n', 'ipsum\nx', 'k']),
   )
 }
 
@@ -112,9 +112,8 @@ function linearizedResult(
   return output
 }
 
-function withoutLineBreaks(markdown: string): string {
-  // Block moves adjust paragraph boundaries; the dedicated newline case checks their text payload.
-  return markdown.replaceAll('\n', '')
+function normalizeStructuralSeams(markdown: string): string {
+  return markdown.replaceAll(/\n{2,}(?=## [ABC]\n)/g, '\n').replace(/\n+$/, '')
 }
 
 function resolveAll(doc: Y.Doc): 'ok' | 'error' {
@@ -275,7 +274,8 @@ function randomTrial(
     (editor) => getMoveConflicts(editor.doc).length === 0,
   )
   const matchesLinearizedContent = bodies.every(
-    (body) => withoutLineBreaks(body) === withoutLineBreaks(expected),
+    (body) =>
+      normalizeStructuralSeams(body) === normalizeStructuralSeams(expected),
   )
   const detail =
     resolution === 'ok' &&

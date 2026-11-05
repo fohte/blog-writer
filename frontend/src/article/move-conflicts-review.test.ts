@@ -8,6 +8,7 @@ import {
   resolveMoveConflict,
   setBody,
 } from '#article/index'
+import { observeMoveConflicts } from '#article/move-conflicts'
 import {
   initialBody,
   moveSection,
@@ -18,6 +19,7 @@ import {
 } from '#article/move-conflicts.test-support.test'
 
 const activeReplicas: Array<ReturnType<typeof replica>> = []
+const activeObservers: Array<() => void> = []
 
 function readBodiesAndConflicts(documents: Y.Doc[]) {
   return {
@@ -34,6 +36,7 @@ function makeReplica(clientId: number): ReturnType<typeof replica> {
 
 afterEach(() => {
   vi.useRealTimers()
+  for (const stop of activeObservers.splice(0)) stop()
   for (const { stop } of activeReplicas.splice(0)) stop()
 })
 
@@ -103,6 +106,35 @@ describe('move conflict review regressions', () => {
         conflicts: [[], []],
         records: [0, 0],
       },
+    })
+  })
+
+  it('notifies another replica when a keep decision arrives', () => {
+    const replicas = prepareConflict()
+    activeReplicas.push(replicas.A, replicas.B)
+    settle(replicas)
+
+    const notifications: string[][] = []
+    activeObservers.push(
+      observeMoveConflicts(replicas.A.doc, () => {
+        notifications.push(getMoveConflicts(replicas.A.doc).map(({ id }) => id))
+      }),
+    )
+    const conflict = getMoveConflicts(replicas.B.doc)[0]
+    if (!conflict) throw new Error('Expected a move conflict')
+    resolveMoveConflict(replicas.B.doc, conflict.id, 'keep')._unsafeUnwrap()
+    settle(replicas)
+
+    const readOutput = () => ({
+      notifications,
+      conflicts: [
+        getMoveConflicts(replicas.A.doc),
+        getMoveConflicts(replicas.B.doc),
+      ],
+    })
+    expect(readOutput()).toEqual({
+      notifications: [[]],
+      conflicts: [[], []],
     })
   })
 

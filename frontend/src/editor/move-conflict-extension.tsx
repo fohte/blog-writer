@@ -129,6 +129,7 @@ class MoveConflictObserver {
   private readonly refresh: () => void
   private readonly body: Y.Text
   private destroyed = false
+  private refreshScheduled = false
 
   constructor(
     private readonly view: EditorView,
@@ -143,9 +144,7 @@ class MoveConflictObserver {
     const views = viewsByDoc.get(doc) ?? new Set<() => void>()
     views.add(this.refresh)
     viewsByDoc.set(doc, views)
-    this.stopObserving = observeMoveConflicts(doc, () => {
-      queueMicrotask(this.refresh)
-    })
+    this.stopObserving = observeMoveConflicts(doc, this.scheduleRefresh)
   }
 
   destroy(): void {
@@ -158,7 +157,16 @@ class MoveConflictObserver {
   }
 
   private readonly onBodyChange = () => {
-    queueMicrotask(this.refresh)
+    this.scheduleRefresh()
+  }
+
+  private readonly scheduleRefresh = () => {
+    if (this.destroyed || this.refreshScheduled) return
+    this.refreshScheduled = true
+    queueMicrotask(() => {
+      this.refreshScheduled = false
+      this.refresh()
+    })
   }
 }
 
