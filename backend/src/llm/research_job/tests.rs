@@ -378,69 +378,50 @@ async fn streams_claim_evidence_with_a_verified_quote(
 }
 
 #[rstest]
-#[tokio::test]
-async fn streams_provider_errors_as_sse_error_events(
-    app_state_builder: TestAppStateBuilder,
-    fetched_urls: Arc<Mutex<Vec<String>>>,
-) {
-    let (provider, generation_calls, search_prompts) = test_provider(Vec::new(), json!({}), true);
-    let app_state = app_state_builder.build(provider, fetched_urls.clone(), None);
-    let response = post_job(
-        app_state,
-        json!({"task": "key_points", "question": "How does the example work?"}),
-    )
-    .await;
-    let actual = response_body(response).await;
-    let expected_events = vec![json!({
+#[case::provider_error(
+    json!({"task": "key_points", "question": "How does the example work?"}),
+    true,
+    "Research question: How does the example work?".to_owned(),
+    vec![json!({
         "event": "error",
         "data": {"message": "failed to start or communicate with the LLM provider"}
-    })];
-
-    assert_eq!(
-        json!({
-            "status": actual.0,
-            "search_prompts": search_prompts.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone(),
-            "generation_calls": generation_calls.load(Ordering::SeqCst),
-            "fetched_urls": fetched_urls.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone(),
-            "body": actual.1,
-        }),
-        json!({
-            "status": 200,
-            "search_prompts": ["Research question: How does the example work?"],
-            "generation_calls": 0,
-            "fetched_urls": [],
-            "body": sse_body(&expected_events),
-        })
-    );
-}
-
-#[rstest]
-#[tokio::test]
-async fn returns_empty_analysis_without_generating_when_no_source_is_available(
-    app_state_builder: TestAppStateBuilder,
-    fetched_urls: Arc<Mutex<Vec<String>>>,
-) {
-    let (provider, generation_calls, search_prompts) = test_provider(Vec::new(), json!({}), false);
-    let app_state = app_state_builder.build(provider, fetched_urls.clone(), None);
-    let response = post_job(
-        app_state,
-        json!({
-            "task": "claim_evidence",
-            "claim": "The source supports this statement."
-        }),
-    )
-    .await;
-    let actual = response_body(response).await;
-    let expected_events = vec![json!({
+    })],
+)]
+#[case::no_available_sources(
+    json!({
+        "task": "claim_evidence",
+        "claim": "The source supports this statement."
+    }),
+    false,
+    indoc! {"
+        Find sources that can verify this claim:
+        Claim: The source supports this statement.
+    "}.trim_end().to_owned(),
+    vec![json!({
         "event": "result",
         "data": {
             "analysis": {
                 "task": "claim_evidence",
                 "data": {"verdict": "insufficient", "quote": null, "suggestion": null}
-                },
+            },
             "sources": []
         }
-    })];
+    })],
+)]
+#[tokio::test]
+async fn handles_failed_search_and_empty_results_without_generation(
+    #[case] payload: Value,
+    #[case] fail_search: bool,
+    #[case] expected_search_prompt: String,
+    #[case] expected_events: Vec<Value>,
+    app_state_builder: TestAppStateBuilder,
+    fetched_urls: Arc<Mutex<Vec<String>>>,
+) {
+    let (provider, generation_calls, search_prompts) =
+        test_provider(Vec::new(), json!({}), fail_search);
+    let app_state = app_state_builder.build(provider, fetched_urls.clone(), None);
+    let response = post_job(app_state, payload).await;
+    let actual = response_body(response).await;
 
     assert_eq!(
         json!({
@@ -452,10 +433,7 @@ async fn returns_empty_analysis_without_generating_when_no_source_is_available(
         }),
         json!({
             "status": 200,
-            "search_prompts": [indoc! {"
-                Find sources that can verify this claim:
-                Claim: The source supports this statement.
-            "}.trim_end().to_owned()],
+            "search_prompts": [expected_search_prompt],
             "generation_calls": 0,
             "fetched_urls": [],
             "body": sse_body(&expected_events),
