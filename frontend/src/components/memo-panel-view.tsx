@@ -111,7 +111,18 @@ export function MemoPanelView({
                   >
                     下へ
                   </Button>
-                  {memo.state.kind === 'dismissed' ? (
+                  {memo.state.kind !== 'dismissed' ? (
+                    <Button
+                      onClick={() => {
+                        onDismissMemo(memo.id)
+                      }}
+                      type="button"
+                      variant="outline"
+                    >
+                      見送る
+                    </Button>
+                  ) : null}
+                  {memo.state.kind !== 'unorganized' ? (
                     <Button
                       onClick={() => {
                         onRestoreMemo(memo.id)
@@ -121,30 +132,7 @@ export function MemoPanelView({
                     >
                       未整理に戻す
                     </Button>
-                  ) : (
-                    <>
-                      <Button
-                        onClick={() => {
-                          onDismissMemo(memo.id)
-                        }}
-                        type="button"
-                        variant="outline"
-                      >
-                        見送る
-                      </Button>
-                      {memo.state.kind === 'adopted' ? (
-                        <Button
-                          onClick={() => {
-                            onRestoreMemo(memo.id)
-                          }}
-                          type="button"
-                          variant="outline"
-                        >
-                          未整理に戻す
-                        </Button>
-                      ) : null}
-                    </>
-                  )}
+                  ) : null}
                 </div>
               </div>
             ))}
