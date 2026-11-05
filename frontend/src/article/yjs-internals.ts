@@ -8,8 +8,11 @@ export type InternalItem = {
   deleted: boolean
   countable: boolean
   origin: TrackedId | null
+  rightOrigin: TrackedId | null
   right: InternalItem | null
 }
+
+export const MOVE_CONFLICT_TRANSACTION_ORIGIN = Symbol('move-conflict')
 
 type InternalText = Y.Text & { _start: InternalItem | null }
 

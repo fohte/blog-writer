@@ -273,12 +273,9 @@ export function mapWithinRange(
       continue
     }
     if (position >= replacement.from) {
-      return (
-        replacement.from -
-        range.from +
-        delta +
-        Math.min(position - replacement.from, replacement.text.length)
-      )
+      const replacementOffset = position - replacement.from
+      if (replacementOffset >= replacement.text.length) return undefined
+      return replacement.from - range.from + delta + replacementOffset
     }
     break
   }

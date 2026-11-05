@@ -17,7 +17,7 @@ import {
   replica,
   settle,
   syncBoth,
-} from '#article/move-conflicts.test-support'
+} from '#article/move-conflicts.test-support.test'
 
 const activeReplicas: Array<ReturnType<typeof replica>> = []
 

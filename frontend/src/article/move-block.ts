@@ -277,7 +277,9 @@ function applyMoveBlock(
       { length: range.to - range.from },
       (_, index) => {
         const mapped = mapWithinRange(range.from + index, range, replacements)
-        return Math.max(0, Math.min(insertion.contentLength - 1, mapped ?? 0))
+        return mapped === undefined
+          ? null
+          : Math.max(0, Math.min(insertion.contentLength - 1, mapped))
       },
     )
     const moveRecord = createMoveRecord({

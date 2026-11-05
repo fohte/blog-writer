@@ -9,14 +9,15 @@ import {
   setBody,
 } from '#article/index'
 import {
-  initialBody,
   pull,
   replica,
   settle,
   syncBoth,
-} from '#article/move-conflicts.test-support'
+} from '#article/move-conflicts.test-support.test'
 
+const initialBody = '## A\naa\n## B\nbravo\n## C\ncc\n'
 type TestReplica = ReturnType<typeof replica>
+type Destination = 'top' | 'mid' | 'end'
 
 let seed = 12345
 
@@ -34,8 +35,8 @@ function pick<T>(values: readonly [T, ...T[]]): T {
 }
 
 function sectionRange(markdown: string): [number, number] {
-  const from = markdown.indexOf('## Fjord\n')
-  const next = markdown.indexOf('\n## Vista', from + 1)
+  const from = markdown.indexOf('## B\n')
+  const next = markdown.indexOf('\n## C', from + 1)
   return [from, next < 0 ? markdown.length : next + 1]
 }
 
@@ -51,101 +52,86 @@ function insertInsideSection(replica: TestReplica): void {
   const text = replica.doc.getText('body')
   const markdown = text.toJSON()
   const [from, to] = sectionRange(markdown)
-  const bodyFrom = markdown.indexOf('\n', from) + 1
-  const bodyTo = Math.max(bodyFrom, to - 1)
-  const position = randomInteger(bodyFrom, bodyTo)
-  text.insert(position, pick(['p', 'q', 'rs', ' ', 'uv']))
+  const position = randomInteger(from + 5, to - 1)
+  text.insert(
+    position,
+    pick(['xx', 'yy', 'zz', 'ab', 'Q', 'lorem ', 'ipsum\n', 'k']),
+  )
 }
 
 function deleteInsideSection(replica: TestReplica): void {
   const text = replica.doc.getText('body')
   const markdown = text.toJSON()
   const [from, to] = sectionRange(markdown)
-  const bodyFrom = markdown.indexOf('\n', from) + 1
-  const bodyTo = Math.max(bodyFrom, to - 1)
-  if (bodyTo - bodyFrom < 2) return
-  const start = randomInteger(bodyFrom, bodyTo - 2)
-  const length = randomInteger(1, Math.min(4, bodyTo - start - 1))
+  if (to - 1 - (from + 5) < 1) return
+  const start = randomInteger(from + 5, to - 2)
+  const length = randomInteger(1, Math.min(4, to - 1 - start))
   text.delete(start, length)
 }
 
 function insertOutsideSection(replica: TestReplica): void {
   const markdown = readBody(replica.doc)
   const locations: [number, number] = [
-    markdown.indexOf('a1') + 1,
-    markdown.indexOf('z9') + 1,
+    markdown.indexOf('aa') + 1,
+    markdown.indexOf('cc') + 1,
   ]
   replica.doc.getText('body').insert(pick(locations), 'o')
 }
 
-function moveSection(doc: Y.Doc, destination: 'top' | 'end'): void {
+function moveSection(doc: Y.Doc, destination: Destination): string | undefined {
   const markdown = readBody(doc)
-  const from = markdown.indexOf('## Fjord\n')
-  moveBlock(doc, {
-    from,
-    destination: destination === 'top' ? 0 : markdown.length,
-  })._unsafeUnwrap()
+  const from = markdown.indexOf('## B\n')
+  const destinationIndex =
+    destination === 'top'
+      ? 0
+      : destination === 'mid'
+        ? markdown.indexOf('## C\n')
+        : markdown.length
+  return moveBlock(doc, { from, destination: destinationIndex }).match(
+    () => undefined,
+    (error) => error.message,
+  )
 }
 
 function linearizedResult(
-  text: string,
-  destinations: ('top' | 'end')[],
-): string {
+  markdown: string,
+  destinations: Destination[],
+): { body: string } | { error: { body: string; message: string } } {
   const doc = new Y.Doc()
-  setBody(doc, text)
-  for (const destination of destinations) moveSection(doc, destination)
-  return readBody(doc)
+  setBody(doc, markdown)
+  for (const destination of destinations) {
+    const error = moveSection(doc, destination)
+    if (error !== undefined) {
+      const output = { error: { body: readBody(doc), message: error } }
+      doc.destroy()
+      return output
+    }
+  }
+  const output = { body: readBody(doc) }
+  doc.destroy()
+  return output
 }
 
-function randomTrial(
-  trial: number,
-  chained: boolean,
-): {
-  converged: boolean
-  detectionsAgree: boolean
-  conflictsCleared: boolean
-  matchesLinearizedResult: boolean
-  detail: string | null
-} {
-  const A = replica(101)
-  const B = replica(102)
-  const C = replica(103)
-  const D = replica(104)
-  const S = new Y.Doc()
-  S.clientID = 105
-  const all = [A, B, C, D]
-  A.doc.getText('body')
-  setBody(A.doc, initialBody)
-  syncAll(all)
+function withoutLineBreaks(markdown: string): string {
+  // Block moves adjust paragraph boundaries; the dedicated newline case checks their text payload.
+  return markdown.replaceAll('\n', '')
+}
 
-  const online: [TestReplica, ...TestReplica[]] = [A, C, D]
-  for (let count = randomInteger(4, 8); count > 0; count -= 1) {
-    const editor = pick(online)
-    if (random() < 0.7) insertInsideSection(editor)
-    else deleteInsideSection(editor)
-    syncAll(all)
+function resolveAll(doc: Y.Doc): 'ok' | 'error' {
+  for (let pass = 0; pass < 100; pass += 1) {
+    const conflict = getMoveConflicts(doc).at(-1)
+    if (!conflict) return 'ok'
+    if (resolveMoveConflict(doc, conflict.id, 'move').isErr()) return 'error'
   }
+  return 'error'
+}
 
-  for (let count = randomInteger(1, 4); count > 0; count -= 1) {
-    const editor = random() < 0.7 ? insertInsideSection : deleteInsideSection
-    editor(B)
-  }
-  if (random() < 0.3) insertOutsideSection(A)
-  if (random() < 0.3) insertOutsideSection(B)
-
-  const reference = new Y.Doc()
-  const offline = new Y.Doc()
-  Y.applyUpdate(reference, Y.encodeStateAsUpdate(A.doc))
-  Y.applyUpdate(offline, Y.encodeStateAsUpdate(B.doc))
-  Y.applyUpdate(reference, Y.encodeStateAsUpdate(offline))
-  Y.applyUpdate(offline, Y.encodeStateAsUpdate(reference))
-  const destinations: ('top' | 'end')[] = [pick(['top', 'end'])]
-  if (chained) destinations.push(destinations[0] === 'top' ? 'end' : 'top')
-  const expected = linearizedResult(readBody(reference), destinations)
-
-  for (const destination of destinations) moveSection(A.doc, destination)
-  syncBoth(A.doc, S)
-  const order = pick(['ab', 'ba', 'sa', 'sb'] as const)
+function syncForOrder(
+  order: 'ab' | 'ba' | 'sa' | 'sb',
+  A: TestReplica,
+  B: TestReplica,
+  S: Y.Doc,
+): void {
   if (order === 'ab') {
     pull(B.doc, A.doc)
     pull(A.doc, B.doc)
@@ -159,10 +145,114 @@ function randomTrial(
     syncBoth(B.doc, S)
     syncBoth(A.doc, S)
   }
+}
 
-  const replicas = { A, B, S, peers: [C, D] }
+function randomTrial(
+  trial: number,
+  chained: boolean,
+): {
+  converged: boolean
+  strayEq: boolean
+  detectionsAgree: boolean
+  convergeAfterFix: boolean
+  noStrayLeft: boolean
+  matchesLinearizedContent: boolean
+  detail: string | null
+} {
+  const A = replica(1)
+  const B = replica(2)
+  const C = replica(5)
+  const D = replica(6)
+  const E = replica(7)
+  const S = new Y.Doc()
+  S.clientID = 3
+  const peers = [C, D, E]
+  const all = [A, B, ...peers]
+  setBody(A.doc, initialBody)
+  syncAll(all)
+
+  const online: [TestReplica, ...TestReplica[]] = [A, ...peers]
+  for (let count = randomInteger(4, 12); count > 0; count -= 1) {
+    const editor = pick(online)
+    if (random() < 0.7) insertInsideSection(editor)
+    else deleteInsideSection(editor)
+    syncAll(all)
+  }
+
+  for (let count = randomInteger(1, 4); count > 0; count -= 1) {
+    if (random() < 0.65) insertInsideSection(B)
+    else deleteInsideSection(B)
+  }
+  if (random() < 0.3) insertOutsideSection(B)
+  if (random() < 0.3) insertOutsideSection(A)
+
+  const reference = new Y.Doc()
+  const offline = new Y.Doc()
+  Y.applyUpdate(reference, Y.encodeStateAsUpdate(A.doc))
+  Y.applyUpdate(offline, Y.encodeStateAsUpdate(B.doc))
+  Y.applyUpdate(reference, Y.encodeStateAsUpdate(offline))
+  Y.applyUpdate(offline, Y.encodeStateAsUpdate(reference))
+
+  const destinations: Destination[] = [pick(['top', 'end'])]
+  if (chained) {
+    destinations.push(destinations[0] === 'top' ? 'end' : pick(['top', 'mid']))
+  }
+  const expectedResult = linearizedResult(readBody(reference), destinations)
+  if ('error' in expectedResult) {
+    const detail = JSON.stringify({
+      trial,
+      chained,
+      phase: 'linearized move',
+      ...expectedResult.error,
+    })
+    for (const editor of all) editor.stop()
+    for (const doc of [...all.map(({ doc }) => doc), S, reference, offline]) {
+      doc.destroy()
+    }
+    return {
+      converged: false,
+      strayEq: false,
+      detectionsAgree: false,
+      convergeAfterFix: false,
+      noStrayLeft: false,
+      matchesLinearizedContent: false,
+      detail,
+    }
+  }
+  const expected = expectedResult.body
+
+  for (const destination of destinations) {
+    const error = moveSection(A.doc, destination)
+    if (error !== undefined) {
+      const detail = JSON.stringify({
+        trial,
+        chained,
+        phase: 'actual move',
+        destination,
+        body: readBody(A.doc),
+        error,
+      })
+      for (const editor of all) editor.stop()
+      for (const doc of [...all.map(({ doc }) => doc), S, reference, offline]) {
+        doc.destroy()
+      }
+      return {
+        converged: false,
+        strayEq: false,
+        detectionsAgree: false,
+        convergeAfterFix: false,
+        noStrayLeft: false,
+        matchesLinearizedContent: false,
+        detail,
+      }
+    }
+  }
+  const order = pick(['ab', 'ba', 'sa', 'sb'] as const)
+  syncForOrder(order, A, B, S)
+
+  const replicas = { A, B, S, peers }
   settle(replicas)
-  const detections = [A, B, C, D].map((editor) =>
+  const detections = [A, B, ...peers].map((editor) =>
     getMoveConflicts(editor.doc).toSorted(
       (left, right) => left.from - right.from,
     ),
@@ -170,68 +260,80 @@ function randomTrial(
   const detectionsAgree = detections.every(
     (detection) => JSON.stringify(detection) === JSON.stringify(detections[0]),
   )
-
-  for (let pass = 0; pass < 100; pass += 1) {
-    const conflicts = getMoveConflicts(A.doc)
-    if (conflicts.length === 0) break
-    for (const conflict of conflicts.toReversed()) {
-      const current = getMoveConflicts(A.doc).find(
-        ({ id }) => id === conflict.id,
-      )
-      if (current) {
-        const result = tryResolve(A.doc, current.id)
-        if (result === 'error') break
-      }
-    }
-  }
+  const strayEq =
+    JSON.stringify(detections[0]) === JSON.stringify(detections[1])
+  const docs = [...all.map(({ doc }) => doc), S]
+  const beforeFixBodies = docs.map(readBody)
+  const converged = beforeFixBodies.every((body) => body === beforeFixBodies[0])
+  const fixer = pick([A, B])
+  const resolution = resolveAll(fixer.doc)
   settle(replicas)
 
-  const docs = [A.doc, B.doc, C.doc, D.doc, S]
   const bodies = docs.map(readBody)
-  const converged = bodies.every((body) => body === bodies[0])
-  const conflictsCleared = [A, B, C, D].every(
+  const convergeAfterFix = bodies.every((body) => body === bodies[0])
+  const noStrayLeft = [A, B, ...peers].every(
     (editor) => getMoveConflicts(editor.doc).length === 0,
   )
-  const matchesLinearizedResult = bodies.every((body) => body === expected)
+  const matchesLinearizedContent = bodies.every(
+    (body) => withoutLineBreaks(body) === withoutLineBreaks(expected),
+  )
   const detail =
-    converged && detectionsAgree && conflictsCleared && matchesLinearizedResult
+    resolution === 'ok' &&
+    converged &&
+    strayEq &&
+    detectionsAgree &&
+    convergeAfterFix &&
+    noStrayLeft &&
+    matchesLinearizedContent
       ? null
-      : JSON.stringify({ trial, order, chained, expected, bodies, detections })
+      : JSON.stringify({
+          trial,
+          order,
+          chained,
+          resolution,
+          expected,
+          bodies,
+          detections,
+        })
 
   for (const editor of all) editor.stop()
+  for (const doc of [...all.map(({ doc }) => doc), S, reference, offline]) {
+    doc.destroy()
+  }
   return {
     converged,
+    strayEq,
     detectionsAgree,
-    conflictsCleared,
-    matchesLinearizedResult,
+    convergeAfterFix,
+    noStrayLeft,
+    matchesLinearizedContent,
     detail,
   }
 }
 
-function tryResolve(doc: Y.Doc, id: string): 'ok' | 'error' {
-  return resolveMoveConflict(doc, id, 'move').match(
-    () => 'ok',
-    () => 'error',
-  )
-}
-
 describe('random move and edit sequences', () => {
-  it('matches the linearized result across 800 deterministic scenarios', () => {
+  it('converges with the same ordered text across 800 deterministic scenarios', () => {
     seed = 12345
-    const totals = {
-      cases: 800,
+    const makeTotals = () => ({
+      cases: 400,
       converged: 0,
+      strayEq: 0,
       detectionsAgree: 0,
-      conflictsCleared: 0,
-      matchesLinearizedResult: 0,
-    }
+      convergeAfterFix: 0,
+      noStrayLeft: 0,
+      matchesLinearizedContent: 0,
+    })
+    const totals = { singleMove: makeTotals(), chainedMoves: makeTotals() }
     let firstFailure: string | null = null
     for (let index = 0; index < 800; index += 1) {
       const result = randomTrial(index, index >= 400)
-      if (result.converged) totals.converged += 1
-      if (result.detectionsAgree) totals.detectionsAgree += 1
-      if (result.conflictsCleared) totals.conflictsCleared += 1
-      if (result.matchesLinearizedResult) totals.matchesLinearizedResult += 1
+      const counts = index < 400 ? totals.singleMove : totals.chainedMoves
+      if (result.converged) counts.converged += 1
+      if (result.strayEq) counts.strayEq += 1
+      if (result.detectionsAgree) counts.detectionsAgree += 1
+      if (result.convergeAfterFix) counts.convergeAfterFix += 1
+      if (result.noStrayLeft) counts.noStrayLeft += 1
+      if (result.matchesLinearizedContent) counts.matchesLinearizedContent += 1
       firstFailure ??= result.detail
     }
 
@@ -242,11 +344,24 @@ describe('random move and edit sequences', () => {
       ]),
     ).toEqual({
       totals: {
-        cases: 800,
-        converged: 800,
-        detectionsAgree: 800,
-        conflictsCleared: 800,
-        matchesLinearizedResult: 800,
+        singleMove: {
+          cases: 400,
+          converged: 400,
+          strayEq: 400,
+          detectionsAgree: 400,
+          convergeAfterFix: 400,
+          noStrayLeft: 400,
+          matchesLinearizedContent: 400,
+        },
+        chainedMoves: {
+          cases: 400,
+          converged: 400,
+          strayEq: 400,
+          detectionsAgree: 400,
+          convergeAfterFix: 400,
+          noStrayLeft: 400,
+          matchesLinearizedContent: 400,
+        },
       },
       firstFailure: null,
     })

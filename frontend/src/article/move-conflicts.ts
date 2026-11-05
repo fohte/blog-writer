@@ -3,12 +3,15 @@ import * as Y from 'yjs'
 
 import { InvalidBlockMoveError } from '#article/errors'
 import {
-  detectMoveConflicts,
+  detectMoveConflictDetails,
   type MoveConflict,
   resolveMoveConflictRange,
 } from '#article/move-conflict-detection'
 import {
   cleanupMoveRecords,
+  isMoveConflictKept,
+  keepMoveConflict,
+  observeMoveConflictDecisions,
   registerMoveConflictObserver,
 } from '#article/move-conflict-records'
 
@@ -16,7 +19,12 @@ export type { MoveConflict } from '#article/move-conflict-detection'
 
 export function getMoveConflicts(doc: Y.Doc): MoveConflict[] {
   cleanupMoveRecords(doc)
-  return detectMoveConflicts(doc)
+  return detectMoveConflictDetails(doc)
+    .filter(
+      ({ conflict, recordId }) =>
+        !isMoveConflictKept(doc, recordId, conflict.id),
+    )
+    .map(({ conflict }) => conflict)
 }
 
 export function resolveMoveConflict(
@@ -24,13 +32,18 @@ export function resolveMoveConflict(
   conflictId: string,
   resolution: 'move' | 'keep',
 ): Result<void, InvalidBlockMoveError> {
-  const conflict = detectMoveConflicts(doc).find(({ id }) => id === conflictId)
-  if (!conflict)
+  const detail = detectMoveConflictDetails(doc).find(
+    ({ conflict }) => conflict.id === conflictId,
+  )
+  if (!detail)
     return err(
       new InvalidBlockMoveError('The move conflict is no longer available'),
     )
-  if (resolution === 'keep') return ok()
-  resolveMoveConflictRange(doc, conflict)
+  if (resolution === 'keep') {
+    keepMoveConflict(doc, detail.recordId, conflictId)
+    return ok()
+  }
+  resolveMoveConflictRange(doc, detail.conflict, detail.recordId, detail.target)
   return ok()
 }
 
@@ -46,8 +59,10 @@ export function observeMoveConflicts(
     onAcknowledgement()
   }
   acknowledgements.observe(notify)
+  const stopObservingDecisions = observeMoveConflictDecisions(doc, notify)
   return () => {
     acknowledgements.unobserve(notify)
+    stopObservingDecisions()
     stopObservingRecords()
   }
 }

@@ -25,7 +25,6 @@ class MoveConflictWidget extends WidgetType {
   constructor(
     readonly doc: Y.Doc,
     readonly conflict: MoveConflict,
-    readonly dismiss: (id: string) => void,
   ) {
     super()
   }
@@ -52,7 +51,7 @@ class MoveConflictWidget extends WidgetType {
           onKeep={() => {
             resolveMoveConflict(this.doc, this.conflict.id, 'keep').match(
               () => {
-                this.dismiss(this.conflict.id)
+                refreshViews(this.doc)
               },
               () => {
                 render(
@@ -63,7 +62,9 @@ class MoveConflictWidget extends WidgetType {
           }}
           onMove={() => {
             resolveMoveConflict(this.doc, this.conflict.id, 'move').match(
-              () => undefined,
+              () => {
+                refreshViews(this.doc)
+              },
               () => {
                 render(
                   'This text changed before the choice could be applied. Review the updated text.',
@@ -94,9 +95,8 @@ function refreshViews(doc: Y.Doc): void {
   for (const refresh of viewsByDoc.get(doc) ?? []) refresh()
 }
 
-function buildDecorations(doc: Y.Doc, dismissed: Set<string>): DecorationSet {
+function buildDecorations(doc: Y.Doc): DecorationSet {
   const decorations = getMoveConflicts(doc).flatMap((conflict) => {
-    if (dismissed.has(conflict.id)) return []
     return [
       Decoration.mark({ class: 'cm-move-conflict-range' }).range(
         conflict.from,
@@ -105,10 +105,7 @@ function buildDecorations(doc: Y.Doc, dismissed: Set<string>): DecorationSet {
       Decoration.widget({
         block: true,
         side: 1,
-        widget: new MoveConflictWidget(doc, conflict, (id) => {
-          dismissed.add(id)
-          refreshViews(doc)
-        }),
+        widget: new MoveConflictWidget(doc, conflict),
       }).range(conflict.to),
     ]
   })
@@ -117,33 +114,20 @@ function buildDecorations(doc: Y.Doc, dismissed: Set<string>): DecorationSet {
 
 function moveConflictStateField(doc: Y.Doc) {
   return StateField.define({
-    create: () => {
-      const dismissed = new Set<string>()
-      return { dismissed, decorations: buildDecorations(doc, dismissed) }
-    },
+    create: () => buildDecorations(doc),
     update: (value, transaction) => {
-      if (
-        transaction.docChanged ||
-        transaction.effects.some((effect) => effect.is(refreshMoveConflicts))
-      ) {
-        return {
-          dismissed: value.dismissed,
-          decorations: buildDecorations(doc, value.dismissed),
-        }
-      }
-      return {
-        dismissed: value.dismissed,
-        decorations: value.decorations.map(transaction.changes),
-      }
+      if (transaction.effects.some((effect) => effect.is(refreshMoveConflicts)))
+        return buildDecorations(doc)
+      return value.map(transaction.changes)
     },
-    provide: (field) =>
-      EditorView.decorations.from(field, (value) => value.decorations),
+    provide: (field) => EditorView.decorations.from(field),
   })
 }
 
 class MoveConflictObserver {
   private readonly stopObserving: () => void
   private readonly refresh: () => void
+  private readonly body: Y.Text
   private destroyed = false
 
   constructor(
@@ -154,6 +138,8 @@ class MoveConflictObserver {
       if (!this.destroyed)
         this.view.dispatch({ effects: refreshMoveConflicts.of(null) })
     }
+    this.body = doc.getText('body')
+    this.body.observe(this.onBodyChange)
     const views = viewsByDoc.get(doc) ?? new Set<() => void>()
     views.add(this.refresh)
     viewsByDoc.set(doc, views)
@@ -164,10 +150,15 @@ class MoveConflictObserver {
 
   destroy(): void {
     this.destroyed = true
+    this.body.unobserve(this.onBodyChange)
     this.stopObserving()
     const views = viewsByDoc.get(this.doc)
     views?.delete(this.refresh)
     if (views?.size === 0) viewsByDoc.delete(this.doc)
+  }
+
+  private readonly onBodyChange = () => {
+    queueMicrotask(this.refresh)
   }
 }
 

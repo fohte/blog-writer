@@ -1,29 +1,23 @@
 import * as Y from 'yjs'
 
+import type { MoveRecord } from '#article/move-conflict-source'
 import {
-  type InternalItem,
   internalItems,
+  MOVE_CONFLICT_TRANSACTION_ORIGIN,
   type TrackedId,
 } from '#article/yjs-internals'
 
+export {
+  captureMoveSource,
+  createMoveRecord,
+} from '#article/move-conflict-source'
+
 const MOVE_RECORDS = 'moves'
 const MOVE_ACKS = 'move-acks'
+const MOVE_DECISIONS = 'move-decisions'
+const MOVE_CONFLICT_RELOCATIONS = 'move-conflict-relocations'
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
-type MoveId = [client: number, clock: number]
-type MoveSourceRun = [
-  client: number,
-  clock: number,
-  length: number,
-  visible: 0 | 1,
-]
-type MoveRecord = {
-  src: MoveSourceRun[]
-  copy: MoveId
-  sv: Record<string, number>
-  offsets: number[]
-  createdAt: number
-}
 export type TrackedTarget = TrackedId & { side: 'before' | 'after' }
 
 export function getMoveRecords(doc: Y.Doc): Y.Array<MoveRecord> {
@@ -32,6 +26,14 @@ export function getMoveRecords(doc: Y.Doc): Y.Array<MoveRecord> {
 
 function getMoveAcks(doc: Y.Doc): Y.Map<number> {
   return doc.getMap<number>(MOVE_ACKS)
+}
+
+function getMoveDecisions(doc: Y.Doc): Y.Map<boolean> {
+  return doc.getMap<boolean>(MOVE_DECISIONS)
+}
+
+function getMoveConflictRelocations(doc: Y.Doc): Y.Map<TrackedId> {
+  return doc.getMap<TrackedId>(MOVE_CONFLICT_RELOCATIONS)
 }
 
 function moveId(record: MoveRecord): string {
@@ -66,108 +68,6 @@ function isMoveRecord(value: unknown): value is MoveRecord {
   )
 }
 
-function pushRun(
-  runs: MoveSourceRun[],
-  client: number,
-  clock: number,
-  length: number,
-  visible: 0 | 1,
-): void {
-  const last = runs.at(-1)
-  if (
-    last &&
-    last[0] === client &&
-    last[3] === visible &&
-    last[1] + last[2] === clock
-  ) {
-    last[2] += length
-  } else {
-    runs.push([client, clock, length, visible])
-  }
-}
-
-function spanOf(text: Y.Text, from: number, to: number): MoveSourceRun[] {
-  const runs: MoveSourceRun[] = []
-  let tombstones: InternalItem[] = []
-  let position = 0
-
-  for (const item of internalItems(text)) {
-    if (item.deleted) {
-      if (runs.length > 0) tombstones.push(item)
-      continue
-    }
-    if (!item.countable) continue
-    if (position >= to) break
-
-    const start = Math.max(from - position, 0)
-    const end = Math.min(to - position, item.length)
-    if (start < end) {
-      for (const tombstone of tombstones) {
-        pushRun(
-          runs,
-          tombstone.id.client,
-          tombstone.id.clock,
-          tombstone.length,
-          0,
-        )
-      }
-      tombstones = []
-      pushRun(runs, item.id.client, item.id.clock + start, end - start, 1)
-      if (end < item.length) {
-        tombstones = []
-        break
-      }
-    }
-    position += item.length
-  }
-
-  for (const tombstone of tombstones) {
-    pushRun(runs, tombstone.id.client, tombstone.id.clock, tombstone.length, 0)
-  }
-  return runs
-}
-
-export function captureMoveSource(
-  text: Y.Text,
-  from: number,
-  to: number,
-): MoveSourceRun[] {
-  return spanOf(text, from, to)
-}
-
-export function createMoveRecord(input: {
-  text: Y.Text
-  copyFrom: number
-  src: MoveSourceRun[]
-  sv: Record<string, number>
-  offsets: number[]
-  createdAt?: number
-}): MoveRecord | undefined {
-  const { text, copyFrom, src, sv, offsets } = input
-  let position = 0
-  let copy: TrackedId | undefined
-  for (const item of internalItems(text)) {
-    if (item.deleted || !item.countable) continue
-    if (copyFrom >= position && copyFrom < position + item.length) {
-      copy = {
-        client: item.id.client,
-        clock: item.id.clock + copyFrom - position,
-      }
-      break
-    }
-    position += item.length
-  }
-  if (!copy) return undefined
-
-  return {
-    src,
-    copy: [copy.client, copy.clock],
-    sv,
-    offsets,
-    createdAt: input.createdAt ?? Date.now(),
-  }
-}
-
 export function cleanupMoveRecords(doc: Y.Doc, now = Date.now()): void {
   if (!doc.share.has(MOVE_RECORDS)) return
   const records = getMoveRecords(doc)
@@ -189,7 +89,75 @@ export function cleanupMoveRecords(doc: Y.Doc, now = Date.now()): void {
     for (const key of acks.keys()) {
       if (removed.some((id) => key.startsWith(`${id}/`))) acks.delete(key)
     }
+    const decisions = getMoveDecisions(doc)
+    for (const key of decisions.keys()) {
+      if (removed.some((id) => key.startsWith(`${id}/`))) decisions.delete(key)
+    }
+    const relocations = getMoveConflictRelocations(doc)
+    for (const key of relocations.keys()) {
+      if (removed.some((id) => key.startsWith(`${id}/`)))
+        relocations.delete(key)
+    }
   })
+}
+
+function moveDecisionKey(recordId: string, conflictId: string): string {
+  return `${recordId}/${conflictId}`
+}
+
+export function isMoveConflictKept(
+  doc: Y.Doc,
+  recordId: string,
+  conflictId: string,
+): boolean {
+  return getMoveDecisions(doc).has(moveDecisionKey(recordId, conflictId))
+}
+
+export function keepMoveConflict(
+  doc: Y.Doc,
+  recordId: string,
+  conflictId: string,
+): void {
+  getMoveDecisions(doc).set(moveDecisionKey(recordId, conflictId), true)
+}
+
+function relocationKey(recordId: string, id: TrackedId): string {
+  return `${recordId}/${id.client.toString()}:${id.clock.toString()}`
+}
+
+export function getMoveConflictRelocation(
+  doc: Y.Doc,
+  recordId: string,
+  id: TrackedId,
+): TrackedId | undefined {
+  return getMoveConflictRelocations(doc).get(relocationKey(recordId, id))
+}
+
+export function recordMoveConflictRelocations(
+  doc: Y.Doc,
+  recordId: string,
+  sourceIds: TrackedId[],
+  destinationIds: TrackedId[],
+): void {
+  const relocations = getMoveConflictRelocations(doc)
+  for (let index = 0; index < sourceIds.length; index += 1) {
+    const source = sourceIds[index]
+    const destination = destinationIds[index]
+    if (source && destination) {
+      relocations.set(relocationKey(recordId, source), destination)
+    }
+  }
+}
+
+export function observeMoveConflictDecisions(
+  doc: Y.Doc,
+  onChange: () => void,
+): () => void {
+  const decisions = getMoveDecisions(doc)
+  decisions.observe(onChange)
+  return () => {
+    decisions.unobserve(onChange)
+  }
 }
 
 export function locate(
@@ -211,12 +179,16 @@ export function locate(
   return undefined
 }
 
-function mappedOffset(record: MoveRecord, sourceOffset: number): number {
+function mappedOffset(
+  record: MoveRecord,
+  sourceOffset: number,
+): number | undefined {
   if (sourceOffset < 0) return sourceOffset
-  return record.offsets[sourceOffset] ?? sourceOffset
+  const mapped = record.offsets[sourceOffset]
+  return mapped === null ? undefined : (mapped ?? sourceOffset)
 }
 
-function forward(records: MoveRecord[], id: TrackedId): TrackedId {
+function forward(records: MoveRecord[], id: TrackedId): TrackedId | undefined {
   for (;;) {
     const record = records.find(
       (candidate) => locate(candidate, id.client, id.clock) !== undefined,
@@ -225,6 +197,7 @@ function forward(records: MoveRecord[], id: TrackedId): TrackedId {
     const offset = locate(record, id.client, id.clock)
     if (offset === undefined) return id
     const mapped = mappedOffset(record, offset)
+    if (mapped === undefined) return undefined
     id = { client: record.copy[0], clock: record.copy[1] + mapped }
   }
 }
@@ -238,17 +211,20 @@ export function targetFor(
   if (!firstVisible) return undefined
   if (sourceOffset < 0) {
     const firstOffset = mappedOffset(record, 0)
+    if (firstOffset === undefined) return undefined
     const id = forward(records, {
       client: record.copy[0],
       clock: record.copy[1] + firstOffset,
     })
-    return { ...id, side: 'before' }
+    return id ? { ...id, side: 'before' } : undefined
   }
+  const offset = mappedOffset(record, sourceOffset)
+  if (offset === undefined) return undefined
   const id = forward(records, {
     client: record.copy[0],
-    clock: record.copy[1] + mappedOffset(record, sourceOffset),
+    clock: record.copy[1] + offset,
   })
-  return { ...id, side: 'after' }
+  return id ? { ...id, side: 'after' } : undefined
 }
 
 export function isConcurrent(
@@ -265,10 +241,21 @@ export function isConcurrent(
   )
 }
 
+export function isAcknowledged(
+  doc: Y.Doc,
+  record: MoveRecord,
+  client: number,
+  clock: number,
+): boolean {
+  const ack = getMoveAcks(doc).get(moveAckKey(record, client))
+  return clock >= (ack ?? Number.POSITIVE_INFINITY)
+}
+
 function repairDeletedMoveCharacters(
   doc: Y.Doc,
   record: MoveRecord,
-  deleteSet: Y.Transaction['deleteSet'],
+  transaction: Y.Transaction,
+  recordWasAdded: boolean,
   records = getMoveRecords(doc).toArray(),
 ): void {
   const ids: TrackedId[] = []
@@ -277,20 +264,27 @@ function repairDeletedMoveCharacters(
     if (visible === 0) continue
     for (let index = 0; index < length; index += 1, offset += 1) {
       const id = Y.createID(client, clock + index)
+      const wasReceived =
+        (transaction.beforeState.get(client) ?? 0) > clock + index
+      const deletedInTransaction = Y.isDeleted(transaction.deleteSet, id)
+      const wasDeletedWhileConflicted = recordWasAdded
+        ? wasReceived && !deletedInTransaction
+        : wasReceived && deletedInTransaction
       if (
-        !Y.isDeleted(deleteSet, id) &&
+        wasDeletedWhileConflicted &&
         !records.some(
           (other) =>
             moveId(other) !== moveId(record) &&
             locate(other, client, clock + index) !== undefined,
         )
       ) {
-        ids.push(
-          forward(records, {
-            client: record.copy[0],
-            clock: record.copy[1] + mappedOffset(record, offset),
-          }),
-        )
+        const mapped = mappedOffset(record, offset)
+        if (mapped === undefined) continue
+        const id = forward(records, {
+          client: record.copy[0],
+          clock: record.copy[1] + mapped,
+        })
+        if (id) ids.push(id)
       }
     }
   }
@@ -326,14 +320,15 @@ function deleteVisibleIds(doc: Y.Doc, ids: TrackedId[]): void {
     for (const [start, length] of ranges.toReversed()) {
       text.delete(start, length)
     }
-  }, 'move-conflict-repair')
+  }, MOVE_CONFLICT_TRANSACTION_ORIGIN)
 }
 
 function observeMoveRecords(doc: Y.Doc): () => void {
   cleanupMoveRecords(doc)
   const records = getMoveRecords(doc)
   const acks = getMoveAcks(doc)
-  for (const record of records.toArray()) {
+  const currentRecords = records.toArray()
+  for (const record of currentRecords) {
     if (
       record.copy[0] !== doc.clientID &&
       acks.get(moveAckKey(record, doc.clientID)) === undefined
@@ -345,32 +340,31 @@ function observeMoveRecords(doc: Y.Doc): () => void {
       )
     }
   }
-  const observe = (
-    event: Y.YArrayEvent<MoveRecord>,
-    transaction: Y.Transaction,
-  ) => {
-    const added: MoveRecord[] = []
-    for (const item of event.changes.added) {
-      const content: unknown = item.content.getContent()
-      if (!Array.isArray(content)) continue
-      for (const value of content) {
-        if (isMoveRecord(value)) added.push(value)
-      }
-    }
-    if (added.length > 0) {
-      const allRecords = records.toArray()
-      for (const record of added) {
-        if (
-          record.copy[0] === doc.clientID ||
-          record.createdAt <= Date.now() - RETENTION_MS
-        )
-          continue
+  let knownRecordIds = new Set(currentRecords.map(moveId))
+  const observe = (transaction: Y.Transaction) => {
+    const allRecords = records.toArray().filter(isMoveRecord)
+    const allRecordIds = new Set(allRecords.map(moveId))
+    const addedRecordIds = new Set(
+      allRecords
+        .filter((record) => !knownRecordIds.has(moveId(record)))
+        .map(moveId),
+    )
+    knownRecordIds = allRecordIds
+
+    for (const record of allRecords) {
+      if (record.copy[0] === doc.clientID) continue
+      if (record.createdAt <= Date.now() - RETENTION_MS) continue
+      const recordWasAdded = addedRecordIds.has(moveId(record))
+      if (recordWasAdded || transaction.deleteSet.clients.size > 0) {
         repairDeletedMoveCharacters(
           doc,
           record,
-          transaction.deleteSet,
+          transaction,
+          recordWasAdded,
           allRecords,
         )
+      }
+      if (recordWasAdded) {
         getMoveAcks(doc).set(
           moveAckKey(record, doc.clientID),
           Y.getState(doc.store, doc.clientID),
@@ -379,9 +373,9 @@ function observeMoveRecords(doc: Y.Doc): () => void {
     }
     cleanupMoveRecords(doc)
   }
-  records.observe(observe)
+  doc.on('afterTransaction', observe)
   return () => {
-    records.unobserve(observe)
+    doc.off('afterTransaction', observe)
   }
 }
 
