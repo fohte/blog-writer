@@ -1,15 +1,20 @@
+import { EditorState, Transaction } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
 import {
   addMemo,
+  blockMoved,
   deriveHeadingTree,
   dismissMemo,
   getMemoState,
   getPremise,
   listMemos,
+  moveBlock,
   readBody,
+  registerBlockMoveUpdater,
   restoreMemo,
+  reverseBlockMove,
   setBody,
   setMemoAdoptedTo,
   setPremise,
@@ -17,6 +22,262 @@ import {
 } from '#article/index'
 
 describe('article model', () => {
+  it('moves a heading section and reanchors memo and registered markers in one transaction', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Alpha
+
+Alpha text
+
+## Nested
+
+Nested text
+
+# Beta
+
+Beta text
+`
+    setBody(doc, markdown)
+    addMemo(doc, { id: 'memo-a', text: 'nested note', order: 0 })
+    const nestedFrom = markdown.indexOf('## Nested')
+    setMemoAdoptedTo(doc, 'memo-a', nestedFrom)
+    const body = doc.getText('body')
+    const referenceData = doc.getMap('references')
+    const oldMarker = markdown.indexOf('Nested text')
+    const initialReference = Y.createRelativePositionFromTypeIndex(
+      body,
+      oldMarker + 1,
+      -1,
+    )
+    referenceData.set('anchor', Y.relativePositionToJSON(initialReference))
+
+    let transactionCount = 0
+    let transactionOrigin: unknown
+    doc.on('afterTransaction', (transaction) => {
+      transactionCount += 1
+      transactionOrigin = transaction.origin
+    })
+    const unregister = registerBlockMoveUpdater(doc, (mapping) => {
+      const stored = referenceData.get('anchor')
+      if (stored === undefined || typeof stored !== 'object') return
+      const absolute = Y.createAbsolutePositionFromRelativePosition(
+        Y.createRelativePositionFromJSON(stored),
+        doc,
+      )
+      if (!absolute) return
+      const newMarker = mapping.mapPosition(absolute.index - 1)
+      if (newMarker === undefined) return
+      return () => {
+        const moved = Y.createRelativePositionFromTypeIndex(
+          body,
+          newMarker + 1,
+          -1,
+        )
+        referenceData.set('anchor', Y.relativePositionToJSON(moved))
+      }
+    })
+
+    const result = moveBlock(doc, { from: 0, destination: markdown.length })
+    unregister()
+    const move = result.match(
+      (value) => value,
+      (error) => {
+        throw new Error(error.message)
+      },
+    )
+    const editorTransaction = EditorState.create({ doc: markdown }).update({
+      changes: { from: 0, to: markdown.length, insert: readBody(doc) },
+      annotations: move.annotations,
+    })
+    const finalReference = referenceData.get('anchor')
+    const finalAbsolute =
+      finalReference !== undefined && typeof finalReference === 'object'
+        ? Y.createAbsolutePositionFromRelativePosition(
+            Y.createRelativePositionFromJSON(finalReference),
+            doc,
+          )
+        : null
+
+    expect(
+      Object.fromEntries([
+        ['body', readBody(doc)],
+        ['memo', listMemos(doc)],
+        ['referenceIndex', finalAbsolute?.index],
+        ['transactionCount', transactionCount],
+        ['annotation', move.annotations[0].value],
+        ['editorAnnotation', editorTransaction.annotation(blockMoved)],
+        [
+          'editorUserEvent',
+          editorTransaction.annotation(Transaction.userEvent),
+        ],
+        [
+          'originAnnotations',
+          Array.isArray(transactionOrigin)
+            ? transactionOrigin.map(
+                (annotation: { value: unknown }) => annotation.value,
+              )
+            : null,
+        ],
+        ['oldMarker', oldMarker],
+        ['newMarker', finalAbsolute ? finalAbsolute.index - 1 : null],
+        ['annotationType', move.annotations[0].type === blockMoved],
+      ]),
+    ).toEqual({
+      body: `# Beta
+
+Beta text
+# Alpha
+
+Alpha text
+
+## Nested
+
+Nested text
+
+`,
+      memo: [
+        {
+          id: 'memo-a',
+          text: 'nested note',
+          order: 0,
+          state: {
+            kind: 'adopted',
+            heading: {
+              level: 2,
+              text: 'Nested',
+              from: 39,
+              to: 48,
+              children: [],
+            },
+          },
+        },
+      ],
+      referenceIndex: 51,
+      transactionCount: 1,
+      annotation: { from: 18, to: 63, seam: 0 },
+      editorAnnotation: { from: 18, to: 63, seam: 0 },
+      editorUserEvent: 'move',
+      originAnnotations: [{ from: 18, to: 63, seam: 0 }, 'move'],
+      oldMarker: 32,
+      newMarker: 50,
+      annotationType: true,
+    })
+  })
+
+  it('moves a single Markdown block', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Heading
+
+First paragraph.
+
+Second paragraph.
+
+After.
+`
+    setBody(doc, markdown)
+    const result = moveBlock(doc, {
+      from: markdown.indexOf('Second paragraph.'),
+      destination: markdown.length,
+    })
+
+    expect(
+      Object.fromEntries([
+        ['body', readBody(doc)],
+        [
+          'moved',
+          result.match(
+            (move) => move.annotations[0].value,
+            (error) => error.name,
+          ),
+        ],
+      ]),
+    ).toEqual({
+      body: `# Heading
+
+First paragraph.
+
+After.
+Second paragraph.
+
+`,
+      moved: { from: 36, to: 55, seam: 29 },
+    })
+  })
+
+  it('moves a heading under another heading and reverses it as an undo event', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Parent
+
+# Sibling
+
+# Moved
+
+## Child
+`
+    setBody(doc, markdown)
+    const parentFrom = markdown.indexOf('# Parent')
+    const movedFrom = markdown.indexOf('# Moved')
+    const siblingFrom = markdown.indexOf('# Sibling')
+    const result = moveBlock(doc, {
+      from: movedFrom,
+      destination: siblingFrom,
+      childOf: parentFrom,
+    })
+    const move = result.match(
+      (value) => value,
+      (error) => {
+        throw new Error(error.message)
+      },
+    )
+    const afterMove = readBody(doc)
+    const editorState = EditorState.create({ doc: markdown })
+    const editorMove = editorState.update({
+      changes: { from: 0, to: markdown.length, insert: afterMove },
+      annotations: move.annotations,
+    })
+    const reverse = reverseBlockMove(doc, move)
+    const reverseMove = reverse.match(
+      (value) => value,
+      (error) => {
+        throw new Error(error.message)
+      },
+    )
+    const editorUndo = editorMove.state.update({
+      changes: {
+        from: 0,
+        to: afterMove.length,
+        insert: readBody(doc),
+      },
+      annotations: reverseMove.annotations,
+    })
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['afterUndo', readBody(doc)],
+        ['move', move.annotations.map((annotation) => annotation.value)],
+        ['undo', reverseMove.annotations.map((annotation) => annotation.value)],
+        ['undoEvent', reverseMove.annotations[1].value],
+        ['editorUndoEvent', editorUndo.annotation(Transaction.userEvent)],
+        ['editorUndoAnnotation', editorUndo.annotation(blockMoved)],
+      ]),
+    ).toEqual({
+      afterMove: `# Parent
+
+## Moved
+
+### Child
+# Sibling
+
+`,
+      afterUndo: markdown,
+      move: [{ from: 10, to: 30, seam: 41 }, 'move'],
+      undo: [{ from: 21, to: 39, seam: 10 }, 'undo'],
+      undoEvent: 'undo',
+      editorUndoEvent: 'undo',
+      editorUndoAnnotation: { from: 21, to: 39, seam: 10 },
+    })
+  })
+
   it('reads and writes body text', () => {
     const doc = new Y.Doc()
     setBody(doc, '# Draft')
