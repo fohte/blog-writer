@@ -9,8 +9,23 @@ import type { Heading } from '#article/types'
 export type Range = { from: number; to: number; headingLevel?: number }
 export type TextReplacement = { from: number; to: number; text: string }
 export type ValidatedMove = { range: Range; targetLevel?: number }
+type MarkdownBlockRange = { from: number; contentTo: number; to: number }
 
 const markdownParser = parser.configure(GFM)
+
+function topLevelBlocks(markdown: string): MarkdownBlockRange[] {
+  const blocks: MarkdownBlockRange[] = []
+  const cursor = markdownParser.parse(markdown).cursor()
+  if (!cursor.firstChild()) return blocks
+
+  do {
+    let to = cursor.to
+    while (markdown[to] === '\n') to += 1
+    blocks.push({ from: cursor.from, contentTo: cursor.to, to })
+  } while (cursor.nextSibling())
+
+  return blocks
+}
 
 function findHeadingSection(
   markdown: string,
@@ -35,19 +50,12 @@ function findHeadingSection(
   }
 }
 
-function findBlockRange(markdown: string, position: number): Range | undefined {
-  const cursor = markdownParser.parse(markdown).cursor()
-  if (!cursor.firstChild()) return undefined
-
-  do {
-    if (cursor.from <= position && position < cursor.to) {
-      let to = cursor.to
-      while (markdown[to] === '\n') to += 1
-      return { from: cursor.from, to }
-    }
-  } while (cursor.nextSibling())
-
-  return undefined
+function findBlockRange(
+  blocks: MarkdownBlockRange[],
+  position: number,
+): Range | undefined {
+  const block = blocks.find(({ from, to }) => from <= position && position < to)
+  return block ? { from: block.from, to: block.to } : undefined
 }
 
 function flattenHeadings(headings: Heading[]): Heading[] {
@@ -65,10 +73,10 @@ function findRange(
   markdown: string,
   from: number,
   headings: Heading[],
+  blocks: MarkdownBlockRange[],
 ): Range | undefined {
   return (
-    findHeadingSection(markdown, headings, from) ??
-    findBlockRange(markdown, from)
+    findHeadingSection(markdown, headings, from) ?? findBlockRange(blocks, from)
   )
 }
 
@@ -111,15 +119,25 @@ function validateDestination(
   return undefined
 }
 
-function isInsideBlock(markdown: string, position: number): boolean {
-  const cursor = markdownParser.parse(markdown).cursor()
-  if (!cursor.firstChild()) return false
+function isInsideBlock(
+  blocks: MarkdownBlockRange[],
+  position: number,
+): boolean {
+  return blocks.some(
+    ({ from, contentTo }) => from < position && position < contentTo,
+  )
+}
 
-  do {
-    if (cursor.from < position && position < cursor.to) return true
-  } while (cursor.nextSibling())
+function trailingNewlines(text: string): number {
+  return text.length - text.replace(/\n+$/, '').length
+}
 
-  return false
+function leadingNewlines(text: string): number {
+  return text.length - text.replace(/^\n+/, '').length
+}
+
+function missingSeparator(left: string, right: string): number {
+  return Math.max(0, 2 - trailingNewlines(left) - leadingNewlines(right))
 }
 
 export function validateMove(
@@ -136,9 +154,14 @@ export function validateMove(
     return err(new InvalidBlockMoveError('Block positions are out of bounds'))
   }
 
-  const range = findRange(markdown, input.from, headings)
+  const blocks = topLevelBlocks(markdown)
+  const range = findRange(markdown, input.from, headings, blocks)
   if (!range)
     return err(new InvalidBlockMoveError('No Markdown block at position'))
+  if (isInsideBlock(blocks, input.destination))
+    return err(
+      new InvalidBlockMoveError('The destination is inside a Markdown block'),
+    )
 
   let targetLevel = input.headingLevel
   if (input.childOf !== undefined) {
@@ -165,12 +188,6 @@ export function validateMove(
         ),
       )
     }
-    if (isInsideBlock(markdown, input.destination))
-      return err(
-        new InvalidBlockMoveError(
-          'The child destination is inside a Markdown block',
-        ),
-      )
     targetLevel = target.level + 1
   }
 
@@ -256,24 +273,10 @@ export function getInsertionText(
   const before = remaining.slice(0, insertionIndex)
   const after = remaining.slice(insertionIndex)
   const contentText = movedText.replace(/\n+$/, '\n')
-  const trailingNewlineCount = (text: string) =>
-    text.length - text.replace(/\n+$/, '').length
-  const leadingNewlineCount = (text: string) =>
-    text.length - text.replace(/^\n+/, '').length
   const prefixLength =
-    before.length === 0
-      ? 0
-      : Math.max(
-          0,
-          2 - trailingNewlineCount(before) - leadingNewlineCount(contentText),
-        )
+    before.length === 0 ? 0 : missingSeparator(before, contentText)
   const suffixLength =
-    after.length === 0
-      ? 0
-      : Math.max(
-          0,
-          2 - trailingNewlineCount(contentText) - leadingNewlineCount(after),
-        )
+    after.length === 0 ? 0 : missingSeparator(contentText, after)
   const prefix = '\n'.repeat(prefixLength)
   const suffix = '\n'.repeat(suffixLength)
 

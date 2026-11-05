@@ -314,7 +314,26 @@ Alpha
     })
   })
 
-  it('rejects child destinations outside the parent section or inside a block', () => {
+  it.each([
+    {
+      name: 'outside the parent section',
+      destination: (markdown: string) => markdown.length,
+      childOf: true,
+      error: 'The child destination is outside the parent section',
+    },
+    {
+      name: 'inside a block while becoming a child',
+      destination: (markdown: string) => markdown.indexOf('Parent text.') + 3,
+      childOf: true,
+      error: 'The destination is inside a Markdown block',
+    },
+    {
+      name: 'inside a block during a plain move',
+      destination: (markdown: string) => markdown.indexOf('Parent text.') + 3,
+      childOf: false,
+      error: 'The destination is inside a Markdown block',
+    },
+  ])('rejects a destination $name', ({ name, destination, childOf, error }) => {
     const markdown = `# Parent
 
 Parent text.
@@ -323,48 +342,30 @@ Parent text.
 
 # Moved
 `
-    const outsideDoc = new Y.Doc()
-    setBody(outsideDoc, markdown)
-    const parentFrom = markdown.indexOf('# Parent')
-    const movedFrom = markdown.indexOf('# Moved')
-    const outside = moveBlock(outsideDoc, {
-      from: movedFrom,
-      destination: markdown.length,
-      childOf: parentFrom,
-    })
-
-    const insideDoc = new Y.Doc()
-    setBody(insideDoc, markdown)
-    const inside = moveBlock(insideDoc, {
-      from: movedFrom,
-      destination: markdown.indexOf('Parent text.') + 3,
-      childOf: parentFrom,
+    const doc = new Y.Doc()
+    setBody(doc, markdown)
+    const result = moveBlock(doc, {
+      from: markdown.indexOf('# Moved'),
+      destination: destination(markdown),
+      ...(childOf ? { childOf: markdown.indexOf('# Parent') } : {}),
     })
 
     expect(
       Object.fromEntries([
+        ['case', name],
         [
-          'outside',
-          outside.match(
+          'result',
+          result.match(
             () => 'ok',
-            (error) => error.message,
+            (moveError) => moveError.message,
           ),
         ],
-        ['outsideBody', readBody(outsideDoc)],
-        [
-          'inside',
-          inside.match(
-            () => 'ok',
-            (error) => error.message,
-          ),
-        ],
-        ['insideBody', readBody(insideDoc)],
+        ['body', readBody(doc)],
       ]),
     ).toEqual({
-      outside: 'The child destination is outside the parent section',
-      outsideBody: markdown,
-      inside: 'The child destination is inside a Markdown block',
-      insideBody: markdown,
+      case: name,
+      result: error,
+      body: markdown,
     })
   })
 

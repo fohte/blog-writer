@@ -59,13 +59,13 @@ type AnchoredTextRange = {
 type MoveHistory = {
   movedFrom: Y.RelativePosition
   seam: Y.RelativePosition
-  selectedText: string
-  restoreText: string
+  insertedSelection: string
+  sourceText: string
   separators: AnchoredTextRange[]
 }
 type ApplyMoveOptions = {
-  expectedText?: string
-  insertionText?: string
+  expectedSelection?: string
+  replacementText?: string
   removeRanges?: AnchoredTextRange[]
 }
 
@@ -108,7 +108,7 @@ function rememberMove(
   move: MoveBlockResult,
   insertionIndex: number,
   insertion: { text: string; prefixLength: number; contentLength: number },
-  restoreText: string,
+  sourceText: string,
 ): void {
   const prefix = insertion.text.slice(0, insertion.prefixLength)
   const suffix = insertion.text.slice(
@@ -137,8 +137,8 @@ function rememberMove(
   historyByMove.set(move, {
     movedFrom: Y.createRelativePositionFromTypeIndex(body, move.from, 1),
     seam: Y.createRelativePositionFromTypeIndex(body, move.seam, 1),
-    selectedText: insertion.text.slice(insertion.prefixLength),
-    restoreText,
+    insertedSelection: insertion.text.slice(insertion.prefixLength),
+    sourceText,
     separators,
   })
 }
@@ -173,8 +173,8 @@ function applyMoveBlock(
   if (validation.isErr()) return err(validation.error)
   const { range, targetLevel } = validation.value
   if (
-    options.expectedText !== undefined &&
-    markdown.slice(range.from, range.to) !== options.expectedText
+    options.expectedSelection !== undefined &&
+    markdown.slice(range.from, range.to) !== options.expectedSelection
   ) {
     return err(new InvalidBlockMoveError('The moved block has changed'))
   }
@@ -185,7 +185,7 @@ function applyMoveBlock(
     headings,
   )
   const movedText = transformedText(markdown, range, replacements)
-  const restoreText = markdown.slice(range.from, range.to)
+  const sourceText = markdown.slice(range.from, range.to)
   const removeRanges = (options.removeRanges ?? []).map((anchoredRange) =>
     resolveTextRange(doc, body, markdown, anchoredRange),
   )
@@ -210,12 +210,12 @@ function applyMoveBlock(
       : input.destination
   const remaining = markdown.slice(0, removeFrom) + markdown.slice(removeTo)
   const insertion =
-    options.insertionText === undefined
+    options.replacementText === undefined
       ? getInsertionText(remaining, insertionIndex, movedText)
       : {
-          text: options.insertionText,
+          text: options.replacementText,
           prefixLength: 0,
-          contentLength: options.insertionText.length,
+          contentLength: options.replacementText.length,
         }
   const newFrom = insertionIndex + insertion.prefixLength
   const newTo = newFrom + insertion.contentLength
@@ -258,7 +258,7 @@ function applyMoveBlock(
       ? {}
       : { originalHeadingLevel: range.headingLevel }),
   }
-  rememberMove(body, move, insertionIndex, insertion, restoreText)
+  rememberMove(body, move, insertionIndex, insertion, sourceText)
   return ok(move)
 }
 
@@ -296,8 +296,8 @@ export function reverseBlockMove(
       userEvent: 'undo',
     },
     {
-      expectedText: history.selectedText,
-      insertionText: history.restoreText,
+      expectedSelection: history.insertedSelection,
+      replacementText: history.sourceText,
       removeRanges: history.separators,
     },
   )
