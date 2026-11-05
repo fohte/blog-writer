@@ -15,12 +15,12 @@ interface ComposeOutput {
 }
 
 interface ImeDriver {
-  pressKey(key: string): Promise<void>
-  compose(
+  pressKey: (key: string) => Promise<void>
+  compose: (
     body: ReturnType<typeof mountMarkdownEditor>['body'],
     content: ReturnType<typeof mountMarkdownEditor>['content'],
     text: string,
-  ): Promise<ComposeOutput>
+  ) => Promise<ComposeOutput>
 }
 
 function readOutput(
@@ -36,27 +36,6 @@ function readOutput(
   }
 }
 
-function withAfterNewline<T extends ComposeOutput>(
-  composition: T,
-  output: MarkdownEditorOutput,
-) {
-  return Object.assign({}, composition, { afterNewline: output })
-}
-
-function withAfterEnter<T extends ComposeOutput>(
-  composition: T,
-  output: MarkdownEditorOutput,
-) {
-  return Object.assign({}, composition, { afterEnter: output })
-}
-
-function withAfterBackspace<T extends ComposeOutput>(
-  composition: T,
-  output: MarkdownEditorOutput,
-) {
-  return Object.assign({}, composition, { afterBackspace: output })
-}
-
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
@@ -66,10 +45,10 @@ function nextFrame(): Promise<void> {
 }
 
 const webkitDriver: ImeDriver = {
-  async pressKey(key) {
+  pressKey: async (key) => {
     await userEvent.keyboard(`{${key}}`)
   },
-  async compose(body, content, text) {
+  compose: async (body, content, text) => {
     content?.dispatchEvent(
       new CompositionEvent('compositionstart', { bubbles: true, data: '' }),
     )
@@ -101,7 +80,7 @@ const webkitDriver: ImeDriver = {
 }
 
 const chromiumDriver: ImeDriver = {
-  async pressKey(key) {
+  pressKey: async (key) => {
     await cdp().send('Input.dispatchKeyEvent', {
       type: 'keyDown',
       key,
@@ -113,7 +92,7 @@ const chromiumDriver: ImeDriver = {
       code: key,
     })
   },
-  async compose(body, content, text) {
+  compose: async (body, content, text) => {
     await cdp().send('Input.imeSetComposition', {
       text,
       selectionStart: text.length,
@@ -132,18 +111,7 @@ const chromiumDriver: ImeDriver = {
 const imeDriver = navigator.userAgent.includes('Chrome')
   ? chromiumDriver
   : webkitDriver
-
-async function pressKey(key: string): Promise<void> {
-  await imeDriver.pressKey(key)
-}
-
-async function compose(
-  body: ReturnType<typeof mountMarkdownEditor>['body'],
-  content: ReturnType<typeof mountMarkdownEditor>['content'],
-  text: string,
-): Promise<ComposeOutput> {
-  return imeDriver.compose(body, content, text)
-}
+const { pressKey, compose } = imeDriver
 
 describe('MarkdownEditor IME', () => {
   it('keeps a closed emphasis marker visible while composing after it', async () => {
@@ -194,7 +162,10 @@ describe('MarkdownEditor IME', () => {
     const composition = await compose(body, content, '日本語')
     await pressKey('Enter')
     await nextFrame()
-    expect(withAfterNewline(composition, readOutput(body, content))).toEqual({
+    const actual = Object.assign({}, composition, {
+      afterNewline: readOutput(body, content),
+    })
+    expect(actual).toEqual({
       duringComposition: {
         body: '日本語plain',
         lines: ['日本語plain'],
@@ -307,10 +278,10 @@ describe('MarkdownEditor IME', () => {
     const afterBackspace = readOutput(body, content)
 
     const composition = await compose(body, content, '日本語')
-    const actual = withAfterBackspace(
-      withAfterEnter(composition, afterEnter),
+    const actual = Object.assign({}, composition, {
+      afterEnter,
       afterBackspace,
-    )
+    })
     expect(actual).toEqual({
       afterEnter: {
         body: '- item\n- ',
@@ -343,7 +314,10 @@ describe('MarkdownEditor IME', () => {
     const composition = await compose(body, content, '日本語')
     await pressKey('Backspace')
     await nextFrame()
-    expect(withAfterBackspace(composition, readOutput(body, content))).toEqual({
+    const actual = Object.assign({}, composition, {
+      afterBackspace: readOutput(body, content),
+    })
+    expect(actual).toEqual({
       duringComposition: {
         body: '## Heading日本語',
         lines: ['Heading日本語'],
