@@ -67,9 +67,7 @@ export default mergeConfig(
             include: ['src/editor/markdown-editor.ime.browser.test.tsx'],
             browser: {
               enabled: true,
-              provider: playwright({
-                launchOptions: { args: [...BLOCK_EXTERNAL_REQUESTS_ARGS] },
-              }),
+              provider: playwright(),
               headless: true,
               instances: [{ browser: 'webkit' }],
             },
