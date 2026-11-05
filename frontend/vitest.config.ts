@@ -31,6 +31,7 @@ export default mergeConfig(
           test: {
             name: 'browser-unit',
             include: ['src/**/*.browser.test.tsx'],
+            exclude: ['src/**/*.ime.browser.test.tsx'],
             browser: {
               enabled: true,
               provider: playwright({
@@ -38,6 +39,37 @@ export default mergeConfig(
               }),
               headless: true,
               instances: [{ browser: 'chromium' }],
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-ime-chromium',
+            include: ['src/**/*.chromium.ime.browser.test.tsx'],
+            browser: {
+              enabled: true,
+              api: { allowWrite: true, allowExec: true },
+              provider: playwright({
+                launchOptions: { args: [...BLOCK_EXTERNAL_REQUESTS_ARGS] },
+              }),
+              headless: true,
+              instances: [{ browser: 'chromium' }],
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-ime-webkit',
+            include: ['src/**/*.webkit.ime.browser.test.tsx'],
+            browser: {
+              enabled: true,
+              provider: playwright({
+                launchOptions: { args: [...BLOCK_EXTERNAL_REQUESTS_ARGS] },
+              }),
+              headless: true,
+              instances: [{ browser: 'webkit' }],
             },
           },
         },

@@ -261,17 +261,17 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+          key: ${{ runner.os }}-playwright-chromium-webkit-${{ steps.playwright-version.outputs.version }}
 
-      - name: Install Playwright chromium
+      - name: Install Playwright browsers
         if: steps.needs-playwright.outputs.needed == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: ${{ matrix.package }}
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium webkit
 
       - name: Install Playwright system dependencies
         if: steps.needs-playwright.outputs.needed == 'true' && steps.playwright-cache.outputs.cache-hit == 'true'
         working-directory: ${{ matrix.package }}
-        run: pnpm exec playwright install-deps chromium
+        run: pnpm exec playwright install-deps chromium webkit
 
       - name: Run tests
         working-directory: ${{ matrix.package }}
