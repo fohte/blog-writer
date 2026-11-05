@@ -3,7 +3,7 @@ import { Chip } from '@fohte/ui/chip'
 import { List } from '@fohte/ui/list'
 import { Panel } from '@fohte/ui/panel'
 import { Textarea } from '@fohte/ui/textarea'
-import type { ClipboardEvent, DragEvent } from 'react'
+import type { ClipboardEvent, DragEvent, ReactNode } from 'react'
 
 import type { Finding, Source } from '#article/index'
 import { ResearchSourceCard } from '#components/research-source-card'
@@ -110,8 +110,36 @@ export function SourcePanelView({
               (finding) => finding.sourceId === source.id,
             )
             const isPending = pending.some((item) => item.id === source.id)
+            const isAnalysisFailed = source.status === 'analysisFailed'
             const expanded = expandedSourceId === source.id
             const checkedAt = formatCheckedAt(source.checkedAt)
+            let findingsContent: ReactNode = null
+            if (!isAnalysisFailed) {
+              if (sourceFindings.length === 0) {
+                findingsContent = (
+                  <p className="text-sm text-muted-foreground">
+                    要点はありません。
+                  </p>
+                )
+              } else {
+                findingsContent = (
+                  <List aria-label={`${source.title}の要点`}>
+                    {sourceFindings.map((finding) => (
+                      <ResearchSourceCard
+                        key={finding.id}
+                        finding={finding}
+                        open={
+                          openFindingId === undefined
+                            ? undefined
+                            : openFindingId === finding.id
+                        }
+                        source={source}
+                      />
+                    ))}
+                  </List>
+                )
+              }
+            }
             return (
               <div
                 className="border-b border-border py-3 last:border-b-0"
@@ -138,7 +166,7 @@ export function SourcePanelView({
                     <Chip size="sm" tone="strong">
                       取得できず
                     </Chip>
-                  ) : source.status === 'analysisFailed' ? (
+                  ) : isAnalysisFailed ? (
                     <Chip size="sm" tone="strong">
                       要約失敗
                     </Chip>
@@ -205,7 +233,7 @@ export function SourcePanelView({
                           </div>
                         ) : null}
                       </div>
-                    ) : source.status === 'analysisFailed' ? (
+                    ) : isAnalysisFailed ? (
                       <div className="flex flex-col items-start gap-2">
                         <p className="text-sm text-muted-foreground">
                           本文は保存済みですが、要約と要点の作成に失敗しました。
@@ -226,27 +254,7 @@ export function SourcePanelView({
                         {source.summary || '要約はありません。'}
                       </p>
                     )}
-                    {source.status ===
-                    'analysisFailed' ? null : sourceFindings.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        要点はありません。
-                      </p>
-                    ) : (
-                      <List aria-label={`${source.title}の要点`}>
-                        {sourceFindings.map((finding) => (
-                          <ResearchSourceCard
-                            key={finding.id}
-                            finding={finding}
-                            open={
-                              openFindingId === undefined
-                                ? undefined
-                                : openFindingId === finding.id
-                            }
-                            source={source}
-                          />
-                        ))}
-                      </List>
-                    )}
+                    {findingsContent}
                   </div>
                 ) : null}
               </div>

@@ -296,21 +296,25 @@ function readImportFailureOutput(doc: Y.Doc) {
   }
 }
 
+function findElementWithText(selector: string, text: string) {
+  return [...(host?.querySelectorAll(selector) ?? [])].find(
+    (element) => element.textContent === text,
+  )
+}
+
+function hasElementWithText(selector: string, text: string) {
+  return findElementWithText(selector, text) !== undefined
+}
+
 function readAnalysisFailureOutput(doc: Y.Doc) {
   const sourceRow = host?.querySelector('[role="listitem"]')
   return {
     ...readOutput(doc),
     alert: host?.querySelector('[role="alert"]')?.textContent,
     analysisNotice: sourceRow?.querySelector('p')?.textContent,
-    pasteActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
-      (button) => button.textContent === '本文を貼り付け',
-    ),
-    retryActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
-      (button) => button.textContent === '要約をやり直す',
-    ),
-    emptyFindingsNoticeVisible: [...(host?.querySelectorAll('p') ?? [])].some(
-      (paragraph) => paragraph.textContent === '要点はありません。',
-    ),
+    pasteActionVisible: hasElementWithText('button', '本文を貼り付け'),
+    retryActionVisible: hasElementWithText('button', '要約をやり直す'),
+    emptyFindingsNoticeVisible: hasElementWithText('p', '要点はありません。'),
     fetchCalls: readFetchCalls(),
   }
 }
@@ -325,15 +329,9 @@ function readExistingAnalysisFailureOutput(doc: Y.Doc) {
     findings: listFindings(doc),
     alert: host?.querySelector('[role="alert"]')?.textContent,
     analysisNotice: sourceRow?.querySelector('p')?.textContent,
-    pasteActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
-      (button) => button.textContent === '本文を貼り付け',
-    ),
-    retryActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
-      (button) => button.textContent === '要約をやり直す',
-    ),
-    emptyFindingsNoticeVisible: [...(host?.querySelectorAll('p') ?? [])].some(
-      (paragraph) => paragraph.textContent === '要点はありません。',
-    ),
+    pasteActionVisible: hasElementWithText('button', '本文を貼り付け'),
+    retryActionVisible: hasElementWithText('button', '要約をやり直す'),
+    emptyFindingsNoticeVisible: hasElementWithText('p', '要点はありません。'),
     savedBodies,
     fetchCalls: readFetchCalls(),
   }
@@ -353,9 +351,9 @@ function readRecoveryCycleOutput(
 async function clickRetrySourceAnalysis() {
   const startingCallCount = fetchMock.mock.calls.length
   await act(async () => {
-    ;[...(host?.querySelectorAll('button') ?? [])]
-      .find((button) => button.textContent === '要約をやり直す')
-      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    findElementWithText('button', '要約をやり直す')?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    )
     await vi.waitFor(() => {
       if (fetchMock.mock.calls.length < startingCallCount + 2)
         throw new Error('source analysis retry has not reached the LLM API')
