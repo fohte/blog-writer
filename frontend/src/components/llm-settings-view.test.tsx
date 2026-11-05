@@ -13,6 +13,7 @@ describe('LlmSettingsView', () => {
         onRouteChange={() => {}}
         settings={{ route: 'local', bridgeUrl: 'http://localhost:4141' }}
         status="ready"
+        storageError={false}
       />,
     )
 

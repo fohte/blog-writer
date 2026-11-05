@@ -8,6 +8,7 @@ const meta = {
     onBack: () => {},
     onRouteChange: () => {},
     onBridgeUrlChange: () => {},
+    storageError: false,
   },
 } satisfies Meta<typeof LlmSettingsView>
 
@@ -57,5 +58,15 @@ export const LoadError: Story = {
     status: 'error',
     locked: false,
     error: 'Unable to load LLM settings.',
+  },
+}
+
+export const StorageUnavailable: Story = {
+  name: 'the settings cannot be saved on this device',
+  args: {
+    settings: { route: 'local', bridgeUrl: 'http://localhost:4141' },
+    status: 'ready',
+    locked: false,
+    storageError: true,
   },
 }

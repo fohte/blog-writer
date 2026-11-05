@@ -14,17 +14,31 @@ const createStorage = () => {
 describe('LLM settings storage', () => {
   it('defaults to the server and restores the selected route and bridge URL', () => {
     const storage = createStorage()
-    const defaults = loadLlmSettings(storage)
-    saveLlmSettings(storage, {
+    const defaults = loadLlmSettings(() => storage).match(
+      (settings) => settings,
+      () => ({ route: 'error', bridgeUrl: '' }),
+    )
+    const saveResult = saveLlmSettings(() => storage, {
       route: 'local',
       bridgeUrl: 'http://localhost:4141',
+    }).match(
+      () => 'saved',
+      () => 'failed',
+    )
+
+    const readSettings = () => ({
+      defaults,
+      saveResult,
+      restored: loadLlmSettings(() => storage).match(
+        (settings) => settings,
+        () => ({ route: 'error', bridgeUrl: '' }),
+      ),
     })
 
-    const readSettings = () => [defaults, loadLlmSettings(storage)]
-
-    expect(readSettings()).toEqual([
-      { route: 'server', bridgeUrl: '' },
-      { route: 'local', bridgeUrl: 'http://localhost:4141' },
-    ])
+    expect(readSettings()).toEqual({
+      defaults: { route: 'server', bridgeUrl: '' },
+      saveResult: 'saved',
+      restored: { route: 'local', bridgeUrl: 'http://localhost:4141' },
+    })
   })
 })

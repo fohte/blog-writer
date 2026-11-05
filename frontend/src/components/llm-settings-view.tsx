@@ -9,6 +9,7 @@ type LlmSettingsViewProps = {
   settings: LlmSettings
   status: 'loading' | 'ready' | 'error'
   locked: boolean
+  storageError: boolean
   error?: string | undefined
   onBack: () => void
   onRouteChange: (route: LlmRoute) => void
@@ -24,6 +25,7 @@ export function LlmSettingsView({
   settings,
   status,
   locked,
+  storageError,
   error,
   onBack,
   onRouteChange,
@@ -91,6 +93,10 @@ export function LlmSettingsView({
             ) : null}
           </Panel>
         )}
+
+        {storageError ? (
+          <p role="alert">Settings could not be saved on this device.</p>
+        ) : null}
       </section>
     </main>
   )

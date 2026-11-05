@@ -1,59 +1,29 @@
-import { errAsync, okAsync, ResultAsync } from 'neverthrow'
 import { useEffect, useState } from 'react'
 
 import { LlmSettingsView } from '#components/llm-settings-view'
-import type { components } from '#lib/api/schema.gen.d.ts'
-import { loadLlmSettings, saveLlmSettings } from '#lib/llm-settings'
-
-type LlmStatus = components['schemas']['LlmStatusResponse']
-
-const isLlmStatus = (value: unknown): value is LlmStatus => {
-  if (
-    typeof value === 'object' &&
-    value !== null &&
-    'locked' in value &&
-    typeof value.locked === 'boolean' &&
-    'provider' in value &&
-    (value.provider === 'claude_code' ||
-      value.provider === 'openai_compatible') &&
-    'web_search' in value &&
-    typeof value.web_search === 'boolean'
-  ) {
-    return true
-  }
-
-  return false
-}
-
-const parseLlmStatus = (value: unknown) =>
-  isLlmStatus(value)
-    ? okAsync(value)
-    : errAsync(new Error('Invalid LLM settings response'))
+import {
+  defaultLlmSettings,
+  loadLlmSettings,
+  saveLlmSettings,
+} from '#lib/llm-settings'
+import { fetchLlmStatus } from '#lib/llm-status'
 
 type LlmSettingsScreenProps = {
   onBack: () => void
 }
 
-const fetchLlmStatus = () =>
-  ResultAsync.fromPromise(
-    fetch('/api/llm/status'),
-    (cause) => new Error('Failed to load LLM settings', { cause }),
-  ).andThen((response) => {
-    if (!response.ok) {
-      return errAsync(
-        new Error(`Failed to load LLM settings: ${String(response.status)}`),
-      )
-    }
-
-    return ResultAsync.fromPromise(
-      response.json().then((value: unknown) => value),
-      (cause) => new Error('Failed to read LLM settings response', { cause }),
-    ).andThen(parseLlmStatus)
-  })
-
 export function LlmSettingsScreen({ onBack }: LlmSettingsScreenProps) {
+  const [initialSettings] = useState(() =>
+    loadLlmSettings(() => window.localStorage),
+  )
   const [settings, setSettings] = useState(() =>
-    loadLlmSettings(window.localStorage),
+    initialSettings.match(
+      (savedSettings) => savedSettings,
+      () => defaultLlmSettings,
+    ),
+  )
+  const [storageError, setStorageError] = useState(() =>
+    initialSettings.isErr(),
   )
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [locked, setLocked] = useState(false)
@@ -62,7 +32,7 @@ export function LlmSettingsScreen({ onBack }: LlmSettingsScreenProps) {
   useEffect(() => {
     let active = true
 
-    void fetchLlmStatus().match(
+    void fetchLlmStatus(fetch).match(
       (response) => {
         if (!active) return
         setLocked(response.locked)
@@ -81,7 +51,14 @@ export function LlmSettingsScreen({ onBack }: LlmSettingsScreenProps) {
   }, [])
 
   const updateSettings = (nextSettings: typeof settings) => {
-    saveLlmSettings(window.localStorage, nextSettings)
+    saveLlmSettings(() => window.localStorage, nextSettings).match(
+      () => {
+        setStorageError(false)
+      },
+      () => {
+        setStorageError(true)
+      },
+    )
     setSettings(nextSettings)
   }
 
@@ -98,6 +75,7 @@ export function LlmSettingsScreen({ onBack }: LlmSettingsScreenProps) {
       }}
       settings={settings}
       status={status}
+      storageError={storageError}
     />
   )
 }
