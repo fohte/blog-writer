@@ -133,6 +133,37 @@ function validateDestination(
   return undefined
 }
 
+function validateSectionDestination(
+  input: MoveBlockInput,
+  markdown: string,
+  range: Range,
+  targetLevel: number | undefined,
+  headings: Heading[],
+): InvalidBlockMoveError | undefined {
+  if (
+    input.childOf !== undefined ||
+    range.headingLevel === undefined ||
+    input.destination === markdown.length
+  ) {
+    return undefined
+  }
+
+  const destinationHeading = headings.find(
+    (heading) => heading.from === input.destination,
+  )
+  const error = new InvalidBlockMoveError(
+    'The section destination must be before a heading at the same or a shallower level, or at the end of the document',
+  )
+  if (!destinationHeading) {
+    return error
+  }
+
+  const level = targetLevel ?? range.headingLevel
+  const destinationLevel =
+    destinationHeading.from === range.from ? level : destinationHeading.level
+  return destinationLevel > level ? error : undefined
+}
+
 function isInsideBlock(
   blocks: MarkdownBlockRange[],
   position: number,
@@ -262,8 +293,17 @@ export function validateMove(
   }
 
   const destinationError = validateDestination(input, range, targetLevel)
-  return destinationError
-    ? err(destinationError)
+  if (destinationError) return err(destinationError)
+
+  const sectionDestinationError = validateSectionDestination(
+    input,
+    markdown,
+    range,
+    targetLevel,
+    headings,
+  )
+  return sectionDestinationError
+    ? err(sectionDestinationError)
     : ok({ range, ...(targetLevel === undefined ? {} : { targetLevel }) })
 }
 
@@ -369,14 +409,19 @@ export function planBlockMove(input: {
           prefixLength: replacement.prefix.length,
           contentLength: replacement.text.length,
         }
+  const restoresDestinationSeam =
+    replacement !== undefined &&
+    destination >= removeTo &&
+    insertionIndex === deletionFrom
 
   return {
     deletionFrom,
     removedLength,
     insertionIndex,
     insertion,
-    seam:
-      insertionIndex < removeFrom
+    seam: restoresDestinationSeam
+      ? insertionIndex + insertion.prefixLength
+      : insertionIndex < removeFrom
         ? deletionFrom + insertion.text.length
         : deletionFrom,
     sourcePrefix: sourceSeparator.removed,

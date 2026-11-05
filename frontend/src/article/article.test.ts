@@ -387,6 +387,126 @@ Alpha
 
   it.each([
     {
+      name: 'an equal-level heading',
+      markdown: `# First
+
+# Moved
+
+# Target
+`,
+      movedHeading: '# Moved',
+      destinationHeading: '# First',
+      afterMove: `# Moved
+
+# First
+
+# Target
+`,
+    },
+    {
+      name: 'a shallower heading',
+      markdown: `# First
+
+## Moved
+
+# Target
+`,
+      movedHeading: '## Moved',
+      destinationHeading: '# First',
+      afterMove: `## Moved
+
+# First
+
+# Target
+`,
+    },
+  ])(
+    'moves a section before $name and reverses it',
+    ({ markdown, movedHeading, destinationHeading, afterMove }) => {
+      const doc = new Y.Doc()
+      setBody(doc, markdown)
+      const move = moveBlock(doc, {
+        from: markdown.indexOf(movedHeading),
+        destination: markdown.indexOf(destinationHeading),
+      })._unsafeUnwrap()
+      const movedBody = readBody(doc)
+      const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+
+      expect(
+        Object.fromEntries([
+          ['movedBody', movedBody],
+          ['restoredBody', readBody(doc)],
+          ['undoEvent', undo.annotations[1].value],
+        ]),
+      ).toEqual({
+        movedBody: afterMove,
+        restoredBody: markdown,
+        undoEvent: 'undo',
+      })
+    },
+  )
+
+  it.each([
+    {
+      name: 'a body block',
+      markdown: `# H0
+
+# H1
+
+# H2
+
+# H3
+
+- l4
+`,
+      from: (markdown: string) => markdown.indexOf('# H2'),
+      destination: (markdown: string) => markdown.indexOf('- l4'),
+    },
+    {
+      name: 'a deeper heading',
+      markdown: `## H0
+
+# H1
+
+## H2
+
+### H3`,
+      from: (markdown: string) => markdown.indexOf('## H0'),
+      destination: (markdown: string) => markdown.indexOf('### H3'),
+    },
+  ])(
+    'rejects a section destination before $name',
+    ({ name, markdown, from, destination }) => {
+      const doc = new Y.Doc()
+      setBody(doc, markdown)
+      const result = moveBlock(doc, {
+        from: from(markdown),
+        destination: destination(markdown),
+      })
+
+      expect(
+        Object.fromEntries([
+          ['case', name],
+          [
+            'result',
+            result.match(
+              () => 'ok',
+              (error) => error.message,
+            ),
+          ],
+          ['body', readBody(doc)],
+        ]),
+      ).toEqual({
+        case: name,
+        result:
+          'The section destination must be before a heading at the same or a shallower level, or at the end of the document',
+        body: markdown,
+      })
+    },
+  )
+
+  it.each([
+    {
       name: 'outside the parent section',
       destination: (markdown: string) => markdown.length,
       childOf: true,
@@ -577,6 +697,48 @@ C
       undoEvent: 'undo',
       editorUndoEvent: 'undo',
       editorUndoAnnotation: { from: 21, to: 39, seam: 10 },
+    })
+  })
+
+  it('reverses a same-position heading level change twice', () => {
+    const doc = new Y.Doc()
+    const markdown = `# H3
+
+# H4
+`
+    setBody(doc, markdown)
+    const parentFrom = markdown.indexOf('# H3')
+    const movedFrom = markdown.indexOf('# H4')
+    const move = moveBlock(doc, {
+      from: movedFrom,
+      destination: movedFrom,
+      childOf: parentFrom,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+    const afterUndo = readBody(doc)
+    const redo = reverseBlockMove(doc, undo)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['afterUndo', afterUndo],
+        ['afterRedo', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+        ['redoEvent', redo.annotations[1].value],
+      ]),
+    ).toEqual({
+      afterMove: `# H3
+
+## H4
+`,
+      afterUndo: markdown,
+      afterRedo: `# H3
+
+## H4
+`,
+      undoEvent: 'undo',
+      redoEvent: 'undo',
     })
   })
 
