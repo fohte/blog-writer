@@ -19,6 +19,26 @@ export default mergeConfig(
           extends: true,
           test: {
             name: 'unit',
+            exclude: [
+              '**/node_modules/**',
+              '**/dist/**',
+              '**/*.browser.test.tsx',
+            ],
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-unit',
+            include: ['src/**/*.browser.test.tsx'],
+            browser: {
+              enabled: true,
+              provider: playwright({
+                launchOptions: { args: [...BLOCK_EXTERNAL_REQUESTS_ARGS] },
+              }),
+              headless: true,
+              instances: [{ browser: 'chromium' }],
+            },
           },
         },
         {
