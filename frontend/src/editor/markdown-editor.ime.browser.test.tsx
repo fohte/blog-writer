@@ -1,7 +1,14 @@
+import { EditorView } from '@codemirror/view'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import { describe, expect, it } from 'vitest'
 import { cdp, userEvent } from 'vitest/browser'
+import * as Y from 'yjs'
 
+import { getBody, setBody } from '#article/index'
+import { MarkdownEditor } from '#components/markdown-editor'
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
+import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
 
 type MarkdownEditorOutput = {
   body: string
@@ -114,6 +121,92 @@ const imeDriver = navigator.userAgent.includes('Chrome')
 const { pressKey, compose } = imeDriver
 
 describe('MarkdownEditor IME', () => {
+  it.skipIf(!navigator.userAgent.includes('Chrome'))(
+    'keeps move handles stable and ignores block movement during composition',
+    async () => {
+      const initial = 'first\n\ntwo\n'
+      const doc = new Y.Doc()
+      setBody(doc, initial)
+      const body = getBody(doc)
+      const history = createMoveHistory(doc)
+      const host = document.createElement('div')
+      document.body.append(host)
+      const root = createRoot(host)
+      const viewRef: { current: EditorView | null } = { current: null }
+      act(() => {
+        root.render(
+          createElement(MarkdownEditor, {
+            extensions: [createOutlineEditorExtension(history)],
+            history,
+            onViewChange: (view: EditorView | null) => {
+              viewRef.current = view
+            },
+            text: body,
+          }),
+        )
+      })
+      const content = host.querySelector<HTMLElement>('.cm-content')
+      const view = viewRef.current
+      const initialHandle = host.querySelector('.cm-block-drag-handle')
+      if (!content || !view || !initialHandle)
+        throw new Error('The MarkdownEditor move handles did not mount')
+
+      try {
+        content.focus()
+        await cdp().send('Input.imeSetComposition', {
+          text: '日本語',
+          selectionStart: 3,
+          selectionEnd: 3,
+        })
+        await nextFrame()
+        const duringComposition = body.toJSON()
+        const handleCountDuringComposition = host.querySelectorAll(
+          '.cm-block-drag-handle',
+        ).length
+        await cdp().send('Input.dispatchKeyEvent', {
+          type: 'keyDown',
+          key: 'ArrowDown',
+          code: 'ArrowDown',
+          modifiers: 4,
+          windowsVirtualKeyCode: 40,
+        })
+        await cdp().send('Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          key: 'ArrowDown',
+          code: 'ArrowDown',
+          modifiers: 4,
+          windowsVirtualKeyCode: 40,
+        })
+        const afterShortcut = body.toJSON()
+        await cdp().send('Input.insertText', { text: '日本語' })
+        await nextFrame()
+        const afterComposition = body.toJSON()
+
+        const readOutput = () => ({
+          duringComposition,
+          handleCountDuringComposition,
+          afterShortcut,
+          afterComposition,
+          editor: view.state.doc.toString(),
+        })
+        expect(readOutput()).toEqual({
+          duringComposition: '日本語first\n\ntwo\n',
+          handleCountDuringComposition: 2,
+          afterShortcut: '日本語first\n\ntwo\n',
+          afterComposition: '日本語first\n\ntwo\n',
+          editor: '日本語first\n\ntwo\n',
+        })
+      } finally {
+        act(() => {
+          root.unmount()
+        })
+        history.destroy()
+        doc.destroy()
+        host.remove()
+      }
+    },
+  )
+
   it('keeps a closed emphasis marker visible while composing after it', async () => {
     const { body, content } = mountMarkdownEditor('**word**')
     content?.focus()

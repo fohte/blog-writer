@@ -15,6 +15,7 @@ import {
 } from '#article/move-block-plan'
 import {
   collectHeadings,
+  findMoveBlockRange,
   validatePlannedMoveStructure,
 } from '#article/move-block-structure'
 
@@ -44,7 +45,7 @@ export type MoveBlockInput = {
   destination: number
   childOf?: number
   headingLevel?: number
-  userEvent?: 'move' | 'undo'
+  userEvent?: 'move' | 'undo' | 'redo'
 }
 
 export type MoveBlockResult = BlockMoved & {
@@ -55,22 +56,28 @@ export type MoveBlockResult = BlockMoved & {
   originalHeadingLevel?: number
 }
 
-type AnchoredTextRange = {
-  from: Y.RelativePosition
-  to: Y.RelativePosition
+type MoveSeparator = {
+  side: 'prefix' | 'suffix'
   text: string
 }
 type MoveHistory = {
   movedFrom: Y.RelativePosition
   seam: Y.RelativePosition
   insertedSelection: string
+  mapPosition: (position: number, assoc: number) => number | undefined
   source?: MoveSource
-  separators: AnchoredTextRange[]
+  separators: MoveSeparator[]
 }
 type ApplyMoveOptions = {
   expectedSelection?: string
   replacement?: MoveSource
-  removeRanges?: AnchoredTextRange[]
+  removeRanges?: { from: number; to: number; text: string }[]
+}
+type HistoryPositionSnapshot = { position: number; assoc: number } | undefined
+type MoveHistorySnapshot = {
+  history: MoveHistory
+  movedFrom: HistoryPositionSnapshot
+  seam: HistoryPositionSnapshot
 }
 
 const updatersByDoc = new WeakMap<Y.Doc, Set<BlockMoveUpdater>>()
@@ -88,61 +95,41 @@ function resolvePosition(
   return absolutePosition?.type === body ? absolutePosition.index : undefined
 }
 
-function resolveTextRange(
-  doc: Y.Doc,
+function relativePositionAt(
   body: Y.Text,
-  markdown: string,
-  anchoredRange: AnchoredTextRange,
-): { from: number; to: number } | undefined {
-  const from = resolvePosition(doc, body, anchoredRange.from)
-  const to = resolvePosition(doc, body, anchoredRange.to)
-  if (
-    from === undefined ||
-    to === undefined ||
-    to < from ||
-    markdown.slice(from, to) !== anchoredRange.text
-  ) {
-    return undefined
-  }
-  return { from, to }
+  index: number,
+  assoc: number,
+): Y.RelativePosition {
+  const position = Y.createRelativePositionFromTypeIndex(body, index, assoc)
+  return position.item === null
+    ? Y.createRelativePositionFromTypeIndex(body, index, -assoc)
+    : position
 }
 
 function rememberMove(input: {
   body: Y.Text
   move: MoveBlockResult
-  insertionIndex: number
   insertion: MoveInsertion
   source?: MoveSource
+  mapPosition: (position: number, assoc: number) => number | undefined
 }): void {
-  const { body, move, insertionIndex, insertion, source } = input
+  const { body, move, insertion, source, mapPosition } = input
   const prefix = insertion.text.slice(0, insertion.prefixLength)
   const suffix = insertion.text.slice(
     insertion.prefixLength + insertion.contentLength,
   )
-  const moveTo = move.to
-  const separators: AnchoredTextRange[] = []
+  const separators: MoveSeparator[] = []
   if (prefix.length > 0) {
-    separators.push({
-      from: Y.createRelativePositionFromTypeIndex(body, insertionIndex, 1),
-      to: Y.createRelativePositionFromTypeIndex(body, move.from, -1),
-      text: prefix,
-    })
+    separators.push({ side: 'prefix', text: prefix })
   }
   if (suffix.length > 0) {
-    separators.push({
-      from: Y.createRelativePositionFromTypeIndex(body, moveTo, 1),
-      to: Y.createRelativePositionFromTypeIndex(
-        body,
-        moveTo + suffix.length,
-        -1,
-      ),
-      text: suffix,
-    })
+    separators.push({ side: 'suffix', text: suffix })
   }
   historyByMove.set(move, {
-    movedFrom: Y.createRelativePositionFromTypeIndex(body, move.from, 1),
-    seam: Y.createRelativePositionFromTypeIndex(body, move.seam, 1),
+    movedFrom: relativePositionAt(body, move.from, 1),
+    seam: relativePositionAt(body, move.seam, 1),
     insertedSelection: insertion.text.slice(insertion.prefixLength),
+    mapPosition,
     ...(source === undefined ? {} : { source }),
     separators,
   })
@@ -191,22 +178,24 @@ function applyMoveBlock(
   )
   const movedText = transformedText(markdown, range, replacements)
   const sourceText = markdown.slice(range.from, range.to)
-  const removeRanges = (options.removeRanges ?? []).map((anchoredRange) =>
-    resolveTextRange(doc, body, markdown, anchoredRange),
+  const removeRanges = options.removeRanges ?? []
+  if (
+    removeRanges.some(
+      ({ from, to, text }) =>
+        from < 0 ||
+        to < from ||
+        to > markdown.length ||
+        markdown.slice(from, to) !== text,
+    )
   )
-  if (removeRanges.some((resolved) => resolved === undefined))
     return err(new InvalidBlockMoveError('A moved separator has changed'))
-  const resolvedRanges = removeRanges.filter(
-    (resolved): resolved is { from: number; to: number } =>
-      resolved !== undefined,
-  )
   const removeFrom = Math.min(
     range.from,
-    ...resolvedRanges.map((resolved) => resolved.from),
+    ...removeRanges.map((resolved) => resolved.from),
   )
   const removeTo = Math.max(
     range.to,
-    ...resolvedRanges.map((resolved) => resolved.to),
+    ...removeRanges.map((resolved) => resolved.to),
   )
   const plannedMove = planBlockMove({
     markdown,
@@ -244,9 +233,17 @@ function applyMoveBlock(
     newFrom,
     newTo,
     mapPosition: (position) => {
+      if (position === range.to) return newTo
       const withinRange = mapWithinRange(position, range, replacements)
       return withinRange === undefined ? undefined : newFrom + withinRange
     },
+  }
+  const mapDocumentPosition = (position: number, assoc: number) => {
+    if (position === range.from && assoc < 0) return undefined
+    if (position === range.to) return assoc < 0 ? newTo : undefined
+    const withinRange = mapWithinRange(position, range, replacements)
+    if (withinRange === undefined) return undefined
+    return newFrom + Math.min(withinRange, insertion.contentLength)
   }
   const annotationValue = { from: newFrom, to: newTo, seam }
   const annotations = [
@@ -276,8 +273,8 @@ function applyMoveBlock(
   rememberMove({
     body,
     move,
-    insertionIndex,
     insertion,
+    mapPosition: mapDocumentPosition,
     ...(options.replacement === undefined
       ? {
           source: {
@@ -297,9 +294,90 @@ export function moveBlock(
   return applyMoveBlock(doc, input)
 }
 
+export function resolveMoveBlockStart(
+  doc: Y.Doc,
+  move: MoveBlockResult,
+): number | undefined {
+  const history = historyByMove.get(move)
+  if (!history) return undefined
+  return resolvePosition(doc, getBody(doc), history.movedFrom)
+}
+
+export function mapMoveBlockPosition(
+  move: MoveBlockResult,
+  position: number,
+  assoc = 1,
+): number | undefined {
+  return historyByMove.get(move)?.mapPosition(position, assoc)
+}
+
+export function captureMoveBlockHistoryRebaser(
+  doc: Y.Doc,
+  moves: MoveBlockResult[],
+): (
+  mapRelativePosition: (position: Y.RelativePosition) => Y.RelativePosition,
+  mapAbsolutePosition: (position: number, assoc: number) => number | undefined,
+) => void {
+  const body = getBody(doc)
+  const snapshot = (position: Y.RelativePosition) => {
+    const absolute = resolvePosition(doc, body, position)
+    return absolute === undefined
+      ? undefined
+      : { position: absolute, assoc: position.assoc }
+  }
+  const histories = moves.flatMap((move): MoveHistorySnapshot[] => {
+    const history = historyByMove.get(move)
+    return history
+      ? [
+          {
+            history,
+            movedFrom: snapshot(history.movedFrom),
+            seam: snapshot(history.seam),
+          },
+        ]
+      : []
+  })
+
+  const rebase = (
+    position: Y.RelativePosition,
+    savedPosition: HistoryPositionSnapshot,
+    mapRelativePosition: (position: Y.RelativePosition) => Y.RelativePosition,
+    mapAbsolutePosition: (
+      position: number,
+      assoc: number,
+    ) => number | undefined,
+  ) => {
+    if (savedPosition === undefined) return mapRelativePosition(position)
+    const mappedAbsolute = mapAbsolutePosition(
+      savedPosition.position,
+      savedPosition.assoc,
+    )
+    if (mappedAbsolute === undefined) return mapRelativePosition(position)
+    return relativePositionAt(body, mappedAbsolute, savedPosition.assoc)
+  }
+
+  return (mapRelativePosition, mapAbsolutePosition) => {
+    for (const saved of histories) {
+      saved.history.movedFrom = rebase(
+        saved.history.movedFrom,
+        saved.movedFrom,
+        mapRelativePosition,
+        mapAbsolutePosition,
+      )
+      saved.history.seam = rebase(
+        saved.history.seam,
+        saved.seam,
+        mapRelativePosition,
+        mapAbsolutePosition,
+      )
+    }
+  }
+}
+
 export function reverseBlockMove(
   doc: Y.Doc,
   move: MoveBlockResult,
+  userEvent: 'undo' | 'redo' = 'undo',
 ): Result<MoveBlockResult, InvalidBlockMoveError> {
   const history = historyByMove.get(move)
   if (!history)
@@ -313,6 +391,17 @@ export function reverseBlockMove(
       new InvalidBlockMoveError('The moved block is no longer available'),
     )
 
+  const markdown = body.toJSON()
+  const range = findMoveBlockRange(markdown, from)
+  if (!range)
+    return err(
+      new InvalidBlockMoveError('The moved block is no longer available'),
+    )
+  const separators = history.separators.map(({ side, text }) => {
+    const to = side === 'prefix' ? range.from : range.to
+    return { from: to - text.length, to, text }
+  })
+
   return applyMoveBlock(
     doc,
     {
@@ -321,12 +410,12 @@ export function reverseBlockMove(
       ...(move.originalHeadingLevel === undefined
         ? {}
         : { headingLevel: move.originalHeadingLevel }),
-      userEvent: 'undo',
+      userEvent,
     },
     {
       expectedSelection: history.insertedSelection,
       ...(history.source === undefined ? {} : { replacement: history.source }),
-      removeRanges: history.separators,
+      removeRanges: separators,
     },
   )
 }

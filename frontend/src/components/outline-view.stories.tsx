@@ -40,6 +40,11 @@ export const SelectedHeading: Story = {
   args: { activeFrom: 13 },
 }
 
+export const OpenMoveMenu: Story = {
+  name: 'the outline shows the available moves for a heading.',
+  args: { openMenuFrom: 13 },
+}
+
 export const ChildDropTarget: Story = {
   name: 'the outline shows where a heading will become a child.',
   args: { dropTarget: { from: 13, placement: 'child' } },

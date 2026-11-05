@@ -27,8 +27,11 @@ export type {
 } from '#article/move-block'
 export {
   blockMoved,
+  captureMoveBlockHistoryRebaser,
+  mapMoveBlockPosition,
   moveBlock,
   registerBlockMoveUpdater,
+  resolveMoveBlockStart,
   reverseBlockMove,
 } from '#article/move-block'
 export {

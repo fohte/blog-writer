@@ -2,7 +2,7 @@ import {
   draggable,
   dropTargetForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
-import type { Extension } from '@codemirror/state'
+import { type Extension, Prec, StateEffect } from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -15,6 +15,8 @@ import {
 
 import { adjacentMove, blockStarts, bodyDropInput } from '#outline/block-ranges'
 import type { MoveHistory } from '#outline/move-history'
+
+const refreshBlockHandles = StateEffect.define()
 
 class BlockDragHandle extends WidgetType {
   constructor(
@@ -36,9 +38,6 @@ class BlockDragHandle extends WidgetType {
     button.className = 'cm-block-drag-handle'
     button.setAttribute('aria-label', 'Move block')
     button.textContent = '⠿'
-    button.addEventListener('mousedown', (event) => {
-      event.preventDefault()
-    })
     this.cleanup = draggable({
       element: button,
       getInitialData: () => ({ kind: 'block', from: this.from }),
@@ -63,10 +62,11 @@ function createDecorations(view: EditorView, history: MoveHistory) {
 }
 
 function createDragPlugin(history: MoveHistory) {
-  return ViewPlugin.fromClass(
+  const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
       private readonly cleanupDropTarget: () => void
+      private composing = false
 
       constructor(readonly view: EditorView) {
         this.decorations = createDecorations(view, history)
@@ -107,9 +107,35 @@ function createDragPlugin(history: MoveHistory) {
       }
 
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
-          this.decorations = createDecorations(this.view, history)
+        if (this.composing) {
+          if (update.docChanged)
+            this.decorations = this.decorations.map(update.changes)
+          return
         }
+        if (
+          !update.docChanged &&
+          !update.viewportChanged &&
+          !update.transactions.some((transaction) =>
+            transaction.effects.some((effect) =>
+              effect.is(refreshBlockHandles),
+            ),
+          )
+        )
+          return
+        this.decorations = createDecorations(this.view, history)
+      }
+
+      startComposition() {
+        this.composing = true
+      }
+
+      endComposition() {
+        this.composing = false
+        requestAnimationFrame(() => {
+          if (this.view.dom.isConnected) {
+            this.view.dispatch({ effects: refreshBlockHandles.of(null) })
+          }
+        })
       }
 
       destroy() {
@@ -118,41 +144,62 @@ function createDragPlugin(history: MoveHistory) {
     },
     { decorations: (plugin) => plugin.decorations },
   )
+  return [
+    plugin,
+    EditorView.domEventHandlers({
+      compositionstart: (_event, view) => {
+        view.plugin(plugin)?.startComposition()
+        return false
+      },
+      compositionend: (_event, view) => {
+        view.plugin(plugin)?.endComposition()
+        return false
+      },
+    }),
+  ]
 }
 
 function moveAdjacent(history: MoveHistory, direction: 'up' | 'down') {
   return (view: EditorView) => {
+    if (view.composing) return true
     const input = adjacentMove(
       view.state,
       view.state.selection.main.head,
       direction,
     )
-    if (!input) return false
-    return history.move(input, view).match(
-      () => true,
-      () => false,
-    )
+    if (input) {
+      history.move(input, view).match(
+        () => true,
+        () => true,
+      )
+    }
+    return true
   }
 }
 
 export function createOutlineEditorExtension(history: MoveHistory): Extension {
   return [
-    keymap.of([
-      {
-        key: 'Alt-ArrowUp',
-        run: moveAdjacent(history, 'up'),
-      },
-      {
-        key: 'Alt-ArrowDown',
-        run: moveAdjacent(history, 'down'),
-      },
-    ]),
+    Prec.highest(
+      keymap.of([
+        {
+          key: 'Alt-ArrowUp',
+          run: moveAdjacent(history, 'up'),
+        },
+        {
+          key: 'Alt-ArrowDown',
+          run: moveAdjacent(history, 'down'),
+        },
+      ]),
+    ),
     createDragPlugin(history),
     EditorView.baseTheme({
-      '.cm-line': { position: 'relative' },
+      '.cm-line': {
+        position: 'relative',
+        paddingInlineStart: '1.5rem',
+      },
       '.cm-block-drag-handle': {
         position: 'absolute',
-        left: '-1.5rem',
+        left: '0',
         top: '0.1rem',
         display: 'flex',
         width: '1.5rem',
@@ -164,6 +211,10 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
         background: 'transparent',
         color: 'var(--muted-foreground)',
         cursor: 'grab',
+        touchAction: 'none',
+        userSelect: 'none',
+        WebkitTouchCallout: 'none',
+        WebkitUserSelect: 'none',
       },
       '.cm-block-drag-handle:hover': {
         background: 'var(--accent)',

@@ -78,15 +78,28 @@ export const MarkdownEditor = forwardRef<
           {
             key: 'Mod-z',
             run: (view: EditorView) => {
-              const result = history.undo(view)
-              return result.isErr() || result.value
+              return history.undo(view).match(
+                () => true,
+                () => true,
+              )
             },
           },
           {
             key: 'Mod-Shift-z',
             run: (view: EditorView) => {
-              const result = history.redo(view)
-              return result.isErr() || result.value
+              return history.redo(view).match(
+                () => true,
+                () => true,
+              )
+            },
+          },
+          {
+            key: 'Mod-y',
+            run: (view: EditorView) => {
+              return history.redo(view).match(
+                () => true,
+                () => true,
+              )
             },
           },
         ]

@@ -2,13 +2,15 @@ import {
   draggable,
   dropTargetForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
+import { Button } from '@fohte/ui/button'
 import { List, ListItem } from '@fohte/ui/list'
+import { Popover, PopoverContent } from '@fohte/ui/popover'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { MoveBlockInput } from '#article/index'
 import type { Heading } from '#article/types'
 
-export type OutlineDropTarget = {
+type OutlineDropTarget = {
   from: number
   placement: 'before' | 'after' | 'child'
 }
@@ -17,6 +19,7 @@ export interface OutlineViewProps {
   headings: Heading[]
   bodyLength: number
   activeFrom?: number
+  openMenuFrom?: number
   dropTarget?: OutlineDropTarget
   error?: string
   onSelect: (from: number) => void
@@ -44,6 +47,27 @@ function sectionEnd(headings: FlatHeading[], from: number, bodyLength: number) {
   )
 }
 
+function siblingHeading(
+  headings: FlatHeading[],
+  from: number,
+  direction: 'previous' | 'next',
+): Heading | undefined {
+  const index = headings.findIndex(({ heading }) => heading.from === from)
+  const current = headings[index]
+  if (!current) return undefined
+  const step = direction === 'previous' ? -1 : 1
+  for (
+    let candidateIndex = index + step;
+    candidateIndex >= 0;
+    candidateIndex += step
+  ) {
+    const candidate = headings[candidateIndex]
+    if (!candidate || candidate.depth < current.depth) return undefined
+    if (candidate.depth === current.depth) return candidate.heading
+  }
+  return undefined
+}
+
 function sourceFrom(source: { data: Record<string, unknown> }) {
   return source.data['kind'] === 'block' &&
     typeof source.data['from'] === 'number'
@@ -58,6 +82,7 @@ function OutlineRow({
   allHeadings,
   active,
   dropTarget,
+  openMenu,
   onSelect,
   onMove,
 }: {
@@ -67,12 +92,21 @@ function OutlineRow({
   allHeadings: FlatHeading[]
   active: boolean
   dropTarget: OutlineDropTarget | undefined
+  openMenu: boolean
   onSelect: () => void
   onMove: (input: MoveBlockInput) => void
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<HTMLButtonElement>(null)
   const [localDrop, setLocalDrop] = useState<OutlineDropTarget>()
+  const [menuOpen, setMenuOpen] = useState(openMenu)
+  const previousHeading = siblingHeading(allHeadings, heading.from, 'previous')
+  const nextHeading = siblingHeading(allHeadings, heading.from, 'next')
+
+  const submitMove = (input: MoveBlockInput) => {
+    onMove(input)
+    setMenuOpen(false)
+  }
 
   useEffect(() => {
     const row = rowRef.current
@@ -171,17 +205,86 @@ function OutlineRow({
         >
           {heading.text || 'Untitled heading'}
         </span>
-        <button
-          aria-label={`Move ${heading.text || 'heading'}`}
-          className="cursor-grab rounded p-1 text-muted-foreground hover:bg-accent active:cursor-grabbing"
-          onClick={(event) => {
-            event.stopPropagation()
-          }}
-          ref={handleRef}
-          type="button"
-        >
-          ⠿
-        </button>
+        <Popover anchor={handleRef} onOpenChange={setMenuOpen} open={menuOpen}>
+          <button
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+            aria-label={`Move ${heading.text || 'heading'}`}
+            className="cursor-grab touch-none select-none rounded p-1 text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
+            onClick={(event) => {
+              event.stopPropagation()
+              setMenuOpen((isOpen) => !isOpen)
+            }}
+            onMouseDown={(event) => {
+              event.stopPropagation()
+            }}
+            ref={handleRef}
+            type="button"
+          >
+            ⠿
+          </button>
+          <PopoverContent
+            className="flex min-w-36 flex-col gap-1 p-1"
+            role="menu"
+          >
+            <Button
+              className="w-full justify-start"
+              disabled={!previousHeading}
+              onClick={() => {
+                if (previousHeading) {
+                  submitMove({
+                    from: heading.from,
+                    destination: previousHeading.from,
+                  })
+                }
+              }}
+              role="menuitem"
+              size="sm"
+              variant="ghost"
+            >
+              Move up
+            </Button>
+            <Button
+              className="w-full justify-start"
+              disabled={!nextHeading}
+              onClick={() => {
+                if (nextHeading) {
+                  submitMove({
+                    from: heading.from,
+                    destination: sectionEnd(
+                      allHeadings,
+                      nextHeading.from,
+                      bodyLength,
+                    ),
+                  })
+                }
+              }}
+              role="menuitem"
+              size="sm"
+              variant="ghost"
+            >
+              Move down
+            </Button>
+            <Button
+              className="w-full justify-start"
+              disabled={!previousHeading}
+              onClick={() => {
+                if (previousHeading) {
+                  submitMove({
+                    from: heading.from,
+                    destination: heading.from,
+                    childOf: previousHeading.from,
+                  })
+                }
+              }}
+              role="menuitem"
+              size="sm"
+              variant="ghost"
+            >
+              Make child
+            </Button>
+          </PopoverContent>
+        </Popover>
       </ListItem>
     </div>
   )
@@ -191,6 +294,7 @@ export function OutlineView({
   headings,
   bodyLength,
   activeFrom,
+  openMenuFrom,
   dropTarget,
   error,
   onSelect,
@@ -220,6 +324,7 @@ export function OutlineView({
               dropTarget={dropTarget}
               heading={heading}
               key={heading.from}
+              openMenu={heading.from === openMenuFrom}
               onMove={onMove}
               onSelect={() => {
                 onSelect(heading.from)

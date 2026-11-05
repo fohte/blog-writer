@@ -1,5 +1,5 @@
 import { markdown } from '@codemirror/lang-markdown'
-import { EditorState } from '@codemirror/state'
+import { EditorSelection, EditorState, Transaction } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
 import { act, createElement } from 'react'
@@ -86,13 +86,19 @@ describe('outline interactions', () => {
       await userEvent.click(details)
     })
 
-    const readSelection = () => ({ selection: view.state.selection.main.head })
+    const readSelection = () => ({
+      selection: view.state.selection.main.head,
+      activeHeadings: [...outlineHost.querySelectorAll('[role="option"]')].map(
+        (option) => option.getAttribute('aria-selected'),
+      ),
+    })
     expect(readSelection()).toEqual({
       selection: markdownText.indexOf('# Details'),
+      activeHeadings: ['false', 'true'],
     })
   })
 
-  it('shows move errors from the shared history in the outline', () => {
+  it('shows move errors and clears them after the next outline action', async () => {
     const markdownText = '# Overview\n\nFirst section.\n'
     const doc = new Y.Doc()
     setBody(doc, markdownText)
@@ -118,51 +124,68 @@ describe('outline interactions', () => {
     })
     let moveAccepted = true
     act(() => {
-      moveAccepted = history.move({ from: 0, destination: 0 }).isOk()
+      moveAccepted = history
+        .move({ from: 0, destination: 0, childOf: 0 })
+        .isOk()
+    })
+    const errorAfterMove =
+      outlineHost.querySelector('[role="alert"]')?.textContent ?? null
+    const heading = outlineHost.querySelector<HTMLElement>('[role="option"]')
+    if (!heading) throw new Error('The outline heading is missing')
+    await act(async () => {
+      await userEvent.click(heading)
     })
 
     const readOutput = () => ({
       moveAccepted,
-      error: outlineHost.querySelector('[role="alert"]')?.textContent ?? null,
+      errorAfterMove,
+      errorAfterNextAction:
+        outlineHost.querySelector('[role="alert"]')?.textContent ?? null,
     })
     expect(readOutput()).toEqual({
       moveAccepted: false,
-      error: 'The block is already at its destination',
+      errorAfterMove: 'A section cannot become its own child',
+      errorAfterNextAction: null,
     })
   })
 
-  it('moves a heading section with Alt plus an arrow key and renders body handles', () => {
+  it('moves a heading section with Alt plus an arrow key through the MarkdownEditor keymap', async () => {
     const markdownText =
       '# Overview\n\nFirst section.\n\n# Details\n\nSecond section.\n'
     const doc = new Y.Doc()
     setBody(doc, markdownText)
     const body = getBody(doc)
     const history = createMoveHistory(doc)
-    const view = new EditorView({
-      parent: document.body,
-      state: EditorState.create({
-        doc: markdownText,
-        extensions: [
-          markdown({ extensions: GFM }),
-          yCollab(body, null, { undoManager: history.undoManager }),
-          createOutlineEditorExtension(history),
-        ],
-      }),
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const viewRef: { current: EditorView | null } = { current: null }
+    act(() => {
+      root.render(
+        createElement(MarkdownEditor, {
+          extensions: [createOutlineEditorExtension(history)],
+          history,
+          onViewChange: (view: EditorView | null) => {
+            viewRef.current = view
+          },
+          text: body,
+        }),
+      )
     })
+    const view = viewRef.current
+    if (view === null) throw new Error('The markdown editor did not mount')
     cleanups.push(() => {
-      view.destroy()
+      act(() => {
+        root.unmount()
+      })
       history.destroy()
       doc.destroy()
+      host.remove()
     })
     view.focus()
-    const content = view.contentDOM
-    content.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'ArrowDown',
-        altKey: true,
-        bubbles: true,
-      }),
-    )
+    await act(async () => {
+      await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}')
+    })
 
     const readOutput = () => ({
       body: body.toJSON(),
@@ -176,7 +199,7 @@ describe('outline interactions', () => {
     })
   })
 
-  it('moves a heading under another heading when its outline row receives a drop', () => {
+  it('moves a heading under another heading with a real pointer and undoes after the drag', async () => {
     const markdownText =
       '# Overview\n\nFirst section.\n\n# Details\n\nSecond section.\n'
     const doc = new Y.Doc()
@@ -187,22 +210,28 @@ describe('outline interactions', () => {
     const editorHost = document.createElement('div')
     const outlineHost = document.createElement('div')
     document.body.append(editorHost, outlineHost)
-    const view = new EditorView({
-      parent: editorHost,
-      state: EditorState.create({
-        doc: markdownText,
-        extensions: [
-          markdown({ extensions: GFM }),
-          yCollab(body, null, { undoManager: history.undoManager }),
-        ],
-      }),
+    const editorRoot = createRoot(editorHost)
+    const viewRef: { current: EditorView | null } = { current: null }
+    act(() => {
+      editorRoot.render(
+        createElement(MarkdownEditor, {
+          extensions: [createOutlineEditorExtension(history)],
+          history,
+          onViewChange: (view: EditorView | null) => {
+            viewRef.current = view
+          },
+          text: body,
+        }),
+      )
     })
+    const view = viewRef.current
+    if (view === null) throw new Error('The markdown editor did not mount')
     const root: Root = createRoot(outlineHost)
     cleanups.push(() => {
       act(() => {
         root.unmount()
+        editorRoot.unmount()
       })
-      view.destroy()
       history.destroy()
       doc.destroy()
       editorHost.remove()
@@ -226,14 +255,19 @@ describe('outline interactions', () => {
     if (overviewContainer === null)
       throw new Error('The outline drop target has no container')
     overviewContainer.style.height = '80px'
-    const overviewBounds = overviewContainer.getBoundingClientRect()
-    act(() => {
-      dispatchDrag(detailsHandle, overviewContainer, overviewBounds)
+    await act(async () => {
+      await userEvent.dragAndDrop(detailsHandle, overviewContainer)
+    })
+    const afterMove = body.toJSON()
+    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
     })
 
     const readOutput = () => ({
       body: body.toJSON(),
       editor: view.state.doc.toString(),
+      afterMove,
       moveCalls: moveSpy.mock.calls.map(([input]) => input),
       error: outlineHost.querySelector('[role="alert"]')?.textContent ?? null,
       headings: [...outlineHost.querySelectorAll('[role="option"]')].map(
@@ -241,8 +275,10 @@ describe('outline interactions', () => {
       ),
     })
     expect(readOutput()).toEqual({
-      body: '# Overview\n\nFirst section.\n\n## Details\n\nSecond section.\n',
-      editor: '# Overview\n\nFirst section.\n\n## Details\n\nSecond section.\n',
+      body: markdownText,
+      editor: markdownText,
+      afterMove:
+        '# Overview\n\nFirst section.\n\n## Details\n\nSecond section.\n',
       moveCalls: [
         {
           from: markdownText.indexOf('# Details'),
@@ -255,14 +291,13 @@ describe('outline interactions', () => {
     })
   })
 
-  it('moves a Markdown block when its body handle is dropped after another block', () => {
+  it('moves a Markdown block with a real pointer drag from the body handle', async () => {
     const markdownText = 'First paragraph.\n\nSecond paragraph.\n'
     const doc = new Y.Doc()
     setBody(doc, markdownText)
     const body = getBody(doc)
     const history = createMoveHistory(doc)
     const editorHost = document.createElement('div')
-    editorHost.style.marginLeft = '40px'
     document.body.append(editorHost)
     const view = new EditorView({
       parent: editorHost,
@@ -288,19 +323,13 @@ describe('outline interactions', () => {
     const firstHandle = handles[0]
     if (firstHandle === undefined)
       throw new Error('The body drag source or target is missing')
-    const targetPosition = view.coordsAtPos(
-      markdownText.indexOf('Second paragraph.'),
-    )
-    if (targetPosition === null)
-      throw new Error('The body drop target has no editor coordinates')
-    const dropPosition = new DOMRect(
-      targetPosition.left + 1,
-      targetPosition.bottom - 2,
-      1,
-      1,
-    )
-    act(() => {
-      dispatchDrag(firstHandle, view.dom, dropPosition)
+    const secondParagraph = [
+      ...view.dom.querySelectorAll<HTMLElement>('.cm-line'),
+    ].find((line) => line.textContent.endsWith('Second paragraph.'))
+    if (!secondParagraph)
+      throw new Error('The second paragraph is missing from the editor')
+    await act(async () => {
+      await userEvent.dragAndDrop(firstHandle, secondParagraph)
     })
 
     const readOutput = () => ({
@@ -310,6 +339,213 @@ describe('outline interactions', () => {
     expect(readOutput()).toEqual({
       body: 'Second paragraph.\n\nFirst paragraph.\n',
       editor: 'Second paragraph.\n\nFirst paragraph.\n',
+    })
+  })
+
+  it('keeps the cursor with a Markdown block moved by Alt plus Down', async () => {
+    const markdownText = 'one\n\ntwo\n\nthree\n\nfour\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const viewRef: { current: EditorView | null } = { current: null }
+    act(() => {
+      root.render(
+        createElement(MarkdownEditor, {
+          extensions: [createOutlineEditorExtension(history)],
+          history,
+          onViewChange: (view: EditorView | null) => {
+            viewRef.current = view
+          },
+          text: body,
+        }),
+      )
+    })
+    const view = viewRef.current
+    if (view === null) throw new Error('The markdown editor did not mount')
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      history.destroy()
+      doc.destroy()
+      host.remove()
+    })
+
+    view.dispatch({
+      selection: EditorSelection.cursor(markdownText.indexOf('two') + 1),
+    })
+    view.focus()
+    await act(async () => {
+      await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}')
+      await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}')
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      cursor: view.state.selection.main.head,
+    })
+    expect(readOutput()).toEqual({
+      body: 'one\n\nthree\n\nfour\n\ntwo\n',
+      cursor: 'one\n\nthree\n\nfour\n\ntwo\n'.indexOf('two') + 1,
+    })
+  })
+
+  it('consumes Alt plus Down when there is no following block', async () => {
+    const markdownText = 'first\n\nlast\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const viewRef: { current: EditorView | null } = { current: null }
+    act(() => {
+      root.render(
+        createElement(MarkdownEditor, {
+          extensions: [createOutlineEditorExtension(history)],
+          history,
+          onViewChange: (view: EditorView | null) => {
+            viewRef.current = view
+          },
+          text: body,
+        }),
+      )
+    })
+    const view = viewRef.current
+    if (view === null) throw new Error('The markdown editor did not mount')
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      history.destroy()
+      doc.destroy()
+      host.remove()
+    })
+
+    view.dispatch({
+      selection: EditorSelection.cursor(markdownText.indexOf('last') + 2),
+    })
+    view.focus()
+    await act(async () => {
+      await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}')
+    })
+
+    expect(body.toJSON()).toEqual(markdownText)
+  })
+
+  it('moves headings up, down, and under another heading from the move menu', async () => {
+    const markdownText =
+      '# Alpha\n\nFirst section.\n\n# Beta\n\nSecond section.\n\n# Gamma\n\nThird section.\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const editorHost = document.createElement('div')
+    const outlineHost = document.createElement('div')
+    document.body.append(editorHost, outlineHost)
+    const view = new EditorView({
+      parent: editorHost,
+      state: EditorState.create({ doc: markdownText }),
+    })
+    const root = createRoot(outlineHost)
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      view.destroy()
+      history.destroy()
+      doc.destroy()
+      editorHost.remove()
+      outlineHost.remove()
+    })
+
+    act(() => {
+      root.render(createElement(ArticleOutline, { doc, history, view }))
+    })
+    const betaHandle = outlineHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="Move Beta"]',
+    )
+    if (!betaHandle) throw new Error('The Beta move button is missing')
+    await act(async () => {
+      await userEvent.click(betaHandle)
+    })
+    const clickOpensMenu = document.body.querySelector('[role="menu"]') !== null
+    const moveUp = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((item) => item.textContent === 'Move up')
+    if (!moveUp) throw new Error('The move up menu item is missing')
+    await act(async () => {
+      await userEvent.click(moveUp)
+    })
+    const afterMoveUp = body.toJSON()
+
+    const betaHandleAfterMoveUp = outlineHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="Move Beta"]',
+    )
+    if (!betaHandleAfterMoveUp)
+      throw new Error('The Beta move button is missing after moving up')
+    await act(async () => {
+      await userEvent.click(betaHandleAfterMoveUp)
+    })
+    const moveDown = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((item) => item.textContent === 'Move down')
+    if (!moveDown) throw new Error('The move down menu item is missing')
+    await act(async () => {
+      await userEvent.click(moveDown)
+    })
+    const afterMoveDown = body.toJSON()
+
+    const betaHandleAfterMoveDown =
+      outlineHost.querySelector<HTMLButtonElement>(
+        'button[aria-label="Move Beta"]',
+      )
+    if (!betaHandleAfterMoveDown)
+      throw new Error('The Beta move button is missing after moving down')
+    await act(async () => {
+      await userEvent.click(betaHandleAfterMoveDown)
+    })
+    const makeChild = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((item) => item.textContent === 'Make child')
+    if (!makeChild) throw new Error('The make child menu item is missing')
+    await act(async () => {
+      await userEvent.click(makeChild)
+    })
+    const afterMakeChild = body.toJSON()
+
+    const gammaHandle = outlineHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="Move Gamma"]',
+    )
+    if (!gammaHandle)
+      throw new Error('The Gamma move button is missing after the moves')
+    gammaHandle.focus()
+    await act(async () => {
+      await userEvent.keyboard('{Enter}')
+    })
+
+    const readOutput = () => ({
+      clickOpensMenu,
+      afterMoveUp,
+      afterMoveDown,
+      afterMakeChild,
+      enterOpensMenu: document.body.querySelector('[role="menu"]') !== null,
+      body: body.toJSON(),
+    })
+    expect(readOutput()).toEqual({
+      clickOpensMenu: true,
+      afterMoveUp:
+        '# Beta\n\nSecond section.\n\n# Alpha\n\nFirst section.\n\n# Gamma\n\nThird section.\n',
+      afterMoveDown: markdownText,
+      afterMakeChild:
+        '# Alpha\n\nFirst section.\n\n## Beta\n\nSecond section.\n\n# Gamma\n\nThird section.\n',
+      enterOpensMenu: true,
+      body: '# Alpha\n\nFirst section.\n\n## Beta\n\nSecond section.\n\n# Gamma\n\nThird section.\n',
     })
   })
 
@@ -407,12 +643,13 @@ describe('outline interactions', () => {
     },
   )
 
-  it('uses the shared history when Cmd or Ctrl plus Z is pressed', () => {
-    const initial = 'An editable sentence.'
+  it('uses the shared history for keyboard moves, undo, and redo', async () => {
+    const initial = '# Alpha\n\nFirst.\n\n# Beta\n\nSecond.\n'
     const doc = new Y.Doc()
     setBody(doc, initial)
     const body = getBody(doc)
     const history = createMoveHistory(doc)
+    const userEvents: string[] = []
     const host = document.createElement('div')
     document.body.append(host)
     const root: Root = createRoot(host)
@@ -429,7 +666,16 @@ describe('outline interactions', () => {
     act(() => {
       root.render(
         createElement(MarkdownEditor, {
-          extensions: [createOutlineEditorExtension(history)],
+          extensions: [
+            createOutlineEditorExtension(history),
+            EditorView.updateListener.of((update) => {
+              for (const transaction of update.transactions) {
+                const userEvent = transaction.annotation(Transaction.userEvent)
+                if (userEvent !== undefined && userEvent.length > 0)
+                  userEvents.push(userEvent)
+              }
+            }),
+          ],
           history,
           onViewChange: (view: EditorView | null) => {
             viewRef.current = view
@@ -439,26 +685,42 @@ describe('outline interactions', () => {
       )
     })
 
-    const content = host.querySelector<HTMLElement>('.cm-content')
     const view = viewRef.current
-    if (content === null || view === null)
-      throw new Error('The markdown editor did not mount')
-    act(() => {
-      view.dispatch({ changes: { from: body.length, insert: ' Draft.' } })
-      view.focus()
-      content.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'z',
-          bubbles: true,
-          [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
-        }),
+    if (view === null) throw new Error('The markdown editor did not mount')
+    const moveSucceeded = history
+      .move(
+        {
+          from: initial.indexOf('# Beta'),
+          destination: 0,
+        },
+        view,
       )
+      .isOk()
+    const afterMove = body.toJSON()
+    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+    })
+    const afterUndo = body.toJSON()
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}y{/${modifier}}`)
     })
 
     const readOutput = () => ({
+      moveSucceeded,
+      afterMove,
+      afterUndo,
       body: body.toJSON(),
       editor: view.state.doc.toString(),
+      userEvents,
     })
-    expect(readOutput()).toEqual({ body: initial, editor: initial })
+    expect(readOutput()).toEqual({
+      moveSucceeded: true,
+      afterMove: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
+      afterUndo: initial,
+      body: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
+      editor: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
+      userEvents: ['move', 'undo', 'redo'],
+    })
   })
 })
