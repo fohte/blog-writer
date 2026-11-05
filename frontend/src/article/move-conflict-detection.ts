@@ -5,9 +5,9 @@ import {
   isConcurrent,
   locate,
   targetFor,
-  type TrackedId,
   type TrackedTarget,
 } from '#article/move-conflict-records'
+import { internalItems, type TrackedId } from '#article/yjs-internals'
 
 export type MoveConflict = {
   id: string
@@ -17,24 +17,14 @@ export type MoveConflict = {
   target: number
 }
 
-type InternalItem = {
-  id: TrackedId
-  length: number
-  deleted: boolean
-  countable: boolean
-  origin: TrackedId | null
-  right: InternalItem | null
-}
-type InternalText = Y.Text & { _start: InternalItem | null }
-
 function idEqual(left: TrackedId, right: TrackedId): boolean {
   return left.client === right.client && left.clock === right.clock
 }
 
 function targetPosition(doc: Y.Doc, target: TrackedTarget): number | undefined {
-  const text = doc.getText('body') as InternalText
+  const text = doc.getText('body')
   let position = 0
-  for (let item = text._start; item; item = item.right) {
+  for (const item of internalItems(text)) {
     if (
       item.id.client === target.client &&
       target.clock >= item.id.clock &&
@@ -51,7 +41,7 @@ function targetPosition(doc: Y.Doc, target: TrackedTarget): number | undefined {
 }
 
 export function detectMoveConflicts(doc: Y.Doc): MoveConflict[] {
-  const text = doc.getText('body') as InternalText
+  const text = doc.getText('body')
   const records = getMoveRecords(doc).toArray()
   const tainted = new Map<string, TrackedTarget>()
   const ranges: Array<{
@@ -63,7 +53,7 @@ export function detectMoveConflicts(doc: Y.Doc): MoveConflict[] {
   let position = 0
   let last: (typeof ranges)[number] | undefined
 
-  for (let item = text._start; item; item = item.right) {
+  for (const item of internalItems(text)) {
     let target: TrackedTarget | undefined
     const origin = item.origin
     if (origin) {
@@ -146,7 +136,6 @@ export function resolveMoveConflictRange(
   conflict: MoveConflict,
 ): void {
   const text = doc.getText('body')
-  if (text.toJSON().slice(conflict.from, conflict.to) !== conflict.text) return
   const target = Math.max(0, Math.min(conflict.target, text.length))
   const insertion =
     target > conflict.from ? target - (conflict.to - conflict.from) : target
@@ -154,11 +143,4 @@ export function resolveMoveConflictRange(
     text.delete(conflict.from, conflict.to - conflict.from)
     text.insert(insertion, conflict.text)
   }, 'move-conflict-resolution')
-}
-
-export function isConflictCurrent(doc: Y.Doc, conflict: MoveConflict): boolean {
-  return (
-    doc.getText('body').toJSON().slice(conflict.from, conflict.to) ===
-    conflict.text
-  )
 }

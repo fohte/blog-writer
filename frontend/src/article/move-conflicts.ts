@@ -4,7 +4,6 @@ import * as Y from 'yjs'
 import { InvalidBlockMoveError } from '#article/errors'
 import {
   detectMoveConflicts,
-  isConflictCurrent,
   type MoveConflict,
   resolveMoveConflictRange,
 } from '#article/move-conflict-detection'
@@ -31,9 +30,6 @@ export function resolveMoveConflict(
       new InvalidBlockMoveError('The move conflict is no longer available'),
     )
   if (resolution === 'keep') return ok()
-  if (!isConflictCurrent(doc, conflict))
-    return err(new InvalidBlockMoveError('The moved text has changed'))
-
   resolveMoveConflictRange(doc, conflict)
   return ok()
 }

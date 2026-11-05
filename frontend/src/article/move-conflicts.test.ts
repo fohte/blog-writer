@@ -61,8 +61,8 @@ describe('move conflict records', () => {
     const beforeResolution = {
       bodies: [readBody(replicas.A.doc), readBody(replicas.B.doc)],
       conflicts: [
-        getMoveConflicts(replicas.A.doc).map(({ text }) => text),
-        getMoveConflicts(replicas.B.doc).map(({ text }) => text),
+        getMoveConflicts(replicas.A.doc),
+        getMoveConflicts(replicas.B.doc),
       ],
     }
     const conflict = getMoveConflicts(replicas.A.doc)[0]
@@ -91,7 +91,10 @@ describe('move conflict records', () => {
           '## Cedar\na1\nxy## Vista\nz9\n\n## Fjord\nmaple ma\n',
           '## Cedar\na1\nxy## Vista\nz9\n\n## Fjord\nmaple ma\n',
         ],
-        conflicts: [['xy'], ['xy']],
+        conflicts: [
+          [{ id: '2:0', from: 12, to: 14, text: 'xy', target: 41 }],
+          [{ id: '2:0', from: 12, to: 14, text: 'xy', target: 41 }],
+        ],
       },
       afterResolution: [
         '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmaplexy ma\n',
@@ -128,9 +131,9 @@ describe('move conflict records', () => {
     const replicas = { A, B, S, peers: [C] }
     settle(replicas)
     const detected = [A, B, C].map((replica) =>
-      getMoveConflicts(replica.doc)
-        .map(({ text }) => text)
-        .toSorted(),
+      getMoveConflicts(replica.doc).toSorted((left, right) =>
+        left.text.localeCompare(right.text),
+      ),
     )
     for (const conflict of getMoveConflicts(B.doc).toReversed()) {
       resolveMoveConflict(B.doc, conflict.id, 'move')._unsafeUnwrap()
@@ -148,9 +151,18 @@ describe('move conflict records', () => {
       ]),
     ).toEqual({
       detected: [
-        ['x1', 'y2'],
-        ['x1', 'y2'],
-        ['x1', 'y2'],
+        [
+          { id: '52:0', from: 14, to: 16, text: 'x1', target: 43 },
+          { id: '53:0', from: 12, to: 14, text: 'y2', target: 38 },
+        ],
+        [
+          { id: '52:0', from: 14, to: 16, text: 'x1', target: 43 },
+          { id: '53:0', from: 12, to: 14, text: 'y2', target: 38 },
+        ],
+        [
+          { id: '52:0', from: 14, to: 16, text: 'x1', target: 43 },
+          { id: '53:0', from: 12, to: 14, text: 'y2', target: 38 },
+        ],
       ],
       finalBodies: [
         '## Cedar\na1\n## Vista\nz9\n\n## Fjord\ny2maplex1 ma\n',
@@ -172,7 +184,7 @@ describe('move conflict records', () => {
     pull(replicas.A.doc, replicas.B.doc)
     settle(replicas)
 
-    const conflicts = getMoveConflicts(replicas.A.doc).map(({ text }) => text)
+    const conflicts = getMoveConflicts(replicas.A.doc)
     const current = readBody(replicas.A.doc)
     expect(
       Object.fromEntries([
@@ -183,7 +195,7 @@ describe('move conflict records', () => {
       ]),
     ).toEqual({
       beforeSync: '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmaple maple\n',
-      conflicts: ['xy'],
+      conflicts: [{ id: '2:0', from: 12, to: 14, text: 'xy', target: 41 }],
       current: '## Cedar\na1\nxy## Vista\nz9\n\n## Fjord\nmaple ma\n',
       recordCount: 3,
     })
@@ -202,21 +214,27 @@ describe('move conflict records', () => {
       position: 'next-heading',
       text: 'Q',
       expectedBody: '## Cedar\na1\nQ## Vista\nz9\n\n## Fjord\nmaple maple\n',
-      expectedConflicts: ['Q'],
+      expectedConflicts: [
+        { id: '32:0', from: 12, to: 13, text: 'Q', target: 47 },
+      ],
     },
     {
       name: 'at the first body character',
       position: 'section-body',
       text: 'R',
       expectedBody: '## Cedar\na1\nR## Vista\nz9\n\n## Fjord\nmaple maple\n',
-      expectedConflicts: ['R'],
+      expectedConflicts: [
+        { id: '32:0', from: 12, to: 13, text: 'R', target: 35 },
+      ],
     },
     {
       name: 'inside the heading',
       position: 'heading-text',
       text: 'S',
       expectedBody: '## Cedar\na1\nS## Vista\nz9\n\n## Fjord\nmaple maple\n',
-      expectedConflicts: ['S'],
+      expectedConflicts: [
+        { id: '32:0', from: 12, to: 13, text: 'S', target: 32 },
+      ],
     },
   ])(
     'detects a boundary edit: $name',
@@ -243,14 +261,8 @@ describe('move conflict records', () => {
       expect(
         Object.fromEntries([
           ['merged', readBody(A.doc)],
-          [
-            'conflictsA',
-            getMoveConflicts(A.doc).map(({ text: value }) => value),
-          ],
-          [
-            'conflictsB',
-            getMoveConflicts(B.doc).map(({ text: value }) => value),
-          ],
+          ['conflictsA', getMoveConflicts(A.doc)],
+          ['conflictsB', getMoveConflicts(B.doc)],
         ]),
       ).toEqual({
         merged: expectedBody,
@@ -299,5 +311,39 @@ describe('move conflict records', () => {
 
     const readOutput = () => ({ refreshCount, body: readBody(doc) })
     expect(readOutput()).toEqual({ refreshCount: 1, body: '' })
+  })
+
+  it('starts acknowledgement tracking for a loaded move record', () => {
+    const source = new Y.Doc()
+    source.clientID = 61
+    setBody(source, initialBody)
+    moveSection(source, 'end')
+
+    const loaded = new Y.Doc()
+    loaded.clientID = 62
+    pull(loaded, source)
+    const record = loaded.getArray<{ copy: [number, number] }>('moves').get(0)
+    const stop = observeMoveConflicts(loaded)
+    const acknowledgementKey = `${record.copy[0].toString()}:${record.copy[1].toString()}/62`
+    const acknowledgements = loaded.getMap<number>('move-acks')
+    const body = loaded.getText('body')
+    body.insert(body.toJSON().indexOf('maple') + 5, 'q')
+    const conflicts = getMoveConflicts(loaded)
+    const readOutput = () => ({
+      records: loaded.getArray('moves').length,
+      acknowledgements: Object.fromEntries(acknowledgements.entries()),
+      expectedKey: acknowledgementKey,
+      body: readBody(loaded),
+      conflicts,
+    })
+    stop()
+
+    expect(readOutput()).toEqual({
+      records: 1,
+      acknowledgements: { [acknowledgementKey]: 0 },
+      expectedKey: acknowledgementKey,
+      body: '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmapleq maple\n',
+      conflicts: [],
+    })
   })
 })

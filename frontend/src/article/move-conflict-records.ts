@@ -1,35 +1,30 @@
 import * as Y from 'yjs'
 
+import {
+  type InternalItem,
+  internalItems,
+  type TrackedId,
+} from '#article/yjs-internals'
+
 const MOVE_RECORDS = 'moves'
 const MOVE_ACKS = 'move-acks'
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
-export type MoveId = [client: number, clock: number]
-export type MoveSourceRun = [
+type MoveId = [client: number, clock: number]
+type MoveSourceRun = [
   client: number,
   clock: number,
   length: number,
   visible: 0 | 1,
 ]
-export type MoveRecord = {
+type MoveRecord = {
   src: MoveSourceRun[]
   copy: MoveId
   sv: Record<string, number>
   offsets: number[]
   createdAt: number
 }
-export type TrackedId = { client: number; clock: number }
 export type TrackedTarget = TrackedId & { side: 'before' | 'after' }
-
-type InternalItem = {
-  id: TrackedId
-  length: number
-  deleted: boolean
-  countable: boolean
-  origin: TrackedId | null
-  right: InternalItem | null
-}
-type InternalText = Y.Text & { _start: InternalItem | null }
 
 export function getMoveRecords(doc: Y.Doc): Y.Array<MoveRecord> {
   return doc.getArray<MoveRecord>(MOVE_RECORDS)
@@ -39,11 +34,11 @@ function getMoveAcks(doc: Y.Doc): Y.Map<number> {
   return doc.getMap<number>(MOVE_ACKS)
 }
 
-export function moveId(record: MoveRecord): string {
+function moveId(record: MoveRecord): string {
   return `${record.copy[0].toString()}:${record.copy[1].toString()}`
 }
 
-export function moveAckKey(record: MoveRecord, client: number): string {
+function moveAckKey(record: MoveRecord, client: number): string {
   return `${moveId(record)}/${client.toString()}`
 }
 
@@ -96,7 +91,7 @@ function spanOf(text: Y.Text, from: number, to: number): MoveSourceRun[] {
   let tombstones: InternalItem[] = []
   let position = 0
 
-  for (let item = (text as InternalText)._start; item; item = item.right) {
+  for (const item of internalItems(text)) {
     if (item.deleted) {
       if (runs.length > 0) tombstones.push(item)
       continue
@@ -151,7 +146,7 @@ export function createMoveRecord(input: {
   const { text, copyFrom, src, sv, offsets } = input
   let position = 0
   let copy: TrackedId | undefined
-  for (let item = (text as InternalText)._start; item; item = item.right) {
+  for (const item of internalItems(text)) {
     if (item.deleted || !item.countable) continue
     if (copyFrom >= position && copyFrom < position + item.length) {
       copy = {
@@ -221,7 +216,7 @@ function mappedOffset(record: MoveRecord, sourceOffset: number): number {
   return record.offsets[sourceOffset] ?? sourceOffset
 }
 
-export function forward(records: MoveRecord[], id: TrackedId): TrackedId {
+function forward(records: MoveRecord[], id: TrackedId): TrackedId {
   for (;;) {
     const record = records.find(
       (candidate) => locate(candidate, id.client, id.clock) !== undefined,
@@ -270,7 +265,7 @@ export function isConcurrent(
   )
 }
 
-export function repairDeletedMoveCharacters(
+function repairDeletedMoveCharacters(
   doc: Y.Doc,
   record: MoveRecord,
   deleteSet: Y.Transaction['deleteSet'],
@@ -303,13 +298,13 @@ export function repairDeletedMoveCharacters(
 }
 
 function deleteVisibleIds(doc: Y.Doc, ids: TrackedId[]): void {
-  const text = doc.getText('body') as InternalText
+  const text = doc.getText('body')
   const ranges: Array<[number, number]> = []
   const uniqueIds = new Map(
     ids.map((id) => [`${id.client.toString()}:${id.clock.toString()}`, id]),
   )
   let position = 0
-  for (let item = text._start; item; item = item.right) {
+  for (const item of internalItems(text)) {
     if (item.deleted || !item.countable) continue
     for (const id of uniqueIds.values()) {
       if (
@@ -334,7 +329,7 @@ function deleteVisibleIds(doc: Y.Doc, ids: TrackedId[]): void {
   }, 'move-conflict-repair')
 }
 
-export function observeMoveRecords(doc: Y.Doc): () => void {
+function observeMoveRecords(doc: Y.Doc): () => void {
   cleanupMoveRecords(doc)
   const records = getMoveRecords(doc)
   const acks = getMoveAcks(doc)

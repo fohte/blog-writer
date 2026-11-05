@@ -2,12 +2,14 @@ import { Button } from '@fohte/ui/button'
 
 export type MoveConflictNoticeProps = {
   text: string
+  status?: string
   onMove?: () => void
   onKeep?: () => void
 }
 
 export function MoveConflictNotice({
   text,
+  status,
   onMove,
   onKeep,
 }: MoveConflictNoticeProps) {
@@ -23,6 +25,9 @@ export function MoveConflictNotice({
       <p className="whitespace-pre-wrap rounded bg-background/70 px-2 py-1 font-mono">
         {text}
       </p>
+      {status !== undefined && status.length > 0 && (
+        <p role="alert">{status}</p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button onClick={onMove} size="sm" type="button">
           Move it with the section

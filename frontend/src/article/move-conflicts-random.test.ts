@@ -163,9 +163,9 @@ function randomTrial(
   const replicas = { A, B, S, peers: [C, D] }
   settle(replicas)
   const detections = [A, B, C, D].map((editor) =>
-    getMoveConflicts(editor.doc)
-      .map(({ from, to, target, text }) => ({ from, to, target, text }))
-      .toSorted((left, right) => left.from - right.from),
+    getMoveConflicts(editor.doc).toSorted(
+      (left, right) => left.from - right.from,
+    ),
   )
   const detectionsAgree = detections.every(
     (detection) => JSON.stringify(detection) === JSON.stringify(detections[0]),
@@ -179,7 +179,7 @@ function randomTrial(
         ({ id }) => id === conflict.id,
       )
       if (current) {
-        const result = importResolve(A.doc, current.id)
+        const result = tryResolve(A.doc, current.id)
         if (result === 'error') break
       }
     }
@@ -208,7 +208,7 @@ function randomTrial(
   }
 }
 
-function importResolve(doc: Y.Doc, id: string): 'ok' | 'error' {
+function tryResolve(doc: Y.Doc, id: string): 'ok' | 'error' {
   return resolveMoveConflict(doc, id, 'move').match(
     () => 'ok',
     () => 'error',
