@@ -30,6 +30,14 @@ export interface MarkdownEditorProps {
 
 const noExtensions: Extension[] = []
 
+function runHistoryStep(history: MoveHistory, step: 'undo' | 'redo') {
+  return (view: EditorView) =>
+    history[step](view).match(
+      () => true,
+      () => true,
+    )
+}
+
 export const MarkdownEditor = forwardRef<
   MarkdownEditorHandle,
   MarkdownEditorProps
@@ -77,30 +85,15 @@ export const MarkdownEditor = forwardRef<
       ? [
           {
             key: 'Mod-z',
-            run: (view: EditorView) => {
-              return history.undo(view).match(
-                () => true,
-                () => true,
-              )
-            },
+            run: runHistoryStep(history, 'undo'),
           },
           {
             key: 'Mod-Shift-z',
-            run: (view: EditorView) => {
-              return history.redo(view).match(
-                () => true,
-                () => true,
-              )
-            },
+            run: runHistoryStep(history, 'redo'),
           },
           {
             key: 'Mod-y',
-            run: (view: EditorView) => {
-              return history.redo(view).match(
-                () => true,
-                () => true,
-              )
-            },
+            run: runHistoryStep(history, 'redo'),
           },
         ]
       : yUndoManagerKeymap

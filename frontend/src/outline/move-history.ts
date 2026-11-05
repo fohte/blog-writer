@@ -16,12 +16,12 @@ import {
   resolveMoveBlockStart,
   reverseBlockMove,
 } from '#article/index'
-import type { IdMapping } from '#outline/undo-id-mapping'
+import { captureDeletedUndoItems } from '#outline/deleted-undo-items'
+import { remapUndoItemIds } from '#outline/undo-id-mapping'
 import {
-  captureDeletedUndoItems,
   captureVisibleSegments,
-  remapUndoItemIds,
-} from '#outline/undo-id-mapping'
+  type IdMapping,
+} from '#outline/undo-id-segments'
 
 type HistoryAction = { kind: 'text' } | { kind: 'move'; move: MoveBlockResult }
 

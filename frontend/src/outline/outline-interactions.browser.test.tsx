@@ -1,6 +1,11 @@
 import { markdown } from '@codemirror/lang-markdown'
-import { EditorSelection, EditorState, Transaction } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import {
+  EditorSelection,
+  EditorState,
+  Prec,
+  Transaction,
+} from '@codemirror/state'
+import { EditorView, keymap } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -404,10 +409,24 @@ describe('outline interactions', () => {
     document.body.append(host)
     const root = createRoot(host)
     const viewRef: { current: EditorView | null } = { current: null }
+    let lowerPriorityHandlerRan = false
     act(() => {
       root.render(
         createElement(MarkdownEditor, {
-          extensions: [createOutlineEditorExtension(history)],
+          extensions: [
+            createOutlineEditorExtension(history),
+            Prec.high(
+              keymap.of([
+                {
+                  key: 'Alt-ArrowDown',
+                  run: () => {
+                    lowerPriorityHandlerRan = true
+                    return true
+                  },
+                },
+              ]),
+            ),
+          ],
           history,
           onViewChange: (view: EditorView | null) => {
             viewRef.current = view
@@ -427,15 +446,23 @@ describe('outline interactions', () => {
       host.remove()
     })
 
-    view.dispatch({
-      selection: EditorSelection.cursor(markdownText.indexOf('last') + 2),
-    })
+    const cursor = markdownText.indexOf('last') + 2
+    view.dispatch({ selection: EditorSelection.cursor(cursor) })
     view.focus()
     await act(async () => {
       await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}')
     })
 
-    expect(body.toJSON()).toEqual(markdownText)
+    const readOutput = () => ({
+      body: body.toJSON(),
+      cursor: view.state.selection.main.head,
+      lowerPriorityHandlerRan,
+    })
+    expect(readOutput()).toEqual({
+      body: markdownText,
+      cursor,
+      lowerPriorityHandlerRan: false,
+    })
   })
 
   it('moves headings up, down, and under another heading from the move menu', async () => {
@@ -703,6 +730,13 @@ describe('outline interactions', () => {
     })
     const afterUndo = body.toJSON()
     await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
+    })
+    const afterShiftRedo = body.toJSON()
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+    })
+    await act(async () => {
       await userEvent.keyboard(`{${modifier}>}y{/${modifier}}`)
     })
 
@@ -710,6 +744,7 @@ describe('outline interactions', () => {
       moveSucceeded,
       afterMove,
       afterUndo,
+      afterShiftRedo,
       body: body.toJSON(),
       editor: view.state.doc.toString(),
       userEvents,
@@ -718,9 +753,10 @@ describe('outline interactions', () => {
       moveSucceeded: true,
       afterMove: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
       afterUndo: initial,
+      afterShiftRedo: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
       body: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
       editor: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
-      userEvents: ['move', 'undo', 'redo'],
+      userEvents: ['move', 'undo', 'redo', 'undo', 'redo'],
     })
   })
 })

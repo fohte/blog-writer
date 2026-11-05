@@ -1,7 +1,6 @@
 import type * as Y from 'yjs'
 
 import {
-  captureDeletedUndoItems,
   type DeletedUndoItem,
   equalRuns,
   remapDeletedUndoItems,
@@ -12,9 +11,6 @@ import {
   type IdMapping,
   type IdSegment,
 } from '#outline/undo-id-segments'
-
-export { captureDeletedUndoItems, captureVisibleSegments }
-export type { DeletedUndoItem, IdMapping, IdSegment }
 
 function intersectIdSegments(
   oldSegments: IdSegment[],

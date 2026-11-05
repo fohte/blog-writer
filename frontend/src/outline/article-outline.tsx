@@ -20,11 +20,9 @@ function activeHeadingFrom(
   headings: Heading[],
   position: number,
 ): number | undefined {
-  const flat = headings.flatMap((heading) => [
-    heading,
-    ...flattenHeadings(heading.children),
-  ])
-  return flat.findLast((heading) => heading.from <= position)?.from
+  return flattenHeadings(headings).findLast(
+    (heading) => heading.from <= position,
+  )?.from
 }
 
 function flattenHeadings(headings: Heading[]): Heading[] {
