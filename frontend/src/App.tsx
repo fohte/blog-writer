@@ -1,12 +1,15 @@
 import { Button } from '@fohte/ui/button'
 import { List } from '@fohte/ui/list'
 import { Panel } from '@fohte/ui/panel'
+import { useState } from 'react'
 
+import { LlmSettingsScreen } from '#components/llm-settings-screen'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
 import { SyncStatus } from '#components/sync-status'
 import { useSyncClient } from '#lib/use-sync-client'
 
 export function App() {
+  const [showSettings, setShowSettings] = useState(false)
   const {
     articles,
     statuses,
@@ -16,13 +19,36 @@ export function App() {
     createArticle,
   } = useSyncClient()
 
+  if (showSettings) {
+    return (
+      <LlmSettingsScreen
+        onBack={() => {
+          setShowSettings(false)
+        }}
+      />
+    )
+  }
+
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-2">
-        <h1 className="text-3xl font-bold">Blog Writer</h1>
-        <p className="text-muted-foreground">
-          Your articles are saved on this device and sync when connected.
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-2">
+            <h1 className="text-3xl font-bold">Blog Writer</h1>
+            <p className="text-muted-foreground">
+              Your articles are saved on this device and sync when connected.
+            </p>
+          </div>
+          <Button
+            onClick={() => {
+              setShowSettings(true)
+            }}
+            type="button"
+            variant="outline"
+          >
+            Settings
+          </Button>
+        </div>
       </header>
 
       <section
