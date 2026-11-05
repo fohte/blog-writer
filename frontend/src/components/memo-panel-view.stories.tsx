@@ -82,7 +82,7 @@ export const Dismissed: Story = {
 }
 
 export const MixedMemoStates: Story = {
-  name: 'memo states can be reordered together',
+  name: 'unorganized, adopted, and dismissed memos are listed together',
   args: {
     memos: [
       {

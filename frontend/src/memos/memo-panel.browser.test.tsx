@@ -11,8 +11,25 @@ import {
   setBody,
   setMemoAdoptedTo,
 } from '#article/index'
-import { MemoPanelView } from '#components/memo-panel-view'
 import { MemoPanel } from '#memos/memo-panel'
+
+const memoMocks = vi.hoisted(() => ({
+  failNextDismiss: false,
+}))
+
+vi.mock('#article/index', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#article/index')>()
+
+  return {
+    ...actual,
+    dismissMemo: (...args: Parameters<typeof actual.dismissMemo>) => {
+      if (!memoMocks.failNextDismiss) return actual.dismissMemo(...args)
+
+      memoMocks.failNextDismiss = false
+      return actual.dismissMemo(args[0], 'missing-memo')
+    },
+  }
+})
 
 let host: HTMLDivElement | undefined
 let root: Root | undefined
@@ -24,27 +41,6 @@ const mountMemoPanel = (doc: Y.Doc) => {
 
   act(() => {
     root?.render(<MemoPanel doc={doc} />)
-  })
-}
-
-const mountMemoPanelView = (error: string) => {
-  host = document.createElement('div')
-  document.body.append(host)
-  root = createRoot(host)
-
-  act(() => {
-    root?.render(
-      <MemoPanelView
-        draft=""
-        error={error}
-        memos={[]}
-        onAddMemo={() => {}}
-        onDismissMemo={() => {}}
-        onDraftChange={() => {}}
-        onMoveMemo={() => {}}
-        onRestoreMemo={() => {}}
-      />,
-    )
   })
 }
 
@@ -91,6 +87,7 @@ const readPanelOutput = (doc: Y.Doc, generatedId?: string) => ({
 })
 
 beforeEach(() => {
+  memoMocks.failNextDismiss = false
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 })
 
@@ -101,7 +98,6 @@ afterEach(() => {
   root = undefined
   host?.remove()
   host = undefined
-  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -125,6 +121,29 @@ describe('MemoPanel', () => {
       rendered: [{ text: '記事の導入を簡潔にする', state: '未整理' }],
       draft: '',
       alert: undefined,
+    })
+  })
+
+  it('shows an alert when dismissing a nonexistent memo fails', () => {
+    const doc = new Y.Doc()
+    addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
+    mountMemoPanel(doc)
+    memoMocks.failNextDismiss = true
+
+    clickButton('見送る')
+
+    expect(readPanelOutput(doc)).toEqual({
+      memos: [
+        {
+          id: 'memo-a',
+          text: '最初の案',
+          order: 0,
+          state: { kind: 'unorganized' },
+        },
+      ],
+      rendered: [{ text: '最初の案', state: '未整理' }],
+      draft: '',
+      alert: 'メモを更新できませんでした。',
     })
   })
 
@@ -294,18 +313,5 @@ describe('MemoPanel', () => {
       draft: '',
       alert: undefined,
     })
-  })
-})
-
-describe('MemoPanelView', () => {
-  it('shows operation errors with the alert role', () => {
-    mountMemoPanelView('メモを更新できませんでした。')
-
-    expect(
-      [...(host?.querySelectorAll('[role="alert"]') ?? [])].map((element) => ({
-        role: element.getAttribute('role'),
-        text: element.textContent,
-      })),
-    ).toEqual([{ role: 'alert', text: 'メモを更新できませんでした。' }])
   })
 })
