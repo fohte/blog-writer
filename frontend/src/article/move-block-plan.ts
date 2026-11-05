@@ -1,9 +1,12 @@
-import { GFM, parser } from '@lezer/markdown'
 import { err, ok, Result } from 'neverthrow'
 
 import { InvalidBlockMoveError } from '#article/errors'
-import { deriveHeadingTree } from '#article/headings'
 import type { MoveBlockInput } from '#article/move-block'
+import {
+  findHeadingSection,
+  type MarkdownBlockRange,
+  topLevelBlocks,
+} from '#article/move-block-structure'
 import type { Heading } from '#article/types'
 
 export type Range = { from: number; to: number; headingLevel?: number }
@@ -23,64 +26,12 @@ type PlannedMove = {
   seam: number
   sourcePrefix: string
 }
-type MarkdownBlockRange = { from: number; contentTo: number; to: number }
-
-const markdownParser = parser.configure(GFM)
-
-function topLevelBlocks(markdown: string): MarkdownBlockRange[] {
-  const blocks: MarkdownBlockRange[] = []
-  const cursor = markdownParser.parse(markdown).cursor()
-  if (!cursor.firstChild()) return blocks
-
-  do {
-    let to = cursor.to
-    while (markdown[to] === '\n') to += 1
-    blocks.push({ from: cursor.from, contentTo: cursor.to, to })
-  } while (cursor.nextSibling())
-
-  return blocks
-}
-
-function findHeadingSection(
-  markdown: string,
-  headings: Heading[],
-  from: number,
-): Range | undefined {
-  const index = headings.findIndex(
-    (heading) => heading.from <= from && from < heading.to,
-  )
-  if (index === -1) return undefined
-
-  const heading = headings[index]
-  if (!heading) return undefined
-  const nextHeading = headings
-    .slice(index + 1)
-    .find((candidate) => candidate.level <= heading.level)
-
-  return {
-    from: heading.from,
-    to: nextHeading?.from ?? markdown.length,
-    headingLevel: heading.level,
-  }
-}
-
 function findBlockRange(
   blocks: MarkdownBlockRange[],
   position: number,
 ): Range | undefined {
   const block = blocks.find(({ from, to }) => from <= position && position < to)
   return block ? { from: block.from, to: block.to } : undefined
-}
-
-function flattenHeadings(headings: Heading[]): Heading[] {
-  return headings.flatMap((heading) => [
-    heading,
-    ...flattenHeadings(heading.children),
-  ])
-}
-
-export function collectHeadings(markdown: string): Heading[] {
-  return flattenHeadings(deriveHeadingTree(markdown))
 }
 
 function findRange(

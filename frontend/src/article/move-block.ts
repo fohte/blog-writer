@@ -7,13 +7,16 @@ import { InvalidBlockMoveError } from '#article/errors'
 import { prepareMemoAnchorMove } from '#article/memos'
 import type { MoveInsertion, MoveSource } from '#article/move-block-plan'
 import {
-  collectHeadings,
   mapWithinRange,
   planBlockMove,
   sectionReplacements,
   transformedText,
   validateMove,
 } from '#article/move-block-plan'
+import {
+  collectHeadings,
+  validatePlannedMoveStructure,
+} from '#article/move-block-structure'
 
 export type BlockMoved = {
   from: number
@@ -217,8 +220,25 @@ function applyMoveBlock(
   })
   const { deletionFrom, removedLength, insertionIndex, insertion, seam } =
     plannedMove
+  const remainingMarkdown =
+    markdown.slice(0, deletionFrom) +
+    markdown.slice(deletionFrom + removedLength)
+  const plannedMarkdown =
+    remainingMarkdown.slice(0, insertionIndex) +
+    insertion.text +
+    remainingMarkdown.slice(insertionIndex)
   const newFrom = insertionIndex + insertion.prefixLength
   const newTo = newFrom + insertion.contentLength
+  const structureError = validatePlannedMoveStructure({
+    originalMarkdown: markdown,
+    originalFrom: range.from,
+    originalTo: range.to,
+    plannedMarkdown,
+    movedFrom: newFrom,
+    movedTo: insertionIndex + insertion.text.length,
+    isSection: range.headingLevel !== undefined,
+  })
+  if (structureError) return err(structureError)
   const mapping: MovePositionMapping = {
     from: range.from,
     to: range.to,

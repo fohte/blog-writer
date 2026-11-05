@@ -532,6 +532,55 @@ Alpha
 
   it.each([
     {
+      name: 'a shallower same-position heading change',
+      markdown: `### H0\n\n### H1\n\n# H2\n\n### H3\n\n## H4\n\n## H5`,
+      from: (markdown: string) => markdown.indexOf('## H4'),
+      destination: (markdown: string) => markdown.indexOf('## H4'),
+      headingLevel: 1,
+    },
+    {
+      name: 'a list at the destination',
+      markdown: `- l0\n\n\n# H1\n\nP2\n\n\n- l3\n\n- l4\n`,
+      from: (markdown: string) => markdown.indexOf('- l0'),
+      destination: (markdown: string) => markdown.indexOf('- l3'),
+    },
+    {
+      name: 'a list at the source',
+      markdown: `- l0\n\nP1\n\n\n- l2\n\n\nP3`,
+      from: (markdown: string) => markdown.indexOf('P1'),
+      destination: () => 0,
+    },
+  ])(
+    'rejects a move that would change Markdown block structure around $name',
+    ({ markdown, from, destination, headingLevel }) => {
+      const doc = new Y.Doc()
+      setBody(doc, markdown)
+      const result = moveBlock(doc, {
+        from: from(markdown),
+        destination: destination(markdown),
+        ...(headingLevel === undefined ? {} : { headingLevel }),
+      })
+
+      expect(
+        Object.fromEntries([
+          [
+            'result',
+            result.match(
+              () => 'ok',
+              (error) => error.message,
+            ),
+          ],
+          ['body', readBody(doc)],
+        ]),
+      ).toEqual({
+        result: 'The move would change Markdown block structure',
+        body: markdown,
+      })
+    },
+  )
+
+  it.each([
+    {
       name: 'outside the parent section',
       destination: (markdown: string) => markdown.length,
       childOf: true,
