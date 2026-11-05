@@ -46,22 +46,33 @@ type ImportedSource = SourceMetadata & {
   findings: { text: string; quote: string }[]
 }
 
-export class SourceImportError extends Error {
-  constructor(
-    readonly phase: 'body' | 'analysis',
-    cause: Error,
-    readonly source?: SourceMetadata,
-  ) {
+class SourceBodyImportError extends Error {
+  readonly phase = 'body' as const
+
+  constructor(cause: Error) {
     super(cause.message, { cause })
-    this.name = 'SourceImportError'
+    this.name = 'SourceBodyImportError'
   }
 }
 
-function withImportPhase<T>(
+export class SourceAnalysisImportError extends Error {
+  readonly phase = 'analysis' as const
+
+  constructor(
+    cause: Error,
+    readonly source: SourceMetadata,
+  ) {
+    super(cause.message, { cause })
+    this.name = 'SourceAnalysisImportError'
+  }
+}
+
+type SourceImportError = SourceBodyImportError | SourceAnalysisImportError
+
+function withBodyImportError<T>(
   result: ResultAsync<T, Error>,
-  phase: SourceImportError['phase'],
-): ResultAsync<T, SourceImportError> {
-  return result.mapErr((cause) => new SourceImportError(phase, cause))
+): ResultAsync<T, SourceBodyImportError> {
+  return result.mapErr((cause) => new SourceBodyImportError(cause))
 }
 
 export type SourceInput =
@@ -108,7 +119,7 @@ export function importSource(
   input: SourceInput,
   settings: LlmSettings,
   signal: AbortSignal,
-): ResultAsync<ImportedSource, Error> {
+): ResultAsync<ImportedSource, SourceImportError> {
   const finish = (
     source: SourceMetadata,
     body: string,
@@ -122,16 +133,14 @@ export function importSource(
           quote,
         })),
       }))
-      .mapErr((cause) => new SourceImportError('analysis', cause, source))
+      .mapErr((cause) => new SourceAnalysisImportError(cause, source))
 
   if (input.kind === 'url') {
-    return withImportPhase(
+    return withBodyImportError(
       fetchSourceUrl(fetcher, articleId, sourceId, input.url, signal),
-      'body',
     ).andThen((response) =>
-      withImportPhase(
+      withBodyImportError(
         getSourceBody(fetcher, articleId, sourceId, signal),
-        'body',
       ).andThen((stored) =>
         finish(
           {
@@ -147,13 +156,11 @@ export function importSource(
   }
 
   if (input.kind === 'file') {
-    return withImportPhase(
+    return withBodyImportError(
       uploadSourceFile(fetcher, articleId, sourceId, input.file, signal),
-      'body',
     ).andThen((response) =>
-      withImportPhase(
+      withBodyImportError(
         getSourceBody(fetcher, articleId, sourceId, signal),
-        'body',
       ).andThen((stored) =>
         finish(
           {
@@ -168,9 +175,8 @@ export function importSource(
     )
   }
 
-  return withImportPhase(
+  return withBodyImportError(
     saveSourceBody(fetcher, articleId, sourceId, input.body, signal),
-    'body',
   ).andThen(() =>
     finish(
       {

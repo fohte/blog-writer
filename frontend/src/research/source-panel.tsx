@@ -20,7 +20,10 @@ import { loadLlmSettings } from '#lib/llm-settings'
 import { deleteSourceBody } from '#lib/source-api'
 import { getSourceHost } from '#research/source-format'
 import type { SourceInput } from '#research/source-ingestion'
-import { importSource, SourceImportError } from '#research/source-ingestion'
+import {
+  importSource,
+  SourceAnalysisImportError,
+} from '#research/source-ingestion'
 
 type SourcePanelProps = {
   articleId: string
@@ -93,6 +96,20 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
     requests.current.set(id, controller)
     setError(undefined)
     setPending((current) => [...current, { id, label }])
+    const persistSource = (
+      fields: Omit<Source, 'id'>,
+      existingFields?: Partial<Omit<Source, 'id'>>,
+    ) => {
+      const saved = existingSource
+        ? updateSource(doc, id, existingFields ?? fields)
+        : addSource(doc, { id, ...fields })
+      saved.match(
+        () => undefined,
+        () => {
+          setError('資料を保存できませんでした。')
+        },
+      )
+    }
     const importResult = loadSettings().match(
       (settings) =>
         importSource(fetch, articleId, id, input, settings, controller.signal),
@@ -108,19 +125,11 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
             status: 'ready' as const,
           }
           doc.transact(() => {
-            const sourceResult = existingSource
-              ? updateSource(doc, id, {
-                  status: 'ready',
-                  summary: imported.summary,
-                  checkedAt: sourceFields.checkedAt,
-                })
-              : addSource(doc, { id, ...sourceFields })
-            sourceResult.match(
-              () => undefined,
-              () => {
-                setError('資料を保存できませんでした。')
-              },
-            )
+            persistSource(sourceFields, {
+              status: 'ready',
+              summary: imported.summary,
+              checkedAt: sourceFields.checkedAt,
+            })
             const findingsResult = setFindings(
               doc,
               id,
@@ -143,8 +152,7 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
         (importError) => {
           if (controller.signal.aborted) return
           const analysisFailed =
-            importError instanceof SourceImportError &&
-            importError.phase === 'analysis'
+            importError instanceof SourceAnalysisImportError
           setError(
             analysisFailed
               ? `資料本文は保存済みですが、要約と要点の作成に失敗しました: ${importError.message}`
@@ -153,37 +161,37 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
           if (analysisFailed) {
             setPastedBody('')
             setPasteTargetId(null)
-            const source = importError.source ?? fallback
             const failedSource = {
-              ...source,
+              ...importError.source,
               checkedAt: new Date().toISOString(),
               status: 'analysisFailed' as const,
               summary: '',
             }
-            const saved = existingSource
-              ? updateSource(doc, id, failedSource)
-              : addSource(doc, { id, ...failedSource })
-            saved.match(
-              () => undefined,
-              () => {
-                setError('資料を保存できませんでした。')
-              },
-            )
+            doc.transact(() => {
+              persistSource(failedSource, {
+                status: 'analysisFailed',
+                summary: '',
+                checkedAt: failedSource.checkedAt,
+              })
+              if (existingSource) {
+                setFindings(doc, id, []).match(
+                  () => undefined,
+                  () => {
+                    setError('要点を保存できませんでした。')
+                  },
+                )
+              }
+            })
             setExpandedSourceId(id)
           } else if (!existingSource) {
-            const added = addSource(doc, {
-              id,
-              ...fallback,
-              checkedAt: null,
-              status: 'unavailable',
-              summary: '',
+            doc.transact(() => {
+              persistSource({
+                ...fallback,
+                checkedAt: null,
+                status: 'unavailable',
+                summary: '',
+              })
             })
-            added.match(
-              () => undefined,
-              () => {
-                setError('資料を保存できませんでした。')
-              },
-            )
             setExpandedSourceId(id)
           }
         },

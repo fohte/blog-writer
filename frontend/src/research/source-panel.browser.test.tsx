@@ -309,6 +309,24 @@ function readAnalysisFailureOutput(doc: Y.Doc) {
   }
 }
 
+function readExistingAnalysisFailureOutput(doc: Y.Doc) {
+  const sourceRow = host?.querySelector('[role="listitem"]')
+  return {
+    sources: listSources(doc).map(({ checkedAt, ...source }) => ({
+      ...source,
+      checkedAt: checkedAt === null ? null : 'normalized-date',
+    })),
+    findings: listFindings(doc),
+    alert: host?.querySelector('[role="alert"]')?.textContent,
+    analysisNotice: sourceRow?.querySelector('p')?.textContent,
+    pasteActionVisible: [...(host?.querySelectorAll('button') ?? [])].some(
+      (button) => button.textContent === '本文を貼り付け',
+    ),
+    savedBodies,
+    fetchCalls: readFetchCalls(),
+  }
+}
+
 function readBodyRecoveryOutput(doc: Y.Doc) {
   return { ...readOutput(doc), savedBodies, fetchCalls: readFetchCalls() }
 }
@@ -746,6 +764,67 @@ describe('SourcePanel', () => {
         {
           url: '/api/articles/article-a/source-bodies/generated-source',
           method: 'GET',
+        },
+        { url: '/api/research/key-points', method: 'POST' },
+      ],
+    })
+    doc.destroy()
+  })
+
+  it('clears stale findings when analysis fails after saving pasted body text', async () => {
+    const doc = new Y.Doc()
+    addSource(doc, {
+      id: 'source-a',
+      kind: 'url',
+      title: '資料ページ',
+      url: 'https://data.example.invalid/report',
+      fileName: null,
+      checkedAt: null,
+      status: 'unavailable',
+    })
+    setFindings(doc, 'source-a', [
+      {
+        id: 'finding-old',
+        text: '以前の要点',
+        quote: '以前の引用',
+      },
+    ])
+    researchStatus = 500
+    mountSourcePanel(doc)
+    const textarea = openPasteField()
+    if (!textarea) throw new Error('paste field is not rendered')
+    const body = '新しい資料本文を貼り付けます。'
+    changeTextarea(textarea, body)
+    act(() => {
+      ;[...(host?.querySelectorAll('button') ?? [])]
+        .find((button) => button.textContent === '本文を登録')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await settleUi(doc)
+
+    expect(readExistingAnalysisFailureOutput(doc)).toEqual({
+      sources: [
+        {
+          id: 'source-a',
+          kind: 'url',
+          title: '資料ページ',
+          url: 'https://data.example.invalid/report',
+          fileName: null,
+          checkedAt: 'normalized-date',
+          status: 'analysisFailed',
+          summary: '',
+        },
+      ],
+      findings: [],
+      alert:
+        '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
+      analysisNotice: '本文は保存済みですが、要約と要点の作成に失敗しました。',
+      pasteActionVisible: false,
+      savedBodies: [body],
+      fetchCalls: [
+        {
+          url: '/api/articles/article-a/source-bodies/source-a',
+          method: 'PUT',
         },
         { url: '/api/research/key-points', method: 'POST' },
       ],
