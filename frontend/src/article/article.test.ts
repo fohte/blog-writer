@@ -1,17 +1,22 @@
+import { EditorState, Transaction } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
 import {
   addMemo,
+  blockMoved,
   deriveHeadingTree,
   dismissMemo,
   getBody,
   getMemoState,
   getPremise,
   listMemos,
+  moveBlock,
   observeMemos,
   readBody,
+  registerBlockMoveUpdater,
   restoreMemo,
+  reverseBlockMove,
   setBody,
   setMemoAdoptedTo,
   setPremise,
@@ -19,6 +24,834 @@ import {
 } from '#article/index'
 
 describe('article model', () => {
+  it('moves a heading section and reanchors memo and registered markers in one transaction', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Alpha
+
+Alpha text
+
+## Nested
+
+Nested text
+
+# Beta
+
+Beta text
+`
+    setBody(doc, markdown)
+    addMemo(doc, { id: 'memo-a', text: 'nested note', order: 0 })
+    const nestedFrom = markdown.indexOf('## Nested')
+    setMemoAdoptedTo(doc, 'memo-a', nestedFrom)
+    const body = doc.getText('body')
+    const referenceData = doc.getMap('references')
+    const oldMarker = markdown.indexOf('Nested text')
+    const initialReference = Y.createRelativePositionFromTypeIndex(
+      body,
+      oldMarker + 1,
+      -1,
+    )
+    referenceData.set('anchor', Y.relativePositionToJSON(initialReference))
+
+    let transactionCount = 0
+    let transactionOrigin: unknown
+    doc.on('afterTransaction', (transaction) => {
+      transactionCount += 1
+      transactionOrigin = transaction.origin
+    })
+    const unregister = registerBlockMoveUpdater(doc, (mapping) => {
+      const stored = referenceData.get('anchor')
+      if (stored === undefined || typeof stored !== 'object') return
+      const absolute = Y.createAbsolutePositionFromRelativePosition(
+        Y.createRelativePositionFromJSON(stored),
+        doc,
+      )
+      if (!absolute) return
+      const newMarker = mapping.mapPosition(absolute.index - 1)
+      if (newMarker === undefined) return
+      return () => {
+        const moved = Y.createRelativePositionFromTypeIndex(
+          body,
+          newMarker + 1,
+          -1,
+        )
+        referenceData.set('anchor', Y.relativePositionToJSON(moved))
+      }
+    })
+
+    const result = moveBlock(doc, { from: 0, destination: markdown.length })
+    unregister()
+    const move = result.match(
+      (value) => value,
+      (error) => {
+        throw new Error(error.message)
+      },
+    )
+    const movedBody = readBody(doc)
+    const movedMemos = listMemos(doc)
+    const moveTransactionCount = transactionCount
+    const moveTransactionOrigin = transactionOrigin
+    const editorTransaction = EditorState.create({ doc: markdown }).update({
+      changes: { from: 0, to: markdown.length, insert: movedBody },
+      annotations: move.annotations,
+    })
+    const finalReference = referenceData.get('anchor')
+    const finalAbsolute =
+      finalReference !== undefined && typeof finalReference === 'object'
+        ? Y.createAbsolutePositionFromRelativePosition(
+            Y.createRelativePositionFromJSON(finalReference),
+            doc,
+          )
+        : null
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['body', movedBody],
+        ['restoredBody', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+        ['memo', movedMemos],
+        ['referenceIndex', finalAbsolute?.index],
+        ['transactionCount', moveTransactionCount],
+        ['annotation', move.annotations[0].value],
+        ['editorAnnotation', editorTransaction.annotation(blockMoved)],
+        [
+          'editorUserEvent',
+          editorTransaction.annotation(Transaction.userEvent),
+        ],
+        [
+          'originAnnotations',
+          Array.isArray(moveTransactionOrigin)
+            ? moveTransactionOrigin.map(
+                (annotation: { value: unknown }) => annotation.value,
+              )
+            : null,
+        ],
+        ['oldMarker', oldMarker],
+        ['newMarker', finalAbsolute ? finalAbsolute.index - 1 : null],
+        ['annotationType', move.annotations[0].type === blockMoved],
+      ]),
+    ).toEqual({
+      body: `# Beta
+
+Beta text
+
+# Alpha
+
+Alpha text
+
+## Nested
+
+Nested text
+`,
+      restoredBody: markdown,
+      undoEvent: 'undo',
+      memo: [
+        {
+          id: 'memo-a',
+          text: 'nested note',
+          order: 0,
+          state: {
+            kind: 'adopted',
+            heading: {
+              level: 2,
+              text: 'Nested',
+              from: 40,
+              to: 49,
+              children: [],
+            },
+          },
+        },
+      ],
+      referenceIndex: 52,
+      transactionCount: 1,
+      annotation: { from: 19, to: 63, seam: 0 },
+      editorAnnotation: { from: 19, to: 63, seam: 0 },
+      editorUserEvent: 'move',
+      originAnnotations: [{ from: 19, to: 63, seam: 0 }, 'move'],
+      oldMarker: 32,
+      newMarker: 51,
+      annotationType: true,
+    })
+  })
+
+  it('moves a single Markdown block', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Heading
+
+First paragraph.
+
+Second paragraph.
+
+After.
+`
+    setBody(doc, markdown)
+    const result = moveBlock(doc, {
+      from: markdown.indexOf('Second paragraph.'),
+      destination: markdown.length,
+    })
+
+    expect(
+      Object.fromEntries([
+        ['body', readBody(doc)],
+        [
+          'moved',
+          result.match(
+            (move) => move.annotations[0].value,
+            (error) => error.name,
+          ),
+        ],
+      ]),
+    ).toEqual({
+      body: `# Heading
+
+First paragraph.
+
+After.
+
+Second paragraph.
+`,
+      moved: { from: 37, to: 55, seam: 29 },
+    })
+  })
+
+  it('normalizes the source separator when moving the final block to the beginning', () => {
+    const doc = new Y.Doc()
+    const markdown = `X
+
+A
+`
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: markdown.indexOf('A'),
+      destination: 0,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['restored', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+      ]),
+    ).toEqual({
+      afterMove: `A
+
+X
+`,
+      restored: markdown,
+      undoEvent: 'undo',
+    })
+  })
+
+  it('preserves block separators when reversing a reverse move', () => {
+    const doc = new Y.Doc()
+    const markdown = `A
+
+B
+`
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: 0,
+      destination: markdown.length,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+    const afterUndo = readBody(doc)
+    const redo = reverseBlockMove(doc, undo)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['afterUndo', afterUndo],
+        ['afterRedo', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+        ['redoEvent', redo.annotations[1].value],
+      ]),
+    ).toEqual({
+      afterMove: `B
+
+A
+`,
+      afterUndo: markdown,
+      afterRedo: `B
+
+A
+`,
+      undoEvent: 'undo',
+      redoEvent: 'undo',
+    })
+  })
+
+  it('keeps an unregistered marker at the source seam when its block moves', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Heading
+
+Stay.
+
+Move me.
+
+After.
+`
+    setBody(doc, markdown)
+    const body = doc.getText('body')
+    const marker = Y.createRelativePositionFromTypeIndex(
+      body,
+      markdown.indexOf('Move me.') + 1,
+      -1,
+    )
+
+    moveBlock(doc, {
+      from: markdown.indexOf('Move me.'),
+      destination: markdown.length,
+    })._unsafeUnwrap()
+
+    const absolute = Y.createAbsolutePositionFromRelativePosition(marker, doc)
+    expect(
+      Object.fromEntries([
+        ['body', readBody(doc)],
+        ['markerIndex', absolute?.index],
+      ]),
+    ).toEqual({
+      body: `# Heading
+
+Stay.
+
+After.
+
+Move me.
+`,
+      markerIndex: 18,
+    })
+  })
+
+  it('restores added separators when reversing a block without a trailing newline', () => {
+    const doc = new Y.Doc()
+    const markdown = `Alpha
+
+Beta`
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: 0,
+      destination: markdown.length,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['restored', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+      ]),
+    ).toEqual({
+      afterMove: `Beta
+
+Alpha
+`,
+      restored: markdown,
+      undoEvent: 'undo',
+    })
+  })
+
+  it('rejects a destination inside the selected section without changing the body', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Parent
+
+## Child
+
+# Other
+`
+    setBody(doc, markdown)
+    const result = moveBlock(doc, {
+      from: markdown.indexOf('# Parent'),
+      destination: markdown.indexOf('## Child'),
+    })
+
+    expect(
+      Object.fromEntries([
+        [
+          'result',
+          result.match(
+            () => 'ok',
+            (error) => error.name,
+          ),
+        ],
+        ['body', readBody(doc)],
+      ]),
+    ).toEqual({
+      result: 'InvalidBlockMoveError',
+      body: markdown,
+    })
+  })
+
+  it.each([
+    {
+      name: 'an equal-level heading',
+      markdown: `# First
+
+# Moved
+
+# Target
+`,
+      movedHeading: '# Moved',
+      destinationHeading: '# First',
+      afterMove: `# Moved
+
+# First
+
+# Target
+`,
+    },
+    {
+      name: 'a shallower heading',
+      markdown: `# First
+
+## Moved
+
+# Target
+`,
+      movedHeading: '## Moved',
+      destinationHeading: '# First',
+      afterMove: `## Moved
+
+# First
+
+# Target
+`,
+    },
+    {
+      name: 'an equal-level heading after changing level',
+      markdown: `# Parent
+
+## Target
+
+# Source
+`,
+      movedHeading: '# Source',
+      destinationHeading: '## Target',
+      headingLevel: 2,
+      afterMove: `# Parent
+
+## Source
+
+## Target
+`,
+    },
+  ])(
+    'moves a section before $name and reverses it',
+    ({
+      markdown,
+      movedHeading,
+      destinationHeading,
+      headingLevel,
+      afterMove,
+    }) => {
+      const doc = new Y.Doc()
+      setBody(doc, markdown)
+      const move = moveBlock(doc, {
+        from: markdown.indexOf(movedHeading),
+        destination: markdown.indexOf(destinationHeading),
+        ...(headingLevel === undefined ? {} : { headingLevel }),
+      })._unsafeUnwrap()
+      const movedBody = readBody(doc)
+      const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+
+      expect(
+        Object.fromEntries([
+          ['movedBody', movedBody],
+          ['restoredBody', readBody(doc)],
+          ['undoEvent', undo.annotations[1].value],
+        ]),
+      ).toEqual({
+        movedBody: afterMove,
+        restoredBody: markdown,
+        undoEvent: 'undo',
+      })
+    },
+  )
+
+  it.each([
+    {
+      name: 'a body block',
+      markdown: `# H0
+
+# H1
+
+# H2
+
+# H3
+
+- l4
+`,
+      from: (markdown: string) => markdown.indexOf('# H2'),
+      destination: (markdown: string) => markdown.indexOf('- l4'),
+    },
+    {
+      name: 'a deeper heading',
+      markdown: `## H0
+
+# H1
+
+## H2
+
+### H3`,
+      from: (markdown: string) => markdown.indexOf('## H0'),
+      destination: (markdown: string) => markdown.indexOf('### H3'),
+    },
+  ])(
+    'rejects a section destination before $name',
+    ({ name, markdown, from, destination }) => {
+      const doc = new Y.Doc()
+      setBody(doc, markdown)
+      const result = moveBlock(doc, {
+        from: from(markdown),
+        destination: destination(markdown),
+      })
+
+      expect(
+        Object.fromEntries([
+          ['case', name],
+          [
+            'result',
+            result.match(
+              () => 'ok',
+              (error) => error.message,
+            ),
+          ],
+          ['body', readBody(doc)],
+        ]),
+      ).toEqual({
+        case: name,
+        result:
+          'The section destination must be before a heading at the same or a shallower level, or at the end of the document',
+        body: markdown,
+      })
+    },
+  )
+
+  it.each([
+    {
+      name: 'a shallower same-position heading change',
+      markdown: `### H0
+
+### H1
+
+# H2
+
+### H3
+
+## H4
+
+## H5`,
+      from: (markdown: string) => markdown.indexOf('## H4'),
+      destination: (markdown: string) => markdown.indexOf('## H4'),
+      headingLevel: 1,
+    },
+    {
+      name: 'a list at the destination',
+      markdown: `- l0
+
+
+# H1
+
+P2
+
+
+- l3
+
+- l4
+`,
+      from: (markdown: string) => markdown.indexOf('- l0'),
+      destination: (markdown: string) => markdown.indexOf('- l3'),
+    },
+    {
+      name: 'a list at the source',
+      markdown: `- l0
+
+P1
+
+
+- l2
+
+
+P3`,
+      from: (markdown: string) => markdown.indexOf('P1'),
+      destination: () => 0,
+    },
+  ])(
+    'rejects a move that would change Markdown block structure around $name',
+    ({ markdown, from, destination, headingLevel }) => {
+      const doc = new Y.Doc()
+      setBody(doc, markdown)
+      const result = moveBlock(doc, {
+        from: from(markdown),
+        destination: destination(markdown),
+        ...(headingLevel === undefined ? {} : { headingLevel }),
+      })
+
+      expect(
+        Object.fromEntries([
+          [
+            'result',
+            result.match(
+              () => 'ok',
+              (error) => error.message,
+            ),
+          ],
+          ['body', readBody(doc)],
+        ]),
+      ).toEqual({
+        result: 'The move would change Markdown block structure',
+        body: markdown,
+      })
+    },
+  )
+
+  it.each([
+    {
+      name: 'outside the parent section',
+      destination: (markdown: string) => markdown.length,
+      childOf: true,
+      error: 'The child destination is outside the parent section',
+    },
+    {
+      name: 'inside a block while becoming a child',
+      destination: (markdown: string) => markdown.indexOf('Parent text.') + 3,
+      childOf: true,
+      error: 'The destination is inside a Markdown block',
+    },
+    {
+      name: 'before body text while becoming a child',
+      destination: (markdown: string) => markdown.indexOf('Parent text.'),
+      childOf: true,
+      error:
+        'The section destination must be before a heading at the same or a shallower level, or at the end of the document',
+    },
+    {
+      name: 'inside a block during a plain move',
+      destination: (markdown: string) => markdown.indexOf('Parent text.') + 3,
+      childOf: false,
+      error: 'The destination is inside a Markdown block',
+    },
+  ])('rejects a destination $name', ({ name, destination, childOf, error }) => {
+    const markdown = `# Parent
+
+Parent text.
+
+# Other
+
+# Moved
+`
+    const doc = new Y.Doc()
+    setBody(doc, markdown)
+    const result = moveBlock(doc, {
+      from: markdown.indexOf('# Moved'),
+      destination: destination(markdown),
+      ...(childOf ? { childOf: markdown.indexOf('# Parent') } : {}),
+    })
+
+    expect(
+      Object.fromEntries([
+        ['case', name],
+        [
+          'result',
+          result.match(
+            () => 'ok',
+            (moveError) => moveError.message,
+          ),
+        ],
+        ['body', readBody(doc)],
+      ]),
+    ).toEqual({
+      case: name,
+      result: error,
+      body: markdown,
+    })
+  })
+
+  it('rejects a destination inside a blank-line separator', () => {
+    const doc = new Y.Doc()
+    const markdown = `A
+
+B
+
+
+C
+`
+    setBody(doc, markdown)
+    const result = moveBlock(doc, {
+      from: 0,
+      destination: markdown.indexOf('C') - 1,
+    })
+
+    expect(
+      Object.fromEntries([
+        [
+          'result',
+          result.match(
+            () => 'ok',
+            (error) => error.message,
+          ),
+        ],
+        ['body', readBody(doc)],
+      ]),
+    ).toEqual({
+      result: 'The destination is not at a Markdown block boundary',
+      body: markdown,
+    })
+  })
+
+  it('resolves the moved section and seam after text is inserted before them', () => {
+    const doc = new Y.Doc()
+    const markdown = `# First
+
+# Second
+`
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: markdown.indexOf('# First'),
+      destination: markdown.length,
+    })._unsafeUnwrap()
+    const intro = `# Intro
+
+`
+    doc.getText('body').insert(0, intro)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['body', readBody(doc)],
+        ['userEvent', undo.annotations[1].value],
+      ]),
+    ).toEqual({
+      body: `# Intro
+
+# First
+
+# Second
+`,
+      userEvent: 'undo',
+    })
+  })
+
+  it('moves a heading under another heading and reverses it as an undo event', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Parent
+
+# Sibling
+
+# Moved
+
+## Child
+`
+    setBody(doc, markdown)
+    const parentFrom = markdown.indexOf('# Parent')
+    const movedFrom = markdown.indexOf('# Moved')
+    const siblingFrom = markdown.indexOf('# Sibling')
+    const result = moveBlock(doc, {
+      from: movedFrom,
+      destination: siblingFrom,
+      childOf: parentFrom,
+    })
+    const move = result.match(
+      (value) => value,
+      (error) => {
+        throw new Error(error.message)
+      },
+    )
+    const afterMove = readBody(doc)
+    const editorState = EditorState.create({ doc: markdown })
+    const editorMove = editorState.update({
+      changes: { from: 0, to: markdown.length, insert: afterMove },
+      annotations: move.annotations,
+    })
+    const reverse = reverseBlockMove(doc, move)
+    const reverseMove = reverse.match(
+      (value) => value,
+      (error) => {
+        throw new Error(error.message)
+      },
+    )
+    const editorUndo = editorMove.state.update({
+      changes: {
+        from: 0,
+        to: afterMove.length,
+        insert: readBody(doc),
+      },
+      annotations: reverseMove.annotations,
+    })
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['afterUndo', readBody(doc)],
+        ['move', move.annotations.map((annotation) => annotation.value)],
+        ['undo', reverseMove.annotations.map((annotation) => annotation.value)],
+        ['undoEvent', reverseMove.annotations[1].value],
+        ['editorUndoEvent', editorUndo.annotation(Transaction.userEvent)],
+        ['editorUndoAnnotation', editorUndo.annotation(blockMoved)],
+      ]),
+    ).toEqual({
+      afterMove: `# Parent
+
+## Moved
+
+### Child
+
+# Sibling
+`,
+      afterUndo: markdown,
+      move: [{ from: 10, to: 30, seam: 41 }, 'move'],
+      undo: [{ from: 21, to: 39, seam: 10 }, 'undo'],
+      undoEvent: 'undo',
+      editorUndoEvent: 'undo',
+      editorUndoAnnotation: { from: 21, to: 39, seam: 10 },
+    })
+  })
+
+  it('reverses a same-position heading level change twice', () => {
+    const doc = new Y.Doc()
+    const markdown = `# H3
+
+# H4
+`
+    setBody(doc, markdown)
+    const parentFrom = markdown.indexOf('# H3')
+    const movedFrom = markdown.indexOf('# H4')
+    const move = moveBlock(doc, {
+      from: movedFrom,
+      destination: movedFrom,
+      childOf: parentFrom,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+    const afterUndo = readBody(doc)
+    const redo = reverseBlockMove(doc, undo)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['afterUndo', afterUndo],
+        ['afterRedo', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+        ['redoEvent', redo.annotations[1].value],
+      ]),
+    ).toEqual({
+      afterMove: `# H3
+
+## H4
+`,
+      afterUndo: markdown,
+      afterRedo: `# H3
+
+## H4
+`,
+      undoEvent: 'undo',
+      redoEvent: 'undo',
+    })
+  })
+
   it('reads and writes body text', () => {
     const doc = new Y.Doc()
     setBody(doc, '# Draft')

@@ -24,3 +24,5 @@ export class InvalidHeadingError extends ArticleError {
     super(`No ATX heading marker at body index ${index.toString()}`)
   }
 }
+
+export class InvalidBlockMoveError extends ArticleError {}

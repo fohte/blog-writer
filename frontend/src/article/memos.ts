@@ -9,6 +9,7 @@ import {
   MemoNotFoundError,
 } from '#article/errors'
 import { deriveHeadingTree } from '#article/headings'
+import type { MovePositionMapping } from '#article/move-block'
 import type { Heading, Memo, MemoData, MemoState } from '#article/types'
 
 type AddMemoInput = {
@@ -199,6 +200,52 @@ export function setMemoAdoptedTo(
     memo.set('adoptedTo', Y.relativePositionToJSON(relativePosition))
     memo.delete('dismissed')
   })
+}
+
+export function prepareMemoAnchorMove(
+  doc: Y.Doc,
+  mapping: MovePositionMapping,
+): () => void {
+  const body = getBody(doc)
+  const relocations: { memo: MemoData; index: number }[] = []
+
+  for (const memo of getMemosMap(doc).values()) {
+    const relativePositionValue = memo.get('adoptedTo')
+    if (
+      relativePositionValue === null ||
+      relativePositionValue === undefined ||
+      typeof relativePositionValue !== 'object'
+    ) {
+      continue
+    }
+
+    const relativePosition = Y.createRelativePositionFromJSON(
+      relativePositionValue,
+    )
+    const absolutePosition = Y.createAbsolutePositionFromRelativePosition(
+      relativePosition,
+      doc,
+    )
+    const itemId = relativePosition.item
+    if (!absolutePosition || absolutePosition.type !== body || !itemId) continue
+    if (Y.getItem(doc.store, itemId).deleted) continue
+
+    const oldIndex = absolutePosition.index - 1
+    const newIndex = mapping.mapPosition(oldIndex)
+    if (newIndex === undefined) continue
+    relocations.push({ memo, index: newIndex })
+  }
+
+  return () => {
+    for (const { memo, index } of relocations) {
+      const newPosition = Y.createRelativePositionFromTypeIndex(
+        body,
+        index + 1,
+        -1,
+      )
+      memo.set('adoptedTo', Y.relativePositionToJSON(newPosition))
+    }
+  }
 }
 
 export function getMemoState(
