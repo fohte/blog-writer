@@ -203,6 +203,100 @@ Second paragraph.
     })
   })
 
+  it('restores added separators when reversing a block without a trailing newline', () => {
+    const doc = new Y.Doc()
+    const markdown = `Alpha
+
+Beta`
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: 0,
+      destination: markdown.length,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['restored', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+      ]),
+    ).toEqual({
+      afterMove: `Beta
+
+Alpha
+
+`,
+      restored: markdown,
+      undoEvent: 'undo',
+    })
+  })
+
+  it('rejects a destination inside the selected section without changing the body', () => {
+    const doc = new Y.Doc()
+    const markdown = `# Parent
+
+## Child
+
+# Other
+`
+    setBody(doc, markdown)
+    const result = moveBlock(doc, {
+      from: markdown.indexOf('# Parent'),
+      destination: markdown.indexOf('## Child'),
+    })
+
+    expect(
+      Object.fromEntries([
+        [
+          'result',
+          result.match(
+            () => 'ok',
+            (error) => error.name,
+          ),
+        ],
+        ['body', readBody(doc)],
+      ]),
+    ).toEqual({
+      result: 'InvalidBlockMoveError',
+      body: markdown,
+    })
+  })
+
+  it('resolves the moved section and seam after text is inserted before them', () => {
+    const doc = new Y.Doc()
+    const markdown = `# First
+
+# Second
+`
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: markdown.indexOf('# First'),
+      destination: markdown.length,
+    })._unsafeUnwrap()
+    const intro = `# Intro
+
+`
+    doc.getText('body').insert(0, intro)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['body', readBody(doc)],
+        ['userEvent', undo.annotations[1].value],
+      ]),
+    ).toEqual({
+      body: `# Intro
+
+# First
+
+# Second
+`,
+      userEvent: 'undo',
+    })
+  })
+
   it('moves a heading under another heading and reverses it as an undo event', () => {
     const doc = new Y.Doc()
     const markdown = `# Parent
