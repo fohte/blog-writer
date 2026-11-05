@@ -67,10 +67,115 @@ describe('article model', () => {
     addMemo(doc, { id: 'memo-b', text: 'second memo', order: 1 })
     updateMemoOrder(doc, 'memo-a', 0)
 
-    expect(listMemos(doc).map(({ id, order }) => ({ id, order }))).toEqual([
-      { id: 'memo-a', order: 0 },
-      { id: 'memo-b', order: 1 },
+    expect(listMemos(doc)).toEqual([
+      {
+        id: 'memo-a',
+        text: 'first memo',
+        order: 0,
+        state: { kind: 'unorganized' },
+      },
+      {
+        id: 'memo-b',
+        text: 'second memo',
+        order: 1,
+        state: { kind: 'unorganized' },
+      },
     ])
+  })
+
+  it.each([
+    {
+      name: 'empty ID',
+      input: { id: '', text: 'new memo', order: 0 },
+      duplicate: false,
+      error: 'InvalidMemoError',
+      memos: [],
+    },
+    {
+      name: 'non-finite order',
+      input: {
+        id: 'memo-a',
+        text: 'new memo',
+        order: Number.POSITIVE_INFINITY,
+      },
+      duplicate: false,
+      error: 'InvalidMemoError',
+      memos: [],
+    },
+    {
+      name: 'duplicate ID',
+      input: { id: 'memo-a', text: 'duplicate memo', order: 1 },
+      duplicate: true,
+      error: 'MemoAlreadyExistsError',
+      memos: [
+        {
+          id: 'memo-a',
+          text: 'existing memo',
+          order: 0,
+          state: { kind: 'unorganized' },
+        },
+      ],
+    },
+  ])('rejects an add with $name', ({ input, duplicate, error, memos }) => {
+    const doc = new Y.Doc()
+    if (duplicate)
+      addMemo(doc, { id: 'memo-a', text: 'existing memo', order: 0 })
+    const result = addMemo(doc, input)
+
+    expect(
+      Object.fromEntries([
+        [
+          'result',
+          result.match(
+            () => 'ok',
+            (error) => error.name,
+          ),
+        ],
+        ['memos', listMemos(doc)],
+      ]),
+    ).toEqual({ result: error, memos })
+  })
+
+  it.each([
+    {
+      name: 'non-finite order',
+      id: 'memo-a',
+      order: Number.NaN,
+      error: 'InvalidMemoError',
+    },
+    {
+      name: 'unknown memo ID',
+      id: 'missing',
+      order: 1,
+      error: 'MemoNotFoundError',
+    },
+  ])('rejects an order update with $name', ({ id, order, error }) => {
+    const doc = new Y.Doc()
+    addMemo(doc, { id: 'memo-a', text: 'first memo', order: 0 })
+    const result = updateMemoOrder(doc, id, order)
+
+    expect(
+      Object.fromEntries([
+        [
+          'result',
+          result.match(
+            () => 'ok',
+            (updateError) => updateError.name,
+          ),
+        ],
+        ['memos', listMemos(doc)],
+      ]),
+    ).toEqual({
+      result: error,
+      memos: [
+        {
+          id: 'memo-a',
+          text: 'first memo',
+          order: 0,
+          state: { kind: 'unorganized' },
+        },
+      ],
+    })
   })
 
   it('dismisses a memo', () => {

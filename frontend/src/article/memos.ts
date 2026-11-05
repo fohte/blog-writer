@@ -25,7 +25,11 @@ function getMemoMap(doc: Y.Doc, id: string): MemoData | undefined {
   return getMemosMap(doc).get(id)
 }
 
-function memoState(doc: Y.Doc, memo: MemoData): MemoState {
+function memoState(
+  doc: Y.Doc,
+  memo: MemoData,
+  headings?: Heading[],
+): MemoState {
   if (memo.get('dismissed') === true) return { kind: 'dismissed' }
 
   const body = getBody(doc)
@@ -55,12 +59,15 @@ function memoState(doc: Y.Doc, memo: MemoData): MemoState {
   if (item.deleted) return { kind: 'unorganized' }
 
   const markerIndex = absolutePosition.index - 1
-  const heading = findHeadingAtMarker(body.toJSON(), markerIndex)
+  const heading = findHeadingAtMarker(
+    headings ?? deriveHeadingTree(body.toJSON()),
+    markerIndex,
+  )
   return heading ? { kind: 'adopted', heading } : { kind: 'unorganized' }
 }
 
 function findHeadingAtMarker(
-  markdown: string,
+  headings: Heading[],
   markerIndex: number,
 ): Heading | undefined {
   const visit = (headings: Heading[]): Heading | undefined => {
@@ -72,10 +79,15 @@ function findHeadingAtMarker(
     return undefined
   }
 
-  return visit(deriveHeadingTree(markdown))
+  return visit(headings)
 }
 
-function readMemo(doc: Y.Doc, id: string, memo: MemoData): Memo {
+function readMemo(
+  doc: Y.Doc,
+  id: string,
+  memo: MemoData,
+  headings?: Heading[],
+): Memo {
   const text = memo.get('text')
   const order = memo.get('order')
 
@@ -83,7 +95,7 @@ function readMemo(doc: Y.Doc, id: string, memo: MemoData): Memo {
     id,
     text: typeof text === 'string' ? text : '',
     order: typeof order === 'number' ? order : 0,
-    state: memoState(doc, memo),
+    state: memoState(doc, memo, headings),
   }
 }
 
@@ -96,8 +108,10 @@ function requireMemo(
 }
 
 export function listMemos(doc: Y.Doc): Memo[] {
+  const headings = deriveHeadingTree(getBody(doc).toJSON())
+
   return [...getMemosMap(doc).entries()]
-    .map(([id, memo]) => readMemo(doc, id, memo))
+    .map(([id, memo]) => readMemo(doc, id, memo, headings))
     .sort(
       (left, right) =>
         left.order - right.order ||
@@ -161,7 +175,10 @@ export function setMemoAdoptedTo(
   markerIndex: number,
 ): Result<void, MemoNotFoundError | InvalidHeadingError> {
   const body = getBody(doc)
-  const heading = findHeadingAtMarker(body.toJSON(), markerIndex)
+  const heading = findHeadingAtMarker(
+    deriveHeadingTree(body.toJSON()),
+    markerIndex,
+  )
   if (!heading) return err(new InvalidHeadingError(markerIndex))
 
   return requireMemo(doc, id).map((memo) => {
