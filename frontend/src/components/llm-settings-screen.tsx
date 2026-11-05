@@ -22,8 +22,8 @@ export function LlmSettingsScreen({ onBack }: LlmSettingsScreenProps) {
       () => defaultLlmSettings,
     ),
   )
-  const [storageError, setStorageError] = useState(() =>
-    initialSettings.isErr(),
+  const [storageError, setStorageError] = useState<'load' | 'save' | undefined>(
+    () => (initialSettings.isErr() ? 'load' : undefined),
   )
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [locked, setLocked] = useState(false)
@@ -53,10 +53,10 @@ export function LlmSettingsScreen({ onBack }: LlmSettingsScreenProps) {
   const updateSettings = (nextSettings: typeof settings) => {
     saveLlmSettings(() => window.localStorage, nextSettings).match(
       () => {
-        setStorageError(false)
+        setStorageError(undefined)
       },
       () => {
-        setStorageError(true)
+        setStorageError('save')
       },
     )
     setSettings(nextSettings)
