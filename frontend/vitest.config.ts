@@ -14,6 +14,7 @@ export default mergeConfig(
   viteConfig,
   defineConfig({
     test: {
+      exclude: ['src/editor/__tests__/markdown-editor-setup.test.tsx'],
       projects: [
         {
           extends: true,
@@ -23,6 +24,7 @@ export default mergeConfig(
               '**/node_modules/**',
               '**/dist/**',
               '**/*.browser.test.tsx',
+              'src/editor/__tests__/markdown-editor-setup.test.tsx',
             ],
           },
         },
@@ -31,6 +33,7 @@ export default mergeConfig(
           test: {
             name: 'browser-unit',
             include: ['src/**/*.browser.test.tsx'],
+            exclude: ['src/**/*.ime.browser.test.tsx'],
             browser: {
               enabled: true,
               provider: playwright({
@@ -38,6 +41,35 @@ export default mergeConfig(
               }),
               headless: true,
               instances: [{ browser: 'chromium' }],
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-ime-chromium',
+            include: ['src/editor/markdown-editor.ime.browser.test.tsx'],
+            browser: {
+              enabled: true,
+              api: { allowWrite: true, allowExec: true },
+              provider: playwright({
+                launchOptions: { args: [...BLOCK_EXTERNAL_REQUESTS_ARGS] },
+              }),
+              headless: true,
+              instances: [{ browser: 'chromium' }],
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-ime-webkit',
+            include: ['src/editor/markdown-editor.ime.browser.test.tsx'],
+            browser: {
+              enabled: true,
+              provider: playwright(),
+              headless: true,
+              instances: [{ browser: 'webkit' }],
             },
           },
         },
