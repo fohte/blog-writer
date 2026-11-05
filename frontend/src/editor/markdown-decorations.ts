@@ -23,6 +23,18 @@ function selectionTouches(
   )
 }
 
+function selectionIntersects(
+  state: EditorState,
+  from: number,
+  to: number,
+): boolean {
+  return state.selection.ranges.some((range) =>
+    range.empty
+      ? range.from > from && range.from < to
+      : range.from < to && range.to > from,
+  )
+}
+
 function buildDecorations(state: EditorState): DecorationSet {
   const decorations = []
   const cursor = syntaxTree(state).cursor()
@@ -40,8 +52,48 @@ function buildDecorations(state: EditorState): DecorationSet {
       )
     }
 
+    if (cursor.name === 'Link') {
+      let destinationFrom: number | undefined
+      let destinationTo: number | undefined
+      for (
+        let child = cursor.node.firstChild;
+        child;
+        child = child.nextSibling
+      ) {
+        if (child.name !== 'LinkMark') continue
+        const mark = state.doc.sliceString(child.from, child.to)
+        if (mark === '(') destinationFrom = child.from
+        if (mark === ')' && destinationFrom !== undefined)
+          destinationTo = child.to
+      }
+
+      if (
+        destinationFrom !== undefined &&
+        destinationTo !== undefined &&
+        !selectionIntersects(state, cursor.from, cursor.to)
+      ) {
+        decorations.push(
+          Decoration.replace({ class: 'cm-md-hidden-markup' }).range(
+            destinationFrom,
+            destinationTo,
+          ),
+        )
+      }
+    }
+
     const isInlineCodeMark =
       cursor.name === 'CodeMark' && cursor.node.parent?.name === 'InlineCode'
+    const parentLink =
+      cursor.name === 'LinkMark' && cursor.node.parent?.name === 'Link'
+        ? cursor.node.parent
+        : null
+    const isLinkMark = parentLink !== null
+    const isLinkParenthesis =
+      isLinkMark &&
+      ['(', ')'].includes(state.doc.sliceString(cursor.from, cursor.to))
+    const isActiveLink =
+      parentLink !== null &&
+      selectionIntersects(state, parentLink.from, parentLink.to)
     const isHiddenMark =
       cursor.name === 'HeaderMark' ||
       cursor.name === 'EmphasisMark' ||
@@ -49,7 +101,12 @@ function buildDecorations(state: EditorState): DecorationSet {
       cursor.name === 'LinkMark' ||
       isInlineCodeMark
 
-    if (isHiddenMark && !selected(cursor.from, cursor.to)) {
+    if (
+      isHiddenMark &&
+      !selected(cursor.from, cursor.to) &&
+      !isLinkParenthesis &&
+      !(isLinkMark && isActiveLink)
+    ) {
       const to =
         cursor.name === 'HeaderMark' &&
         /^[ \t]$/u.test(state.doc.sliceString(cursor.to, cursor.to + 1))

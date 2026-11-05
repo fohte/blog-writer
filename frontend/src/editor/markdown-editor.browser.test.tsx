@@ -1,9 +1,10 @@
 import { EditorView } from '@codemirror/view'
 import { act } from 'react'
 import { describe, expect, it } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
-import { mountMarkdownEditor } from '#editor/markdown-editor.test-utils'
+import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
 
 describe('MarkdownEditor', () => {
   it('formats Markdown source', () => {
@@ -60,41 +61,44 @@ describe('MarkdownEditor', () => {
     })
   })
 
-  it('shows Markdown markers when the cursor touches them', () => {
+  it('shows the opening Markdown marker when the cursor touches it', () => {
     const { content } = mountMarkdownEditor('**bold**')
 
     expect(content?.textContent).toEqual('**bold')
   })
 
-  it('replaces only changed text while keeping positions in unchanged text', () => {
-    const { body, doc, editor } = mountMarkdownEditor(
-      'prefix 🦊 original suffix',
-    )
-    const prefix = Y.createRelativePositionFromTypeIndex(body, 3)
-    const suffix = Y.createRelativePositionFromTypeIndex(body, 19)
+  it('shows Markdown markers touched by the selection', () => {
+    const { content } = mountMarkdownEditor('**bold**')
+    const view = content ? EditorView.findFromDOM(content) : null
+    view?.dispatch({ selection: { anchor: 0, head: 8 } })
+
+    expect(content?.textContent).toEqual('**bold**')
+  })
+
+  it('preserves positions between separated body edits', () => {
+    const { body, doc, editor } = mountMarkdownEditor('red 🦊 middle blue')
+    const middle = Y.createRelativePositionFromTypeIndex(body, 9)
 
     act(() => {
-      editor.current?.replaceBody('prefix 🦊 new suffix')
+      editor.current?.replaceBody('longer 🦊 middle gold')
     })
 
     const readOutput = () => ({
       body: body.toJSON(),
-      prefix: Y.createAbsolutePositionFromRelativePosition(prefix, doc)?.index,
-      suffix: Y.createAbsolutePositionFromRelativePosition(suffix, doc)?.index,
+      middle: Y.createAbsolutePositionFromRelativePosition(middle, doc)?.index,
     })
 
     expect(readOutput()).toEqual({
-      body: 'prefix 🦊 new suffix',
-      prefix: 3,
-      suffix: 14,
+      body: 'longer 🦊 middle gold',
+      middle: 12,
     })
   })
 
   it('undoes a body replacement in one Yjs undo step', () => {
-    const { body, content, editor } = mountMarkdownEditor('before body after')
+    const { body, content, editor } = mountMarkdownEditor('red 🦊 middle blue')
 
     act(() => {
-      editor.current?.replaceBody('before imported after')
+      editor.current?.replaceBody('longer 🦊 middle gold')
     })
     content?.dispatchEvent(
       new KeyboardEvent('keydown', {
@@ -104,6 +108,26 @@ describe('MarkdownEditor', () => {
       }),
     )
 
-    expect(body.toJSON()).toEqual('before body after')
+    expect(body.toJSON()).toEqual('red 🦊 middle blue')
+  })
+
+  it('keeps typing before a body replacement in a separate Yjs undo step', async () => {
+    const { body, content, editor } = mountMarkdownEditor('original body')
+    content?.focus()
+    await userEvent.keyboard('{End}')
+    await userEvent.keyboard('!')
+
+    act(() => {
+      editor.current?.replaceBody('imported body')
+    })
+    content?.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'z',
+        bubbles: true,
+        [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
+      }),
+    )
+
+    expect(body.toJSON()).toEqual('original body!')
   })
 })

@@ -1,6 +1,7 @@
 import { defaultKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
-import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { syntaxHighlighting } from '@codemirror/language'
+import { languages } from '@codemirror/language-data'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
@@ -10,7 +11,7 @@ import * as Y from 'yjs'
 
 import { markdownDecorations } from '#editor/markdown-decorations'
 import { replaceBody } from '#editor/replace-body'
-import { editorTheme } from '#editor/theme'
+import { editorTheme, markdownHighlightStyle } from '#editor/theme'
 
 export interface MarkdownEditorHandle {
   replaceBody(value: string): void
@@ -59,8 +60,8 @@ export const MarkdownEditor = forwardRef<
       state: EditorState.create({
         doc: text.toJSON(),
         extensions: [
-          markdown({ extensions: GFM }),
-          syntaxHighlighting(defaultHighlightStyle),
+          markdown({ extensions: GFM, codeLanguages: languages }),
+          syntaxHighlighting(markdownHighlightStyle),
           markdownDecorations,
           editorTheme,
           EditorView.lineWrapping,

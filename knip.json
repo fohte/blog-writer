@@ -11,6 +11,7 @@
       "entry": [
         "src/lib/utils.ts!",
         "src/article/index.ts!",
+        "src/editor/index.ts!",
         "service-worker.js!"
       ],
       "ignoreDependencies": [
