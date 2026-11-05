@@ -4,8 +4,11 @@ export {
   InvalidBlockMoveError,
   InvalidHeadingError,
   InvalidMemoError,
+  InvalidSourceError,
   MemoAlreadyExistsError,
   MemoNotFoundError,
+  SourceAlreadyExistsError,
+  SourceNotFoundError,
 } from '#article/errors'
 export { deriveHeadingTree } from '#article/headings'
 export {
@@ -32,10 +35,24 @@ export {
   reverseBlockMove,
 } from '#article/move-block'
 export { getPremise, setPremise } from '#article/premise'
+export type { AddFindingInput, AddSourceInput } from '#article/sources'
+export {
+  addSource,
+  deleteSource,
+  listFindings,
+  listSources,
+  observeSources,
+  setFindings,
+  updateSource,
+} from '#article/sources'
 export type {
+  Finding,
   Heading,
   Memo,
   MemoState,
   Premise,
   PremiseField,
+  Source,
+  SourceKind,
+  SourceStatus,
 } from '#article/types'
