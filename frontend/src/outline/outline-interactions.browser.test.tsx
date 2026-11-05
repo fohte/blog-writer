@@ -11,9 +11,11 @@ import * as Y from 'yjs'
 
 import { getBody, setBody } from '#article/index'
 import { MarkdownEditor } from '#components/markdown-editor'
-import { ArticleOutline } from '#outline/article-outline'
-import { createOutlineEditorExtension } from '#outline/editor-extension'
-import { createMoveHistory } from '#outline/move-history'
+import {
+  ArticleOutline,
+  createMoveHistory,
+  createOutlineEditorExtension,
+} from '#outline/index'
 
 const cleanups: (() => void)[] = []
 
@@ -87,6 +89,45 @@ describe('outline interactions', () => {
     const readSelection = () => ({ selection: view.state.selection.main.head })
     expect(readSelection()).toEqual({
       selection: markdownText.indexOf('# Details'),
+    })
+  })
+
+  it('shows move errors from the shared history in the outline', () => {
+    const markdownText = '# Overview\n\nFirst section.\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const history = createMoveHistory(doc)
+    const outlineHost = document.createElement('div')
+    document.body.append(outlineHost)
+    const view = new EditorView({
+      state: EditorState.create({ doc: markdownText }),
+    })
+    const root: Root = createRoot(outlineHost)
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      view.destroy()
+      history.destroy()
+      doc.destroy()
+      outlineHost.remove()
+    })
+
+    act(() => {
+      root.render(createElement(ArticleOutline, { doc, history, view }))
+    })
+    let moveAccepted = true
+    act(() => {
+      moveAccepted = history.move({ from: 0, destination: 0 }).isOk()
+    })
+
+    const readOutput = () => ({
+      moveAccepted,
+      error: outlineHost.querySelector('[role="alert"]')?.textContent ?? null,
+    })
+    expect(readOutput()).toEqual({
+      moveAccepted: false,
+      error: 'The block is already at its destination',
     })
   })
 
@@ -271,6 +312,100 @@ describe('outline interactions', () => {
       editor: 'Second paragraph.\n\nFirst paragraph.\n',
     })
   })
+
+  it.each([
+    {
+      placement: 'before',
+      offset: 0,
+      expectedBody:
+        '# Wrapup\n\nThird section.\n\n# Overview\n\nFirst section.\n\n# Details\n\nSecond section.\n',
+    },
+    {
+      placement: 'after',
+      offset: 60,
+      expectedBody:
+        '# Overview\n\nFirst section.\n\n# Wrapup\n\nThird section.\n\n# Details\n\nSecond section.\n',
+    },
+  ])(
+    'moves a heading to the $placement outline drop zone',
+    ({ offset, expectedBody }) => {
+      const markdownText =
+        '# Overview\n\nFirst section.\n\n# Details\n\nSecond section.\n\n# Wrapup\n\nThird section.\n'
+      const doc = new Y.Doc()
+      setBody(doc, markdownText)
+      const body = getBody(doc)
+      const history = createMoveHistory(doc)
+      const moveSpy = vi.spyOn(history, 'move')
+      const editorHost = document.createElement('div')
+      const outlineHost = document.createElement('div')
+      document.body.append(editorHost, outlineHost)
+      const view = new EditorView({
+        parent: editorHost,
+        state: EditorState.create({
+          doc: markdownText,
+          extensions: [
+            markdown({ extensions: GFM }),
+            yCollab(body, null, { undoManager: history.undoManager }),
+          ],
+        }),
+      })
+      const root: Root = createRoot(outlineHost)
+      cleanups.push(() => {
+        act(() => {
+          root.unmount()
+        })
+        view.destroy()
+        history.destroy()
+        doc.destroy()
+        editorHost.remove()
+        outlineHost.remove()
+      })
+
+      act(() => {
+        root.render(createElement(ArticleOutline, { doc, history, view }))
+      })
+
+      const handles = outlineHost.querySelectorAll<HTMLElement>(
+        'button[aria-label^="Move "]',
+      )
+      const wrapupHandle = handles[2]
+      const overviewRow = outlineHost.querySelector<HTMLElement>(
+        '[aria-label="Overview"]',
+      )
+      if (wrapupHandle === undefined || overviewRow === null)
+        throw new Error('The outline drag source or target is missing')
+      const overviewContainer = overviewRow.parentElement
+      if (overviewContainer === null)
+        throw new Error('The outline drop target has no container')
+      overviewContainer.style.height = '80px'
+      const bounds = overviewContainer.getBoundingClientRect()
+      const dropPosition = new DOMRect(
+        bounds.left,
+        bounds.top + offset,
+        bounds.width,
+        20,
+      )
+      act(() => {
+        dispatchDrag(wrapupHandle, overviewContainer, dropPosition)
+      })
+
+      const readOutput = () => ({
+        body: body.toJSON(),
+        editor: view.state.doc.toString(),
+        moveCalls: moveSpy.mock.calls.map(([input]) => input),
+      })
+      expect(readOutput()).toEqual({
+        body: expectedBody,
+        editor: expectedBody,
+        moveCalls: [
+          {
+            from: markdownText.indexOf('# Wrapup'),
+            destination: offset === 0 ? 0 : markdownText.indexOf('# Details'),
+          },
+        ],
+      })
+    },
+  )
 
   it('uses the shared history when Cmd or Ctrl plus Z is pressed', () => {
     const initial = 'An editable sentence.'

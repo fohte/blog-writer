@@ -3,7 +3,7 @@ import {
   dropTargetForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
 import { List, ListItem } from '@fohte/ui/list'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { MoveBlockInput } from '#article/index'
 import type { Heading } from '#article/types'
@@ -196,7 +196,7 @@ export function OutlineView({
   onSelect,
   onMove,
 }: OutlineViewProps) {
-  const flattened = flattenHeadings(headings)
+  const flattened = useMemo(() => flattenHeadings(headings), [headings])
 
   return (
     <section

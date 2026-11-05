@@ -1,25 +1,13 @@
-import { syntaxTree } from '@codemirror/language'
 import type { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 
 import type { MoveBlockInput } from '#article/index'
-import { deriveHeadingTree, findMoveBlockRange } from '#article/index'
+import {
+  deriveHeadingTree,
+  findMoveBlockRange,
+  topLevelBlocks,
+} from '#article/index'
 import type { Heading } from '#article/types'
-
-type TopLevelBlock = { from: number; to: number; name: string }
-
-function topLevelBlocks(state: EditorState): TopLevelBlock[] {
-  const blocks: TopLevelBlock[] = []
-  const cursor = syntaxTree(state).cursor()
-  if (!cursor.firstChild()) return blocks
-
-  do {
-    let to = cursor.to
-    while (state.doc.sliceString(to, to + 1) === '\n') to += 1
-    blocks.push({ from: cursor.from, to, name: cursor.name })
-  } while (cursor.nextSibling())
-  return blocks
-}
 
 function siblingsAt(
   headings: Heading[],
@@ -60,7 +48,7 @@ export function adjacentMove(
       : { from: range.from, destination }
   }
 
-  const blocks = topLevelBlocks(state)
+  const blocks = topLevelBlocks(markdown)
   const index = blocks.findIndex(
     (block) => block.from <= from && from < block.to,
   )
@@ -102,7 +90,7 @@ export function blockStarts(
   from = 0,
   to = state.doc.length,
 ): number[] {
-  return topLevelBlocks(state)
+  return topLevelBlocks(state.doc.toString())
     .filter((block) => block.from <= to && block.to >= from)
     .map(({ from: blockFrom }) => blockFrom)
 }

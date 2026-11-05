@@ -77,19 +77,17 @@ export const MarkdownEditor = forwardRef<
       ? [
           {
             key: 'Mod-z',
-            run: (view: EditorView) =>
-              history.undo(view).match(
-                (didUndo) => didUndo,
-                () => true,
-              ),
+            run: (view: EditorView) => {
+              const result = history.undo(view)
+              return result.isErr() || result.value
+            },
           },
           {
             key: 'Mod-Shift-z',
-            run: (view: EditorView) =>
-              history.redo(view).match(
-                (didRedo) => didRedo,
-                () => true,
-              ),
+            run: (view: EditorView) => {
+              const result = history.redo(view)
+              return result.isErr() || result.value
+            },
           },
         ]
       : yUndoManagerKeymap

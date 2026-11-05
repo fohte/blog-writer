@@ -95,11 +95,13 @@ function createDragPlugin(history: MoveHistory) {
               return
             }
             const input = bodyDropInput(view, position, clientY, from)
-            if (input)
-              history.move(input, view).match(
-                () => {},
-                () => {},
+            if (input) {
+              const succeeded = history.move(input, view).match(
+                () => true,
+                () => false,
               )
+              if (!succeeded) return
+            }
           },
         })
       }
@@ -118,40 +120,31 @@ function createDragPlugin(history: MoveHistory) {
   )
 }
 
+function moveAdjacent(history: MoveHistory, direction: 'up' | 'down') {
+  return (view: EditorView) => {
+    const input = adjacentMove(
+      view.state,
+      view.state.selection.main.head,
+      direction,
+    )
+    if (!input) return false
+    return history.move(input, view).match(
+      () => true,
+      () => false,
+    )
+  }
+}
+
 export function createOutlineEditorExtension(history: MoveHistory): Extension {
   return [
     keymap.of([
       {
         key: 'Alt-ArrowUp',
-        run: (view) => {
-          const input = adjacentMove(
-            view.state,
-            view.state.selection.main.head,
-            'up',
-          )
-          if (!input) return false
-          history.move(input, view).match(
-            () => {},
-            () => {},
-          )
-          return true
-        },
+        run: moveAdjacent(history, 'up'),
       },
       {
         key: 'Alt-ArrowDown',
-        run: (view) => {
-          const input = adjacentMove(
-            view.state,
-            view.state.selection.main.head,
-            'down',
-          )
-          if (!input) return false
-          history.move(input, view).match(
-            () => {},
-            () => {},
-          )
-          return true
-        },
+        run: moveAdjacent(history, 'down'),
       },
     ]),
     createDragPlugin(history),

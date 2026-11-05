@@ -25,6 +25,47 @@ type DeletedUndoItem = {
   length: number
   text: string
 }
+type VisibleItemRange = { item: Y.Item; from: number; to: number }
+
+function findVisibleItem(
+  items: VisibleItemRange[] | undefined,
+  clock: number,
+): VisibleItemRange | undefined {
+  if (!items) return undefined
+  let low = 0
+  let high = items.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    const range = items[middle]
+    if (!range) return undefined
+    if (clock < range.item.id.clock) {
+      high = middle
+    } else if (clock >= range.item.id.clock + range.item.length) {
+      low = middle + 1
+    } else {
+      return range
+    }
+  }
+  return undefined
+}
+
+function firstStructEndingAfter(
+  structs: { id: { clock: number }; length: number }[],
+  clock: number,
+): number {
+  let low = 0
+  let high = structs.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    const struct = structs[middle]
+    if (!struct || struct.id.clock + struct.length <= clock) {
+      low = middle + 1
+    } else {
+      high = middle
+    }
+  }
+  return low
+}
 
 const historyMaintenanceOrigin = Symbol('history-maintenance')
 
@@ -60,27 +101,30 @@ export function captureDeletedUndoItems(
   to: number,
   stackItems: UndoStackItem[],
 ): DeletedUndoItem[] {
-  const visibleItems: { item: Y.Item; from: number; to: number }[] = []
+  const visibleItemsByClient = new Map<number, VisibleItemRange[]>()
   let visiblePosition = 0
   for (let item = body._start; item; item = item.next) {
     if (item.deleted || !item.countable) continue
-    visibleItems.push({
+    const clientItems = visibleItemsByClient.get(item.id.client) ?? []
+    clientItems.push({
       item,
       from: visiblePosition,
       to: visiblePosition + item.length,
     })
+    visibleItemsByClient.set(item.id.client, clientItems)
     visiblePosition += item.length
+  }
+  for (const items of visibleItemsByClient.values()) {
+    items.sort((left, right) => left.item.id.clock - right.item.id.clock)
   }
 
   const positionOf = (item: Y.Item): number => {
     let right = item.right
     while (right) {
       const anchor = right
-      const segment = visibleItems.find(
-        ({ item: visible }) =>
-          visible.id.client === anchor.id.client &&
-          visible.id.clock <= anchor.id.clock &&
-          anchor.id.clock < visible.id.clock + visible.length,
+      const segment = findVisibleItem(
+        visibleItemsByClient.get(anchor.id.client),
+        anchor.id.clock,
       )
       if (segment) return segment.from + anchor.id.clock - segment.item.id.clock
       right = anchor.right
@@ -89,11 +133,9 @@ export function captureDeletedUndoItems(
     let left = item.left
     while (left) {
       const anchor = left
-      const segment = visibleItems.find(
-        ({ item: visible }) =>
-          visible.id.client === anchor.id.client &&
-          visible.id.clock <= anchor.id.clock &&
-          anchor.id.clock < visible.id.clock + visible.length,
+      const segment = findVisibleItem(
+        visibleItemsByClient.get(anchor.id.client),
+        anchor.id.clock,
       )
       if (segment) return segment.from + segment.item.length
       left = anchor.left
@@ -105,10 +147,13 @@ export function captureDeletedUndoItems(
   for (const stackItem of stackItems) {
     for (const [client, deletions] of stackItem.deletions.clients) {
       const insertions = stackItem.insertions.clients.get(client) ?? []
+      const structs = doc.store.clients.get(client) ?? []
       for (const deletion of deletions) {
-        const structs = doc.store.clients.get(client) ?? []
         const end = deletion.clock + deletion.len
-        for (const struct of structs) {
+        const first = firstStructEndingAfter(structs, deletion.clock)
+        for (let index = first; index < structs.length; index += 1) {
+          const struct = structs[index]
+          if (!struct || struct.id.clock >= end) break
           if (!(struct instanceof Y.Item)) continue
           const overlapFrom = Math.max(struct.id.clock, deletion.clock)
           const overlapTo = Math.min(struct.id.clock + struct.length, end)

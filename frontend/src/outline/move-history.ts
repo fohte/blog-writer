@@ -22,6 +22,9 @@ type HistoryAction = { kind: 'text' } | { kind: 'move'; move: MoveBlockResult }
 
 export interface MoveHistory {
   undoManager: Y.UndoManager
+  onError(
+    listener: (error: InvalidBlockMoveError | undefined) => void,
+  ): () => void
   move(
     input: MoveBlockInput,
     view?: EditorView,
@@ -31,16 +34,29 @@ export interface MoveHistory {
   destroy(): void
 }
 
-function makeMoveError(message: string): InvalidBlockMoveError {
-  return new InvalidBlockMoveError(message)
-}
-
 export function createMoveHistory(doc: Y.Doc): MoveHistory {
   const body = getBody(doc)
   const undoManager = new Y.UndoManager(body)
   const undoActions: HistoryAction[] = []
   const redoActions: HistoryAction[] = []
+  const errorListeners = new Set<
+    (error: InvalidBlockMoveError | undefined) => void
+  >()
+  let currentError: InvalidBlockMoveError | undefined
   let applyingHistory = false
+
+  const report = <T>(result: Result<T, InvalidBlockMoveError>) =>
+    result
+      .map((value) => {
+        currentError = undefined
+        for (const listener of errorListeners) listener(undefined)
+        return value
+      })
+      .mapErr((error) => {
+        currentError = error
+        for (const listener of errorListeners) listener(error)
+        return error
+      })
 
   undoManager.on('stack-item-added', ({ type }) => {
     if (applyingHistory || type !== 'undo') return
@@ -59,7 +75,8 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
   ): Result<MoveBlockResult, InvalidBlockMoveError> => {
     const previousText = readBody(doc)
     const range = findMoveBlockRange(previousText, from)
-    if (!range) return err(makeMoveError('No Markdown block at position'))
+    if (!range)
+      return err(new InvalidBlockMoveError('No Markdown block at position'))
     const oldSegments = captureVisibleSegments(body, range.from, range.to)
     const sourceText = previousText.slice(range.from, range.to)
     const deletedItems = captureDeletedUndoItems(
@@ -101,19 +118,24 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
       return result
     })
 
-  const undo = (view?: EditorView): Result<boolean, InvalidBlockMoveError> => {
-    const action = undoActions.pop()
+  const stepHistory = (
+    fromStack: HistoryAction[],
+    toStack: HistoryAction[],
+    applyTextAction: () => ReturnType<Y.UndoManager['undo']>,
+    view?: EditorView,
+  ): Result<boolean, InvalidBlockMoveError> => {
+    const action = fromStack.pop()
     if (!action) return ok(false)
 
     if (action.kind === 'text') {
       applyingHistory = true
-      const result = undoManager.undo()
+      const result = applyTextAction()
       applyingHistory = false
-      if (!result) {
-        undoActions.push(action)
+      if (result === null) {
+        fromStack.push(action)
         return ok(false)
       }
-      redoActions.push(action)
+      toStack.push(action)
       return ok(true)
     }
 
@@ -123,50 +145,39 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
       view,
     )
     if (result.isErr()) {
-      undoActions.push(action)
+      fromStack.push(action)
       return err(result.error)
     }
-    redoActions.push({ kind: 'move', move: result.value })
+    toStack.push({ kind: 'move', move: result.value })
     return ok(true)
   }
 
-  const redo = (view?: EditorView): Result<boolean, InvalidBlockMoveError> => {
-    const action = redoActions.pop()
-    if (!action) return ok(false)
-
-    if (action.kind === 'text') {
-      applyingHistory = true
-      const result = undoManager.redo()
-      applyingHistory = false
-      if (!result) {
-        redoActions.push(action)
-        return ok(false)
-      }
-      undoActions.push(action)
-      return ok(true)
-    }
-
-    const result = applyMove(
-      action.move.from,
-      () => reverseBlockMove(doc, action.move),
-      view,
+  const undo = (view?: EditorView) =>
+    report(
+      stepHistory(undoActions, redoActions, () => undoManager.undo(), view),
     )
-    if (result.isErr()) {
-      redoActions.push(action)
-      return err(result.error)
-    }
-    undoActions.push({ kind: 'move', move: result.value })
-    return ok(true)
-  }
+
+  const redo = (view?: EditorView) =>
+    report(
+      stepHistory(redoActions, undoActions, () => undoManager.redo(), view),
+    )
 
   return {
     undoManager,
     move(input, view) {
-      return move(input, view)
+      return report(move(input, view))
     },
     undo,
     redo,
+    onError(listener) {
+      errorListeners.add(listener)
+      listener(currentError)
+      return () => {
+        errorListeners.delete(listener)
+      }
+    },
     destroy() {
+      errorListeners.clear()
       undoManager.destroy()
     },
   }

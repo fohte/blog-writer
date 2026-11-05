@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
 import { getBody, setBody } from '#article/index'
-import { createMoveHistory } from '#outline/move-history'
+import { createMoveHistory } from '#outline/index'
 
 describe('MoveHistory', () => {
   it('undoes and redoes text edits and moves in reverse chronological order', () => {
@@ -115,6 +115,58 @@ describe('MoveHistory', () => {
       afterUndoEdit: initial,
       afterRedoEdit: '# Alpha\n\nFirst section.\n\n# Beta\n\necond section.\n',
       afterRedoMove: '# Beta\n\necond section.\n\n# Alpha\n\nFirst section.\n',
+    })
+
+    history.destroy()
+    doc.destroy()
+  })
+
+  it('undoes and redoes a replacement edit around a later move', () => {
+    const initial = '# Alpha\n\nFirst section.\n\n# Beta\n\nSecond section.\n'
+    const doc = new Y.Doc()
+    setBody(doc, initial)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const replacementFrom = initial.indexOf('Second')
+    doc.transact(() => {
+      body.delete(replacementFrom, 'Second'.length)
+      body.insert(replacementFrom, 'Third')
+    })
+    const afterReplacement = body.toJSON()
+    history
+      .move({
+        from: afterReplacement.indexOf('# Beta'),
+        destination: 0,
+      })
+      ._unsafeUnwrap()
+    const afterMove = body.toJSON()
+
+    history.undo()._unsafeUnwrap()
+    const afterUndoMove = body.toJSON()
+    history.undo()._unsafeUnwrap()
+    const afterUndoReplacement = body.toJSON()
+    history.redo()._unsafeUnwrap()
+    const afterRedoReplacement = body.toJSON()
+    history.redo()._unsafeUnwrap()
+    const afterRedoMove = body.toJSON()
+
+    const readOutput = () => ({
+      afterReplacement,
+      afterMove,
+      afterUndoMove,
+      afterUndoReplacement,
+      afterRedoReplacement,
+      afterRedoMove,
+    })
+    expect(readOutput()).toEqual({
+      afterReplacement:
+        '# Alpha\n\nFirst section.\n\n# Beta\n\nThird section.\n',
+      afterMove: '# Beta\n\nThird section.\n\n# Alpha\n\nFirst section.\n',
+      afterUndoMove: '# Alpha\n\nFirst section.\n\n# Beta\n\nThird section.\n',
+      afterUndoReplacement: initial,
+      afterRedoReplacement:
+        '# Alpha\n\nFirst section.\n\n# Beta\n\nThird section.\n',
+      afterRedoMove: '# Beta\n\nThird section.\n\n# Alpha\n\nFirst section.\n',
     })
 
     history.destroy()

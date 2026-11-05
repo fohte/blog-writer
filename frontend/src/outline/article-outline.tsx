@@ -1,6 +1,6 @@
 import { EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type * as Y from 'yjs'
 
 import type { MoveBlockInput } from '#article/index'
@@ -24,6 +24,7 @@ export function ArticleOutline({
   const body = getBody(doc)
   const [markdown, setMarkdown] = useState(() => readBody(doc))
   const [error, setError] = useState<string>()
+  const headings = useMemo(() => deriveHeadingTree(markdown), [markdown])
 
   useEffect(() => {
     const update = () => {
@@ -35,15 +36,19 @@ export function ArticleOutline({
     }
   }, [body])
 
+  useEffect(
+    () =>
+      history.onError((moveError) => {
+        setError(moveError?.message)
+      }),
+    [history],
+  )
+
   const handleMove = useCallback(
     (input: MoveBlockInput) => {
-      history.move(input, view).match(
-        () => {
-          setError(undefined)
-        },
-        (moveError) => {
-          setError(moveError.message)
-        },
+      return history.move(input, view).match(
+        () => true,
+        () => false,
       )
     },
     [history, view],
@@ -52,7 +57,7 @@ export function ArticleOutline({
   return (
     <OutlineView
       bodyLength={markdown.length}
-      headings={deriveHeadingTree(markdown)}
+      headings={headings}
       {...(activeFrom === undefined ? {} : { activeFrom })}
       {...(error === undefined ? {} : { error })}
       onMove={handleMove}
