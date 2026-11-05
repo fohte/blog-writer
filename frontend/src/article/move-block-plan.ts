@@ -135,33 +135,30 @@ function validateDestination(
 
 function validateSectionDestination(
   input: MoveBlockInput,
-  markdown: string,
+  bodyLength: number,
   range: Range,
   targetLevel: number | undefined,
   headings: Heading[],
 ): InvalidBlockMoveError | undefined {
-  if (
-    input.childOf !== undefined ||
-    range.headingLevel === undefined ||
-    input.destination === markdown.length
-  ) {
+  if (range.headingLevel === undefined || input.destination === bodyLength) {
     return undefined
   }
 
   const destinationHeading = headings.find(
     (heading) => heading.from === input.destination,
   )
-  const error = new InvalidBlockMoveError(
-    'The section destination must be before a heading at the same or a shallower level, or at the end of the document',
-  )
+  const reject = () =>
+    new InvalidBlockMoveError(
+      'The section destination must be before a heading at the same or a shallower level, or at the end of the document',
+    )
   if (!destinationHeading) {
-    return error
+    return reject()
   }
 
   const level = targetLevel ?? range.headingLevel
   const destinationLevel =
     destinationHeading.from === range.from ? level : destinationHeading.level
-  return destinationLevel > level ? error : undefined
+  return destinationLevel > level ? reject() : undefined
 }
 
 function isInsideBlock(
@@ -297,7 +294,7 @@ export function validateMove(
 
   const sectionDestinationError = validateSectionDestination(
     input,
-    markdown,
+    markdown.length,
     range,
     targetLevel,
     headings,
@@ -371,6 +368,36 @@ function getInsertionText(
   }
 }
 
+function computeMoveSeam(input: {
+  replacement: MoveSource | undefined
+  destination: number
+  removeFrom: number
+  removeTo: number
+  deletionFrom: number
+  insertionIndex: number
+  insertion: MoveInsertion
+}): number {
+  const {
+    replacement,
+    destination,
+    removeFrom,
+    removeTo,
+    deletionFrom,
+    insertionIndex,
+    insertion,
+  } = input
+  if (
+    replacement !== undefined &&
+    destination >= removeTo &&
+    insertionIndex === deletionFrom
+  ) {
+    // The replacement prefix separates the restored heading from the deletion seam.
+    return insertionIndex + insertion.prefixLength
+  }
+  if (insertionIndex < removeFrom) return deletionFrom + insertion.text.length
+  return deletionFrom
+}
+
 export function planBlockMove(input: {
   markdown: string
   removeFrom: number
@@ -409,21 +436,20 @@ export function planBlockMove(input: {
           prefixLength: replacement.prefix.length,
           contentLength: replacement.text.length,
         }
-  const restoresDestinationSeam =
-    replacement !== undefined &&
-    destination >= removeTo &&
-    insertionIndex === deletionFrom
-
   return {
     deletionFrom,
     removedLength,
     insertionIndex,
     insertion,
-    seam: restoresDestinationSeam
-      ? insertionIndex + insertion.prefixLength
-      : insertionIndex < removeFrom
-        ? deletionFrom + insertion.text.length
-        : deletionFrom,
+    seam: computeMoveSeam({
+      replacement,
+      destination,
+      removeFrom,
+      removeTo,
+      deletionFrom,
+      insertionIndex,
+      insertion,
+    }),
     sourcePrefix: sourceSeparator.removed,
   }
 }

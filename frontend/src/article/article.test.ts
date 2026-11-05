@@ -420,14 +420,39 @@ Alpha
 # Target
 `,
     },
+    {
+      name: 'an equal-level heading after changing level',
+      markdown: `# Parent
+
+## Target
+
+# Source
+`,
+      movedHeading: '# Source',
+      destinationHeading: '## Target',
+      headingLevel: 2,
+      afterMove: `# Parent
+
+## Source
+
+## Target
+`,
+    },
   ])(
     'moves a section before $name and reverses it',
-    ({ markdown, movedHeading, destinationHeading, afterMove }) => {
+    ({
+      markdown,
+      movedHeading,
+      destinationHeading,
+      headingLevel,
+      afterMove,
+    }) => {
       const doc = new Y.Doc()
       setBody(doc, markdown)
       const move = moveBlock(doc, {
         from: markdown.indexOf(movedHeading),
         destination: markdown.indexOf(destinationHeading),
+        ...(headingLevel === undefined ? {} : { headingLevel }),
       })._unsafeUnwrap()
       const movedBody = readBody(doc)
       const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
@@ -517,6 +542,13 @@ Alpha
       destination: (markdown: string) => markdown.indexOf('Parent text.') + 3,
       childOf: true,
       error: 'The destination is inside a Markdown block',
+    },
+    {
+      name: 'before body text while becoming a child',
+      destination: (markdown: string) => markdown.indexOf('Parent text.'),
+      childOf: true,
+      error:
+        'The section destination must be before a heading at the same or a shallower level, or at the end of the document',
     },
     {
       name: 'inside a block during a plain move',
