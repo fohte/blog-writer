@@ -28,7 +28,7 @@ use super::{
     CALL_TIMEOUT, LlmError, LlmEvent, LlmProvider, LlmState, call_to_sse, call_web_search_to_sse,
     call_web_search_with,
 };
-use crate::config::{OpenAiCompatibleConfig, ProviderName};
+use crate::config::{LlmConfig, OpenAiCompatibleConfig, ProviderName};
 
 mod claim_evidence;
 mod research_key_points;
@@ -1116,6 +1116,35 @@ async fn sends_keep_alive_comments_while_waiting_for_claude_code() {
             .to_owned(),
             true,
         )
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn sends_keep_alive_comments_before_proxy_read_timeout() {
+    let (_, shutdown) = watch::channel(false);
+    let mut state = LlmState::new_with_shutdown(LlmConfig::default(), shutdown);
+    state.provider = Arc::new(PendingProvider);
+    let mut stream = call_to_sse::<SampleOutput>(
+        state,
+        "Return a concise structured response.".to_owned(),
+        "Return the sample output.".to_owned(),
+    )
+    .into_response()
+    .into_body()
+    .into_data_stream();
+
+    let first_chunk = tokio::time::timeout(Duration::from_secs(125), stream.next())
+        .await
+        .expect("SSE keep-alive arrives before the proxy read timeout")
+        .expect("SSE stream is not empty")
+        .expect("SSE chunk is readable");
+
+    assert_eq!(
+        String::from_utf8(first_chunk.to_vec()).expect("keep-alive is UTF-8"),
+        indoc! {"
+            : keep-alive
+
+        "}
     );
 }
 
