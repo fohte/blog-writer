@@ -34,6 +34,26 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid synchronization file path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Synchronization file is not valid UTF-8",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "503": {
             "description": "File synchronization is not configured",
             "content": {
@@ -82,6 +102,16 @@
           },
           "400": {
             "description": "Invalid synchronization file path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Synchronization file is not valid UTF-8",
             "content": {
               "application/json": {
                 "schema": {
@@ -187,7 +217,27 @@
             }
           },
           "400": {
+            "description": "No synchronization file is selected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
             "description": "The file changed after it was read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Synchronization file is not valid UTF-8",
             "content": {
               "application/json": {
                 "schema": {

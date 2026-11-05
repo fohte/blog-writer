@@ -85,6 +85,11 @@ impl AppState {
         shutdown: watch::Receiver<bool>,
     ) -> Result<Self, AppStateError> {
         let sync = database.clone().map(SyncService::new).transpose()?;
+        if sync.is_none() && sync_directory.is_some() {
+            tracing::warn!(
+                "BLOG_SYNC_DIRECTORY is set but article file synchronization has no database"
+            );
+        }
         let file_sync = sync
             .as_ref()
             .zip(sync_directory)

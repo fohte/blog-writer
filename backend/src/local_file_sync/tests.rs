@@ -15,7 +15,9 @@ use crate::{
     app::{AppState, router},
     db,
     host_origin::HostOriginPolicy,
-    local_file_sync::service::{FileSyncStatus, LocalFileSyncService},
+    local_file_sync::service::{
+        ArticleFileContent, ArticleFileState, FileSyncStatus, LocalFileSyncService,
+    },
     sync::SyncService,
 };
 
@@ -125,11 +127,11 @@ struct ArticleSnapshot {
 async fn writes_article_body_after_debounce_without_waiting_for_the_production_delay() -> TestResult
 {
     let fixture = fixture(Duration::ZERO).await?;
+    fixture.service.start().await?;
     fixture
         .service
         .set_article_file("article-example", "drafts/example.md")
         .await?;
-    fixture.service.start().await?;
     replace_body(&fixture.sync, "article-example", "更新後の本文").await?;
 
     let result = wait_for(&fixture, |snapshot| {
@@ -137,8 +139,20 @@ async fn writes_article_body_after_debounce_without_waiting_for_the_production_d
     })
     .await?;
     assert_eq!(
-        (result.state.state.status, result.state.content.as_deref()),
-        (FileSyncStatus::Synced, Some("更新後の本文"))
+        result.state,
+        ArticleFileContent {
+            state: ArticleFileState {
+                path: Some("drafts/example.md".to_owned()),
+                hash: Some(
+                    "5d324ce69241e29162b91edbe082760b1c04337b925aaa9f6941e426178e8394".to_owned()
+                ),
+                status: FileSyncStatus::Synced,
+            },
+            content: Some("更新後の本文".to_owned()),
+            content_hash: Some(
+                "5d324ce69241e29162b91edbe082760b1c04337b925aaa9f6941e426178e8394".to_owned()
+            ),
+        }
     );
     Ok(())
 }
@@ -169,11 +183,20 @@ async fn leaves_external_file_untouched_and_records_conflict(
     })
     .await?;
     assert_eq!(
-        (result.state.state.status, result.state.content),
-        (
-            FileSyncStatus::ExternalChanged,
-            change_file.then(|| "外部編集".to_owned())
-        )
+        result.state,
+        ArticleFileContent {
+            state: ArticleFileState {
+                path: Some("example.md".to_owned()),
+                hash: Some(
+                    "39c33819cc10ba4f2b8b5034f95024385e56272d48013713727f08892bdd9775".to_owned()
+                ),
+                status: FileSyncStatus::ExternalChanged,
+            },
+            content: change_file.then(|| "外部編集".to_owned()),
+            content_hash: change_file.then(|| {
+                "499d60bfe334d4bee39f140cd07b623c00e5157d302ed296e2c18a58e2b1d84f".to_owned()
+            }),
+        }
     );
     Ok(())
 }
@@ -193,17 +216,33 @@ async fn selecting_a_missing_file_initializes_and_an_existing_file_conflicts() -
         .await?;
 
     assert_eq!(
+        (created, existing),
         (
-            created.state.status,
-            created.content.as_deref(),
-            existing.state.status,
-            existing.content.as_deref(),
-        ),
-        (
-            FileSyncStatus::Synced,
-            Some("初期本文"),
-            FileSyncStatus::ExternalChanged,
-            Some("外部の本文"),
+            ArticleFileContent {
+                state: ArticleFileState {
+                    path: Some("notes/example.md".to_owned()),
+                    hash: Some(
+                        "39c33819cc10ba4f2b8b5034f95024385e56272d48013713727f08892bdd9775"
+                            .to_owned()
+                    ),
+                    status: FileSyncStatus::Synced,
+                },
+                content: Some("初期本文".to_owned()),
+                content_hash: Some(
+                    "39c33819cc10ba4f2b8b5034f95024385e56272d48013713727f08892bdd9775".to_owned()
+                ),
+            },
+            ArticleFileContent {
+                state: ArticleFileState {
+                    path: Some("notes/example.md".to_owned()),
+                    hash: None,
+                    status: FileSyncStatus::ExternalChanged,
+                },
+                content: Some("外部の本文".to_owned()),
+                content_hash: Some(
+                    "1128973cea86296e80ca2e990a9dff2e245b0a079a1425546712abd3682dc6b3".to_owned()
+                ),
+            },
         )
     );
     Ok(())
@@ -226,8 +265,20 @@ async fn reading_file_state_detects_external_changes() -> TestResult {
         .await?;
 
     assert_eq!(
-        (actual.state.status, actual.content.as_deref()),
-        (FileSyncStatus::ExternalChanged, Some("外部で変更"))
+        actual,
+        ArticleFileContent {
+            state: ArticleFileState {
+                path: Some("read/example.md".to_owned()),
+                hash: Some(
+                    "39c33819cc10ba4f2b8b5034f95024385e56272d48013713727f08892bdd9775".to_owned()
+                ),
+                status: FileSyncStatus::ExternalChanged,
+            },
+            content: Some("外部で変更".to_owned()),
+            content_hash: Some(
+                "be31004a46767c22c19027b3d78c694caca8876b1d4885e4594904d04ececfc9".to_owned()
+            ),
+        }
     );
     Ok(())
 }
@@ -261,10 +312,33 @@ async fn resumes_after_import_only_when_the_file_hash_still_matches() -> TestRes
         .map_err(|error| error.to_string());
 
     assert_eq!(
-        (initial.state.status, imported.state.status, stale),
+        (initial, imported, stale),
         (
-            FileSyncStatus::ExternalChanged,
-            FileSyncStatus::Synced,
+            ArticleFileContent {
+                state: ArticleFileState {
+                    path: Some("import.md".to_owned()),
+                    hash: None,
+                    status: FileSyncStatus::ExternalChanged,
+                },
+                content: Some("取り込む本文".to_owned()),
+                content_hash: Some(
+                    "3624e40b24ec0045b7a0df22775ada5ddbd06de2b4cc3a05fdcf8d507bc36db4".to_owned()
+                ),
+            },
+            ArticleFileContent {
+                state: ArticleFileState {
+                    path: Some("import.md".to_owned()),
+                    hash: Some(
+                        "3624e40b24ec0045b7a0df22775ada5ddbd06de2b4cc3a05fdcf8d507bc36db4"
+                            .to_owned()
+                    ),
+                    status: FileSyncStatus::Synced,
+                },
+                content: Some("取り込む本文".to_owned()),
+                content_hash: Some(
+                    "3624e40b24ec0045b7a0df22775ada5ddbd06de2b4cc3a05fdcf8d507bc36db4".to_owned()
+                ),
+            },
             Err("synchronization file changed while importing".to_owned()),
         )
     );
@@ -303,14 +377,31 @@ async fn overwrite_preserves_crlf_and_removes_the_temporary_file() -> TestResult
 
     assert_eq!(
         (
-            overwritten.state.status,
+            overwritten,
             fs::read(&file)?,
             entries
                 .iter()
                 .filter(|name| name.as_os_str() != "overwrite.md")
                 .count(),
         ),
-        (FileSyncStatus::Synced, expected_body.into_bytes(), 0,)
+        (
+            ArticleFileContent {
+                state: ArticleFileState {
+                    path: Some("overwrite.md".to_owned()),
+                    hash: Some(
+                        "9653fdfc444daab6a0ee318ba9cacb6921a261f3485df5455c20ce9c04226556"
+                            .to_owned()
+                    ),
+                    status: FileSyncStatus::Synced,
+                },
+                content: Some("新しい本文\r\n次の行".to_owned()),
+                content_hash: Some(
+                    "9653fdfc444daab6a0ee318ba9cacb6921a261f3485df5455c20ce9c04226556".to_owned()
+                ),
+            },
+            expected_body.into_bytes(),
+            0,
+        )
     );
     Ok(())
 }
@@ -349,6 +440,26 @@ async fn rejects_symlinks_that_leave_the_sync_directory() -> TestResult {
     let actual = fixture
         .service
         .set_article_file("article-example", "linked/example.md")
+        .await
+        .map(|_| "accepted")
+        .map_err(|error| error.to_string());
+
+    assert_eq!(actual, Err("invalid synchronization file path".to_owned()));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn rejects_symlinks_that_resolve_into_git_metadata() -> TestResult {
+    use std::os::unix::fs::symlink;
+
+    let fixture = fixture(Duration::ZERO).await?;
+    let git_hooks = fixture.service.directory().join(".git/hooks");
+    fs::create_dir_all(&git_hooks)?;
+    symlink(&git_hooks, fixture.service.directory().join("hook-alias"))?;
+    let actual = fixture
+        .service
+        .set_article_file("article-example", "hook-alias/example.md")
         .await
         .map(|_| "accepted")
         .map_err(|error| error.to_string());
@@ -399,6 +510,89 @@ async fn reports_disabled_configuration_and_unavailable_article_endpoints() -> T
             json!({"enabled": false, "directory": null}),
             503,
             json!({"error": "Article file synchronization is not configured"}),
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn rejects_an_import_hash_that_changed_before_the_resume_request() -> TestResult {
+    let fixture = fixture(Duration::ZERO).await?;
+    let initial = fixture
+        .service
+        .set_article_file("article-example", "import.md")
+        .await?;
+    fs::write(
+        fixture.service.directory().join("import.md"),
+        "外部で再変更",
+    )?;
+    let app = router(
+        AppState {
+            file_sync: Some(fixture.service.clone()),
+            ..AppState::default()
+        },
+        HostOriginPolicy::new(vec!["localhost:3000".to_owned()], Vec::new()),
+    );
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/articles/article-example/file-sync/resume")
+                .header("host", "localhost:3000")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"hash": initial.content_hash}).to_string(),
+                ))?,
+        )
+        .await?;
+    let status = response.status().as_u16();
+    let body: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+
+    assert_eq!(
+        (status, body),
+        (
+            409,
+            json!({"error": "Synchronization file changed; reload it before continuing"}),
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn returns_unprocessable_entity_for_non_utf8_file_content() -> TestResult {
+    let fixture = fixture(Duration::ZERO).await?;
+    fs::create_dir_all(fixture.service.directory())?;
+    fs::write(fixture.service.directory().join("invalid.md"), [0xff])?;
+    let selection = fixture
+        .service
+        .set_article_file("article-example", "invalid.md")
+        .await
+        .map(|_| "selected")
+        .map_err(|error| error.to_string());
+    let app = router(
+        AppState {
+            file_sync: Some(fixture.service.clone()),
+            ..AppState::default()
+        },
+        HostOriginPolicy::new(vec!["localhost:3000".to_owned()], Vec::new()),
+    );
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/articles/article-example/file-sync")
+                .header("host", "localhost:3000")
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = response.status().as_u16();
+    let body: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+
+    assert_eq!(
+        (selection, status, body),
+        (
+            Err("synchronization file is not valid UTF-8".to_owned()),
+            422,
+            json!({"error": "Synchronization file is not valid UTF-8"}),
         )
     );
     Ok(())

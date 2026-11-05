@@ -82,7 +82,7 @@ pub async fn get_configuration(
     };
     Json(FileSyncConfigurationResponse {
         enabled: true,
-        directory: service.directory().to_str().map(str::to_owned),
+        directory: Some(service.directory().to_string_lossy().into_owned()),
     })
 }
 
@@ -92,6 +92,8 @@ pub async fn get_configuration(
     params(("article_id" = String, Path, description = "Article ID")),
     responses(
         (status = 200, description = "Current synchronization file and state", body = ArticleFileSyncResponse),
+        (status = 400, description = "Invalid synchronization file path", body = ErrorResponse),
+        (status = 422, description = "Synchronization file is not valid UTF-8", body = ErrorResponse),
         (status = 503, description = "File synchronization is not configured", body = ErrorResponse)
     )
 )]
@@ -116,6 +118,7 @@ pub async fn get_article_file(
     responses(
         (status = 200, description = "Synchronization file selected", body = ArticleFileSyncResponse),
         (status = 400, description = "Invalid synchronization file path", body = ErrorResponse),
+        (status = 422, description = "Synchronization file is not valid UTF-8", body = ErrorResponse),
         (status = 503, description = "File synchronization is not configured", body = ErrorResponse)
     )
 )]
@@ -139,7 +142,9 @@ pub async fn set_article_file(
     request_body = ResumeArticleFileSyncRequest,
     responses(
         (status = 200, description = "File synchronization resumed after import", body = ArticleFileSyncResponse),
-        (status = 400, description = "The file changed after it was read", body = ErrorResponse),
+        (status = 400, description = "No synchronization file is selected", body = ErrorResponse),
+        (status = 409, description = "The file changed after it was read", body = ErrorResponse),
+        (status = 422, description = "Synchronization file is not valid UTF-8", body = ErrorResponse),
         (status = 503, description = "File synchronization is not configured", body = ErrorResponse)
     )
 )]
@@ -187,7 +192,6 @@ fn service(state: &AppState) -> Result<&LocalFileSyncService, AppError> {
 
 fn map_error(error: FileSyncError) -> AppError {
     match error {
-        FileSyncError::Unavailable => AppError::FileSyncUnavailable,
         FileSyncError::InvalidPath => AppError::Client {
             status: StatusCode::BAD_REQUEST,
             message: "Invalid synchronization file request".to_owned(),
@@ -195,6 +199,10 @@ fn map_error(error: FileSyncError) -> AppError {
         FileSyncError::FileChanged => AppError::Client {
             status: StatusCode::CONFLICT,
             message: "Synchronization file changed; reload it before continuing".to_owned(),
+        },
+        FileSyncError::NonUtf8 => AppError::Client {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: "Synchronization file is not valid UTF-8".to_owned(),
         },
         error => {
             tracing::error!(%error, "article file synchronization failed");

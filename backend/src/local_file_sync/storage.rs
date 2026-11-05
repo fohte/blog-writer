@@ -33,15 +33,28 @@ pub(super) fn atomic_write(
 ) -> Result<(), FileSyncError> {
     let path = resolve_path(directory, relative, true)?;
     let parent = path.parent().ok_or(FileSyncError::InvalidPath)?;
+    let permissions = match fs::metadata(&path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
     let mut temporary = NamedTempFile::new_in(parent)?;
     temporary.write_all(bytes)?;
     temporary.as_file().sync_all()?;
+    if let Some(permissions) = permissions {
+        temporary.as_file().set_permissions(permissions)?;
+    }
     temporary.persist(&path).map_err(|error| error.error)?;
     Ok(())
 }
 
 pub(super) fn validate_path(directory: &Path, relative: &str) -> Result<(), FileSyncError> {
-    resolve_path(directory, relative, true).map(|_| ())
+    validate_path_syntax(relative)?;
+    match resolve_path(directory, relative, false) {
+        Ok(_) => Ok(()),
+        Err(FileSyncError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn resolve_path(
@@ -55,6 +68,9 @@ fn resolve_path(
         fs::create_dir_all(directory)?;
     }
     let root = fs::canonicalize(directory)?;
+    if contains_git_component(&root) {
+        return Err(FileSyncError::InvalidPath);
+    }
     let mut current = root.clone();
     let components: Vec<_> = path.components().collect();
     for (index, component) in components.iter().enumerate() {
@@ -68,13 +84,19 @@ fn resolve_path(
                 Ok(metadata) => {
                     let resolved =
                         fs::canonicalize(&current).map_err(|_| FileSyncError::InvalidPath)?;
-                    if !resolved.starts_with(&root) || metadata.is_dir() {
+                    if !resolved.starts_with(&root)
+                        || contains_git_component(&resolved)
+                        || metadata.is_dir()
+                    {
                         return Err(FileSyncError::InvalidPath);
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     let parent = current.parent().ok_or(FileSyncError::InvalidPath)?;
-                    if !fs::canonicalize(parent)?.starts_with(&root) {
+                    let resolved_parent = fs::canonicalize(parent)?;
+                    if !resolved_parent.starts_with(&root)
+                        || contains_git_component(&resolved_parent)
+                    {
                         return Err(FileSyncError::InvalidPath);
                     }
                 }
@@ -86,7 +108,10 @@ fn resolve_path(
             Ok(metadata) if metadata.is_dir() || metadata.file_type().is_symlink() => {
                 let resolved =
                     fs::canonicalize(&current).map_err(|_| FileSyncError::InvalidPath)?;
-                if !resolved.starts_with(&root) || !resolved.is_dir() {
+                if !resolved.starts_with(&root)
+                    || contains_git_component(&resolved)
+                    || !resolved.is_dir()
+                {
                     return Err(FileSyncError::InvalidPath);
                 }
             }
@@ -133,6 +158,15 @@ fn is_windows_absolute(value: &str) -> bool {
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
         && (bytes[2] == b'/' || bytes[2] == b'\\')
+}
+
+fn contains_git_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(".git")
+    })
 }
 
 pub(super) fn line_endings(body: &[u8], previous: Option<&[u8]>) -> Vec<u8> {

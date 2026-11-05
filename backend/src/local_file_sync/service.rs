@@ -68,12 +68,12 @@ pub struct ArticleFileContent {
 
 #[derive(Debug, Error)]
 pub enum FileSyncError {
-    #[error("file synchronization is unavailable")]
-    Unavailable,
     #[error("invalid synchronization file path")]
     InvalidPath,
     #[error("synchronization file changed while importing")]
     FileChanged,
+    #[error("synchronization file is not valid UTF-8")]
+    NonUtf8,
     #[error("synchronization document failed: {0}")]
     Sync(#[from] crate::sync::SyncError),
     #[error("invalid synchronization document: {0}")]
@@ -108,7 +108,7 @@ impl LocalFileSyncService {
         Self::with_delay(sync, directory, Duration::from_secs(1))
     }
 
-    pub fn with_delay(sync: SyncService, directory: PathBuf, delay: Duration) -> Self {
+    pub(super) fn with_delay(sync: SyncService, directory: PathBuf, delay: Duration) -> Self {
         Self {
             inner: Arc::new(LocalFileSyncInner {
                 sync,
@@ -149,32 +149,14 @@ impl LocalFileSyncService {
         article_id: &str,
     ) -> Result<ArticleFileContent, FileSyncError> {
         let _guard = self.operation_lock(article_id).await.lock_owned().await;
-        let mut state = self.read_state(article_id).await?;
-        let Some(path) = state.path.as_deref() else {
-            return Ok(ArticleFileContent {
-                state,
-                content: None,
-                content_hash: None,
-            });
-        };
-
-        let content = storage::read_file(&self.inner.directory, path)?;
-        let content_hash = content.as_deref().map(storage::sha256_hex);
-        if state.status == FileSyncStatus::Synced
-            && content_hash.as_deref() != state.hash.as_deref()
+        let mut content = self.article_file_state_unlocked(self.read_state(article_id).await?)?;
+        if content.state.status == FileSyncStatus::Synced
+            && content.content_hash.as_deref() != content.state.hash.as_deref()
         {
-            state.status = FileSyncStatus::ExternalChanged;
-            self.write_state(article_id, &state).await?;
+            content.state.status = FileSyncStatus::ExternalChanged;
+            self.write_state(article_id, &content.state).await?;
         }
-        let content = content
-            .map(|bytes| String::from_utf8(bytes).map_err(|_| FileSyncError::InvalidPath))
-            .transpose()?;
-
-        Ok(ArticleFileContent {
-            state,
-            content,
-            content_hash,
-        })
+        Ok(content)
     }
 
     pub async fn set_article_file(
@@ -202,7 +184,8 @@ impl LocalFileSyncService {
             }
         };
         self.write_state(article_id, &state).await?;
-        self.article_file_state_unlocked(state).await
+        self.refresh_watchers().await?;
+        self.article_file_state_unlocked(state)
     }
 
     pub async fn resume_article_file_sync(
@@ -215,6 +198,7 @@ impl LocalFileSyncService {
         let path = state.path.as_deref().ok_or(FileSyncError::InvalidPath)?;
         let bytes =
             storage::read_file(&self.inner.directory, path)?.ok_or(FileSyncError::FileChanged)?;
+        std::str::from_utf8(&bytes).map_err(|_| FileSyncError::NonUtf8)?;
         let actual_hash = storage::sha256_hex(&bytes);
         if imported_hash != actual_hash {
             return Err(FileSyncError::FileChanged);
@@ -222,7 +206,7 @@ impl LocalFileSyncService {
         state.hash = Some(actual_hash);
         state.status = FileSyncStatus::Synced;
         self.write_state(article_id, &state).await?;
-        self.article_file_state_unlocked(state).await
+        self.article_file_state_unlocked(state)
     }
 
     pub async fn overwrite_article_file(
@@ -239,10 +223,10 @@ impl LocalFileSyncService {
         state.hash = Some(storage::sha256_hex(&bytes));
         state.status = FileSyncStatus::Synced;
         self.write_state(article_id, &state).await?;
-        self.article_file_state_unlocked(state).await
+        self.article_file_state_unlocked(state)
     }
 
-    async fn article_file_state_unlocked(
+    fn article_file_state_unlocked(
         &self,
         state: ArticleFileState,
     ) -> Result<ArticleFileContent, FileSyncError> {
@@ -256,7 +240,7 @@ impl LocalFileSyncService {
         let content = storage::read_file(&self.inner.directory, path)?;
         let content_hash = content.as_deref().map(storage::sha256_hex);
         let content = content
-            .map(|bytes| String::from_utf8(bytes).map_err(|_| FileSyncError::InvalidPath))
+            .map(|bytes| String::from_utf8(bytes).map_err(|_| FileSyncError::NonUtf8))
             .transpose()?;
         Ok(ArticleFileContent {
             state,
@@ -269,17 +253,11 @@ impl LocalFileSyncService {
         let index = self.inner.sync.open_document(ARTICLE_INDEX_ID).await?;
         let entries = read_index_entries(&index).await?;
         let mut watchers = self.inner.watchers.lock().await;
-        for (article_id, watcher) in watchers.iter() {
-            let replacement_path = entries.get(article_id);
-            if replacement_path != Some(&watcher.path) {
-                watcher.stop.send_replace(true);
-                watcher.task.abort();
-            }
-        }
         watchers.retain(|article_id, watcher| {
             if entries.get(article_id) == Some(&watcher.path) {
                 true
             } else {
+                watcher.stop.send_replace(true);
                 watcher.task.abort();
                 false
             }
@@ -294,9 +272,9 @@ impl LocalFileSyncService {
             let service = self.clone();
             let watched_id = article_id.clone();
             let task = tokio::spawn(async move {
-                service
-                    .watch_article(watched_id, document, updates, stopped)
-                    .await;
+                // SyncService caches documents weakly, so keep the sender alive for this receiver.
+                let _document_guard = document;
+                service.watch_article(watched_id, updates, stopped).await;
             });
             watchers.insert(article_id, ActiveWatcher { path, stop, task });
         }
@@ -306,7 +284,6 @@ impl LocalFileSyncService {
     async fn watch_article(
         &self,
         article_id: String,
-        _document: SyncDocument,
         mut updates: tokio::sync::broadcast::Receiver<Vec<u8>>,
         mut stopped: watch::Receiver<bool>,
     ) {
