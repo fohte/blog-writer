@@ -1,11 +1,13 @@
+import type { Result } from 'neverthrow'
 import { useMemo, useSyncExternalStore } from 'react'
 import { v7 } from 'uuid'
 import * as Y from 'yjs'
 
-import type { Memo } from '#article/index'
+import type { Heading, Memo } from '#article/index'
 import {
   addMemo,
   dismissMemo,
+  getBody,
   listMemos,
   restoreMemo,
   updateMemoOrder,
@@ -16,32 +18,85 @@ type MemoStore = {
   subscribe: (listener: () => void) => () => void
 }
 
+function haveSameHeadings(left: Memo['state'], right: Memo['state']): boolean {
+  if (left.kind !== 'adopted' || right.kind !== 'adopted')
+    return left.kind === right.kind
+
+  const sameHeading = (leftHeading: Heading, rightHeading: Heading): boolean =>
+    leftHeading.level === rightHeading.level &&
+    leftHeading.text === rightHeading.text &&
+    leftHeading.from === rightHeading.from &&
+    leftHeading.to === rightHeading.to &&
+    leftHeading.children.length === rightHeading.children.length &&
+    leftHeading.children.every((child, index) => {
+      const otherChild = rightHeading.children[index]
+      return otherChild !== undefined && sameHeading(child, otherChild)
+    })
+
+  return sameHeading(left.heading, right.heading)
+}
+
+function haveSameMemos(left: Memo[], right: Memo[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((memo, index) => {
+      const otherMemo = right[index]
+      return (
+        otherMemo !== undefined &&
+        memo.id === otherMemo.id &&
+        memo.text === otherMemo.text &&
+        memo.order === otherMemo.order &&
+        haveSameHeadings(memo.state, otherMemo.state)
+      )
+    })
+  )
+}
+
 function createMemoStore(doc: Y.Doc): MemoStore {
   let snapshot = listMemos(doc)
   const listeners = new Set<() => void>()
+  const memos = doc.getMap('memos')
+  const body = getBody(doc)
 
-  const onUpdate = () => {
-    snapshot = listMemos(doc)
+  const refresh = () => {
+    const nextSnapshot = listMemos(doc)
+    if (haveSameMemos(snapshot, nextSnapshot)) return
+    snapshot = nextSnapshot
     for (const listener of listeners) listener()
+  }
+  const onBodyUpdate = () => {
+    if (!snapshot.some((memo) => memo.state.kind === 'adopted')) return
+    refresh()
   }
 
   return {
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
-      if (listeners.size === 0) doc.on('update', onUpdate)
+      if (listeners.size === 0) {
+        memos.observeDeep(refresh)
+        body.observe(onBodyUpdate)
+      }
       listeners.add(listener)
       snapshot = listMemos(doc)
 
       return () => {
         listeners.delete(listener)
-        if (listeners.size === 0) doc.off('update', onUpdate)
+        if (listeners.size === 0) {
+          memos.unobserveDeep(refresh)
+          body.unobserve(onBodyUpdate)
+        }
       }
     },
   }
 }
 
-function getOperationError(): string {
-  return 'メモを更新できませんでした。'
+const OPERATION_ERROR = 'メモを更新できませんでした。'
+
+function toOperationError<T, E>(result: Result<T, E>): string | undefined {
+  return result.match(
+    () => undefined,
+    () => OPERATION_ERROR,
+  )
 }
 
 export function useMemos(doc: Y.Doc) {
@@ -61,10 +116,7 @@ export function useMemos(doc: Y.Doc) {
         order: listMemos(doc).length,
       })
 
-      return result.match(
-        () => undefined,
-        () => getOperationError(),
-      )
+      return toOperationError(result)
     },
     move: (id: string, direction: 'up' | 'down'): string | undefined => {
       const current = listMemos(doc)
@@ -83,28 +135,17 @@ export function useMemos(doc: Y.Doc) {
           updateMemoOrder(doc, orderedMemo.id, order),
         ),
       )
-      const errors = results.map((result) =>
-        result.match(
-          () => undefined,
-          () => getOperationError(),
-        ),
-      )
+      const errors = results.map(toOperationError)
 
       return errors.find((error) => error !== undefined)
     },
     dismiss: (id: string): string | undefined => {
       const result = dismissMemo(doc, id)
-      return result.match(
-        () => undefined,
-        () => getOperationError(),
-      )
+      return toOperationError(result)
     },
     restore: (id: string): string | undefined => {
       const result = restoreMemo(doc, id)
-      return result.match(
-        () => undefined,
-        () => getOperationError(),
-      )
+      return toOperationError(result)
     },
   }
 }

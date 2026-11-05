@@ -28,6 +28,23 @@ const clickButton = (name: string) => {
   })
 }
 
+const readPanelOutput = (doc: Y.Doc) => ({
+  memos: listMemos(doc).map(({ id, ...memo }) => ({
+    ...memo,
+    id: id.length > 0 ? 'generated-id' : 'empty-id',
+  })),
+  rendered: [...(host?.querySelectorAll('[role="listitem"]') ?? [])].map(
+    (item) => {
+      const paragraphs = item.querySelectorAll('p')
+      return {
+        text: paragraphs.item(0).textContent,
+        state: paragraphs.item(1).textContent,
+      }
+    },
+  ),
+  draft: host?.querySelector<HTMLTextAreaElement>('textarea')?.value,
+})
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 })
@@ -60,15 +77,7 @@ describe('MemoPanel', () => {
     })
     clickButton('追加')
 
-    const readOutput = () => ({
-      memos: listMemos(doc).map(({ id, ...memo }) => ({
-        ...memo,
-        id: id.length > 0 ? 'generated-id' : 'empty-id',
-      })),
-      draft: host?.querySelector<HTMLTextAreaElement>('textarea')?.value,
-    })
-
-    expect(readOutput()).toEqual({
+    expect(readPanelOutput(doc)).toEqual({
       memos: [
         {
           id: 'generated-id',
@@ -77,6 +86,7 @@ describe('MemoPanel', () => {
           state: { kind: 'unorganized' },
         },
       ],
+      rendered: [{ text: '記事の導入を簡潔にする', state: '未整理' }],
       draft: '',
     })
   })
@@ -95,20 +105,27 @@ describe('MemoPanel', () => {
         ?.click()
     })
 
-    expect(listMemos(doc)).toEqual([
-      {
-        id: 'memo-b',
-        text: '次の案',
-        order: 0,
-        state: { kind: 'unorganized' },
-      },
-      {
-        id: 'memo-a',
-        text: '最初の案',
-        order: 1,
-        state: { kind: 'unorganized' },
-      },
-    ])
+    expect(readPanelOutput(doc)).toEqual({
+      memos: [
+        {
+          id: 'generated-id',
+          text: '次の案',
+          order: 0,
+          state: { kind: 'unorganized' },
+        },
+        {
+          id: 'generated-id',
+          text: '最初の案',
+          order: 1,
+          state: { kind: 'unorganized' },
+        },
+      ],
+      rendered: [
+        { text: '次の案', state: '未整理' },
+        { text: '最初の案', state: '未整理' },
+      ],
+      draft: '',
+    })
   })
 
   it('marks an unorganized memo as dismissed', () => {
@@ -118,14 +135,18 @@ describe('MemoPanel', () => {
 
     clickButton('見送る')
 
-    expect(listMemos(doc)).toEqual([
-      {
-        id: 'memo-a',
-        text: '最初の案',
-        order: 0,
-        state: { kind: 'dismissed' },
-      },
-    ])
+    expect(readPanelOutput(doc)).toEqual({
+      memos: [
+        {
+          id: 'generated-id',
+          text: '最初の案',
+          order: 0,
+          state: { kind: 'dismissed' },
+        },
+      ],
+      rendered: [{ text: '最初の案', state: '見送り' }],
+      draft: '',
+    })
   })
 
   it('restores an adopted memo to unorganized', () => {
@@ -137,13 +158,53 @@ describe('MemoPanel', () => {
 
     clickButton('未整理に戻す')
 
-    expect(listMemos(doc)).toEqual([
-      {
-        id: 'memo-a',
-        text: '最初の案',
-        order: 0,
-        state: { kind: 'unorganized' },
-      },
-    ])
+    expect(readPanelOutput(doc)).toEqual({
+      memos: [
+        {
+          id: 'generated-id',
+          text: '最初の案',
+          order: 0,
+          state: { kind: 'unorganized' },
+        },
+      ],
+      rendered: [{ text: '最初の案', state: '未整理' }],
+      draft: '',
+    })
+  })
+
+  it('refreshes an adopted heading after the article body changes', () => {
+    const doc = new Y.Doc()
+    setBody(doc, '# Section')
+    addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
+    setMemoAdoptedTo(doc, 'memo-a', 0)
+    mountMemoPanel(doc)
+    const body = doc.getText('body')
+
+    act(() => {
+      body.delete(2, 'Section'.length)
+      body.insert(2, 'Updated')
+    })
+
+    expect(readPanelOutput(doc)).toEqual({
+      memos: [
+        {
+          id: 'generated-id',
+          text: '最初の案',
+          order: 0,
+          state: {
+            kind: 'adopted',
+            heading: {
+              level: 1,
+              text: 'Updated',
+              from: 0,
+              to: 9,
+              children: [],
+            },
+          },
+        },
+      ],
+      rendered: [{ text: '最初の案', state: '採用済み: Updated' }],
+      draft: '',
+    })
   })
 })
