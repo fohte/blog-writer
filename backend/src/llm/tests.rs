@@ -1121,6 +1121,8 @@ async fn sends_keep_alive_comments_while_waiting_for_claude_code() {
 
 #[tokio::test(start_paused = true)]
 async fn sends_keep_alive_comments_before_proxy_read_timeout() {
+    const CLOUDFLARE_PROXY_READ_TIMEOUT: Duration = Duration::from_secs(125);
+
     let (_, shutdown) = watch::channel(false);
     let mut state = LlmState::new_with_shutdown(LlmConfig::default(), shutdown);
     state.provider = Arc::new(PendingProvider);
@@ -1133,7 +1135,7 @@ async fn sends_keep_alive_comments_before_proxy_read_timeout() {
     .into_body()
     .into_data_stream();
 
-    let first_chunk = tokio::time::timeout(Duration::from_secs(125), stream.next())
+    let first_chunk = tokio::time::timeout(CLOUDFLARE_PROXY_READ_TIMEOUT, stream.next())
         .await
         .expect("SSE keep-alive arrives before the proxy read timeout")
         .expect("SSE stream is not empty")
