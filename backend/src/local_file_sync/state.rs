@@ -1,10 +1,61 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io};
 
+use thiserror::Error;
 use yrs::{Any, Doc, Map, MapRef, Out, ReadTxn, Transact, Update, updates::decoder::Decode};
 
 use crate::sync::{SyncDocument, SyncService};
 
-use super::service::{ArticleFileState, FileSyncError, FileSyncStatus};
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileSyncStatus {
+    Unset,
+    Synced,
+    ExternalChanged,
+}
+
+impl FileSyncStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unset => "unset",
+            Self::Synced => "synced",
+            Self::ExternalChanged => "external_changed",
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "synced" => Self::Synced,
+            "external_changed" => Self::ExternalChanged,
+            _ => Self::Unset,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArticleFileState {
+    pub path: Option<String>,
+    pub hash: Option<String>,
+    pub status: FileSyncStatus,
+}
+
+#[derive(Debug, Error)]
+pub enum FileSyncError {
+    #[error("invalid synchronization file path")]
+    InvalidPath,
+    #[error("synchronization file changed while importing")]
+    FileChanged,
+    #[error("synchronization file is not valid UTF-8")]
+    NonUtf8,
+    #[error("article was not found")]
+    ArticleNotFound,
+    #[error("synchronization document failed: {0}")]
+    Sync(#[from] crate::sync::SyncError),
+    #[error("invalid synchronization document: {0}")]
+    Yrs(#[from] yrs::encoding::read::Error),
+    #[error("synchronization document update failed: {0}")]
+    Update(#[from] yrs::error::UpdateError),
+    #[error("file synchronization I/O failed: {0}")]
+    Io(#[from] io::Error),
+}
 
 pub(super) const ARTICLE_INDEX_ID: &str = "article-index";
 const ARTICLE_INDEX_MAP: &str = "articles";

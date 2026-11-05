@@ -11,7 +11,10 @@ use crate::{
     error::{ApiJson, AppError, ErrorResponse},
 };
 
-use super::service::{ArticleFileContent, FileSyncError, FileSyncStatus, LocalFileSyncService};
+use super::{
+    service::{ArticleFileContent, LocalFileSyncService},
+    state::{FileSyncError, FileSyncStatus},
+};
 
 #[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
 pub struct FileSyncConfigurationResponse {

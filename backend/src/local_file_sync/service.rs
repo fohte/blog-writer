@@ -1,12 +1,10 @@
 use std::{
     collections::HashMap,
-    io,
     path::{Path, PathBuf},
     sync::{Arc, Weak},
     time::Duration,
 };
 
-use thiserror::Error;
 use tokio::{
     sync::{Mutex, watch},
     task::JoinHandle,
@@ -16,65 +14,16 @@ use yrs::{Doc, GetString, ReadTxn, Transact};
 
 use crate::sync::SyncService;
 
-use super::{state, storage};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileSyncStatus {
-    Unset,
-    Synced,
-    ExternalChanged,
-}
-
-impl FileSyncStatus {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::Unset => "unset",
-            Self::Synced => "synced",
-            Self::ExternalChanged => "external_changed",
-        }
-    }
-
-    pub(super) fn from_str(value: &str) -> Self {
-        match value {
-            "synced" => Self::Synced,
-            "external_changed" => Self::ExternalChanged,
-            _ => Self::Unset,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ArticleFileState {
-    pub path: Option<String>,
-    pub hash: Option<String>,
-    pub status: FileSyncStatus,
-}
+use super::{
+    state::{self, ArticleFileState, FileSyncError, FileSyncStatus},
+    storage,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArticleFileContent {
     pub state: ArticleFileState,
     pub content: Option<String>,
     pub content_hash: Option<String>,
-}
-
-#[derive(Debug, Error)]
-pub enum FileSyncError {
-    #[error("invalid synchronization file path")]
-    InvalidPath,
-    #[error("synchronization file changed while importing")]
-    FileChanged,
-    #[error("synchronization file is not valid UTF-8")]
-    NonUtf8,
-    #[error("article was not found")]
-    ArticleNotFound,
-    #[error("synchronization document failed: {0}")]
-    Sync(#[from] crate::sync::SyncError),
-    #[error("invalid synchronization document: {0}")]
-    Yrs(#[from] yrs::encoding::read::Error),
-    #[error("synchronization document update failed: {0}")]
-    Update(#[from] yrs::error::UpdateError),
-    #[error("file synchronization I/O failed: {0}")]
-    Io(#[from] io::Error),
 }
 
 #[derive(Clone)]
@@ -153,7 +102,7 @@ impl LocalFileSyncService {
     ) -> Result<ArticleFileContent, FileSyncError> {
         let _guard = self.operation_lock(article_id).await.lock_owned().await;
         let state = state::read_state(&self.inner.sync, article_id).await?;
-        self.article_file_state_unlocked(article_id, state).await
+        self.reconcile_and_load_content(article_id, state).await
     }
 
     pub async fn set_article_file(
@@ -183,7 +132,7 @@ impl LocalFileSyncService {
         };
         self.persist_state(article_id, &state).await?;
         self.refresh_watchers().await?;
-        self.article_file_state_unlocked(article_id, state).await
+        self.reconcile_and_load_content(article_id, state).await
     }
 
     pub async fn resume_article_file_sync(
@@ -204,7 +153,7 @@ impl LocalFileSyncService {
         state.hash = Some(actual_hash);
         state.status = FileSyncStatus::Synced;
         self.persist_state(article_id, &state).await?;
-        self.article_file_state_unlocked(article_id, state).await
+        self.reconcile_and_load_content(article_id, state).await
     }
 
     pub async fn overwrite_article_file(
@@ -221,10 +170,10 @@ impl LocalFileSyncService {
         state.hash = Some(storage::sha256_hex(&bytes));
         state.status = FileSyncStatus::Synced;
         self.persist_state(article_id, &state).await?;
-        self.article_file_state_unlocked(article_id, state).await
+        self.reconcile_and_load_content(article_id, state).await
     }
 
-    async fn article_file_state_unlocked(
+    async fn reconcile_and_load_content(
         &self,
         article_id: &str,
         mut state: ArticleFileState,
@@ -338,10 +287,8 @@ impl LocalFileSyncService {
         let current = match storage::read_file(&self.inner.directory, path) {
             Ok(current) => current,
             Err(error) if is_file_error(&error) => {
-                let mut updated = state;
-                updated.status = FileSyncStatus::ExternalChanged;
-                self.persist_state(article_id, &updated).await?;
-                tracing::warn!(article_id, %error, "paused article file synchronization after a file error");
+                self.pause_after_file_error(article_id, state, &error)
+                    .await?;
                 return Ok(());
             }
             Err(error) => return Err(error),
@@ -357,10 +304,8 @@ impl LocalFileSyncService {
         let bytes = storage::line_endings(body.as_bytes(), current.as_deref());
         if let Err(error) = storage::atomic_write(&self.inner.directory, path, &bytes) {
             if is_file_error(&error) {
-                let mut updated = state;
-                updated.status = FileSyncStatus::ExternalChanged;
-                self.persist_state(article_id, &updated).await?;
-                tracing::warn!(article_id, %error, "paused article file synchronization after a file error");
+                self.pause_after_file_error(article_id, state, &error)
+                    .await?;
                 return Ok(());
             }
             return Err(error);
@@ -368,6 +313,18 @@ impl LocalFileSyncService {
         let mut updated = state;
         updated.hash = Some(storage::sha256_hex(&bytes));
         self.persist_state(article_id, &updated).await
+    }
+
+    async fn pause_after_file_error(
+        &self,
+        article_id: &str,
+        mut state: ArticleFileState,
+        error: &FileSyncError,
+    ) -> Result<(), FileSyncError> {
+        state.status = FileSyncStatus::ExternalChanged;
+        self.persist_state(article_id, &state).await?;
+        tracing::warn!(article_id, %error, "paused article file synchronization after a file error");
+        Ok(())
     }
 
     async fn read_article_body(&self, article_id: &str) -> Result<String, FileSyncError> {

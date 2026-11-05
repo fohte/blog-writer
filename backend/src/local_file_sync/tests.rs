@@ -16,10 +16,11 @@ use crate::{
     app::{AppState, router},
     db,
     host_origin::HostOriginPolicy,
-    local_file_sync::service::{
-        ArticleFileContent, ArticleFileState, FileSyncStatus, LocalFileSyncService,
+    local_file_sync::{
+        service::{ArticleFileContent, LocalFileSyncService},
+        state::{ArticleFileState, FileSyncStatus},
     },
-    sync::SyncService,
+    sync::{SyncDocument, SyncService},
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -31,9 +32,21 @@ struct Fixture {
 }
 
 async fn fixture(delay: Duration) -> TestResult<Fixture> {
+    fixture_with_database(delay, None).await
+}
+
+async fn fixture_with_memory_database(delay: Duration) -> TestResult<Fixture> {
+    fixture_with_database(delay, Some("sqlite::memory:")).await
+}
+
+async fn fixture_with_database(delay: Duration, database_url: Option<&str>) -> TestResult<Fixture> {
     let directory = TempDir::new()?;
-    let database_path = directory.path().join("sync.sqlite");
-    let database_url = format!("sqlite://{}", database_path.display());
+    let database_url = database_url.map(str::to_owned).unwrap_or_else(|| {
+        format!(
+            "sqlite://{}",
+            directory.path().join("sync.sqlite").display()
+        )
+    });
     let pool = db::initialize(Some(&database_url)).await?;
     let sync = SyncService::new(pool.clone())?;
     let file_directory = directory.path().join("notes");
@@ -76,6 +89,14 @@ async fn seed_index_entry(sync: &SyncService, article_id: &str) -> TestResult {
     Ok(())
 }
 
+async fn load_index(sync: &SyncService) -> TestResult<(SyncDocument, Doc)> {
+    let document = sync.open_document("article-index").await?;
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    Ok((document, doc))
+}
+
 async fn set_index_file_state(
     sync: &SyncService,
     article_id: &str,
@@ -83,10 +104,7 @@ async fn set_index_file_state(
     hash: Option<&str>,
     status: &str,
 ) -> TestResult {
-    let document = sync.open_document("article-index").await?;
-    let doc = Doc::new();
-    doc.transact_mut()
-        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    let (document, doc) = load_index(sync).await?;
     let articles = doc.get_or_insert_map("articles");
     let article = {
         let transaction = doc.transact();
@@ -114,10 +132,7 @@ async fn set_index_file_state(
 }
 
 async fn delete_index_entry(sync: &SyncService, article_id: &str) -> TestResult {
-    let document = sync.open_document("article-index").await?;
-    let doc = Doc::new();
-    doc.transact_mut()
-        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    let (document, doc) = load_index(sync).await?;
     let articles = doc.get_or_insert_map("articles");
     articles.remove(&mut doc.transact_mut(), article_id);
     let update = doc
@@ -128,18 +143,12 @@ async fn delete_index_entry(sync: &SyncService, article_id: &str) -> TestResult 
 }
 
 async fn article_index_client_count(sync: &SyncService) -> TestResult<usize> {
-    let document = sync.open_document("article-index").await?;
-    let doc = Doc::new();
-    doc.transact_mut()
-        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    let (_, doc) = load_index(sync).await?;
     Ok(doc.transact().state_vector().len())
 }
 
 async fn article_index_sync_status(sync: &SyncService, article_id: &str) -> TestResult<String> {
-    let document = sync.open_document("article-index").await?;
-    let doc = Doc::new();
-    doc.transact_mut()
-        .apply_update(Update::decode_v1(&document.encode_state().await)?)?;
+    let (_, doc) = load_index(sync).await?;
     let transaction = doc.transact();
     let articles = transaction
         .get_map("articles")
@@ -559,6 +568,50 @@ async fn reuses_one_server_client_id_for_index_state_updates() -> TestResult {
     let final_client_count = article_index_client_count(&fixture.sync).await?;
 
     assert_eq!((initial_client_count, final_client_count), (2, 2));
+    Ok(())
+}
+
+#[tokio::test]
+async fn persists_concurrent_file_state_updates_for_different_articles() -> TestResult {
+    let fixture = fixture_with_memory_database(Duration::ZERO).await?;
+    seed_document(&fixture.sync, "article-second", "初期本文").await?;
+    seed_index_entry(&fixture.sync, "article-second").await?;
+
+    let (first, second) = tokio::join!(
+        fixture
+            .service
+            .set_article_file("article-example", "first.md"),
+        fixture
+            .service
+            .set_article_file("article-second", "second.md"),
+    );
+    let actual = (
+        first?,
+        second?,
+        article_index_client_count(&fixture.sync).await?,
+    );
+    let expected_article = |path: &str| ArticleFileContent {
+        state: ArticleFileState {
+            path: Some(path.to_owned()),
+            hash: Some(
+                "39c33819cc10ba4f2b8b5034f95024385e56272d48013713727f08892bdd9775".to_owned(),
+            ),
+            status: FileSyncStatus::Synced,
+        },
+        content: Some("初期本文".to_owned()),
+        content_hash: Some(
+            "39c33819cc10ba4f2b8b5034f95024385e56272d48013713727f08892bdd9775".to_owned(),
+        ),
+    };
+
+    assert_eq!(
+        actual,
+        (
+            expected_article("first.md"),
+            expected_article("second.md"),
+            3
+        )
+    );
     Ok(())
 }
 

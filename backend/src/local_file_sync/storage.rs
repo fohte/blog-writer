@@ -6,7 +6,7 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use super::service::FileSyncError;
+use super::state::FileSyncError;
 
 pub(super) fn read_file(
     directory: &Path,
