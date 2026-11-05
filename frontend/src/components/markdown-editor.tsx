@@ -1,8 +1,13 @@
 import { defaultKeymap } from '@codemirror/commands'
-import { markdown } from '@codemirror/lang-markdown'
+import { markdown, markdownKeymap } from '@codemirror/lang-markdown'
 import { syntaxHighlighting } from '@codemirror/language'
 import { languages } from '@codemirror/language-data'
-import { Compartment, EditorState, type Extension } from '@codemirror/state'
+import {
+  Compartment,
+  EditorState,
+  type Extension,
+  Prec,
+} from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
@@ -60,11 +65,16 @@ export const MarkdownEditor = forwardRef<
       state: EditorState.create({
         doc: text.toJSON(),
         extensions: [
-          markdown({ extensions: GFM, codeLanguages: languages }),
+          markdown({
+            extensions: GFM,
+            codeLanguages: languages,
+            addKeymap: false,
+          }),
           syntaxHighlighting(markdownHighlightStyle),
           markdownDecorations,
           editorTheme,
           EditorView.lineWrapping,
+          Prec.high(keymap.of(markdownKeymap)),
           keymap.of([...yUndoManagerKeymap, ...defaultKeymap]),
           EditorView.contentAttributes.of({
             'aria-label': ariaLabel,

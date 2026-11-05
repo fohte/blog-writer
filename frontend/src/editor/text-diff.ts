@@ -19,7 +19,7 @@ interface EditTask {
 
 type Task = DiffTask | EqualTask | EditTask
 
-const MAX_DIFF_WORK = 250_000
+const MAX_DIFF_WORK = 20_000_000
 
 interface DiffWorkBudget {
   remaining: number

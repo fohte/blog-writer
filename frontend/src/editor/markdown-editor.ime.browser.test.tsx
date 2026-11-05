@@ -36,12 +36,25 @@ function readOutput(
   }
 }
 
-function withAfterStep(
-  composition: ComposeOutput,
-  key: 'afterNewline' | 'afterBackspace',
+function withAfterNewline<T extends ComposeOutput>(
+  composition: T,
   output: MarkdownEditorOutput,
 ) {
-  return Object.assign({}, composition, { [key]: output })
+  return Object.assign({}, composition, { afterNewline: output })
+}
+
+function withAfterEnter<T extends ComposeOutput>(
+  composition: T,
+  output: MarkdownEditorOutput,
+) {
+  return Object.assign({}, composition, { afterEnter: output })
+}
+
+function withAfterBackspace<T extends ComposeOutput>(
+  composition: T,
+  output: MarkdownEditorOutput,
+) {
+  return Object.assign({}, composition, { afterBackspace: output })
 }
 
 function nextFrame(): Promise<void> {
@@ -181,9 +194,7 @@ describe('MarkdownEditor IME', () => {
     const composition = await compose(body, content, '日本語')
     await pressKey('Enter')
     await nextFrame()
-    expect(
-      withAfterStep(composition, 'afterNewline', readOutput(body, content)),
-    ).toEqual({
+    expect(withAfterNewline(composition, readOutput(body, content))).toEqual({
       duringComposition: {
         body: '日本語plain',
         lines: ['日本語plain'],
@@ -286,15 +297,31 @@ describe('MarkdownEditor IME', () => {
     })
   })
 
-  it('composes after pressing Enter and Backspace after a list item', async () => {
+  it('continues a list, deletes its marker, and composes text', async () => {
     const { body, content } = mountMarkdownEditor('- item')
     content?.focus()
     await pressKey('End')
     await pressKey('Enter')
+    const afterEnter = readOutput(body, content)
     await pressKey('Backspace')
+    const afterBackspace = readOutput(body, content)
 
-    const actual = await compose(body, content, '日本語')
+    const composition = await compose(body, content, '日本語')
+    const actual = withAfterBackspace(
+      withAfterEnter(composition, afterEnter),
+      afterBackspace,
+    )
     expect(actual).toEqual({
+      afterEnter: {
+        body: '- item\n- ',
+        lines: ['- item', '- '],
+        visible: '- item- ',
+      },
+      afterBackspace: {
+        body: '- item\n  ',
+        lines: ['- item', '  '],
+        visible: '- item  ',
+      },
       duringComposition: {
         body: '- item\n  日本語',
         lines: ['- item', '  日本語'],
@@ -316,9 +343,7 @@ describe('MarkdownEditor IME', () => {
     const composition = await compose(body, content, '日本語')
     await pressKey('Backspace')
     await nextFrame()
-    expect(
-      withAfterStep(composition, 'afterBackspace', readOutput(body, content)),
-    ).toEqual({
+    expect(withAfterBackspace(composition, readOutput(body, content))).toEqual({
       duringComposition: {
         body: '## Heading日本語',
         lines: ['Heading日本語'],
