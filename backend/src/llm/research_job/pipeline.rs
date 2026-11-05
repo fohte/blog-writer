@@ -1,0 +1,231 @@
+use std::{future::Future, pin::Pin, sync::Arc};
+
+use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
+use tokio::sync::mpsc;
+
+use crate::{
+    app::AppState,
+    llm::{LlmError, LlmState, call_web_search_with, call_with_timeout, wait_for_shutdown},
+    research_claim_evidence::{
+        self,
+        model::{ClaimEvidenceSourceInput, ModelResponse as ClaimEvidenceModelResponse},
+    },
+    research_key_points::{
+        self,
+        model::{ModelResponse as KeyPointsModelResponse, ResearchSourceInput},
+    },
+    safe_fetch::SafeFetchService,
+};
+
+use super::model::{
+    ResearchJobAnalysis, ResearchJobRequest, ResearchJobResult, ResearchJobSource,
+    ResearchJobSourceStatus,
+};
+
+const MAX_CITATIONS: usize = 5;
+const MAX_SOURCE_CHARACTERS: usize = 10_000;
+const SEARCH_SYSTEM_PROMPT: &str = "Search the web for reliable sources relevant to the request. Use the web search tool and return the provider's source citations. Do not answer the request from memory. The request contains no source text.";
+
+pub(crate) type JobFuture =
+    Pin<Box<dyn Future<Output = Result<ResearchJobResult, LlmError>> + Send>>;
+
+pub(crate) fn start(
+    state: LlmState,
+    app_state: AppState,
+    request: ResearchJobRequest,
+    progress: mpsc::UnboundedSender<String>,
+) -> JobFuture {
+    Box::pin(async move { execute(state, app_state.safe_fetch, request, progress).await })
+}
+
+async fn execute(
+    state: LlmState,
+    fetcher: Arc<dyn SafeFetchService>,
+    request: ResearchJobRequest,
+    progress: mpsc::UnboundedSender<String>,
+) -> Result<ResearchJobResult, LlmError> {
+    let search_prompt = search_prompt(&request);
+    let progress_sender = progress.clone();
+    let search_result = call_web_search_with(
+        state.clone(),
+        SEARCH_SYSTEM_PROMPT.to_owned(),
+        search_prompt,
+        move |query| {
+            let _ = progress_sender.send(query);
+        },
+    )
+    .await?;
+
+    let mut sources = Vec::new();
+    for (index, url) in search_result
+        .citations
+        .into_iter()
+        .take(MAX_CITATIONS)
+        .enumerate()
+    {
+        sources.push(fetch_source(fetcher.as_ref(), index, url).await);
+    }
+
+    let analysis = analyze(&state, &request, &sources).await?;
+    Ok(ResearchJobResult { analysis, sources })
+}
+
+fn search_prompt(request: &ResearchJobRequest) -> String {
+    match request {
+        ResearchJobRequest::KeyPoints { question } => {
+            format!("Research question: {question}")
+        }
+        ResearchJobRequest::ClaimEvidence {
+            claim,
+            before,
+            after,
+        } => {
+            let mut lines = vec!["Find sources that can verify this claim:".to_owned()];
+            if let Some(before) = before.as_deref().filter(|text| !text.trim().is_empty()) {
+                lines.push(format!("Previous sentence: {before}"));
+            }
+            lines.push(format!("Claim: {claim}"));
+            if let Some(after) = after.as_deref().filter(|text| !text.trim().is_empty()) {
+                lines.push(format!("Next sentence: {after}"));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+async fn fetch_source(
+    fetcher: &dyn SafeFetchService,
+    index: usize,
+    url: String,
+) -> ResearchJobSource {
+    let unavailable = || ResearchJobSource {
+        id: format!("source-{}", index + 1),
+        url: url.clone(),
+        final_url: None,
+        title: None,
+        body: None,
+        status: ResearchJobSourceStatus::Unavailable,
+    };
+    let response = match fetcher.fetch(&url).await {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(reason = error.code(), "research source fetch failed");
+            return unavailable();
+        }
+    };
+    if !crate::html::is_html_content_type(response.content_type.as_deref()) {
+        return unavailable();
+    }
+
+    let final_url = response.final_url.to_string();
+    let html = crate::html::decode_html(&response.body, response.content_type.as_deref());
+    let document_url = final_url.clone();
+    let Ok(Ok(extracted)) = tokio::task::spawn_blocking(move || {
+        crate::source_bodies::extractor::extract(&html, &document_url)
+    })
+    .await
+    else {
+        return unavailable();
+    };
+
+    ResearchJobSource {
+        id: format!("source-{}", index + 1),
+        url,
+        final_url: Some(final_url),
+        title: Some(extracted.title),
+        body: Some(extracted.body),
+        status: ResearchJobSourceStatus::Available,
+    }
+}
+
+async fn analyze(
+    state: &LlmState,
+    request: &ResearchJobRequest,
+    sources: &[ResearchJobSource],
+) -> Result<ResearchJobAnalysis, LlmError> {
+    match request {
+        ResearchJobRequest::KeyPoints { question } => {
+            let source_inputs = sources
+                .iter()
+                .filter_map(available_body)
+                .map(|(id, body)| ResearchSourceInput { id, body })
+                .collect::<Vec<_>>();
+            let prompt_sources = source_inputs
+                .iter()
+                .map(|source| ResearchSourceInput {
+                    id: source.id.clone(),
+                    body: limit_source_body(&source.body),
+                })
+                .collect::<Vec<_>>();
+            let prompt = research_key_points::build_prompt(Some(question), &prompt_sources);
+            let response = generate::<KeyPointsModelResponse>(
+                state,
+                research_key_points::SYSTEM_PROMPT,
+                &prompt,
+            )
+            .await?;
+            let result = research_key_points::build_result(response, prompt_sources, true)?;
+            Ok(ResearchJobAnalysis::KeyPoints(result))
+        }
+        ResearchJobRequest::ClaimEvidence {
+            claim,
+            before,
+            after,
+        } => {
+            let source_inputs = sources
+                .iter()
+                .filter_map(available_body)
+                .map(|(id, body)| ClaimEvidenceSourceInput { id, body })
+                .collect::<Vec<_>>();
+            let prompt_sources = source_inputs
+                .iter()
+                .map(|source| ClaimEvidenceSourceInput {
+                    id: source.id.clone(),
+                    body: limit_source_body(&source.body),
+                })
+                .collect::<Vec<_>>();
+            let prompt = research_claim_evidence::build_prompt(
+                claim,
+                before.as_deref(),
+                after.as_deref(),
+                &prompt_sources,
+            );
+            let response = generate::<ClaimEvidenceModelResponse>(
+                state,
+                research_claim_evidence::SYSTEM_PROMPT,
+                &prompt,
+            )
+            .await?;
+            let result = research_claim_evidence::build_result(response, prompt_sources)?;
+            Ok(ResearchJobAnalysis::ClaimEvidence(result))
+        }
+    }
+}
+
+fn available_body(source: &ResearchJobSource) -> Option<(String, String)> {
+    source
+        .body
+        .as_ref()
+        .map(|body| (source.id.clone(), body.clone()))
+}
+
+fn limit_source_body(body: &str) -> String {
+    body.chars().take(MAX_SOURCE_CHARACTERS).collect()
+}
+
+async fn generate<T>(state: &LlmState, system_prompt: &str, prompt: &str) -> Result<T, LlmError>
+where
+    T: DeserializeOwned + JsonSchema,
+{
+    let mut shutdown = state.shutdown.clone();
+    tokio::select! {
+        result = call_with_timeout::<T>(
+            state.provider.as_ref(),
+            system_prompt,
+            prompt,
+            state.timeout,
+        ) => result,
+        _ = wait_for_shutdown(&mut shutdown) => Err(LlmError::Cancelled),
+    }
+}

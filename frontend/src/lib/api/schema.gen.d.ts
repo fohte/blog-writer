@@ -212,6 +212,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/research/jobs': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['run_research_job']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/research/key-points': {
     parameters: {
       query?: never
@@ -416,6 +432,60 @@ export interface components {
       title: string
       url: string
     }
+    ResearchJobAnalysis:
+      | {
+          data: components['schemas']['ResearchKeyPointsResult']
+          /** @enum {string} */
+          task: 'key_points'
+        }
+      | {
+          data: components['schemas']['JudgeClaimEvidenceResult']
+          /** @enum {string} */
+          task: 'claim_evidence'
+        }
+    ResearchJobEvent:
+      | {
+          data: components['schemas']['LlmProgress']
+          /** @enum {string} */
+          event: 'progress'
+        }
+      | {
+          data: components['schemas']['ResearchJobResult']
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['LlmErrorPayload']
+          /** @enum {string} */
+          event: 'error'
+        }
+    ResearchJobRequest:
+      | {
+          question: string
+          /** @enum {string} */
+          task: 'key_points'
+        }
+      | {
+          after?: string | null
+          before?: string | null
+          claim: string
+          /** @enum {string} */
+          task: 'claim_evidence'
+        }
+    ResearchJobResult: {
+      analysis: components['schemas']['ResearchJobAnalysis']
+      sources: components['schemas']['ResearchJobSource'][]
+    }
+    ResearchJobSource: {
+      body?: string | null
+      final_url?: string | null
+      id: string
+      status: components['schemas']['ResearchJobSourceStatus']
+      title?: string | null
+      url: string
+    }
+    /** @enum {string} */
+    ResearchJobSourceStatus: 'available' | 'unavailable'
     ResearchKeyPoint: {
       quote: string
       text: string
@@ -1293,6 +1363,39 @@ export interface operations {
         }
       }
       /** @description Source IDs must be unique */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  run_research_job: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ResearchJobRequest']
+      }
+    }
+    responses: {
+      /** @description Research progress and source-backed result */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': components['schemas']['ResearchJobEvent']
+        }
+      }
+      /** @description Invalid request body */
       400: {
         headers: {
           [name: string]: unknown

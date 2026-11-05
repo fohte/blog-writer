@@ -1,6 +1,7 @@
 mod claude_code;
 mod handler;
 mod openai_compatible;
+pub(crate) mod research_job;
 mod router;
 
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
