@@ -94,16 +94,20 @@ class MarkdownDecorationPlugin {
   }
 
   update(update: ViewUpdate): void {
-    if (
-      this.composing ||
-      (!update.docChanged &&
-        !update.selectionSet &&
-        !update.transactions.some((transaction) =>
-          transaction.effects.some((effect) => effect.is(refreshDecorations)),
-        ))
-    ) {
+    if (this.composing) {
+      if (update.docChanged)
+        this.decorations = this.decorations.map(update.changes)
       return
     }
+
+    if (
+      !update.docChanged &&
+      !update.selectionSet &&
+      !update.transactions.some((transaction) =>
+        transaction.effects.some((effect) => effect.is(refreshDecorations)),
+      )
+    )
+      return
 
     this.decorations = buildDecorations(update.state)
   }

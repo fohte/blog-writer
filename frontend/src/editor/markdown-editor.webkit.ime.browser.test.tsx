@@ -1,45 +1,13 @@
-import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { userEvent } from 'vitest/browser'
-import * as Y from 'yjs'
 
-import { getBody } from '#article/body'
-import { MarkdownEditor } from '#editor/index'
-
-let host: HTMLDivElement | undefined
-let root: Root | undefined
-let doc = new Y.Doc()
-
-beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  host = document.createElement('div')
-  document.body.append(host)
-  root = createRoot(host)
-  doc.destroy()
-  doc = new Y.Doc()
-  getBody(doc).insert(0, '[reference](https://example.test) ')
-
-  act(() => {
-    root?.render(<MarkdownEditor text={getBody(doc)} />)
-  })
-})
-
-afterEach(() => {
-  act(() => {
-    root?.unmount()
-  })
-  doc.destroy()
-  root = undefined
-  host?.remove()
-  host = undefined
-  doc = new Y.Doc()
-  vi.unstubAllGlobals()
-})
+import { mountMarkdownEditor } from '#editor/markdown-editor.test-utils'
 
 describe('MarkdownEditor IME in WebKit', () => {
   it('commits Japanese composition after Markdown punctuation without changing its order', async () => {
-    const content = host?.querySelector<HTMLElement>('.cm-content')
+    const { body, content } = mountMarkdownEditor(
+      '[reference](https://example.test) ',
+    )
     content?.focus()
     content?.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'End', bubbles: true }),
@@ -68,7 +36,7 @@ describe('MarkdownEditor IME in WebKit', () => {
     )
 
     const readOutput = () => ({
-      body: getBody(doc).toJSON(),
+      body: body.toJSON(),
       visible: content?.textContent,
     })
 

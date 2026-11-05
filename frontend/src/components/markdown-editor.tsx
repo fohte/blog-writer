@@ -1,7 +1,7 @@
 import { defaultKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { EditorState, type Extension } from '@codemirror/state'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
@@ -35,6 +35,7 @@ export const MarkdownEditor = forwardRef<
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const undoManagerRef = useRef<Y.UndoManager | null>(null)
+  const extensionsCompartment = useRef(new Compartment()).current
 
   useImperativeHandle(
     ref,
@@ -71,7 +72,7 @@ export const MarkdownEditor = forwardRef<
             spellcheck: 'false',
           }),
           yCollab(text, null, { undoManager }),
-          extensions,
+          extensionsCompartment.of(extensions),
         ],
       }),
     })
@@ -85,7 +86,14 @@ export const MarkdownEditor = forwardRef<
       viewRef.current = null
       undoManagerRef.current = null
     }
-  }, [ariaLabel, extensions, text])
+  }, [ariaLabel, extensionsCompartment, text])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (view) {
+      view.dispatch({ effects: extensionsCompartment.reconfigure(extensions) })
+    }
+  }, [extensions, extensionsCompartment])
 
   return <div className={className} ref={hostRef} />
 })

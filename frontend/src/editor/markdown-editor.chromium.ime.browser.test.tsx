@@ -1,45 +1,19 @@
-import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { cdp } from 'vitest/browser'
-import * as Y from 'yjs'
 
-import { getBody } from '#article/body'
-import { MarkdownEditor } from '#editor/index'
+import { mountMarkdownEditor } from '#editor/markdown-editor.test-utils'
 
-let host: HTMLDivElement | undefined
-let root: Root | undefined
-let doc = new Y.Doc()
-
-beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  host = document.createElement('div')
-  document.body.append(host)
-  root = createRoot(host)
-  doc.destroy()
-  doc = new Y.Doc()
-  getBody(doc).insert(0, '**word')
-
-  act(() => {
-    root?.render(<MarkdownEditor text={getBody(doc)} />)
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      resolve()
+    })
   })
-})
-
-afterEach(() => {
-  act(() => {
-    root?.unmount()
-  })
-  doc.destroy()
-  root = undefined
-  host?.remove()
-  host = undefined
-  doc = new Y.Doc()
-  vi.unstubAllGlobals()
-})
+}
 
 describe('MarkdownEditor IME in Chromium', () => {
   it('keeps source markup visible during Japanese composition and commits it once', async () => {
-    const content = host?.querySelector<HTMLElement>('.cm-content')
+    const { body, content } = mountMarkdownEditor('**word')
     content?.focus()
     content?.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'End', bubbles: true }),
@@ -50,26 +24,18 @@ describe('MarkdownEditor IME in Chromium', () => {
       selectionStart: 5,
       selectionEnd: 5,
     })
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve()
-      })
-    })
+    await nextFrame()
 
     const composingOutput = {
-      body: getBody(doc).toJSON(),
+      body: body.toJSON(),
       visible: content?.textContent,
     }
     await cdp().send('Input.insertText', { text: '**日本語' })
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve()
-      })
-    })
+    await nextFrame()
 
     const readOutput = () => ({
       duringComposition: composingOutput,
-      committedBody: getBody(doc).toJSON(),
+      committedBody: body.toJSON(),
       committedVisible: content?.textContent,
     })
 
@@ -77,6 +43,40 @@ describe('MarkdownEditor IME in Chromium', () => {
       duringComposition: { body: '**word**日本語', visible: '**word**日本語' },
       committedBody: '**word**日本語',
       committedVisible: 'word日本語',
+    })
+  })
+
+  it('keeps later Markdown decorations aligned while composing at the start', async () => {
+    const { body, content } = mountMarkdownEditor('**before** **after**')
+    content?.focus()
+
+    await cdp().send('Input.imeSetComposition', {
+      text: '日本語',
+      selectionStart: 3,
+      selectionEnd: 3,
+    })
+    await nextFrame()
+
+    const composingOutput = {
+      body: body.toJSON(),
+      visible: content?.textContent,
+    }
+    await cdp().send('Input.insertText', { text: '日本語' })
+    await nextFrame()
+
+    const readOutput = () => ({
+      duringComposition: composingOutput,
+      committedBody: body.toJSON(),
+      committedVisible: content?.textContent,
+    })
+
+    expect(readOutput()).toEqual({
+      duringComposition: {
+        body: '日本語**before** **after**',
+        visible: '日本語**before after',
+      },
+      committedBody: '日本語**before** **after**',
+      committedVisible: '日本語**before after',
     })
   })
 })

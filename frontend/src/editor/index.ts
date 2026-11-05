@@ -1,5 +1,5 @@
 export type {
   MarkdownEditorHandle,
   MarkdownEditorProps,
-} from '#editor/markdown-editor'
-export { MarkdownEditor } from '#editor/markdown-editor'
+} from '#components/markdown-editor'
+export { MarkdownEditor } from '#components/markdown-editor'

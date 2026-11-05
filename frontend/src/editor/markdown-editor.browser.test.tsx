@@ -1,61 +1,15 @@
 import { EditorView } from '@codemirror/view'
-import { act, createRef, type RefObject } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act } from 'react'
+import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
-import { getBody } from '#article/body'
-import { MarkdownEditor, type MarkdownEditorHandle } from '#editor/index'
-
-let host: HTMLDivElement | undefined
-let root: Root | undefined
-let editor: RefObject<MarkdownEditorHandle | null> | undefined
-let doc = new Y.Doc()
-
-function mountEditor(value: string) {
-  host = document.createElement('div')
-  document.body.append(host)
-  root = createRoot(host)
-  doc.destroy()
-  doc = new Y.Doc()
-  getBody(doc).insert(0, value)
-  editor = createRef<MarkdownEditorHandle>()
-
-  act(() => {
-    root?.render(
-      <MarkdownEditor
-        ariaLabel="Draft body"
-        extensions={[
-          EditorView.contentAttributes.of({ 'data-extension': 'included' }),
-        ]}
-        ref={editor}
-        text={getBody(doc)}
-      />,
-    )
-  })
-}
-
-beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-})
-
-afterEach(() => {
-  act(() => {
-    root?.unmount()
-  })
-  doc.destroy()
-  root = undefined
-  host?.remove()
-  host = undefined
-  editor = undefined
-  doc = new Y.Doc()
-  vi.unstubAllGlobals()
-})
+import { mountMarkdownEditor } from '#editor/markdown-editor.test-utils'
 
 describe('MarkdownEditor', () => {
-  it('formats Markdown and accepts extra extensions', () => {
-    mountEditor('## Heading **bold** and `code`')
-    const content = host?.querySelector<HTMLElement>('.cm-content')
+  it('formats Markdown source', () => {
+    const { content, host } = mountMarkdownEditor(
+      '## Heading **bold** and `code`',
+    )
     content?.focus()
     content?.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'End', bubbles: true }),
@@ -69,25 +23,58 @@ describe('MarkdownEditor', () => {
 
     const readOutput = () => ({
       text: content?.textContent,
-      extension: content?.getAttribute('data-extension'),
-      headingClass: host?.querySelector('.cm-line')?.className,
+      headingClass: host.querySelector('.cm-line')?.className,
     })
 
     expect(readOutput()).toEqual({
       text: 'Heading bold and code',
-      extension: 'included',
       headingClass: 'cm-line cm-md-heading cm-md-heading-2',
     })
   })
 
+  it('accepts additional CodeMirror extensions', () => {
+    const { content } = mountMarkdownEditor('body', [
+      EditorView.contentAttributes.of({ 'data-extension': 'included' }),
+    ])
+
+    expect(content?.getAttribute('data-extension')).toEqual('included')
+  })
+
+  it('reconfigures extensions without remounting the editor', () => {
+    const { content, host, updateExtensions } = mountMarkdownEditor('body')
+    updateExtensions([
+      EditorView.contentAttributes.of({ 'data-extension': 'included' }),
+    ])
+
+    const updatedContent = host.querySelector<HTMLElement>('.cm-content')
+    const readOutput = () => ({
+      sameContentElement: updatedContent === content,
+      text: updatedContent?.textContent,
+      extension: updatedContent?.getAttribute('data-extension'),
+    })
+
+    expect(readOutput()).toEqual({
+      sameContentElement: true,
+      text: 'body',
+      extension: 'included',
+    })
+  })
+
+  it('shows Markdown markers when the cursor touches them', () => {
+    const { content } = mountMarkdownEditor('**bold**')
+
+    expect(content?.textContent).toEqual('**bold')
+  })
+
   it('replaces only changed text while keeping positions in unchanged text', () => {
-    mountEditor('prefix 🦊 original suffix')
-    const body = getBody(doc)
+    const { body, doc, editor } = mountMarkdownEditor(
+      'prefix 🦊 original suffix',
+    )
     const prefix = Y.createRelativePositionFromTypeIndex(body, 3)
     const suffix = Y.createRelativePositionFromTypeIndex(body, 19)
 
     act(() => {
-      editor?.current?.replaceBody('prefix 🦊 new suffix')
+      editor.current?.replaceBody('prefix 🦊 new suffix')
     })
 
     const readOutput = () => ({
@@ -104,11 +91,10 @@ describe('MarkdownEditor', () => {
   })
 
   it('undoes a body replacement in one Yjs undo step', () => {
-    mountEditor('before body after')
-    const content = host?.querySelector<HTMLElement>('.cm-content')
+    const { body, content, editor } = mountMarkdownEditor('before body after')
 
     act(() => {
-      editor?.current?.replaceBody('before imported after')
+      editor.current?.replaceBody('before imported after')
     })
     content?.dispatchEvent(
       new KeyboardEvent('keydown', {
@@ -118,6 +104,6 @@ describe('MarkdownEditor', () => {
       }),
     )
 
-    expect(getBody(doc).toJSON()).toEqual('before body after')
+    expect(body.toJSON()).toEqual('before body after')
   })
 })
