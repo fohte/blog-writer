@@ -124,7 +124,7 @@ describe('MemoPanel', () => {
     })
   })
 
-  it('shows an alert when dismissing a nonexistent memo fails', () => {
+  it('shows an alert when a dismiss action fails', () => {
     const doc = new Y.Doc()
     addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
     mountMemoPanel(doc)
