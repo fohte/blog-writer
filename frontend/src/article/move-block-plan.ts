@@ -128,6 +128,17 @@ function isInsideBlock(
   )
 }
 
+function isBlockBoundary(
+  markdown: string,
+  blocks: MarkdownBlockRange[],
+  position: number,
+): boolean {
+  return (
+    position === markdown.length ||
+    blocks.some((block) => block.from === position)
+  )
+}
+
 function trailingNewlines(text: string): number {
   return text.length - text.replace(/\n+$/, '').length
 }
@@ -161,6 +172,12 @@ export function validateMove(
   if (isInsideBlock(blocks, input.destination))
     return err(
       new InvalidBlockMoveError('The destination is inside a Markdown block'),
+    )
+  if (!isBlockBoundary(markdown, blocks, input.destination))
+    return err(
+      new InvalidBlockMoveError(
+        'The destination is not at a Markdown block boundary',
+      ),
     )
 
   let targetLevel = input.headingLevel

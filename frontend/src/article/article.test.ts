@@ -212,6 +212,75 @@ Second paragraph.
     })
   })
 
+  it('normalizes the source separator when moving the final block to the beginning', () => {
+    const doc = new Y.Doc()
+    const markdown = `X
+
+A
+`
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: markdown.indexOf('A'),
+      destination: 0,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['restored', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+      ]),
+    ).toEqual({
+      afterMove: `A
+
+X
+`,
+      restored: markdown,
+      undoEvent: 'undo',
+    })
+  })
+
+  it('preserves block separators when reversing a reverse move', () => {
+    const doc = new Y.Doc()
+    const markdown = `A
+
+B
+`
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: 0,
+      destination: markdown.length,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+    const afterUndo = readBody(doc)
+    const redo = reverseBlockMove(doc, undo)._unsafeUnwrap()
+
+    expect(
+      Object.fromEntries([
+        ['afterMove', afterMove],
+        ['afterUndo', afterUndo],
+        ['afterRedo', readBody(doc)],
+        ['undoEvent', undo.annotations[1].value],
+        ['redoEvent', redo.annotations[1].value],
+      ]),
+    ).toEqual({
+      afterMove: `B
+
+A
+`,
+      afterUndo: markdown,
+      afterRedo: `B
+
+A
+`,
+      undoEvent: 'undo',
+      redoEvent: 'undo',
+    })
+  })
+
   it('keeps an unregistered marker at the source seam when its block moves', () => {
     const doc = new Y.Doc()
     const markdown = `# Heading
@@ -369,6 +438,38 @@ Parent text.
     })
   })
 
+  it('rejects a destination inside a blank-line separator', () => {
+    const doc = new Y.Doc()
+    const markdown = `A
+
+B
+
+
+C
+`
+    setBody(doc, markdown)
+    const result = moveBlock(doc, {
+      from: 0,
+      destination: markdown.indexOf('C') - 1,
+    })
+
+    expect(
+      Object.fromEntries([
+        [
+          'result',
+          result.match(
+            () => 'ok',
+            (error) => error.message,
+          ),
+        ],
+        ['body', readBody(doc)],
+      ]),
+    ).toEqual({
+      result: 'The destination is not at a Markdown block boundary',
+      body: markdown,
+    })
+  })
+
   it('resolves the moved section and seam after text is inserted before them', () => {
     const doc = new Y.Doc()
     const markdown = `# First
@@ -467,10 +568,9 @@ Parent text.
 ### Child
 
 # Sibling
-
 `,
       afterUndo: markdown,
-      move: [{ from: 10, to: 30, seam: 42 }, 'move'],
+      move: [{ from: 10, to: 30, seam: 41 }, 'move'],
       undo: [{ from: 21, to: 39, seam: 10 }, 'undo'],
       undoEvent: 'undo',
       editorUndoEvent: 'undo',

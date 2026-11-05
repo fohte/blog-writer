@@ -60,17 +60,32 @@ type MoveHistory = {
   movedFrom: Y.RelativePosition
   seam: Y.RelativePosition
   insertedSelection: string
-  sourceText: string
+  sourceText?: string
+  sourcePrefix: string
   separators: AnchoredTextRange[]
 }
 type ApplyMoveOptions = {
   expectedSelection?: string
   replacementText?: string
+  replacementPrefix?: string
   removeRanges?: AnchoredTextRange[]
 }
 
 const updatersByDoc = new WeakMap<Y.Doc, Set<BlockMoveUpdater>>()
 const historyByMove = new WeakMap<MoveBlockResult, MoveHistory>()
+
+function normalizeTrailingNewlines(text: string): {
+  text: string
+  removed: string
+} {
+  const trailing = /\n+$/.exec(text)?.[0] ?? ''
+  if (trailing.length < 2) return { text, removed: '' }
+
+  return {
+    text: text.slice(0, text.length - trailing.length + 1),
+    removed: trailing.slice(1),
+  }
+}
 
 function resolvePosition(
   doc: Y.Doc,
@@ -109,6 +124,8 @@ function rememberMove(
   insertionIndex: number,
   insertion: { text: string; prefixLength: number; contentLength: number },
   sourceText: string,
+  sourcePrefix: string,
+  restoreSource: boolean,
 ): void {
   const prefix = insertion.text.slice(0, insertion.prefixLength)
   const suffix = insertion.text.slice(
@@ -138,7 +155,8 @@ function rememberMove(
     movedFrom: Y.createRelativePositionFromTypeIndex(body, move.from, 1),
     seam: Y.createRelativePositionFromTypeIndex(body, move.seam, 1),
     insertedSelection: insertion.text.slice(insertion.prefixLength),
-    sourceText,
+    ...(restoreSource ? { sourceText } : {}),
+    sourcePrefix: restoreSource ? sourcePrefix : '',
     separators,
   })
 }
@@ -203,26 +221,35 @@ function applyMoveBlock(
     range.to,
     ...resolvedRanges.map((resolved) => resolved.to),
   )
-  const removedLength = removeTo - removeFrom
+  const remainingBeforeNormalization =
+    markdown.slice(0, removeFrom) + markdown.slice(removeTo)
+  const sourceSeparator =
+    options.replacementText === undefined && removeTo === markdown.length
+      ? normalizeTrailingNewlines(remainingBeforeNormalization)
+      : { text: remainingBeforeNormalization, removed: '' }
+  const deletionFrom = removeFrom - sourceSeparator.removed.length
+  const removedLength = removeTo - deletionFrom
   const insertionIndex =
     input.destination >= removeTo
       ? input.destination - removedLength
-      : input.destination
-  const remaining = markdown.slice(0, removeFrom) + markdown.slice(removeTo)
+      : input.destination >= deletionFrom
+        ? deletionFrom
+        : input.destination
+  const remaining = sourceSeparator.text
   const insertion =
     options.replacementText === undefined
       ? getInsertionText(remaining, insertionIndex, movedText)
       : {
-          text: options.replacementText,
-          prefixLength: 0,
+          text: (options.replacementPrefix ?? '') + options.replacementText,
+          prefixLength: (options.replacementPrefix ?? '').length,
           contentLength: options.replacementText.length,
         }
   const newFrom = insertionIndex + insertion.prefixLength
   const newTo = newFrom + insertion.contentLength
   const seam =
     insertionIndex < removeFrom
-      ? removeFrom + insertion.text.length
-      : removeFrom
+      ? deletionFrom + insertion.text.length
+      : deletionFrom
   const mapping: MovePositionMapping = {
     from: range.from,
     to: range.to,
@@ -245,7 +272,7 @@ function applyMoveBlock(
     const finishUpdaterMoves = [...(updatersByDoc.get(doc) ?? [])]
       .map((updater) => updater(mapping))
       .filter((finishMove) => finishMove !== undefined)
-    body.delete(removeFrom, removedLength)
+    body.delete(deletionFrom, removedLength)
     body.insert(insertionIndex, insertion.text)
     finishMemoAnchorMove()
     for (const finishMove of finishUpdaterMoves) finishMove()
@@ -258,7 +285,15 @@ function applyMoveBlock(
       ? {}
       : { originalHeadingLevel: range.headingLevel }),
   }
-  rememberMove(body, move, insertionIndex, insertion, sourceText)
+  rememberMove(
+    body,
+    move,
+    insertionIndex,
+    insertion,
+    sourceText,
+    sourceSeparator.removed,
+    options.replacementText === undefined,
+  )
   return ok(move)
 }
 
@@ -297,7 +332,10 @@ export function reverseBlockMove(
     },
     {
       expectedSelection: history.insertedSelection,
-      replacementText: history.sourceText,
+      ...(history.sourceText === undefined
+        ? {}
+        : { replacementText: history.sourceText }),
+      replacementPrefix: history.sourcePrefix,
       removeRanges: history.separators,
     },
   )
