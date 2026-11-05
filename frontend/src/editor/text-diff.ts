@@ -19,6 +19,12 @@ interface EditTask {
 
 type Task = DiffTask | EqualTask | EditTask
 
+const MAX_DIFF_WORK = 250_000
+
+interface DiffWorkBudget {
+  remaining: number
+}
+
 interface TextChange {
   from: number
   to: number
@@ -46,6 +52,7 @@ function codeUnitLength(characters: string[], from: number, to: number) {
 }
 
 interface DiagonalOptions {
+  budget: DiffWorkBudget
   vector: Int32Array
   offset: number
   diagonal: number
@@ -71,7 +78,11 @@ function advanceDiagonal({
   nextFrom,
   nextTo,
   reverse,
-}: DiagonalOptions): { x: number; y: number } {
+  budget,
+}: DiagonalOptions): { x: number; y: number } | undefined {
+  if (budget.remaining === 0) return undefined
+  budget.remaining -= 1
+
   const vectorIndex = offset + diagonal
   const read = (index: number) => vector[index] ?? -1
   let x =
@@ -81,12 +92,16 @@ function advanceDiagonal({
       : read(vectorIndex - 1) + 1
   let y = x - diagonal
 
-  while (
-    x < previousTo - previousFrom &&
-    y < nextTo - nextFrom &&
-    previous[reverse ? previousTo - x - 1 : previousFrom + x] ===
+  while (x < previousTo - previousFrom && y < nextTo - nextFrom) {
+    if (budget.remaining === 0) return undefined
+    budget.remaining -= 1
+
+    if (
+      previous[reverse ? previousTo - x - 1 : previousFrom + x] !==
       next[reverse ? nextTo - y - 1 : nextFrom + y]
-  ) {
+    )
+      break
+
     x += 1
     y += 1
   }
@@ -102,12 +117,17 @@ function findMiddleSplit(
   next: string[],
   nextFrom: number,
   nextTo: number,
+  budget: DiffWorkBudget,
 ): { previous: number; next: number } | undefined {
   const previousLength = previousTo - previousFrom
   const nextLength = nextTo - nextFrom
   const maxDistance = Math.ceil((previousLength + nextLength) / 2)
   const offset = maxDistance + 1
   const vectorLength = 2 * maxDistance + 3
+  const vectorInitializationWork = 2 * vectorLength
+  if (budget.remaining < vectorInitializationWork) return undefined
+  budget.remaining -= vectorInitializationWork
+
   const forward = new Int32Array(vectorLength).fill(-1)
   const reverse = new Int32Array(vectorLength).fill(-1)
   const delta = previousLength - nextLength
@@ -126,7 +146,8 @@ function findMiddleSplit(
       diagonal <= distance - forwardEnd;
       diagonal += 2
     ) {
-      const { x, y } = advanceDiagonal({
+      const forwardPath = advanceDiagonal({
+        budget,
         vector: forward,
         offset,
         diagonal,
@@ -139,6 +160,8 @@ function findMiddleSplit(
         nextTo,
         reverse: false,
       })
+      if (!forwardPath) return undefined
+      const { x, y } = forwardPath
 
       if (x > previousLength) {
         forwardEnd += 2
@@ -164,7 +187,8 @@ function findMiddleSplit(
       diagonal <= distance - reverseEnd;
       diagonal += 2
     ) {
-      const { x, y } = advanceDiagonal({
+      const reversePath = advanceDiagonal({
+        budget,
         vector: reverse,
         offset,
         diagonal,
@@ -177,6 +201,8 @@ function findMiddleSplit(
         nextTo,
         reverse: true,
       })
+      if (!reversePath) return undefined
+      const { x, y } = reversePath
 
       if (x > previousLength) {
         reverseEnd += 2
@@ -211,6 +237,7 @@ function expandDiffTask(
   previous: string[],
   next: string[],
   tasks: Task[],
+  budget: DiffWorkBudget,
 ): void {
   let prefixLength = 0
   while (
@@ -273,6 +300,7 @@ function expandDiffTask(
       next,
       nextMiddleFrom,
       nextMiddleTo,
+      budget,
     )
 
     if (
@@ -326,6 +354,7 @@ export function diff(previous: string, next: string): TextChange[] {
       nextTo: nextText.length,
     },
   ]
+  const budget = { remaining: MAX_DIFF_WORK }
   let previousPosition = 0
   let nextPosition = 0
   let activeChange: { from: number; nextFrom: number } | undefined
@@ -362,7 +391,7 @@ export function diff(previous: string, next: string): TextChange[] {
       continue
     }
 
-    expandDiffTask(task, previousText, nextText, tasks)
+    expandDiffTask(task, previousText, nextText, tasks, budget)
   }
 
   flushChange()

@@ -38,4 +38,10 @@ describe('diff', () => {
   it('returns no changes for identical text', () => {
     expect(diff('unchanged', 'unchanged')).toEqual([])
   })
+
+  it('replaces the remaining span when the diff work limit is reached', () => {
+    expect(diff('a'.repeat(600), 'b'.repeat(600))).toEqual([
+      { from: 0, to: 600, insert: 'b'.repeat(600) },
+    ])
+  })
 })

@@ -111,6 +111,34 @@ describe('MarkdownEditor', () => {
     expect(body.toJSON()).toEqual('red 🦊 middle blue')
   })
 
+  it('applies a capped body replacement in one Yjs undo step', () => {
+    const previous = 'a'.repeat(600)
+    const replacement = 'b'.repeat(600)
+    const { body, content, editor } = mountMarkdownEditor(previous)
+
+    act(() => {
+      editor.current?.replaceBody(replacement)
+    })
+    const bodyAfterReplace = body.toJSON()
+    content?.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'z',
+        bubbles: true,
+        [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
+      }),
+    )
+
+    const readOutput = () => ({
+      bodyAfterReplace,
+      bodyAfterUndo: body.toJSON(),
+    })
+
+    expect(readOutput()).toEqual({
+      bodyAfterReplace: replacement,
+      bodyAfterUndo: previous,
+    })
+  })
+
   it('keeps typing before a body replacement in a separate Yjs undo step', async () => {
     const { body, content, editor } = mountMarkdownEditor('original body')
     content?.focus()

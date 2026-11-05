@@ -11,7 +11,6 @@ type MarkdownEditorOutput = {
 
 interface ComposeOptions {
   after?: 'backspace' | 'newline'
-  beforeBackspace?: MarkdownEditorOutput
 }
 
 interface ComposeOutput {
@@ -109,7 +108,6 @@ async function compose(
   }
 
   const output: ComposeOutput = { duringComposition, committed }
-  if (options.beforeBackspace) output.afterBackspace = options.beforeBackspace
   if (options.after === 'newline') {
     await pressKey('Enter')
     await nextFrame()
@@ -212,6 +210,26 @@ describe('MarkdownEditor IME', () => {
     })
   })
 
+  it('inserts composed text immediately after a Markdown link', async () => {
+    const { body, content } = mountMarkdownEditor('[label](url)')
+    content?.focus()
+    await pressKey('End')
+
+    const actual = await compose(body, content, '日本語')
+    expect(actual).toEqual({
+      duringComposition: {
+        body: '[label](url)日本語',
+        lines: ['label日本語'],
+        visible: 'label日本語',
+      },
+      committed: {
+        body: '[label](url)日本語',
+        lines: ['label日本語'],
+        visible: 'label日本語',
+      },
+    })
+  })
+
   it('inserts composed text at the end of a line before a code block', async () => {
     const { body, content } = mountMarkdownEditor(
       'before\n```ts\nconst value = 1\n```\nafter',
@@ -256,26 +274,24 @@ describe('MarkdownEditor IME', () => {
     })
   })
 
-  it('inserts composed text after backspacing a new list marker', async () => {
-    const { body, content } = mountMarkdownEditor('- ')
+  it('composes after pressing Enter and Backspace after a list item', async () => {
+    const { body, content } = mountMarkdownEditor('- item')
     content?.focus()
     await pressKey('End')
+    await pressKey('Enter')
     await pressKey('Backspace')
-    await pressKey('Backspace')
-    const actual = await compose(body, content, '日本語', {
-      beforeBackspace: readOutput(body, content),
-    })
+
+    const actual = await compose(body, content, '日本語')
     expect(actual).toEqual({
-      afterBackspace: { body: '', lines: [''], visible: '' },
       duringComposition: {
-        body: '日本語',
-        lines: ['日本語'],
-        visible: '日本語',
+        body: '- item\n  日本語',
+        lines: ['- item', '  日本語'],
+        visible: '- item  日本語',
       },
       committed: {
-        body: '日本語',
-        lines: ['日本語'],
-        visible: '日本語',
+        body: '- item\n  日本語',
+        lines: ['- item', '  日本語'],
+        visible: '- item  日本語',
       },
     })
   })
