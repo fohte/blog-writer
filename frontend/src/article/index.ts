@@ -13,6 +13,7 @@ export {
   dismissMemo,
   getMemoState,
   listMemos,
+  observeMemos,
   restoreMemo,
   setMemoAdoptedTo,
   updateMemoOrder,
