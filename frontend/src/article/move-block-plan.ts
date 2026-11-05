@@ -4,6 +4,7 @@ import { InvalidBlockMoveError } from '#article/errors'
 import type { MoveBlockInput } from '#article/move-block'
 import {
   findHeadingSection,
+  findMoveBlockRange,
   type MarkdownBlockRange,
   topLevelBlocks,
 } from '#article/move-block-structure'
@@ -29,25 +30,6 @@ type PlannedMove = {
   insertedFrom: number
   insertedTo: number
 }
-function findBlockRange(
-  blocks: MarkdownBlockRange[],
-  position: number,
-): Range | undefined {
-  const block = blocks.find(({ from, to }) => from <= position && position < to)
-  return block ? { from: block.from, to: block.to } : undefined
-}
-
-function findRange(
-  markdown: string,
-  from: number,
-  headings: Heading[],
-  blocks: MarkdownBlockRange[],
-): Range | undefined {
-  return (
-    findHeadingSection(markdown, headings, from) ?? findBlockRange(blocks, from)
-  )
-}
-
 export function sectionReplacements(
   markdown: string,
   range: Range,
@@ -175,7 +157,7 @@ export function validateMove(
   }
 
   const blocks = topLevelBlocks(markdown)
-  const range = findRange(markdown, input.from, headings, blocks)
+  const range = findMoveBlockRange(markdown, input.from, headings, blocks)
   if (!range)
     return err(new InvalidBlockMoveError('No Markdown block at position'))
   if (isInsideBlock(blocks, input.destination))

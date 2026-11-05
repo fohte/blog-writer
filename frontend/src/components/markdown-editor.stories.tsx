@@ -4,10 +4,12 @@ import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
 import { MarkdownEditor } from '#editor/index'
+import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
 
 interface StoryArgs {
   content: string
   initialSelection?: { anchor: number; head?: number }
+  showMoveHandles?: boolean
 }
 
 const defaultContent = [
@@ -38,23 +40,32 @@ const otherSyntaxContent = [
   '> The blockquote stays as source text.',
 ].join('\n')
 
-function MarkdownEditorPreview({ content, initialSelection }: StoryArgs) {
-  const { body, doc } = useMemo(() => {
+function MarkdownEditorPreview({
+  content,
+  initialSelection,
+  showMoveHandles = false,
+}: StoryArgs) {
+  const { body, doc, history, extensions } = useMemo(() => {
     const doc = new Y.Doc()
     getBody(doc).insert(0, content)
-    return { body: getBody(doc), doc }
-  }, [content])
+    const history = showMoveHandles ? createMoveHistory(doc) : undefined
+    const extensions = history ? [createOutlineEditorExtension(history)] : []
+    return { body: getBody(doc), doc, history, extensions }
+  }, [content, showMoveHandles])
 
   useEffect(() => {
     return () => {
+      history?.destroy()
       doc.destroy()
     }
-  }, [doc])
+  }, [doc, history])
 
   return (
     <div style={{ height: '32rem' }}>
       <MarkdownEditor
         text={body}
+        {...(history ? { history } : {})}
+        extensions={extensions}
         {...(initialSelection ? { initialSelection } : {})}
       />
     </div>
@@ -98,5 +109,15 @@ export const OtherMarkdownSyntax: Story = {
   args: {
     content: otherSyntaxContent,
     initialSelection: { anchor: otherSyntaxContent.length },
+  },
+}
+
+export const BlockMoveHandles: Story = {
+  name: 'the editor shows drag handles beside Markdown blocks.',
+  args: {
+    content:
+      '# Overview\n\nA first paragraph.\n\n## Details\n\nA second paragraph.\n',
+    initialSelection: { anchor: 0 },
+    showMoveHandles: true,
   },
 }

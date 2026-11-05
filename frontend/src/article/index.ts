@@ -31,6 +31,7 @@ export {
   registerBlockMoveUpdater,
   reverseBlockMove,
 } from '#article/move-block'
+export { findMoveBlockRange } from '#article/move-block-structure'
 export { getPremise, setPremise } from '#article/premise'
 export type {
   Heading,
