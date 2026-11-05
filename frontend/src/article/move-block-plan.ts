@@ -9,6 +9,20 @@ import type { Heading } from '#article/types'
 export type Range = { from: number; to: number; headingLevel?: number }
 export type TextReplacement = { from: number; to: number; text: string }
 export type ValidatedMove = { range: Range; targetLevel?: number }
+export type MoveSource = { text: string; prefix: string }
+export type MoveInsertion = {
+  text: string
+  prefixLength: number
+  contentLength: number
+}
+type PlannedMove = {
+  deletionFrom: number
+  removedLength: number
+  insertionIndex: number
+  insertion: MoveInsertion
+  seam: number
+  sourcePrefix: string
+}
 type MarkdownBlockRange = { from: number; contentTo: number; to: number }
 
 const markdownParser = parser.configure(GFM)
@@ -147,6 +161,19 @@ function leadingNewlines(text: string): number {
   return text.length - text.replace(/^\n+/, '').length
 }
 
+function normalizeTrailingNewlines(text: string): {
+  text: string
+  removed: string
+} {
+  const trailing = /\n+$/.exec(text)?.[0] ?? ''
+  if (trailing.length < 2) return { text, removed: '' }
+
+  return {
+    text: text.slice(0, text.length - trailing.length + 1),
+    removed: trailing.slice(1),
+  }
+}
+
 function missingSeparator(left: string, right: string): number {
   return Math.max(0, 2 - trailingNewlines(left) - leadingNewlines(right))
 }
@@ -282,11 +309,11 @@ export function transformedText(
   return text
 }
 
-export function getInsertionText(
+function getInsertionText(
   remaining: string,
   insertionIndex: number,
   movedText: string,
-): { text: string; prefixLength: number; contentLength: number } {
+): MoveInsertion {
   const before = remaining.slice(0, insertionIndex)
   const after = remaining.slice(insertionIndex)
   const contentText = movedText.replace(/\n+$/, '\n')
@@ -301,5 +328,57 @@ export function getInsertionText(
     text: prefix + contentText + suffix,
     prefixLength,
     contentLength: contentText.length,
+  }
+}
+
+export function planBlockMove(input: {
+  markdown: string
+  removeFrom: number
+  removeTo: number
+  destination: number
+  movedText: string
+  replacement?: MoveSource
+}): PlannedMove {
+  const {
+    markdown,
+    removeFrom,
+    removeTo,
+    destination,
+    movedText,
+    replacement,
+  } = input
+  const remainingBeforeNormalization =
+    markdown.slice(0, removeFrom) + markdown.slice(removeTo)
+  const sourceSeparator =
+    replacement === undefined && removeTo === markdown.length
+      ? normalizeTrailingNewlines(remainingBeforeNormalization)
+      : { text: remainingBeforeNormalization, removed: '' }
+  const deletionFrom = removeFrom - sourceSeparator.removed.length
+  const removedLength = removeTo - deletionFrom
+  const insertionIndex =
+    destination >= removeTo
+      ? destination - removedLength
+      : destination >= deletionFrom
+        ? deletionFrom
+        : destination
+  const insertion =
+    replacement === undefined
+      ? getInsertionText(sourceSeparator.text, insertionIndex, movedText)
+      : {
+          text: replacement.prefix + replacement.text,
+          prefixLength: replacement.prefix.length,
+          contentLength: replacement.text.length,
+        }
+
+  return {
+    deletionFrom,
+    removedLength,
+    insertionIndex,
+    insertion,
+    seam:
+      insertionIndex < removeFrom
+        ? deletionFrom + insertion.text.length
+        : deletionFrom,
+    sourcePrefix: sourceSeparator.removed,
   }
 }

@@ -5,10 +5,11 @@ import * as Y from 'yjs'
 import { getBody } from '#article/body'
 import { InvalidBlockMoveError } from '#article/errors'
 import { prepareMemoAnchorMove } from '#article/memos'
+import type { MoveInsertion, MoveSource } from '#article/move-block-plan'
 import {
   collectHeadings,
-  getInsertionText,
   mapWithinRange,
+  planBlockMove,
   sectionReplacements,
   transformedText,
   validateMove,
@@ -60,32 +61,17 @@ type MoveHistory = {
   movedFrom: Y.RelativePosition
   seam: Y.RelativePosition
   insertedSelection: string
-  sourceText?: string
-  sourcePrefix: string
+  source?: MoveSource
   separators: AnchoredTextRange[]
 }
 type ApplyMoveOptions = {
   expectedSelection?: string
-  replacementText?: string
-  replacementPrefix?: string
+  replacement?: MoveSource
   removeRanges?: AnchoredTextRange[]
 }
 
 const updatersByDoc = new WeakMap<Y.Doc, Set<BlockMoveUpdater>>()
 const historyByMove = new WeakMap<MoveBlockResult, MoveHistory>()
-
-function normalizeTrailingNewlines(text: string): {
-  text: string
-  removed: string
-} {
-  const trailing = /\n+$/.exec(text)?.[0] ?? ''
-  if (trailing.length < 2) return { text, removed: '' }
-
-  return {
-    text: text.slice(0, text.length - trailing.length + 1),
-    removed: trailing.slice(1),
-  }
-}
 
 function resolvePosition(
   doc: Y.Doc,
@@ -118,15 +104,14 @@ function resolveTextRange(
   return { from, to }
 }
 
-function rememberMove(
-  body: Y.Text,
-  move: MoveBlockResult,
-  insertionIndex: number,
-  insertion: { text: string; prefixLength: number; contentLength: number },
-  sourceText: string,
-  sourcePrefix: string,
-  restoreSource: boolean,
-): void {
+function rememberMove(input: {
+  body: Y.Text
+  move: MoveBlockResult
+  insertionIndex: number
+  insertion: MoveInsertion
+  source?: MoveSource
+}): void {
+  const { body, move, insertionIndex, insertion, source } = input
   const prefix = insertion.text.slice(0, insertion.prefixLength)
   const suffix = insertion.text.slice(
     insertion.prefixLength + insertion.contentLength,
@@ -155,8 +140,7 @@ function rememberMove(
     movedFrom: Y.createRelativePositionFromTypeIndex(body, move.from, 1),
     seam: Y.createRelativePositionFromTypeIndex(body, move.seam, 1),
     insertedSelection: insertion.text.slice(insertion.prefixLength),
-    ...(restoreSource ? { sourceText } : {}),
-    sourcePrefix: restoreSource ? sourcePrefix : '',
+    ...(source === undefined ? {} : { source }),
     separators,
   })
 }
@@ -221,35 +205,20 @@ function applyMoveBlock(
     range.to,
     ...resolvedRanges.map((resolved) => resolved.to),
   )
-  const remainingBeforeNormalization =
-    markdown.slice(0, removeFrom) + markdown.slice(removeTo)
-  const sourceSeparator =
-    options.replacementText === undefined && removeTo === markdown.length
-      ? normalizeTrailingNewlines(remainingBeforeNormalization)
-      : { text: remainingBeforeNormalization, removed: '' }
-  const deletionFrom = removeFrom - sourceSeparator.removed.length
-  const removedLength = removeTo - deletionFrom
-  const insertionIndex =
-    input.destination >= removeTo
-      ? input.destination - removedLength
-      : input.destination >= deletionFrom
-        ? deletionFrom
-        : input.destination
-  const remaining = sourceSeparator.text
-  const insertion =
-    options.replacementText === undefined
-      ? getInsertionText(remaining, insertionIndex, movedText)
-      : {
-          text: (options.replacementPrefix ?? '') + options.replacementText,
-          prefixLength: (options.replacementPrefix ?? '').length,
-          contentLength: options.replacementText.length,
-        }
+  const plannedMove = planBlockMove({
+    markdown,
+    removeFrom,
+    removeTo,
+    destination: input.destination,
+    movedText,
+    ...(options.replacement === undefined
+      ? {}
+      : { replacement: options.replacement }),
+  })
+  const { deletionFrom, removedLength, insertionIndex, insertion, seam } =
+    plannedMove
   const newFrom = insertionIndex + insertion.prefixLength
   const newTo = newFrom + insertion.contentLength
-  const seam =
-    insertionIndex < removeFrom
-      ? deletionFrom + insertion.text.length
-      : deletionFrom
   const mapping: MovePositionMapping = {
     from: range.from,
     to: range.to,
@@ -285,15 +254,20 @@ function applyMoveBlock(
       ? {}
       : { originalHeadingLevel: range.headingLevel }),
   }
-  rememberMove(
+  rememberMove({
     body,
     move,
     insertionIndex,
     insertion,
-    sourceText,
-    sourceSeparator.removed,
-    options.replacementText === undefined,
-  )
+    ...(options.replacement === undefined
+      ? {
+          source: {
+            text: sourceText,
+            prefix: plannedMove.sourcePrefix,
+          },
+        }
+      : {}),
+  })
   return ok(move)
 }
 
@@ -332,10 +306,7 @@ export function reverseBlockMove(
     },
     {
       expectedSelection: history.insertedSelection,
-      ...(history.sourceText === undefined
-        ? {}
-        : { replacementText: history.sourceText }),
-      replacementPrefix: history.sourcePrefix,
+      ...(history.source === undefined ? {} : { replacement: history.source }),
       removeRanges: history.separators,
     },
   )
