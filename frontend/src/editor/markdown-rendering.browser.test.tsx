@@ -30,6 +30,42 @@ describe('Markdown rendering', () => {
     expect(content?.textContent).toEqual('before [label](url) after')
   })
 
+  it.each([
+    {
+      name: 'heading',
+      markdown: '# Heading',
+      cursor: 3,
+      expected: '# Heading',
+    },
+    {
+      name: 'bold',
+      markdown: '**bold**',
+      cursor: 3,
+      expected: '**bold**',
+    },
+    {
+      name: 'inline code',
+      markdown: '`code`',
+      cursor: 2,
+      expected: '`code`',
+    },
+    {
+      name: 'strikethrough',
+      markdown: '~~strike~~',
+      cursor: 3,
+      expected: '~~strike~~',
+    },
+  ])(
+    'shows all $name markers while the cursor is inside its span',
+    ({ markdown, cursor, expected }) => {
+      const { content } = mountMarkdownEditor(markdown)
+      const view = content ? EditorView.findFromDOM(content) : null
+      view?.dispatch({ selection: { anchor: cursor } })
+
+      expect(content?.textContent).toEqual(expected)
+    },
+  )
+
   it('colors language-aware code tokens with shared CSS variables', async () => {
     const { content } = mountMarkdownEditor('```js\nconst value = "text"\n```')
     content?.style.setProperty('--tint-green-foreground', '#123456')

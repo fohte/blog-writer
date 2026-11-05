@@ -7,7 +7,7 @@ import * as Y from 'yjs'
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
 
 describe('MarkdownEditor', () => {
-  it('formats Markdown source', () => {
+  it('shows heading and inline-code markers while the cursor is in their ranges', () => {
     const { content, host } = mountMarkdownEditor(
       '## Heading **bold** and `code`',
     )
@@ -28,7 +28,7 @@ describe('MarkdownEditor', () => {
     })
 
     expect(readOutput()).toEqual({
-      text: 'Heading bold and code',
+      text: '## Heading bold and `code`',
       headingClass: 'cm-line cm-md-heading cm-md-heading-2',
     })
   })

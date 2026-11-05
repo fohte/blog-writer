@@ -20,6 +20,7 @@ export interface MarkdownEditorHandle {
 export interface MarkdownEditorProps {
   text: Y.Text
   extensions?: Extension[]
+  initialSelection?: { anchor: number; head?: number }
   ariaLabel?: string
   className?: string
 }
@@ -30,13 +31,20 @@ export const MarkdownEditor = forwardRef<
   MarkdownEditorHandle,
   MarkdownEditorProps
 >(function MarkdownEditor(
-  { text, extensions = noExtensions, ariaLabel = 'Article body', className },
+  {
+    text,
+    extensions = noExtensions,
+    initialSelection,
+    ariaLabel = 'Article body',
+    className,
+  },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const undoManagerRef = useRef<Y.UndoManager | null>(null)
   const extensionsCompartment = useRef(new Compartment()).current
+  const initialSelectionRef = useRef(initialSelection).current
 
   useImperativeHandle(
     ref,
@@ -59,6 +67,7 @@ export const MarkdownEditor = forwardRef<
       parent: host,
       state: EditorState.create({
         doc: text.toJSON(),
+        selection: initialSelectionRef ?? { anchor: 0 },
         extensions: [
           markdown({ extensions: GFM, codeLanguages: languages }),
           syntaxHighlighting(markdownHighlightStyle),

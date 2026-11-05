@@ -100,10 +100,20 @@ function buildDecorations(state: EditorState): DecorationSet {
       cursor.name === 'StrikethroughMark' ||
       cursor.name === 'LinkMark' ||
       isInlineCodeMark
+    const markupParent = cursor.node.parent
+    const isEditableMarkup =
+      markupParent !== null &&
+      ((cursor.name === 'HeaderMark' &&
+        /^ATXHeading[1-6]$/u.test(markupParent.name)) ||
+        cursor.name === 'EmphasisMark' ||
+        cursor.name === 'StrikethroughMark' ||
+        isInlineCodeMark) &&
+      selectionIntersects(state, markupParent.from, markupParent.to)
 
     if (
       isHiddenMark &&
       !selected(cursor.from, cursor.to) &&
+      !isEditableMarkup &&
       !isLinkParenthesis &&
       !(isLinkMark && isActiveLink)
     ) {
