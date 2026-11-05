@@ -192,6 +192,25 @@ function randomTrial(
   Y.applyUpdate(reference, Y.encodeStateAsUpdate(offline))
   Y.applyUpdate(offline, Y.encodeStateAsUpdate(reference))
 
+  const cleanup = () => {
+    for (const editor of all) editor.stop()
+    for (const doc of [...all.map(({ doc }) => doc), S, reference, offline]) {
+      doc.destroy()
+    }
+  }
+  const failedTrial = (detail: string) => {
+    cleanup()
+    return {
+      converged: false,
+      strayEq: false,
+      detectionsAgree: false,
+      convergeAfterFix: false,
+      noStrayLeft: false,
+      matchesLinearizedContent: false,
+      detail,
+    }
+  }
+
   const destinations: Destination[] = [pick(['top', 'end'])]
   if (chained) {
     destinations.push(destinations[0] === 'top' ? 'end' : pick(['top', 'mid']))
@@ -204,19 +223,7 @@ function randomTrial(
       phase: 'linearized move',
       ...expectedResult.error,
     })
-    for (const editor of all) editor.stop()
-    for (const doc of [...all.map(({ doc }) => doc), S, reference, offline]) {
-      doc.destroy()
-    }
-    return {
-      converged: false,
-      strayEq: false,
-      detectionsAgree: false,
-      convergeAfterFix: false,
-      noStrayLeft: false,
-      matchesLinearizedContent: false,
-      detail,
-    }
+    return failedTrial(detail)
   }
   const expected = expectedResult.body
 
@@ -231,19 +238,7 @@ function randomTrial(
         body: readBody(A.doc),
         error,
       })
-      for (const editor of all) editor.stop()
-      for (const doc of [...all.map(({ doc }) => doc), S, reference, offline]) {
-        doc.destroy()
-      }
-      return {
-        converged: false,
-        strayEq: false,
-        detectionsAgree: false,
-        convergeAfterFix: false,
-        noStrayLeft: false,
-        matchesLinearizedContent: false,
-        detail,
-      }
+      return failedTrial(detail)
     }
   }
   const order = pick(['ab', 'ba', 'sa', 'sb'] as const)
@@ -296,10 +291,7 @@ function randomTrial(
           detections,
         })
 
-  for (const editor of all) editor.stop()
-  for (const doc of [...all.map(({ doc }) => doc), S, reference, offline]) {
-    doc.destroy()
-  }
+  cleanup()
   return {
     converged,
     strayEq,
