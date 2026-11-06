@@ -14,12 +14,16 @@ import {
   memoAdoptionErrorMessage,
 } from '#memos/adoption'
 import type { MoveHistory } from '#outline/move-history'
+import type { OutlineProposalState } from '#proposals/outline'
 
 export interface ArticleOutlineProps {
   doc: Y.Doc
   history: MoveHistory
   view: EditorView
   activeFrom?: number
+  proposalState?: OutlineProposalState
+  onProposalAccept?: (id: string) => void
+  onProposalReject?: (id: string) => void
 }
 
 const HISTORY_FAILURE_PRESENTATION = {
@@ -45,6 +49,9 @@ export function ArticleOutline({
   history,
   view,
   activeFrom,
+  proposalState,
+  onProposalAccept,
+  onProposalReject,
 }: ArticleOutlineProps) {
   const { headings, markdown } = useArticleHeadings(doc)
   const [error, setError] = useState<string>()
@@ -154,9 +161,12 @@ export function ArticleOutline({
         ? {}
         : { activeFrom: selectedHeadingFrom })}
       {...(error === undefined ? {} : { error })}
+      {...(proposalState === undefined ? {} : { proposalState })}
       onMove={handleMove}
       onAdoptMemo={handleAdoptMemo}
       onInsertMemo={handleInsertMemo}
+      {...(onProposalAccept === undefined ? {} : { onProposalAccept })}
+      {...(onProposalReject === undefined ? {} : { onProposalReject })}
       onSelect={(from) => {
         setError(undefined)
         view.focus()

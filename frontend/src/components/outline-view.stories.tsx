@@ -79,3 +79,26 @@ export const MoveError: Story = {
   name: 'the outline explains why a move could not be completed.',
   args: { error: 'この位置には移動できません。' },
 }
+
+export const HeadingSuggestions: Story = {
+  name: 'the outline shows heading additions and edits with accept and reject actions.',
+  args: {
+    proposalState: {
+      generating: false,
+      suggestions: [
+        { id: 'rename', from: 13, to: 21, replacement: '## Outcomes' },
+        { id: 'add', from: 35, to: 35, replacement: '## Summary' },
+        { id: 'delete', from: 36, to: 47, replacement: '' },
+      ],
+    },
+    onProposalAccept: () => {},
+    onProposalReject: () => {},
+  },
+}
+
+export const GeneratingHeadingSuggestions: Story = {
+  name: 'the outline shows that heading suggestions are being created.',
+  args: {
+    proposalState: { generating: true, suggestions: [] },
+  },
+}

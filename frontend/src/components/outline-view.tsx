@@ -21,7 +21,25 @@ import {
   OutlineDropGap,
   type OutlineGapDropTarget,
 } from '#components/outline-drop-gap'
+import {
+  headingText,
+  OutlineProposalRow,
+  proposalDiffActions,
+  proposalHandlers,
+} from '#components/outline-proposal-row'
+import { stopButtonClickPropagation } from '#components/outline-view/stop-button-click-propagation'
+import {
+  type FlatHeading,
+  outlineViewEntries,
+  sectionEnd,
+  siblingHeading,
+} from '#components/outline-view-utils'
+import { SuggestionDiff } from '#components/suggestion-diff'
 import { memoIdFrom } from '#outline/memo-drag'
+import type {
+  OutlineProposalState,
+  OutlineSuggestion,
+} from '#proposals/outline'
 
 type OutlineDropTarget =
   | { kind: 'move'; from: number; placement: 'before' | 'after' | 'child' }
@@ -38,43 +56,11 @@ export interface OutlineViewProps {
   error?: string
   onAdoptMemo?: ((memoId: string, markerIndex: number) => void) | undefined
   onInsertMemo?: (memoId: string, beforeFrom?: number) => void
+  proposalState?: OutlineProposalState
   onSelect: (from: number) => void
   onMove: (input: MoveBlockInput) => void
-}
-
-type FlatHeading = ReturnType<typeof flattenHeadingTreeWithDepth>[number]
-
-function sectionEnd(headings: FlatHeading[], from: number, bodyLength: number) {
-  const index = headings.findIndex(({ heading }) => heading.from === from)
-  const current = headings[index]?.heading
-  if (!current) return bodyLength
-  return (
-    headings
-      .slice(index + 1)
-      .find(({ heading }) => heading.level <= current.level)?.heading.from ??
-    bodyLength
-  )
-}
-
-function siblingHeading(
-  headings: FlatHeading[],
-  from: number,
-  direction: 'previous' | 'next',
-): Heading | undefined {
-  const index = headings.findIndex(({ heading }) => heading.from === from)
-  const current = headings[index]
-  if (!current) return undefined
-  const step = direction === 'previous' ? -1 : 1
-  for (
-    let candidateIndex = index + step;
-    candidateIndex >= 0;
-    candidateIndex += step
-  ) {
-    const candidate = headings[candidateIndex]
-    if (!candidate || candidate.depth < current.depth) return undefined
-    if (candidate.depth === current.depth) return candidate.heading
-  }
-  return undefined
+  onProposalAccept?: (id: string) => void
+  onProposalReject?: (id: string) => void
 }
 
 function blockFrom(source: { data: Record<string, unknown> }) {
@@ -96,6 +82,9 @@ function OutlineRow({
   onSelect,
   onMove,
   onAdoptMemo,
+  proposal,
+  onProposalAccept,
+  onProposalReject,
 }: {
   heading: Heading
   depth: number
@@ -108,6 +97,9 @@ function OutlineRow({
   onSelect: () => void
   onMove: (input: MoveBlockInput) => void
   onAdoptMemo?: ((memoId: string, markerIndex: number) => void) | undefined
+  proposal?: OutlineSuggestion
+  onProposalAccept?: (id: string) => void
+  onProposalReject?: (id: string) => void
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<HTMLButtonElement>(null)
@@ -247,9 +239,24 @@ function OutlineRow({
       >
         <span
           className="min-w-0 flex-1 truncate"
+          onClick={stopButtonClickPropagation}
           style={{ paddingInlineStart: `${String(depth)}rem` }}
         >
-          {heading.text || 'Untitled heading'}
+          {proposal ? (
+            <SuggestionDiff
+              focused
+              inline
+              original={heading.text || 'Untitled heading'}
+              replacement={headingText(proposal.replacement)}
+              {...proposalDiffActions(
+                proposal,
+                onProposalAccept,
+                onProposalReject,
+              )}
+            />
+          ) : (
+            heading.text || 'Untitled heading'
+          )}
         </span>
         <Popover anchor={handleRef} onOpenChange={setMenuOpen} open={menuOpen}>
           <button
@@ -349,8 +356,11 @@ export function OutlineView({
   error,
   onAdoptMemo,
   onInsertMemo,
+  proposalState,
   onSelect,
   onMove,
+  onProposalAccept,
+  onProposalReject,
 }: OutlineViewProps) {
   const flattened = useMemo(
     () => flattenHeadingTreeWithDepth(headings),
@@ -383,6 +393,9 @@ export function OutlineView({
     (gapDropTarget?.kind === 'memo-gap' ||
       gapDropTarget?.kind === 'block-gap') &&
     gapDropTarget.beforeFrom === beforeFrom
+  const suggestions = proposalState?.suggestions ?? []
+  const handlers = proposalHandlers(onProposalAccept, onProposalReject)
+  const entries = outlineViewEntries(flattened, suggestions)
 
   return (
     <section
@@ -393,7 +406,10 @@ export function OutlineView({
       {error !== undefined && error.length > 0 ? (
         <p role="alert">{error}</p>
       ) : null}
-      {flattened.length === 0 ? (
+      {proposalState?.generating === true ? (
+        <SuggestionDiff generating original="" replacement="" />
+      ) : null}
+      {entries.length === 0 ? (
         <>
           <p className="text-sm text-muted-foreground">No headings yet.</p>
           <OutlineDropGap
@@ -406,35 +422,48 @@ export function OutlineView({
         </>
       ) : (
         <List aria-label="Headings" role="listbox">
-          {flattened.map(({ heading, depth }) => (
-            <Fragment key={heading.from}>
-              <OutlineDropGap
-                active={isGapActive(heading.from)}
-                beforeFrom={heading.from}
-                bodyLength={bodyLength}
-                onDragChange={handleGapDragChange}
-                onInsertMemo={onInsertMemo}
-                onMove={onMove}
+          {entries.map((entry) =>
+            entry.kind === 'heading' ? (
+              <Fragment key={`heading-${String(entry.from)}`}>
+                <OutlineDropGap
+                  active={isGapActive(entry.heading.from)}
+                  beforeFrom={entry.heading.from}
+                  bodyLength={bodyLength}
+                  onDragChange={handleGapDragChange}
+                  onInsertMemo={onInsertMemo}
+                  onMove={onMove}
+                />
+                <OutlineRow
+                  active={entry.heading.from === activeFrom}
+                  allHeadings={flattened}
+                  bodyLength={bodyLength}
+                  depth={entry.depth}
+                  dropTarget={
+                    dropTarget?.kind === 'move' ? dropTarget : gapDropTarget
+                  }
+                  heading={entry.heading}
+                  onAdoptMemo={onAdoptMemo}
+                  onMemoDropTargetChange={setLocalGapDropTarget}
+                  onMove={onMove}
+                  {...handlers}
+                  onSelect={() => {
+                    onSelect(entry.heading.from)
+                  }}
+                  openMenu={openMenuFrom === entry.heading.from}
+                  {...(entry.proposal === undefined
+                    ? {}
+                    : { proposal: entry.proposal })}
+                />
+              </Fragment>
+            ) : (
+              <OutlineProposalRow
+                depth={entry.depth}
+                key={entry.proposal.id}
+                {...handlers}
+                proposal={entry.proposal}
               />
-              <OutlineRow
-                active={heading.from === activeFrom}
-                allHeadings={flattened}
-                bodyLength={bodyLength}
-                depth={depth}
-                dropTarget={
-                  dropTarget?.kind === 'move' ? dropTarget : gapDropTarget
-                }
-                heading={heading}
-                onAdoptMemo={onAdoptMemo}
-                onMemoDropTargetChange={setLocalGapDropTarget}
-                onMove={onMove}
-                onSelect={() => {
-                  onSelect(heading.from)
-                }}
-                openMenu={heading.from === openMenuFrom}
-              />
-            </Fragment>
-          ))}
+            ),
+          )}
           <OutlineDropGap
             active={isGapActive()}
             bodyLength={bodyLength}
