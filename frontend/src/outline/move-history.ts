@@ -21,6 +21,7 @@ import {
   type MoveBlockResult,
   recordMoveConflictRestoration,
   resolveMoveBlockStart,
+  restoreMemoAdoptionHistory,
   restoreMemoAdoptions,
   reverseBlockMove,
 } from '#article/index'
@@ -31,6 +32,7 @@ import { moveEntryForReverseStep } from '#outline/move-history-transitions'
 import type {
   HistoryEntry,
   HistoryStateValue,
+  MemoAdoptionHistoryRecord,
   MoveHistory,
   MoveHistoryStep,
   TextHistoryEntry,
@@ -38,6 +40,8 @@ import type {
 } from '#outline/move-history-types'
 
 const textHistoryStep = Annotation.define<TextHistoryStep>()
+const recordMemoAdoptionHistory =
+  StateEffect.define<MemoAdoptionHistoryRecord>()
 const recordMove = StateEffect.define<MoveBlockResult>()
 const applyMoveHistoryStep = StateEffect.define<MoveHistoryStep>()
 const dropHistoryEntry = StateEffect.define<{
@@ -48,6 +52,10 @@ const clearHistory = StateEffect.define()
 const newGroupDelay = 500
 const maxHistoryDepth = 100
 const joinableUserEvent = /^(input\.type|delete)($|\.)/u
+
+export function memoAdoptionHistoryEffect(record: MemoAdoptionHistoryRecord) {
+  return recordMemoAdoptionHistory.of(record)
+}
 
 function pushHistoryEntry(stack: HistoryEntry[], entry: HistoryEntry): void {
   stack.push(entry)
@@ -133,7 +141,10 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         pushHistoryEntry(to, {
           ...entry,
           inverse: transaction.changes.invert(transaction.startState.doc),
-          memoAdoptions: step.memoAdoptions,
+          memoAdoptions:
+            entry.memoAdoptionChanges.length === 0
+              ? step.memoAdoptions
+              : mapMemoAdoptions(entry.memoAdoptions, transaction.changes),
           selectionBefore: entry.selectionAfter,
           selectionAfter: entry.selectionBefore,
         })
@@ -202,12 +213,22 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
           ),
           transaction.changes,
         )
+        const adoptionRecord = transaction.effects.find((effect) =>
+          effect.is(recordMemoAdoptionHistory),
+        )
         const isolation = transaction.annotation(isolateHistory)
         const inverse = transaction.changes.invert(transaction.startState.doc)
         const next: TextHistoryEntry = {
           kind: 'text',
           inverse,
-          memoAdoptions,
+          memoAdoptions:
+            adoptionRecord?.is(recordMemoAdoptionHistory) === true
+              ? [...memoAdoptions, adoptionRecord.value.redoSnapshot]
+              : memoAdoptions,
+          memoAdoptionChanges:
+            adoptionRecord?.is(recordMemoAdoptionHistory) === true
+              ? [adoptionRecord.value.change]
+              : [],
           selectionBefore: transaction.startState.selection,
           selectionAfter: transaction.newSelection,
           userEvent: transaction.annotation(Transaction.userEvent),
@@ -228,6 +249,10 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
             ...previous,
             inverse: next.inverse.compose(previous.inverse),
             memoAdoptions: [...mappedSnapshots, ...next.memoAdoptions],
+            memoAdoptionChanges: [
+              ...previous.memoAdoptionChanges,
+              ...next.memoAdoptionChanges,
+            ],
             selectionAfter: next.selectionAfter,
             userEvent: next.userEvent,
             time: next.time,
@@ -278,6 +303,14 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         )
       }
       if (!step) continue
+
+      if (step.direction === 'undo') {
+        restoreMemoAdoptionHistory(
+          doc,
+          step.entry.memoAdoptionChanges,
+          step.memoAdoptions,
+        )
+      }
 
       const snapshots = mapMemoAdoptions(
         step.entry.memoAdoptions,

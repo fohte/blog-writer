@@ -42,6 +42,10 @@ export function observeMemos(doc: Y.Doc, listener: () => void): () => void {
   }
 }
 
+export function getMemoAdoptedTo(doc: Y.Doc, id: string): unknown {
+  return getMemoMap(doc, id)?.get('adoptedTo')
+}
+
 function getMemoMap(doc: Y.Doc, id: string): MemoData | undefined {
   return getMemosMap(doc).get(id)
 }
@@ -257,6 +261,29 @@ export function restoreMemoAdoptions(
   }
 }
 
+export function restoreMemoAdoptionHistory(
+  doc: Y.Doc,
+  changes: readonly { id: string; previousAdoptedTo: unknown }[],
+  expectedAdoptions: readonly MemoAdoptionSnapshot[],
+): void {
+  for (const change of changes) {
+    const memo = getMemoMap(doc, change.id)
+    const expected = expectedAdoptions.find(({ id }) => id === change.id)
+    if (
+      !memo ||
+      memo.get('dismissed') === true ||
+      expected === undefined ||
+      JSON.stringify(memo.get('adoptedTo')) !==
+        JSON.stringify(expected.adoptedTo)
+    ) {
+      continue
+    }
+
+    if (change.previousAdoptedTo === undefined) memo.delete('adoptedTo')
+    else memo.set('adoptedTo', change.previousAdoptedTo)
+  }
+}
+
 export function addMemo(
   doc: Y.Doc,
   input: AddMemoInput,
@@ -359,6 +386,7 @@ export function prepareMemoAnchorMove(
     if (Y.getItem(doc.store, itemId).deleted) continue
 
     const oldIndex = absolutePosition.index - 1
+    if (oldIndex === mapping.to) continue
     const newIndex = mapping.mapPosition(oldIndex)
     if (newIndex === undefined) continue
     relocations.push({ memo, index: newIndex })

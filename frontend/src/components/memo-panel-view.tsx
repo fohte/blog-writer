@@ -65,7 +65,6 @@ export function MemoPanelView({
           getInitialData: () => ({
             kind: 'memo',
             memoId: memo.id,
-            text: memo.text,
           }),
         }),
       ]
@@ -132,7 +131,6 @@ export function MemoPanelView({
                           dragHandleRefs.current.set(memo.id, element)
                         else dragHandleRefs.current.delete(memo.id)
                       }}
-                      style={{ touchAction: 'none' }}
                       type="button"
                     >
                       ⠿

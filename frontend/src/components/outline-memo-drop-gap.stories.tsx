@@ -6,9 +6,11 @@ const meta = {
   component: OutlineMemoDropGap,
   args: {
     beforeFrom: 24,
+    bodyLength: 80,
     active: false,
     onDragChange: () => {},
     onInsertMemo: () => {},
+    onMove: () => {},
   },
 } satisfies Meta<typeof OutlineMemoDropGap>
 
@@ -16,10 +18,10 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const ReadyForDrop: Story = {
-  name: 'the outline leaves a gap where a memo can become a heading.',
+  name: 'the outline leaves a gap for dropped content.',
 }
 
 export const ActiveDrop: Story = {
-  name: 'the outline highlights a gap under the dragged memo.',
+  name: 'the outline highlights a drop gap.',
   args: { active: true },
 }

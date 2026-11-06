@@ -17,13 +17,17 @@ import {
 import type { MoveBlockInput } from '#article/index'
 import { flattenHeadingTreeWithDepth } from '#article/index'
 import type { Heading } from '#article/types'
-import { OutlineMemoDropGap } from '#components/outline-memo-drop-gap'
+import {
+  OutlineMemoDropGap,
+  type OutlineMemoGapTarget,
+} from '#components/outline-memo-drop-gap'
 import { memoIdFrom } from '#outline/memo-drag'
 
 type OutlineDropTarget =
   | { kind: 'move'; from: number; placement: 'before' | 'after' | 'child' }
   | { kind: 'memo-heading'; from: number }
   | { kind: 'memo-gap'; beforeFrom?: number }
+  | { kind: 'block-gap'; beforeFrom?: number }
 
 export interface OutlineViewProps {
   headings: Heading[]
@@ -352,20 +356,33 @@ export function OutlineView({
     () => flattenHeadingTreeWithDepth(headings),
     [headings],
   )
-  const [localMemoDropTarget, setLocalMemoDropTarget] =
+  const [localGapDropTarget, setLocalGapDropTarget] =
     useState<OutlineDropTarget>()
   const memoDropTarget =
-    dropTarget?.kind === 'memo-heading' || dropTarget?.kind === 'memo-gap'
+    dropTarget?.kind === 'memo-heading' ||
+    dropTarget?.kind === 'memo-gap' ||
+    dropTarget?.kind === 'block-gap'
       ? dropTarget
-      : localMemoDropTarget
+      : localGapDropTarget
   const handleMemoGapDragChange = useCallback(
-    (target: { beforeFrom?: number } | undefined) => {
-      setLocalMemoDropTarget(
-        target === undefined ? undefined : { kind: 'memo-gap', ...target },
+    (target: OutlineMemoGapTarget | undefined) => {
+      setLocalGapDropTarget(
+        target === undefined
+          ? undefined
+          : {
+              kind: target.kind === 'memo' ? 'memo-gap' : 'block-gap',
+              ...(target.beforeFrom === undefined
+                ? {}
+                : { beforeFrom: target.beforeFrom }),
+            },
       )
     },
     [],
   )
+  const isGapActive = (beforeFrom?: number) =>
+    (memoDropTarget?.kind === 'memo-gap' ||
+      memoDropTarget?.kind === 'block-gap') &&
+    memoDropTarget.beforeFrom === beforeFrom
 
   return (
     <section
@@ -380,12 +397,11 @@ export function OutlineView({
         <>
           <p className="text-sm text-muted-foreground">No headings yet.</p>
           <OutlineMemoDropGap
-            active={
-              memoDropTarget?.kind === 'memo-gap' &&
-              memoDropTarget.beforeFrom === undefined
-            }
+            active={isGapActive()}
+            bodyLength={bodyLength}
             onDragChange={handleMemoGapDragChange}
             onInsertMemo={onInsertMemo}
+            onMove={onMove}
           />
         </>
       ) : (
@@ -393,13 +409,12 @@ export function OutlineView({
           {flattened.map(({ heading, depth }) => (
             <Fragment key={heading.from}>
               <OutlineMemoDropGap
-                active={
-                  memoDropTarget?.kind === 'memo-gap' &&
-                  memoDropTarget.beforeFrom === heading.from
-                }
+                active={isGapActive(heading.from)}
                 beforeFrom={heading.from}
+                bodyLength={bodyLength}
                 onDragChange={handleMemoGapDragChange}
                 onInsertMemo={onInsertMemo}
+                onMove={onMove}
               />
               <OutlineRow
                 active={heading.from === activeFrom}
@@ -411,7 +426,7 @@ export function OutlineView({
                 }
                 heading={heading}
                 onAdoptMemo={onAdoptMemo}
-                onMemoDropTargetChange={setLocalMemoDropTarget}
+                onMemoDropTargetChange={setLocalGapDropTarget}
                 onMove={onMove}
                 onSelect={() => {
                   onSelect(heading.from)
@@ -421,12 +436,11 @@ export function OutlineView({
             </Fragment>
           ))}
           <OutlineMemoDropGap
-            active={
-              memoDropTarget?.kind === 'memo-gap' &&
-              memoDropTarget.beforeFrom === undefined
-            }
+            active={isGapActive()}
+            bodyLength={bodyLength}
             onDragChange={handleMemoGapDragChange}
             onInsertMemo={onInsertMemo}
+            onMove={onMove}
           />
         </List>
       )}

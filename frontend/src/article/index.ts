@@ -24,6 +24,7 @@ export {
   listMemos,
   observeMemos,
   restoreMemo,
+  restoreMemoAdoptionHistory,
   restoreMemoAdoptions,
   setMemoAdoptedTo,
   updateMemoOrder,

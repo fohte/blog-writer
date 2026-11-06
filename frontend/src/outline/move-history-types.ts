@@ -10,6 +10,7 @@ export type TextHistoryEntry = {
   kind: 'text'
   inverse: ChangeSet
   memoAdoptions: MemoAdoptionSnapshot[]
+  memoAdoptionChanges: MemoAdoptionHistoryChange[]
   selectionBefore: EditorSelection
   selectionAfter: EditorSelection
   userEvent: string | undefined
@@ -17,6 +18,16 @@ export type TextHistoryEntry = {
   isolateBefore: boolean
   isolateAfter: boolean
   failure?: string
+}
+
+export type MemoAdoptionHistoryChange = {
+  id: string
+  previousAdoptedTo: unknown
+}
+
+export type MemoAdoptionHistoryRecord = {
+  change: MemoAdoptionHistoryChange
+  redoSnapshot: MemoAdoptionSnapshot
 }
 
 type MoveHistoryEntry = {
