@@ -29,6 +29,8 @@ export class InvalidBlockMoveError extends ArticleError {}
 
 export class InvalidSourceError extends ArticleError {}
 
+export class InvalidEvidenceError extends ArticleError {}
+
 export class SourceAlreadyExistsError extends ArticleError {
   constructor(id: string) {
     super(`Source already exists: ${id}`)

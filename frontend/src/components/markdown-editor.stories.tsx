@@ -3,11 +3,16 @@ import { useEffect, useMemo } from 'react'
 import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
+import { addEvidence } from '#article/evidence'
+import { addSource } from '#article/sources'
+import type { EvidenceVerdict } from '#article/types'
 import { MarkdownEditor } from '#editor/index'
 
 interface StoryArgs {
   content: string
   initialSelection?: { anchor: number; head?: number }
+  evidenceVerdict?: EvidenceVerdict
+  evidenceEdited?: boolean
 }
 
 const defaultContent = [
@@ -38,12 +43,40 @@ const otherSyntaxContent = [
   '> The blockquote stays as source text.',
 ].join('\n')
 
-function MarkdownEditorPreview({ content, initialSelection }: StoryArgs) {
+function MarkdownEditorPreview({
+  content,
+  initialSelection,
+  evidenceVerdict,
+  evidenceEdited,
+}: StoryArgs) {
   const { body, doc } = useMemo(() => {
     const doc = new Y.Doc()
-    getBody(doc).insert(0, content)
+    const body = getBody(doc)
+    body.insert(0, content)
+    if (evidenceVerdict !== undefined) {
+      const checkedAt = '2026-02-01T00:00:00.000Z'
+      addSource(doc, {
+        id: 'source-example',
+        kind: 'url',
+        title: 'Example research report',
+        url: 'https://example.invalid/report',
+        fileName: null,
+        checkedAt,
+        summary: 'The report describes a measured change over time.',
+      })._unsafeUnwrap()
+      addEvidence(doc, {
+        id: 'evidence-example',
+        from: 0,
+        to: content.length,
+        claim: evidenceEdited === true ? 'An earlier sentence.' : content,
+        sourceId: 'source-example',
+        quote: 'The measured value changed during the study period.',
+        verdict: evidenceVerdict,
+        checkedAt,
+      })._unsafeUnwrap()
+    }
     return { body: getBody(doc), doc }
-  }, [content])
+  }, [content, evidenceEdited, evidenceVerdict])
 
   useEffect(() => {
     return () => {
@@ -98,5 +131,26 @@ export const OtherMarkdownSyntax: Story = {
   args: {
     content: otherSyntaxContent,
     initialSelection: { anchor: otherSyntaxContent.length },
+  },
+}
+
+const evidenceContent = 'A research sentence.'
+
+export const SupportedEvidenceMarker: Story = {
+  name: 'the sentence ends with a green supported marker.',
+  args: { content: evidenceContent, evidenceVerdict: 'supported' },
+}
+
+export const NeedsReviewEvidenceMarker: Story = {
+  name: 'the sentence ends with a yellow marker for a contradiction.',
+  args: { content: evidenceContent, evidenceVerdict: 'contradicted' },
+}
+
+export const EditedEvidenceMarker: Story = {
+  name: 'the sentence ends with a yellow marker after it changes.',
+  args: {
+    content: evidenceContent,
+    evidenceVerdict: 'supported',
+    evidenceEdited: true,
   },
 }

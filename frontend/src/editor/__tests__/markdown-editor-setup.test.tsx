@@ -31,6 +31,7 @@ afterEach(() => {
 export function mountMarkdownEditor(
   value: string,
   extensions: Extension[] = [],
+  extensionFactory?: (doc: Y.Doc) => Extension[],
 ): MountedMarkdownEditor {
   const host = document.createElement('div')
   document.body.append(host)
@@ -38,11 +39,16 @@ export function mountMarkdownEditor(
   const doc = new Y.Doc()
   const body = getBody(doc)
   body.insert(0, value)
+  const mountedExtensions = [...extensions, ...(extensionFactory?.(doc) ?? [])]
   const editor = createRef<MarkdownEditorHandle>()
 
   act(() => {
     root.render(
-      <MarkdownEditor extensions={extensions} ref={editor} text={body} />,
+      <MarkdownEditor
+        extensions={mountedExtensions}
+        ref={editor}
+        text={body}
+      />,
     )
   })
 

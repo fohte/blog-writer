@@ -3,10 +3,12 @@ import * as Y from 'yjs'
 
 import type { Finding, Source } from '#article/index'
 import {
+  addEvidence,
   addSource,
   deleteSource,
   listFindings,
   listSources,
+  setBody,
   setFindings,
   updateSource,
 } from '#article/index'
@@ -33,8 +35,9 @@ function readSourceDeletionOutput(
   removed: boolean,
   sources: ReturnType<typeof listSources>,
   findings: ReturnType<typeof listFindings>,
+  evidenceIds: string[],
 ) {
-  return { mergedSource, removed, sources, findings }
+  return { mergedSource, removed, sources, findings, evidenceIds }
 }
 
 function readDuplicateSourceOutput(
@@ -147,6 +150,17 @@ describe('article sources', () => {
         quote: '本文の引用です。',
       },
     ])
+    setBody(first, 'x')
+    addEvidence(first, {
+      id: 'evidence-a',
+      from: 0,
+      to: 1,
+      claim: 'x',
+      sourceId: 'source-a',
+      quote: 'A quote.',
+      verdict: 'supported',
+      checkedAt: '2026-02-01T00:00:00.000Z',
+    })._unsafeUnwrap()
     const mergedSource = listSources(first)[0]
     const removed = deleteSource(first, 'source-a').match(
       () => true,
@@ -159,6 +173,7 @@ describe('article sources', () => {
         removed,
         listSources(first),
         listFindings(first),
+        [...first.getMap('evidence').keys()],
       ),
     ).toEqual({
       mergedSource: {
@@ -174,6 +189,7 @@ describe('article sources', () => {
       removed: true,
       sources: [],
       findings: [],
+      evidenceIds: [],
     })
     first.destroy()
     second.destroy()

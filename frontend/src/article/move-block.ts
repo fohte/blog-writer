@@ -4,6 +4,7 @@ import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
 import { InvalidBlockMoveError } from '#article/errors'
+import { prepareEvidenceAnchorMove } from '#article/evidence'
 import { prepareMemoAnchorMove } from '#article/memos'
 import type { MoveInsertion, MoveSource } from '#article/move-block-plan'
 import {
@@ -257,12 +258,14 @@ function applyMoveBlock(
 
   doc.transact(() => {
     const finishMemoAnchorMove = prepareMemoAnchorMove(doc, mapping)
+    const finishEvidenceAnchorMove = prepareEvidenceAnchorMove(doc, mapping)
     const finishUpdaterMoves = [...(updatersByDoc.get(doc) ?? [])]
       .map((updater) => updater(mapping))
       .filter((finishMove) => finishMove !== undefined)
     body.delete(deletionFrom, removedLength)
     body.insert(insertionIndex, insertion.text)
     finishMemoAnchorMove()
+    finishEvidenceAnchorMove()
     for (const finishMove of finishUpdaterMoves) finishMove()
   }, origin)
 
