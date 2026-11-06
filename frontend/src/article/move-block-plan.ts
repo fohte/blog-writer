@@ -245,7 +245,7 @@ export function mapWithinRange(
   range: Range,
   replacements: TextReplacement[],
 ): number | undefined {
-  if (position < range.from || position > range.to) return undefined
+  if (position < range.from || position >= range.to) return undefined
 
   const offset = position - range.from
   let delta = 0

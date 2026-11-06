@@ -43,7 +43,7 @@ function trackRange(
     const nextFrom =
       start?.type === body ? mapping.mapPosition(start.index) : undefined
     const nextTo =
-      end?.type === body ? mapping.mapPosition(end.index) : undefined
+      end?.type === body ? mapping.mapRangeEnd(end.index) : undefined
     return () => {
       if (nextFrom !== undefined)
         from = Y.createRelativePositionFromTypeIndex(body, nextFrom, 1)
@@ -206,7 +206,10 @@ export function evidenceDrop(
 
       const instance: DropPlugin = {
         handleDrop(event, editorView) {
-          if (internalDrag) return false
+          if (internalDrag) {
+            internalDrag = false
+            return false
+          }
           if (!event.dataTransfer) return false
           const position = editorView.posAtCoords({
             x: event.clientX,

@@ -212,7 +212,7 @@ export function prepareEvidenceAnchorMove(
     relocations.push({
       data,
       from: mapping.mapPosition(range.from),
-      to: mapping.mapPosition(range.to),
+      to: mapping.mapRangeEnd(range.to),
     })
   }
 

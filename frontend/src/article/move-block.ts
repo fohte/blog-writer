@@ -56,6 +56,7 @@ export type MovePositionMapping = {
   newFrom: number
   newTo: number
   mapPosition: (position: number) => number | undefined
+  mapRangeEnd: (position: number) => number | undefined
 }
 
 /** Resolve old anchors before deletion and return the write to run after insertion. */
@@ -257,16 +258,19 @@ function applyMoveBlock(
       })
     : undefined
   if (structureError) return err(structureError)
+  const mapPosition = (position: number) => {
+    if (position < range.from || position >= range.to) return undefined
+    const withinRange = mapWithinRange(position, range, replacements)
+    return withinRange === undefined ? undefined : newFrom + withinRange
+  }
   const mapping: MovePositionMapping = {
     from: range.from,
     to: range.to,
     newFrom,
     newTo,
-    mapPosition: (position) => {
-      if (position === range.to) return newTo
-      const withinRange = mapWithinRange(position, range, replacements)
-      return withinRange === undefined ? undefined : newFrom + withinRange
-    },
+    mapPosition,
+    mapRangeEnd: (position) =>
+      position === range.to ? newTo : mapPosition(position),
   }
   const mapDocumentPosition = (position: number, assoc: number) => {
     if (position === range.from && assoc < 0) return undefined

@@ -98,6 +98,29 @@ function readFallbackDropOutput(
   }
 }
 
+function readInternalDragRecoveryOutput(
+  internalDrop: DragEvent,
+  externalDrop: DragEvent,
+  doc: Y.Doc,
+  requestCount: number,
+) {
+  return {
+    internalDropPrevented: internalDrop.defaultPrevented,
+    externalDropPrevented: externalDrop.defaultPrevented,
+    body: readBody(doc),
+    sources: listSources(doc).map(({ id, status }) => ({ id, status })),
+    evidence: listEvidence(doc).map(
+      ({ claim, currentClaim, edited, verdict }) => ({
+        claim,
+        currentClaim,
+        edited,
+        verdict,
+      }),
+    ),
+    requestCount,
+  }
+}
+
 function readTypingOutput(
   doc: Y.Doc,
   bodyStringifications: number,
@@ -409,13 +432,49 @@ describe('MarkdownEditor', () => {
     })
   })
 
-  it('keeps an internal URL drag on CodeMirror’s move path', async () => {
+  it('keeps an internal drag on CodeMirror’s move path and accepts the next URL drop', async () => {
     const url = 'https://example.invalid/report'
     const markdown = `Start ${url} end.`
     let requestCount = 0
-    const fetcher: typeof fetch = () => {
+    const fetcher: typeof fetch = (input) => {
       requestCount += 1
-      return Promise.resolve(new Response('{}'))
+      const requestUrl =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      const sourceId = 'drop-id-0'
+      if (requestUrl.endsWith('/url')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source_id: sourceId,
+              title: 'Report title',
+              final_url: url,
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        )
+      }
+      if (requestUrl.includes('/source-bodies/')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              source_id: sourceId,
+              article_id: 'article-example',
+              body: 'The report supports the sentence.',
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        )
+      }
+      return Promise.resolve(
+        new Response(
+          `event: result\ndata: {"event":"result","data":{"verdict":"supported","quote":{"source_id":"${sourceId}","text":"A supporting sentence."}}}\n\n`,
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+      )
     }
     const { content, doc } = mountMarkdownEditor(markdown, [], (doc) =>
       evidenceDrop(
@@ -451,13 +510,35 @@ describe('MarkdownEditor', () => {
         resolve()
       })
     })
+    const externalDataTransfer = new DataTransfer()
+    externalDataTransfer.setData('text/uri-list', url)
+    const externalDrop = new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: externalDataTransfer,
+    })
+    content?.dispatchEvent(externalDrop)
+    await vi.waitFor(() => {
+      if (doc.getMap('evidence').size !== 1)
+        throw new Error('The external drop did not save its judgment')
+    })
 
-    expect(readFallbackDropOutput(drop, doc, requestCount)).toEqual({
-      defaultPrevented: true,
+    expect(
+      readInternalDragRecoveryOutput(drop, externalDrop, doc, requestCount),
+    ).toEqual({
+      internalDropPrevented: true,
+      externalDropPrevented: true,
       body: `${url}Start  end.`,
-      sourceIds: [],
-      evidenceIds: [],
-      requestCount: 0,
+      sources: [{ id: 'drop-id-0', status: 'ready' }],
+      evidence: [
+        {
+          claim: `${url}Start  end.`,
+          currentClaim: `${url}Start  end.`,
+          edited: false,
+          verdict: 'supported',
+        },
+      ],
+      requestCount: 3,
     })
   })
 
