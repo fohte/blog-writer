@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type * as Y from 'yjs'
 
 import type { MoveBlockInput } from '#article/index'
-import { flattenHeadingTree } from '#article/index'
+import { findMoveBlockRange, flattenHeadingTree } from '#article/index'
 import type { Heading } from '#article/types'
 import { OutlineView } from '#components/outline-view'
 import { useArticleHeadings } from '#hooks/use-article-headings'
@@ -21,6 +21,8 @@ export interface ArticleOutlineProps {
   view: EditorView
   activeFrom?: number
 }
+
+const BLOCK_MOVE_ERROR_MESSAGE = 'この位置には移動できません。'
 
 function activeHeadingFrom(
   headings: Heading[],
@@ -83,19 +85,36 @@ export function ArticleOutline({
   useEffect(
     () =>
       history.onError((moveError) => {
-        setError(moveError?.message)
+        if (moveError === undefined) {
+          setError(undefined)
+          return
+        }
+
+        console.warn('Block move failed', moveError)
+        setError(BLOCK_MOVE_ERROR_MESSAGE)
       }),
     [history],
   )
 
   const handleMove = useCallback(
     (input: MoveBlockInput) => {
+      if (input.childOf === undefined && input.headingLevel === undefined) {
+        const sourceRange = findMoveBlockRange(markdown, input.from)
+        if (
+          sourceRange !== undefined &&
+          (input.destination === sourceRange.from ||
+            input.destination === sourceRange.to)
+        ) {
+          return true
+        }
+      }
+
       return history.move(input, view).match(
         () => true,
         () => false,
       )
     },
-    [history, view],
+    [history, markdown, view],
   )
   const handleAdoptMemo = useCallback(
     (memoId: string, markerIndex: number) => {

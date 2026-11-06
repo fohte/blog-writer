@@ -51,6 +51,7 @@ beforeEach(() => {
 afterEach(() => {
   for (const cleanup of cleanups) cleanup()
   cleanups.length = 0
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -127,6 +128,7 @@ describe('outline interactions', () => {
     act(() => {
       root.render(createElement(ArticleOutline, { doc, history, view }))
     })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     let moveAccepted = true
     act(() => {
       moveAccepted = history
@@ -149,10 +151,154 @@ describe('outline interactions', () => {
     })
     expect(readOutput()).toEqual({
       moveAccepted: false,
-      errorAfterMove: 'A section cannot become its own child',
+      errorAfterMove: 'この位置には移動できません。',
       errorAfterNextAction: null,
     })
   })
+
+  it.each([
+    {
+      case: 'above the moved section',
+      marker: '## B',
+    },
+    {
+      case: 'below the moved section',
+      marker: '# C',
+    },
+  ])('ignores a gap drop $case', async ({ marker }) => {
+    const markdownText = '# A\n\n## B\n\ntext\n\n# C'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const moveSpy = vi.spyOn(history, 'move')
+    const outlineHost = document.createElement('div')
+    document.body.append(outlineHost)
+    const view = new EditorView({
+      state: EditorState.create({ doc: markdownText }),
+    })
+    const root: Root = createRoot(outlineHost)
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      view.destroy()
+      history.destroy()
+      doc.destroy()
+      outlineHost.remove()
+    })
+
+    act(() => {
+      root.render(createElement(ArticleOutline, { doc, history, view }))
+    })
+    const dragHandle = outlineHost.querySelector<HTMLElement>(
+      '[aria-label="Move B"]',
+    )
+    const gap = outlineHost.querySelector<HTMLElement>(
+      `[data-outline-gap="${String(markdownText.indexOf(marker))}"]`,
+    )
+    if (!dragHandle || !gap)
+      throw new Error('The outline drag source or gap is missing')
+    await act(async () => {
+      await userEvent.dragAndDrop(dragHandle, gap)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      editor: view.state.doc.toString(),
+      moveCalls: moveSpy.mock.calls.map(([input]) => input),
+      error: outlineHost.querySelector('[role="alert"]')?.textContent ?? null,
+    })
+    expect(readOutput()).toEqual({
+      body: markdownText,
+      editor: markdownText,
+      moveCalls: [],
+      error: null,
+    })
+  })
+
+  it.each([
+    {
+      case: 'a gap inside the moved section',
+      markdownText: '# A\n\n## B\n\n### C\n\n# D',
+      source: 'B',
+      target: '### C',
+      internalError: 'Destination is inside the moved block',
+    },
+    {
+      case: 'a deeper heading destination',
+      markdownText: '# A\n\n# B\n\n## Child\n\n# C',
+      source: 'A',
+      target: '## Child',
+      internalError:
+        'The section destination must be before a heading at the same or a shallower level, or at the end of the document',
+    },
+  ])(
+    'shows a user-facing message for $case',
+    async ({ markdownText, source, target, internalError }) => {
+      const doc = new Y.Doc()
+      setBody(doc, markdownText)
+      const body = getBody(doc)
+      const history = createMoveHistory(doc)
+      const outlineHost = document.createElement('div')
+      document.body.append(outlineHost)
+      const view = new EditorView({
+        state: EditorState.create({ doc: markdownText }),
+      })
+      const root: Root = createRoot(outlineHost)
+      cleanups.push(() => {
+        act(() => {
+          root.unmount()
+        })
+        view.destroy()
+        history.destroy()
+        doc.destroy()
+        outlineHost.remove()
+      })
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      act(() => {
+        root.render(createElement(ArticleOutline, { doc, history, view }))
+      })
+      const dragHandle = outlineHost.querySelector<HTMLElement>(
+        `[aria-label="Move ${source}"]`,
+      )
+      const gap = outlineHost.querySelector<HTMLElement>(
+        `[data-outline-gap="${String(markdownText.indexOf(target))}"]`,
+      )
+      if (!dragHandle || !gap)
+        throw new Error('The outline drag source or gap is missing')
+      await act(async () => {
+        await userEvent.dragAndDrop(dragHandle, gap)
+      })
+
+      const readWarnings = () =>
+        warning.mock.calls.map(([label, error]) => ({
+          label: String(label),
+          error:
+            error instanceof Error
+              ? { name: error.name, message: error.message }
+              : String(error),
+        }))
+      const readOutput = () => ({
+        body: body.toJSON(),
+        editor: view.state.doc.toString(),
+        error: outlineHost.querySelector('[role="alert"]')?.textContent ?? null,
+        warnings: readWarnings(),
+      })
+      expect(readOutput()).toEqual({
+        body: markdownText,
+        editor: markdownText,
+        error: 'この位置には移動できません。',
+        warnings: [
+          {
+            label: 'Block move failed',
+            error: { name: 'InvalidBlockMoveError', message: internalError },
+          },
+        ],
+      })
+    },
+  )
 
   it('moves a heading section with Alt plus an arrow key through the MarkdownEditor keymap', async () => {
     const markdownText =
@@ -980,7 +1126,7 @@ describe('outline interactions', () => {
       cursorAfterOpen: cursor,
       cursorAfterRejectedMove: cursor,
       body: markdownText,
-      error: 'Heading levels must be between 1 and 6',
+      error: 'この位置には移動できません。',
     })
   })
 

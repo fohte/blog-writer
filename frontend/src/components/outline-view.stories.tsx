@@ -77,5 +77,5 @@ export const EmptyOutline: Story = {
 
 export const MoveError: Story = {
   name: 'the outline explains why a move could not be completed.',
-  args: { error: 'The destination is inside a Markdown block.' },
+  args: { error: 'この位置には移動できません。' },
 }
