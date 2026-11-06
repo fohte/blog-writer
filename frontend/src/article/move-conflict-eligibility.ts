@@ -26,17 +26,22 @@ export function getMoveConflictEligibleRanges(
   restorations: TrackedIdRange[],
 ): TrackedIdRange[] {
   if (target.eligibility === 'all') return [range]
-  const candidateRanges = [
-    ...(target.eligibility === 'concurrent-or-restored' && record
-      ? [getConcurrentClockRange(doc, record, range.client)]
-      : []),
-    ...restorations,
-  ]
-  return coalesceIdRanges(
-    candidateRanges.flatMap((candidate) => {
-      if (!candidate) return []
-      const intersection = intersectIdRange(range, candidate)
-      return intersection ? [intersection] : []
-    }),
-  )
+  const eligible: TrackedIdRange[] = []
+  if (target.eligibility === 'concurrent-or-restored' && record) {
+    const concurrent = getConcurrentClockRange(doc, record, range.client)
+    const intersection = concurrent && intersectIdRange(range, concurrent)
+    if (
+      intersection?.clock === range.clock &&
+      intersection.length === range.length
+    ) {
+      return [range]
+    }
+    if (intersection) eligible.push(intersection)
+  }
+  if (restorations.length === 0) return eligible
+  for (const restoration of restorations) {
+    const intersection = intersectIdRange(range, restoration)
+    if (intersection) eligible.push(intersection)
+  }
+  return eligible.length < 2 ? eligible : coalesceIdRanges(eligible)
 }
