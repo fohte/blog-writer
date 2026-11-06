@@ -1,5 +1,10 @@
 import type { EditorState } from '@codemirror/state'
-import { Decoration, type DecorationSet, WidgetType } from '@codemirror/view'
+import {
+  Decoration,
+  type DecorationSet,
+  type EditorView,
+  WidgetType,
+} from '@codemirror/view'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { SuggestionDiff } from '#components/suggestion-diff'
@@ -108,6 +113,21 @@ class SuggestionDiffWidget extends WidgetType {
       other.focused === this.focused &&
       other.block === this.block
     )
+  }
+
+  override updateDOM(dom: HTMLElement, _view: EditorView, from: this): boolean {
+    if (
+      from.suggestion?.id !== this.suggestion?.id ||
+      from.suggestion?.replacement !== this.suggestion?.replacement ||
+      from.original !== this.original ||
+      from.focused !== this.focused ||
+      from.block !== this.block
+    ) {
+      return false
+    }
+    dom.dataset['suggestionFrom'] = String(this.position.from)
+    dom.dataset['suggestionTo'] = String(this.position.to)
+    return true
   }
 
   override toDOM(): HTMLElement {

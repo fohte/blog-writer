@@ -221,6 +221,7 @@ describe('body request', () => {
 
   it('anchors the request input to a visible proposal widget', async () => {
     const { view } = createRequestEditor()
+    view.dom.style.height = '320px'
     const { fetcher, resolveResponse, signals } = createPendingFetch()
     vi.stubGlobal('fetch', fetcher)
 
@@ -257,10 +258,62 @@ describe('body request', () => {
       popoverBelowWidget:
         popover.getBoundingClientRect().top >=
         widget.getBoundingClientRect().bottom,
+      popoverBeforeEditorBottom:
+        popover.getBoundingClientRect().top <
+        view.dom.getBoundingClientRect().bottom - 100,
     })
     expect(readOutput()).toEqual({
       selection: { from: proposalRange.from, to: proposalRange.from },
       popoverBelowWidget: true,
+      popoverBeforeEditorBottom: true,
+    })
+  })
+
+  it('reuses a proposal widget when text before its range changes', () => {
+    const otherLayer = createSuggestionLayer()
+    const { body, view } = createRequestEditor([otherLayer.extension])
+    const from = content.indexOf('Rewrite this sentence.')
+    const to = from + 'Rewrite this sentence.'.length
+    expect(
+      otherLayer.setSuggestions([
+        {
+          id: 'stable-proposal',
+          from,
+          to,
+          replacement: 'A more concise sentence.',
+        },
+      ]),
+    ).toEqual(ok(undefined))
+    const widgetBeforeEdit = view.dom.querySelector<HTMLElement>(
+      '.cm-suggestion-widget[data-suggestion-from]',
+    )
+    if (!widgetBeforeEdit)
+      throw new Error('The proposal widget was not rendered')
+
+    const insertedText = 'Earlier paragraph.\n\n'
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: 0, insert: insertedText } })
+    })
+
+    const widgetAfterEdit = view.dom.querySelector<HTMLElement>(
+      '.cm-suggestion-widget[data-suggestion-from]',
+    )
+    if (!widgetAfterEdit) throw new Error('The proposal widget was removed')
+    const readOutput = () => ({
+      body: body.toJSON(),
+      sameWidget: widgetAfterEdit === widgetBeforeEdit,
+      position: {
+        from: Number(widgetAfterEdit.dataset['suggestionFrom']),
+        to: Number(widgetAfterEdit.dataset['suggestionTo']),
+      },
+    })
+    expect(readOutput()).toEqual({
+      body: `${insertedText}${content}`,
+      sameWidget: true,
+      position: {
+        from: from + insertedText.length,
+        to: to + insertedText.length,
+      },
     })
   })
 

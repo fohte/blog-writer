@@ -38,7 +38,8 @@ export function getBlankLineInsertionSeparators(
 }
 
 function lineStartAt(text: string, position: number): number {
-  return text.lastIndexOf('\n', Math.max(0, position - 1)) + 1
+  if (position <= 0) return 0
+  return text.lastIndexOf('\n', position - 1) + 1
 }
 
 function lineEndAt(text: string, position: number): number {

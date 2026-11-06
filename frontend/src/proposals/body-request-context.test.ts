@@ -79,6 +79,18 @@ describe('getBodyRequestContext', () => {
     })
   })
 
+  it('uses a leading blank line as an insertion target before a fence', () => {
+    const text = '\n```md\nconst value = 1\n```'
+
+    expect(getBodyRequestContext(text, { from: 0, to: 0 })).toEqual({
+      headings: [],
+      section:
+        '⟪依頼範囲の開始⟫⟪依頼範囲の終了⟫\n\n```md\nconst value = 1\n```',
+      target: '',
+      range: { from: 0, to: 0 },
+    })
+  })
+
   it('uses only the heading line when the cursor is on a heading', () => {
     const text = '# Main\n\n## Child\nparagraph'
     const headingStart = text.indexOf('## Child')
