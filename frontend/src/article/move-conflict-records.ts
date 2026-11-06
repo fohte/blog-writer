@@ -36,7 +36,7 @@ function getMoveDecisions(doc: Y.Doc): Y.Map<TrackedIdRange[]> {
   return doc.getMap<TrackedIdRange[]>(MOVE_DECISIONS)
 }
 
-export function getMoveConflictRestorations(doc: Y.Doc): Y.Map<TrackedIdRange> {
+function getMoveConflictRestorations(doc: Y.Doc): Y.Map<TrackedIdRange> {
   return doc.getMap<TrackedIdRange>(MOVE_CONFLICT_RESTORATIONS)
 }
 
@@ -144,22 +144,38 @@ export function coalesceIdRanges(ranges: TrackedIdRange[]): TrackedIdRange[] {
   return result
 }
 
-export function indexMoveConflictDecisions(
-  doc: Y.Doc,
+function groupRangesByRecordId(
+  entries: Iterable<[string, TrackedIdRange[]]>,
 ): Map<string, TrackedIdRange[]> {
-  const decisionsByRecord = new Map<string, TrackedIdRange[]>()
-  for (const [key, ranges] of getMoveDecisions(doc)) {
+  const rangesByRecord = new Map<string, TrackedIdRange[]>()
+  for (const [key, ranges] of entries) {
     const separator = key.lastIndexOf('/')
     if (separator < 0) continue
     const recordId = key.slice(0, separator)
-    decisionsByRecord.set(recordId, [
-      ...(decisionsByRecord.get(recordId) ?? []),
+    rangesByRecord.set(recordId, [
+      ...(rangesByRecord.get(recordId) ?? []),
       ...ranges,
     ])
   }
+  return rangesByRecord
+}
+
+export function indexMoveConflictDecisions(
+  doc: Y.Doc,
+): Map<string, TrackedIdRange[]> {
+  const decisionsByRecord = groupRangesByRecordId(getMoveDecisions(doc))
   for (const [recordId, ranges] of decisionsByRecord)
     decisionsByRecord.set(recordId, coalesceIdRanges(ranges))
   return decisionsByRecord
+}
+
+export function indexMoveConflictRestorations(
+  doc: Y.Doc,
+): Map<string, TrackedIdRange[]> {
+  const entries = [...getMoveConflictRestorations(doc)].map(
+    ([key, range]) => [key, [range]] as [string, TrackedIdRange[]],
+  )
+  return groupRangesByRecordId(entries)
 }
 
 export function getUnkeptMoveConflictRanges(

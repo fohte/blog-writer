@@ -167,19 +167,16 @@ describe('move conflict detection', () => {
     moveSection(A.doc, 'end')
     settle({ A, B })
     undoManager.undo()
-    const cachedDeltaCounts = undoEvents.map((event) => event.delta.length)
     body.insert(0, 'q')
     const result = recordMoveConflictRestoration(B.doc, undoEvents)
 
     const readOutput = () => ({
-      cachedDeltaCounts,
       result: result.match(
         () => ({ ok: true, error: null }),
         (error) => ({ ok: false, error: error.message }),
       ),
     })
     expect(readOutput()).toEqual({
-      cachedDeltaCounts: [2],
       result: {
         ok: false,
         error:

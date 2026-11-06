@@ -13,10 +13,10 @@ import {
 } from '#article/move-conflict-index'
 import {
   coalesceIdRanges,
-  getMoveConflictRestorations,
   getMoveRecords,
   getUnkeptMoveConflictRanges,
   indexMoveConflictDecisions,
+  indexMoveConflictRestorations,
   isConcurrent,
   locate,
   recordMoveConflictRelocations,
@@ -206,13 +206,7 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
   const relocations = indexRelocations(doc, records)
   const itemIndex = indexInternalItems(text, sourceIndex)
   const decisions = indexMoveConflictDecisions(doc)
-  const restorations = new Map<string, TrackedIdRange[]>()
-  for (const [key, range] of getMoveConflictRestorations(doc)) {
-    const separator = key.lastIndexOf('/')
-    if (separator < 0) continue
-    const recordId = key.slice(0, separator)
-    restorations.set(recordId, [...(restorations.get(recordId) ?? []), range])
-  }
+  const restorations = indexMoveConflictRestorations(doc)
   const tainted = new Map<
     InternalItem,
     { target: TrackedTarget; position: number; recordId: string }
