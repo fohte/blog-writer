@@ -6,6 +6,10 @@ import { observeMoveConflicts } from '#article/move-conflicts'
 
 export const initialBody = '## Cedar\na1\n## Fjord\nmaple maple\n## Vista\nz9\n'
 
+export function stateVector(doc: Y.Doc): Map<number, number> {
+  return Y.decodeStateVector(Y.encodeStateVector(doc))
+}
+
 export type Replica = { doc: Y.Doc; stop: () => void }
 export type ReplicaSet = {
   A: Replica

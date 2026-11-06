@@ -13,6 +13,7 @@ import {
   recordMoveConflictRestoration,
   resolveMoveConflict,
 } from '#article/move-conflicts'
+import { stateVector } from '#article/move-conflicts.test-support.test'
 import { moveConflictExtension } from '#editor/move-conflict-extension'
 
 const initialBody = '## Ember\nu1\n## Brindle\nrho rho\n## Quartz\nv1\n'
@@ -92,10 +93,6 @@ function createConflictEditor({
   return { applyRemoteEditToSource, host, offline, readOutput, source, view }
 }
 
-function stateVector(doc: Y.Doc): Map<number, number> {
-  return Y.decodeStateVector(Y.encodeStateVector(doc))
-}
-
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 })
@@ -142,7 +139,12 @@ describe('moveConflictExtension', () => {
   it('refreshes the notice after a remote restoration record arrives alone', async () => {
     const receiver = new Y.Doc()
     receiver.clientID = 83
-    setBody(receiver, 'one # Brindle\n# Quartz\n')
+    setBody(
+      receiver,
+      `one # Brindle
+# Quartz
+`,
+    )
     const mover = new Y.Doc()
     mover.clientID = 84
     Y.applyUpdate(mover, Y.encodeStateAsUpdate(receiver))
@@ -227,14 +229,20 @@ describe('moveConflictExtension', () => {
 
     expect(outputs).toEqual([
       {
-        body: 'one # Quartz\n\n# Brindle\n',
+        body: `one # Quartz
+
+# Brindle
+`,
         acknowledgements: 2,
         notice: null,
         highlightedText: null,
         restorations: 0,
       },
       {
-        body: 'one # Quartz\n\n# Brindle\n',
+        body: `one # Quartz
+
+# Brindle
+`,
         acknowledgements: 2,
         notice:
           'This text was written in a section that has moved.one Move it with the sectionKeep it here',

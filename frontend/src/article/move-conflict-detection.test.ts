@@ -16,6 +16,7 @@ import {
   pull,
   replica,
   settle,
+  stateVector,
 } from '#article/move-conflicts.test-support.test'
 
 const activeReplicas: Array<ReturnType<typeof replica>> = []
@@ -25,10 +26,6 @@ function makeReplica(clientId: number): ReturnType<typeof replica> {
   const result = replica(clientId)
   activeReplicas.push(result)
   return result
-}
-
-function stateVector(doc: Y.Doc): Map<number, number> {
-  return Y.decodeStateVector(Y.encodeStateVector(doc))
 }
 
 function undoAndRecordRestoration(
@@ -139,7 +136,13 @@ describe('move conflict detection', () => {
   it('tracks restored text after later deletions shift its old position', () => {
     const A = makeReplica(88)
     const B = makeReplica(89)
-    const article = '# Aaa\naa\n# Bbb\none two\n# Ccc\ncc\n'
+    const article = `# Aaa
+aa
+# Bbb
+one two
+# Ccc
+cc
+`
     setBody(A.doc, article)
     pull(B.doc, A.doc)
 
@@ -168,8 +171,22 @@ describe('move conflict detection', () => {
     })
     expect(readOutput()).toEqual({
       bodies: [
-        'Aaa\naa\none # Ccc\ncc\n\n# Bbb\ntwo\n',
-        'Aaa\naa\none # Ccc\ncc\n\n# Bbb\ntwo\n',
+        `Aaa
+aa
+one # Ccc
+cc
+
+# Bbb
+two
+`,
+        `Aaa
+aa
+one # Ccc
+cc
+
+# Bbb
+two
+`,
       ],
       conflicts: [
         [{ text: 'one ', target: 31 }],

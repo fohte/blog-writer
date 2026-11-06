@@ -5,7 +5,6 @@ import { InvalidBlockMoveError } from '#article/errors'
 import {
   detectMoveConflictDetails,
   type MoveConflict,
-  recordMoveConflictRestoration as recordRestoration,
   resolveMoveConflictRange,
 } from '#article/move-conflict-detection'
 import {
@@ -16,6 +15,7 @@ import {
 } from '#article/move-conflict-records'
 
 export type { MoveConflict } from '#article/move-conflict-detection'
+export { recordMoveConflictRestoration } from '#article/move-conflict-detection'
 
 export function getMoveConflicts(doc: Y.Doc): MoveConflict[] {
   cleanupMoveRecords(doc)
@@ -40,14 +40,6 @@ export function resolveMoveConflict(
   }
   resolveMoveConflictRange(doc, detail.conflict, detail.recordId, detail.target)
   return ok()
-}
-
-export function recordMoveConflictRestoration(
-  doc: Y.Doc,
-  beforeState: ReadonlyMap<number, number>,
-  afterState: ReadonlyMap<number, number>,
-): void {
-  recordRestoration(doc, beforeState, afterState)
 }
 
 export function observeMoveConflicts(
