@@ -12,6 +12,26 @@ type BodyRequestContext = {
   range: TextRange
 }
 
+export function getBlankLineInsertionSeparators(
+  before: string,
+  after: string,
+  replacement: string,
+): { before: string; after: string } {
+  const beforeSeparator =
+    before.trim().length > 0 &&
+    !before.endsWith('\n\n') &&
+    !replacement.startsWith('\n')
+      ? '\n'
+      : ''
+  const afterSeparator =
+    after.trim().length > 0 &&
+    !after.startsWith('\n\n') &&
+    !replacement.endsWith('\n')
+      ? '\n'
+      : ''
+  return { before: beforeSeparator, after: afterSeparator }
+}
+
 function lineStartAt(text: string, position: number): number {
   return text.lastIndexOf('\n', Math.max(0, position - 1)) + 1
 }
@@ -129,19 +149,14 @@ export function getBodyRequestContext(
       lineStartAt(text, range.from),
       lineEndAt(text, range.from),
     )
-  const separatorBeforeRange =
-    isBlankLineInsertion &&
-    sectionBeforeRange.trim().length > 0 &&
-    !sectionBeforeRange.endsWith('\n\n')
-      ? '\n'
-      : ''
-  const separatorAfterRange =
-    isBlankLineInsertion &&
-    sectionAfterRange.trim().length > 0 &&
-    !sectionAfterRange.startsWith('\n\n')
-      ? '\n'
-      : ''
-  const markedSection = `${sectionBeforeRange}${separatorBeforeRange}⟪依頼範囲の開始⟫${section.slice(sectionRange.from, sectionRange.to)}⟪依頼範囲の終了⟫${separatorAfterRange}${sectionAfterRange}`
+  const separators = isBlankLineInsertion
+    ? getBlankLineInsertionSeparators(
+        sectionBeforeRange,
+        sectionAfterRange,
+        section.slice(sectionRange.from, sectionRange.to),
+      )
+    : { before: '', after: '' }
+  const markedSection = `${sectionBeforeRange}${separators.before}⟪依頼範囲の開始⟫${section.slice(sectionRange.from, sectionRange.to)}⟪依頼範囲の終了⟫${separators.after}${sectionAfterRange}`
   return {
     headings,
     section: markedSection.trimEnd(),

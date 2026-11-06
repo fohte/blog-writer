@@ -942,12 +942,14 @@ describe('suggestion layer', () => {
                 {
                   seam_id: 'seam-0',
                   ...seam0,
-                  replacement: 'Alpha revised.\n\nBeta revised.',
+                  replacement:
+                    'Discarded alpha boundary.\n\nDiscarded beta boundary.',
                 },
                 {
                   seam_id: 'seam-2',
                   ...seam2,
-                  replacement: 'Delta revised.\n\nEpsilon revised.',
+                  replacement:
+                    'Preserved delta boundary.\n\nPreserved epsilon boundary.',
                 },
               ],
             },
@@ -961,15 +963,29 @@ describe('suggestion layer', () => {
     const readOutput = () => ({
       body: body.toJSON(),
       requestAborted: fetchMock.mock.calls[0]?.[1]?.signal?.aborted ?? null,
-      addedText: Array.from(
-        editorView.dom.querySelectorAll('.suggestion-diff-added'),
-        (node) => node.textContent,
+      proposals: Array.from(
+        editorView.dom.querySelectorAll('.suggestion-diff'),
+        (widget) => ({
+          removed: Array.from(
+            widget.querySelectorAll('.suggestion-diff-removed'),
+            (node) => node.textContent,
+          ).join(''),
+          added: Array.from(
+            widget.querySelectorAll('.suggestion-diff-added'),
+            (node) => node.textContent,
+          ).join(''),
+        }),
       ),
     })
     expect(readOutput()).toEqual({
       body: content.replace('Alpha sentence.', 'Alxha sentence.'),
       requestAborted: false,
-      addedText: ['revised', 'revised'],
+      proposals: [
+        {
+          removed: 'Delta sentenceEpsilon sentence',
+          added: 'Preserved delta boundaryPreserved epsilon boundary',
+        },
+      ],
     })
   })
 

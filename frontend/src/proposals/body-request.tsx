@@ -17,7 +17,10 @@ import {
   type BodyRequestInput,
   requestBodyProposal,
 } from '#proposals/body-request-api'
-import { getBodyRequestContext } from '#proposals/body-request-context'
+import {
+  getBlankLineInsertionSeparators,
+  getBodyRequestContext,
+} from '#proposals/body-request-context'
 
 export type BodyRequestEditorContext = {
   doc: Y.Doc
@@ -38,16 +41,8 @@ function preserveBlankLineSeparators(
 
   const before = text.slice(0, range.from)
   const after = text.slice(range.to)
-  const needsBeforeSeparator =
-    before.trim().length > 0 &&
-    !before.endsWith('\n\n') &&
-    !replacement.startsWith('\n')
-  const needsAfterSeparator =
-    after.trim().length > 0 &&
-    !after.startsWith('\n\n') &&
-    !replacement.endsWith('\n')
-
-  return `${needsBeforeSeparator ? '\n' : ''}${replacement}${needsAfterSeparator ? '\n' : ''}`
+  const separators = getBlankLineInsertionSeparators(before, after, replacement)
+  return `${separators.before}${replacement}${separators.after}`
 }
 
 class BodyRequestManager {

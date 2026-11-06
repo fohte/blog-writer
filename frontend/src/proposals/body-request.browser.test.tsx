@@ -450,6 +450,62 @@ describe('body request', () => {
     })
   })
 
+  it('aborts the active request with Escape from the request field', async () => {
+    const { body, view } = createRequestEditor()
+    const { fetcher, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+
+    await submitRequest(view, 'make it concise', () => signals.length === 1)
+    const input = document.querySelector<HTMLInputElement>('#body-request')
+    if (!input) throw new Error('The request input did not stay open')
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }),
+      )
+      await Promise.resolve()
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      inFlight:
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+      requestAborted: signals.map((signal) => signal.aborted),
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      inFlight: null,
+      requestAborted: [true],
+    })
+  })
+
+  it('aborts the active request when its target range is edited', async () => {
+    const { body, view } = createRequestEditor()
+    const { fetcher, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+
+    await submitRequest(view, 'make it concise', () => signals.length === 1)
+    const targetStart = content.indexOf('Rewrite this sentence.')
+    act(() => {
+      view.dispatch({
+        changes: { from: targetStart + 2, to: targetStart + 3, insert: 'x' },
+      })
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      inFlight:
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+      requestAborted: signals.map((signal) => signal.aborted),
+    })
+    expect(readOutput()).toEqual({
+      body: content.replace('Rewrite', 'Rexrite'),
+      inFlight: null,
+      requestAborted: [true],
+    })
+  })
+
   it('aborts an active request when the accessory unmounts', async () => {
     const { body, view, unmountAccessory } = createRequestEditor()
     const { fetcher, signals } = createPendingFetch()
