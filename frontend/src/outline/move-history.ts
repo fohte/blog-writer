@@ -19,6 +19,7 @@ import {
   mapMoveBlockPosition,
   moveBlock,
   type MoveBlockResult,
+  recordMoveConflictRestoration,
   resolveMoveBlockStart,
   restoreMemoAdoptions,
   reverseBlockMove,
@@ -154,7 +155,13 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         const to = direction === 'undo' ? redo : undo
         const entry = from.pop()
         if (entry?.kind !== 'move') return current
-        pushHistoryEntry(to, { kind: 'move', move })
+        pushHistoryEntry(to, {
+          kind: 'move',
+          move,
+          ...(entry.requiresValidation === true
+            ? { requiresValidation: true }
+            : {}),
+        })
         groupBarrier = true
       }
 
@@ -192,17 +199,14 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         }
 
         const deletedRanges = deletedRangesIn(transaction.changes)
-        const memoAdoptions =
-          deletedRanges.length === 0
-            ? []
-            : mapMemoAdoptions(
-                captureDeletedMemoAdoptions(
-                  doc,
-                  () => transaction.startState.doc.toString(),
-                  deletedRanges,
-                ),
-                transaction.changes,
-              )
+        const memoAdoptions = mapMemoAdoptions(
+          captureDeletedMemoAdoptions(
+            doc,
+            () => transaction.startState.doc.toString(),
+            deletedRanges,
+          ),
+          transaction.changes,
+        )
         const isolation = transaction.annotation(isolateHistory)
         const inverse = transaction.changes.invert(transaction.startState.doc)
         const next: TextHistoryEntry = {
@@ -265,6 +269,24 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
   const updateAfterView = (update: ViewUpdate) => {
     for (const transaction of update.transactions) {
       const step = transaction.annotation(textHistoryStep)
+      const moveStep = transaction.effects.find((effect) =>
+        effect.is(applyMoveHistoryStep),
+      )
+      const moveHistoryStep =
+        moveStep?.is(applyMoveHistoryStep) === true ? moveStep.value : undefined
+      const beforeState =
+        step?.direction === 'undo'
+          ? step.beforeState
+          : moveHistoryStep?.direction === 'undo'
+            ? moveHistoryStep.beforeState
+            : undefined
+      if (beforeState !== undefined) {
+        recordMoveConflictRestoration(
+          doc,
+          beforeState,
+          Y.decodeStateVector(Y.encodeStateVector(doc)),
+        )
+      }
       if (!step) continue
 
       const snapshots = mapMemoAdoptions(
@@ -328,6 +350,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
           textHistoryStep.of({
             direction,
             entry,
+            beforeState: Y.decodeStateVector(Y.encodeStateVector(doc)),
             memoAdoptions: mapMemoAdoptions(
               captureDeletedMemoAdoptions(
                 doc,
@@ -355,9 +378,10 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
     if (resolveMoveBlockStart(doc, entry.move) === undefined)
       return discardMoveAndFail('The moved block is no longer available')
 
+    const beforeState = Y.decodeStateVector(Y.encodeStateVector(doc))
     applyingLocalMove = true
     const result = reverseBlockMove(doc, entry.move, direction, {
-      skipValidation: entry.remoteMapped !== true,
+      validate: entry.requiresValidation === true,
     })
     applyingLocalMove = false
     if (result.isErr())
@@ -374,7 +398,9 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         ? {}
         : { selection: EditorSelection.range(mappedAnchor, mappedHead) }),
       annotations: reversed.annotations,
-      effects: [applyMoveHistoryStep.of({ direction, move: reversed })],
+      effects: [
+        applyMoveHistoryStep.of({ direction, move: reversed, beforeState }),
+      ],
     })
     view.focus()
     return ok(true)

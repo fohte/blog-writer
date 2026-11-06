@@ -22,7 +22,7 @@ export type TextHistoryEntry = {
 type MoveHistoryEntry = {
   kind: 'move'
   move: MoveBlockResult
-  remoteMapped?: true
+  requiresValidation?: true
   failure?: string
 }
 
@@ -38,11 +38,13 @@ export type TextHistoryStep = {
   direction: 'undo' | 'redo'
   entry: TextHistoryEntry
   memoAdoptions: MemoAdoptionSnapshot[]
+  beforeState: ReadonlyMap<number, number>
 }
 
 export type MoveHistoryStep = {
   direction: 'undo' | 'redo'
   move: MoveBlockResult
+  beforeState: ReadonlyMap<number, number>
 }
 
 export interface MoveHistory {

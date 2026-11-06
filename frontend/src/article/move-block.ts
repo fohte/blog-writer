@@ -81,7 +81,7 @@ type ApplyMoveOptions = {
   expectedSelection?: string
   replacement?: MoveSource
   removeRanges?: { from: number; to: number; text: string }[]
-  skipValidation?: boolean
+  validate?: boolean
 }
 const updatersByDoc = new WeakMap<Y.Doc, Set<BlockMoveUpdater>>()
 const historyByMove = new WeakMap<MoveBlockResult, MoveRecord>()
@@ -161,10 +161,10 @@ function applyMoveBlock(
   const body = getBody(doc)
   const markdown = body.toJSON()
   const headings = collectHeadings(markdown)
-  const skipValidation = options.skipValidation === true
-  const validation = skipValidation
-    ? undefined
-    : validateMove(markdown, input, headings)
+  const shouldValidate = options.validate !== false
+  const validation = shouldValidate
+    ? validateMove(markdown, input, headings)
+    : undefined
   if (validation?.isErr() === true) return err(validation.error)
   const validated = validation?.isOk() === true ? validation.value : undefined
   const range = validated
@@ -235,15 +235,15 @@ function applyMoveBlock(
   )
   const newFrom = insertedFrom
   const newTo = newFrom + insertion.contentLength
-  const structureError = skipValidation
-    ? undefined
-    : validatePlannedMoveStructure({
+  const structureError = shouldValidate
+    ? validatePlannedMoveStructure({
         originalMarkdown: markdown,
         originalRange: { from: range.from, to: range.to },
         plannedMarkdown,
         movedRange: { from: insertedFrom, to: insertedTo },
         isSection: range.headingLevel !== undefined,
       })
+    : undefined
   if (structureError) return err(structureError)
   const mapping: MovePositionMapping = {
     from: range.from,
@@ -404,7 +404,7 @@ export function reverseBlockMove(
   doc: Y.Doc,
   move: MoveBlockResult,
   userEvent: 'undo' | 'redo' = 'undo',
-  options: { skipValidation?: boolean } = {},
+  options: { validate?: boolean } = {},
 ): Result<MoveBlockResult, InvalidBlockMoveError> {
   const history = historyByMove.get(move)
   if (!history)
@@ -439,9 +439,7 @@ export function reverseBlockMove(
       expectedSelection: history.insertedSelection,
       ...(history.source === undefined ? {} : { replacement: history.source }),
       removeRanges: separators,
-      ...(options.skipValidation === undefined
-        ? {}
-        : { skipValidation: options.skipValidation }),
+      ...(options.validate === undefined ? {} : { validate: options.validate }),
     },
   )
 }

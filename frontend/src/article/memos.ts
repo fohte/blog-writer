@@ -237,8 +237,6 @@ export function restoreMemoAdoptions(
     if (!insertion) continue
     const markerIndex = insertion.from + markerOffset
 
-    if (markerIndex < insertion.from || markerIndex >= insertion.to) continue
-
     const memo = getMemoMap(doc, snapshot.id)
     if (
       !memo ||

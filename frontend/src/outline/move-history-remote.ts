@@ -86,7 +86,7 @@ export function mapRemoteHistoryEntries(
     mappedEntries[index] = {
       kind: 'move',
       move: mapped.value.move,
-      remoteMapped: true,
+      requiresValidation: true,
     }
     currentChange = mapped.value.changeBeforeMove
   }
