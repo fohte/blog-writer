@@ -22,3 +22,4 @@ export {
   type OutlineProposalState,
   type OutlineSuggestion,
 } from '#proposals/outline'
+export { transitionProposalEditorExtensions } from '#proposals/transition'
