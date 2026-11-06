@@ -138,13 +138,23 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         const to = step.direction === 'undo' ? redo : undo
         const entry = from.pop()
         if (entry?.kind !== 'text') return current
+        const memoAdoptions =
+          step.direction === 'undo'
+            ? step.memoAdoptions.map((snapshot) => {
+                const change = entry.memoAdoptionChanges.find(
+                  ({ id }) => id === snapshot.id,
+                )
+                return change === undefined
+                  ? snapshot
+                  : { ...snapshot, adoptedTo: change.previousAdoptedTo }
+              })
+            : entry.memoAdoptionChanges.length === 0
+              ? step.memoAdoptions
+              : mapMemoAdoptions(entry.memoAdoptions, transaction.changes)
         pushHistoryEntry(to, {
           ...entry,
           inverse: transaction.changes.invert(transaction.startState.doc),
-          memoAdoptions:
-            entry.memoAdoptionChanges.length === 0
-              ? step.memoAdoptions
-              : mapMemoAdoptions(entry.memoAdoptions, transaction.changes),
+          memoAdoptions,
           selectionBefore: entry.selectionAfter,
           selectionAfter: entry.selectionBefore,
         })

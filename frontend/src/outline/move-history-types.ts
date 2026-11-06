@@ -20,7 +20,7 @@ export type TextHistoryEntry = {
   failure?: string
 }
 
-export type MemoAdoptionHistoryChange = {
+type MemoAdoptionHistoryChange = {
   id: string
   previousAdoptedTo: unknown
 }
