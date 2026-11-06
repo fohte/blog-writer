@@ -24,6 +24,7 @@ import {
   createOutlineEditorExtension,
 } from '#outline/index'
 import type { MoveHistory } from '#outline/move-history'
+import { pressRedo, pressUndo } from '#test-utils/browser-editor-history'
 
 type ViewRef = { current: EditorView | null }
 type MountedEditor = {
@@ -75,6 +76,11 @@ const viewRef: ViewRef = { current: null }
 function currentEditor(): MountedEditor {
   if (!mounted) throw new Error('The editor has not been mounted')
   return mounted
+}
+
+function currentView(): EditorView {
+  if (!viewRef.current) throw new Error('The editor view is not mounted')
+  return viewRef.current
 }
 
 function mount(markdown: string, memoText: string) {
@@ -263,24 +269,10 @@ async function chooseEndInsertion() {
   })
 }
 
-async function undo() {
-  const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
-  await act(async () => {
-    await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
-  })
-}
-
-async function redo() {
-  const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
-  await act(async () => {
-    await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
-  })
-}
-
 async function undoAndRedo() {
-  await undo()
+  await pressUndo(currentView())
   const afterUndo = readOutput()
-  await redo()
+  await pressRedo(currentView())
   return afterUndo
 }
 
@@ -320,9 +312,9 @@ describe('memo adoption', () => {
       await userEvent.dragAndDrop(dragHandle, gap)
     })
     const afterInsert = readOutput()
-    await undo()
+    await pressUndo(currentView())
     const afterUndo = readOutput()
-    await redo()
+    await pressRedo(currentView())
 
     expect(readUndoOutput(afterInsert, afterUndo)).toEqual({
       afterInsert: {
@@ -560,13 +552,13 @@ describe('memo adoption', () => {
       if (result.isErr()) throw result.error
     })
     const afterMoveOutput = readOutput()
-    await undo()
+    await pressUndo(currentView())
     const afterUndoMove = readOutput()
-    await undo()
+    await pressUndo(currentView())
     const afterUndoInsert = readOutput()
-    await redo()
+    await pressRedo(currentView())
     const afterRedoInsert = readOutput()
-    await redo()
+    await pressRedo(currentView())
     expect(
       readHistoryOutput(
         {
@@ -783,9 +775,9 @@ describe('memo adoption', () => {
       )
     })
     const afterRemoteAdoption = readOutput()
-    await undo()
+    await pressUndo(currentView())
     const afterUndo = readOutput()
-    await redo()
+    await pressRedo(currentView())
 
     expect(
       readHistoryOutput({ afterInsert, afterRemoteAdoption, afterUndo }),
@@ -866,9 +858,9 @@ describe('memo adoption', () => {
       if (result.isErr()) throw result.error
     })
     const afterInsert = readOutput()
-    await undo()
+    await pressUndo(currentView())
     const afterUndoInsert = readOutput()
-    await undo()
+    await pressUndo(currentView())
     expect(
       readHistoryOutput({ afterInsert, afterUndoInsert }, 'afterUndoTyping'),
     ).toEqual({
@@ -1366,7 +1358,7 @@ describe('memo adoption', () => {
       const result = dismissMemo(currentEditor().doc, 'memo-a')
       if (result.isErr()) throw result.error
     })
-    await undo()
+    await pressUndo(currentView())
 
     expect(readDismissedUndoOutput(adoptionBeforeUndo)).toEqual({
       adoptionBeforeUndo,

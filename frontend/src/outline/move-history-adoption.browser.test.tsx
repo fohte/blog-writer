@@ -3,7 +3,6 @@ import { EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { userEvent } from 'vitest/browser'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
@@ -16,6 +15,7 @@ import {
 } from '#article/index'
 import { insertMemoAsHeading } from '#memos/adoption'
 import { createMoveHistory } from '#outline/index'
+import { pressRedo, pressUndo } from '#test-utils/browser-editor-history'
 
 type MountedEditor = {
   doc: Y.Doc
@@ -111,26 +111,10 @@ function insertMemo(mounted: MountedEditor) {
   if (result.isErr()) throw result.error
 }
 
-async function undo(mounted: MountedEditor) {
-  const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
-  mounted.view.focus()
-  await act(async () => {
-    await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
-  })
-}
-
-async function redo(mounted: MountedEditor) {
-  const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
-  mounted.view.focus()
-  await act(async () => {
-    await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
-  })
-}
-
 async function undoAndRedo(mounted: MountedEditor) {
-  await undo(mounted)
+  await pressUndo(mounted.view)
   const afterUndo = readOutput(mounted)
-  await redo(mounted)
+  await pressRedo(mounted.view)
   return afterUndo
 }
 
@@ -294,11 +278,11 @@ describe('memo adoption history', () => {
     )
     if (moved.isErr()) throw moved.error
     const afterMove = readOutput(mounted)
-    await undo(mounted)
+    await pressUndo(mounted.view)
     const afterUndoMove = readOutput(mounted)
-    await undo(mounted)
+    await pressUndo(mounted.view)
     const afterUndoInsert = readOutput(mounted)
-    await redo(mounted)
+    await pressRedo(mounted.view)
     const afterRedoInsert = readOutput(mounted)
 
     expect(
