@@ -401,6 +401,49 @@ Details.`,
     })
   })
 
+  it('keeps a long tablet outline above the article body', async () => {
+    await page.viewport(900, 800)
+    const article: Article = {
+      id: 'article-tablet-outline',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(
+      articleDoc,
+      Array.from(
+        { length: 30 },
+        (_, index) => `## Section ${String(index + 1)}\n\nDetails.`,
+      ).join(`\n\n`),
+    )
+    renderWorkspace(article, articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+
+    const sidebar = host?.querySelector<HTMLElement>('aside')
+    const body = host?.querySelector<HTMLElement>(
+      'section[aria-label="Article body"]',
+    )
+    const readTabletLayoutOutput = () => ({
+      overflowY: sidebar ? getComputedStyle(sidebar).overflowY : null,
+      bodyStartsAfterSidebarContent:
+        sidebar !== null &&
+        sidebar !== undefined &&
+        body !== null &&
+        body !== undefined
+          ? body.getBoundingClientRect().top >=
+            sidebar.getBoundingClientRect().top + sidebar.scrollHeight
+          : false,
+    })
+    expect(readTabletLayoutOutput()).toEqual({
+      overflowY: 'visible',
+      bodyStartsAfterSidebarContent: true,
+    })
+  })
+
   it('shows the article panel after widening from the mobile outline tab', async () => {
     await page.viewport(375, 812)
     const article: Article = {

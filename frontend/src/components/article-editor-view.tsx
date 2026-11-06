@@ -295,7 +295,9 @@ export function ArticleEditorView({
     pagePadding: isMobile ? 'px-4' : 'px-4 sm:px-6',
     premiseColumns: isMobile ? '' : 'sm:grid-cols-3',
     workspaceColumns: isMobile ? '' : 'lg:grid-cols-3',
-    sidebar: isMobile ? '' : 'lg:self-start lg:overflow-y-auto lg:col-span-1',
+    sidebar: isMobile
+      ? ''
+      : 'lg:self-start lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto lg:col-span-1',
     panelSpacing: isMobile ? 'pt-4' : 'pt-4 lg:pt-0',
     bodyColumns: isMobile ? '' : 'lg:col-span-2',
   }
@@ -398,9 +400,6 @@ export function ArticleEditorView({
           >
             <aside
               className={`flex min-w-0 flex-col gap-6 ${layoutClasses.sidebar}`}
-              style={{
-                maxHeight: isMobile ? undefined : 'calc(100vh - 3rem)',
-              }}
             >
               {(['outline', 'memo', 'sources'] as const).map((value) =>
                 availablePanels.some((panel) => panel.value === value) ? (
