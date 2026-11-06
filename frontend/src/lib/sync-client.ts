@@ -7,6 +7,7 @@ import * as Y from 'yjs'
 import { observeMoveConflicts } from '#article/move-conflicts'
 
 const ARTICLE_INDEX_DOC_ID = 'article-index'
+const DEFAULT_ARTICLE_TITLE = 'Untitled article'
 
 export type SyncState = 'saved' | 'unsynced' | 'syncing' | 'synced'
 type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'
@@ -258,7 +259,7 @@ class SyncClient implements SyncClientApi {
       () => ({
         id: this.options.createArticleId(),
         createdAt: this.options.now(),
-        title: 'Untitled article',
+        title: DEFAULT_ARTICLE_TITLE,
       }),
       toSyncClientError,
     )().andThen((article) =>
@@ -294,7 +295,7 @@ class SyncClient implements SyncClientApi {
         return {
           id,
           createdAt: typeof createdAt === 'number' ? createdAt : 0,
-          title: typeof title === 'string' ? title : 'Untitled article',
+          title: typeof title === 'string' ? title : DEFAULT_ARTICLE_TITLE,
         }
       })
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))

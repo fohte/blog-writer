@@ -41,3 +41,13 @@ export const WithArticles: Story = {
     statuses: { 'article-a': 'synced', 'article-b': 'unsynced' },
   },
 }
+
+export const AuthenticationRequired: Story = {
+  name: 'the list asks the writer to sign in again when authentication expires.',
+  args: { requiresAuthentication: true, canCreate: false },
+}
+
+export const WithError: Story = {
+  name: 'the list shows an error when articles cannot be synchronized.',
+  args: { error: 'Articles could not be synchronized.' },
+}

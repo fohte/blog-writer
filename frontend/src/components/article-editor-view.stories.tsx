@@ -14,14 +14,17 @@ type StoryArgs = {
   layout: ArticleEditorLayout
   initialMobilePanel: ArticleEditorPanel
   sources: boolean
+  status: 'ready' | 'loading' | 'error'
 }
 
 function ArticleEditorPreview({
   layout,
   initialMobilePanel,
   sources,
+  status,
 }: StoryArgs) {
   const doc = useMemo(() => {
+    if (status !== 'ready') return undefined
     const nextDoc = new Y.Doc()
     setBody(
       nextDoc,
@@ -31,9 +34,10 @@ function ArticleEditorPreview({
     setPremise(nextDoc, 'purpose', 'Explain one useful idea')
     setPremise(nextDoc, 'claim', 'A focused article is easier to follow')
     return nextDoc
-  }, [])
+  }, [status])
 
   useEffect(() => {
+    if (!doc) return
     return () => {
       doc.destroy()
     }
@@ -58,6 +62,13 @@ function ArticleEditorPreview({
       layout={layout}
       onBack={() => {}}
       onTitleChange={() => {}}
+      status={
+        status === 'loading'
+          ? { kind: 'loading' }
+          : status === 'error'
+            ? { kind: 'error', message: 'The article could not be opened.' }
+            : undefined
+      }
       sourcesPanel={
         sources ? (
           <section
@@ -83,6 +94,7 @@ const meta = {
     initialMobilePanel: 'body',
     layout: 'desktop',
     sources: false,
+    status: 'ready',
   },
 } satisfies Meta<StoryArgs>
 
@@ -110,4 +122,14 @@ export const MobileSources: Story = {
     initialMobilePanel: 'sources',
     sources: true,
   },
+}
+
+export const Opening: Story = {
+  name: 'the editor shows a loading message while the article opens.',
+  args: { status: 'loading' },
+}
+
+export const OpenFailed: Story = {
+  name: 'the editor shows an error when the article cannot be opened.',
+  args: { status: 'error' },
 }

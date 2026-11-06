@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
 import { moveBlock, readBody, setBody } from '#article/index'
-import { observeMoveConflicts } from '#article/move-conflicts'
 import type { SyncClientOptions } from '#lib/sync-client'
 import { createSyncClient } from '#lib/sync-client'
 
@@ -258,7 +257,6 @@ describe('createSyncClient', () => {
     const { client } = createFixture(savedDocuments)
     await client.start()
     const openedDoc = client.openDocument(articleId)._unsafeUnwrap()
-    const stopEditorObserver = observeMoveConflicts(openedDoc)
     Y.applyUpdate(openedDoc, moveUpdate, 'remote-move')
 
     const readMoveOutput = () => ({
@@ -270,7 +268,6 @@ describe('createSyncClient', () => {
       acknowledgements: 1,
     })
 
-    stopEditorObserver()
     client.destroy()
     baseline.destroy()
     mover.destroy()

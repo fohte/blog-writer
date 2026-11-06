@@ -1,5 +1,5 @@
 import { ok, okAsync } from 'neverthrow'
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
@@ -40,34 +40,48 @@ describe('article editor screen', () => {
     const initialBody =
       '# First section\n\nFirst paragraph.\n\n# Second section\n\nSecond paragraph.\n'
     setBody(articleDoc, initialBody)
-    const client: SyncClientApi = {
-      start: () => okAsync(undefined),
-      openDocument: () => ok(articleDoc),
-      createArticle: () => ok(article),
-      updateArticleTitle: () => ok(undefined),
-      listArticles: () => [article],
-      getStatus: () => 'synced',
-      getError: () => undefined,
-      requiresAuthentication: () => false,
-      subscribe: () => () => {},
-      destroy: () => {},
-    }
-    host = document.createElement('div')
-    document.body.append(host)
-    root = createRoot(host)
+    function ArticleWorkspaceHarness() {
+      const [articles, setArticles] = useState([article])
+      const [client] = useState<SyncClientApi>(() => ({
+        start: () => okAsync(undefined),
+        openDocument: () => ok(articleDoc),
+        createArticle: () => ok(article),
+        updateArticleTitle: (id, title) => {
+          setArticles((currentArticles) =>
+            currentArticles.map((currentArticle) =>
+              currentArticle.id === id
+                ? { ...currentArticle, title }
+                : currentArticle,
+            ),
+          )
+          return ok(undefined)
+        },
+        listArticles: () => [article],
+        getStatus: () => 'synced',
+        getError: () => undefined,
+        requiresAuthentication: () => false,
+        subscribe: () => () => {},
+        destroy: () => {},
+      }))
 
-    act(() => {
-      root?.render(
+      return (
         <ArticleWorkspace
-          articles={[article]}
+          articles={articles}
           client={client}
           onCreateArticle={() => undefined}
           onOpenSettings={() => {}}
           ready
           requiresAuthentication={false}
           statuses={{ [article.id]: 'synced' }}
-        />,
+        />
       )
+    }
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+
+    act(() => {
+      root?.render(<ArticleWorkspaceHarness />)
     })
 
     await act(async () => {
@@ -77,6 +91,13 @@ describe('article editor screen', () => {
     const firstLine = host.querySelector<HTMLElement>('.cm-line')
     if (!editor || !firstLine)
       throw new Error('The article editor did not open')
+
+    const renamedTitle = 'A more useful article'
+    await act(async () => {
+      const titleInput = page.getByRole('textbox', { name: 'Article title' })
+      await userEvent.clear(titleInput)
+      await userEvent.type(titleInput, renamedTitle)
+    })
 
     await act(async () => {
       await userEvent.click(firstLine)
@@ -113,7 +134,7 @@ describe('article editor screen', () => {
       bodyAfterMove:
         '# Second section\n\nSecond paragraph.\n\n# Updated First section\n\nFirst paragraph.\n',
       bodyAfterUndo: editedBody,
-      listTitle: article.title,
+      listTitle: renamedTitle,
       editorCount: 0,
     })
   })
