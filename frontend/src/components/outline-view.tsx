@@ -249,6 +249,14 @@ function OutlineRow({
       >
         <span
           className="min-w-0 flex-1 truncate"
+          onClick={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest('button') !== null
+            ) {
+              event.stopPropagation()
+            }
+          }}
           style={{ paddingInlineStart: `${String(depth)}rem` }}
         >
           {proposal ? (
@@ -374,7 +382,7 @@ export function OutlineView({
   const headingProposals = new Map(
     suggestions
       .filter((proposal) => proposal.from !== proposal.to)
-      .map((proposal) => [proposal.from, proposal]),
+      .map((proposal) => [proposal.anchorFrom ?? proposal.from, proposal]),
   )
   const additions = suggestions.filter(
     (proposal) => proposal.from === proposal.to,

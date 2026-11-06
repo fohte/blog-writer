@@ -20,6 +20,7 @@ export function requestBody(
   markdown: string,
 ): OutlineProposalRequest {
   const premise = getPremise(doc)
+  const blocks = topLevelBlocks(markdown)
   return {
     premise: {
       audience: premise.audience ?? '',
@@ -27,27 +28,49 @@ export function requestBody(
       thesis: premise.claim ?? '',
     },
     body_length: markdown.length,
-    blocks: topLevelBlocks(markdown).map((block, index) => ({
-      id: `article-block-${String(index + 1)}`,
-      kind: /^ATXHeading[1-6]$/u.test(block.name)
+    blocks: blocks.map((block, index) => {
+      const kind = /^ATXHeading[1-6]$/u.test(block.name)
         ? 'heading'
         : block.name === 'Paragraph'
           ? 'paragraph'
-          : block.name.toLowerCase(),
-      markdown: markdown.slice(block.from, block.contentTo),
-      from: block.from,
-      to: block.contentTo,
-    })),
+          : block.name.toLowerCase()
+      const base = {
+        id: `article-block-${String(index + 1)}`,
+        kind,
+        markdown: markdown.slice(block.from, block.contentTo),
+        from: block.from,
+        to: block.contentTo,
+      }
+      const deleteFrom =
+        kind === 'heading' ? deletionFrom(markdown, blocks, index) : block.from
+      return deleteFrom === block.from
+        ? base
+        : { ...base, deletion_from: deleteFrom }
+    }),
   }
 }
 
-export function suggestionTargetTo(
-  block: { to: number },
-  replacement: string,
-  bodyLength: number,
+function deletionFrom(
+  markdown: string,
+  blocks: ReturnType<typeof topLevelBlocks>,
+  blockIndex: number,
 ): number {
-  // Deleting a heading includes its following newline when one exists.
-  return replacement === '' && block.to < bodyLength ? block.to + 1 : block.to
+  const block = blocks[blockIndex]
+  const previous = blocks[blockIndex - 1]
+  if (!block) return 0
+  if (blockIndex !== blocks.length - 1 || !previous) return block.from
+
+  const separator = markdown.slice(previous.contentTo, block.from)
+  const firstLineEnding = /\r\n|\r|\n/u.exec(separator)
+  if (!firstLineEnding) return block.from
+  const remainingSeparator = separator.slice(
+    firstLineEnding.index + firstLineEnding[0].length,
+  )
+  if (!/\r\n|\r|\n/u.test(remainingSeparator)) return block.from
+
+  // Keep the previous block's line ending while removing the empty line before
+  // a tail heading.
+  return previous.contentTo + firstLineEnding.index + firstLineEnding[0].length
 }
 
 export function isOutlineProposalResponse(

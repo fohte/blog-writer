@@ -425,6 +425,7 @@ export interface components {
       title: string | null
     }
     OutlineProposalArticleBlockRequest: {
+      deletion_from?: number | null
       from: number
       id: string
       kind: string

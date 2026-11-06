@@ -27,10 +27,10 @@ import {
   type OutlineProposalResponse,
   requestBody,
   requestUrl,
-  suggestionTargetTo,
 } from '#proposals/outline-request'
 
 export type OutlineSuggestion = {
+  anchorFrom?: number
   id: string
   from: number
   to: number
@@ -63,8 +63,9 @@ export interface OutlineProposalOptions {
 type TrackedSuggestion = Pick<
   OutlineSuggestion,
   'from' | 'to' | 'replacement'
-> & { guardFrom: number; guardTo: number }
+> & { anchorFrom: number; guardFrom: number; guardTo: number }
 type ManagedSuggestion = OutlineSuggestion & {
+  anchorFrom: number
   guardFrom: number
   guardTo: number
   original: string
@@ -115,6 +116,7 @@ function mapRange(
     ...range,
     from: changes.mapPos(range.from, 1),
     to: changes.mapPos(range.to, -1),
+    anchorFrom: changes.mapPos(range.anchorFrom, 1),
     guardFrom: changes.mapPos(range.guardFrom, 1),
     guardTo: changes.mapPos(range.guardTo, -1),
   }
@@ -345,29 +347,40 @@ class OutlineProposalController {
       ) {
         return []
       }
-      const targetBlock = request.blocks.find((block) => {
+      const targetBlockIndex = request.blocks.findIndex((block) => {
+        if (suggestion.replacement === '') {
+          return (
+            block.kind === 'heading' &&
+            (block.deletion_from ?? block.from) === suggestion.from
+          )
+        }
         if (suggestion.from === suggestion.to) {
           return block.kind === 'paragraph' && block.from === suggestion.from
         }
         return block.kind === 'heading' && block.from === suggestion.from
       })
+      const targetBlock = request.blocks[targetBlockIndex]
       if (!targetBlock) return []
+      const targetFrom =
+        suggestion.replacement === ''
+          ? (targetBlock.deletion_from ?? targetBlock.from)
+          : targetBlock.from
       const targetTo =
-        suggestion.from === suggestion.to
-          ? targetBlock.from
-          : suggestionTargetTo(
-              targetBlock,
-              suggestion.replacement,
-              request.body_length,
-            )
-      if (targetTo !== suggestion.to) return []
+        suggestion.replacement === ''
+          ? (request.blocks[targetBlockIndex + 1]?.from ?? request.body_length)
+          : suggestion.from === suggestion.to
+            ? targetBlock.from
+            : targetBlock.to
+      if (targetFrom !== suggestion.from || targetTo !== suggestion.to)
+        return []
       const guardTo =
         suggestion.from === suggestion.to ? targetBlock.to : targetTo
       let mapped: TrackedSuggestion | null = {
         from: suggestion.from,
         to: suggestion.to,
         replacement: suggestion.replacement,
-        guardFrom: targetBlock.from,
+        anchorFrom: targetBlock.from,
+        guardFrom: targetFrom,
         guardTo,
       }
       for (const changes of tracker) {

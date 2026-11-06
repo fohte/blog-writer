@@ -1535,6 +1535,10 @@
         "type": "object",
         "required": ["id", "kind", "markdown", "from", "to"],
         "properties": {
+          "deletion_from": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
           "from": {
             "type": "integer",
             "minimum": 0

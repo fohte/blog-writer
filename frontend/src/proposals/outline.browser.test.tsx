@@ -17,7 +17,12 @@ import { createMoveHistory } from '#outline/index'
 
 const cleanups: (() => void)[] = []
 
-type RequestBlock = { from: number; kind: string; to: number }
+type RequestBlock = {
+  deletion_from?: number
+  from: number
+  kind: string
+  to: number
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -33,11 +38,20 @@ function readRequestBlocks(body: string): RequestBlock[] {
       !isRecord(block) ||
       typeof block['from'] !== 'number' ||
       typeof block['to'] !== 'number' ||
-      typeof block['kind'] !== 'string'
+      typeof block['kind'] !== 'string' ||
+      (block['deletion_from'] !== undefined &&
+        typeof block['deletion_from'] !== 'number')
     ) {
       throw new Error('The outline request has an invalid block')
     }
-    return { from: block['from'], kind: block['kind'], to: block['to'] }
+    return {
+      ...(typeof block['deletion_from'] === 'number'
+        ? { deletion_from: block['deletion_from'] }
+        : {}),
+      from: block['from'],
+      kind: block['kind'],
+      to: block['to'],
+    }
   })
 }
 
@@ -49,13 +63,22 @@ function paragraphFrom(body: string): number {
   return paragraph.from
 }
 
-function lastHeadingRange(body: string): { from: number; to: number } {
-  const headings = readRequestBlocks(body).filter(
-    ({ kind }) => kind === 'heading',
-  )
-  const heading = headings[headings.length - 1]
-  if (!heading) throw new Error('The outline request has no heading')
-  return { from: heading.from, to: heading.to }
+function headingDeletionRange(body: string): { from: number; to: number } {
+  const blocks = readRequestBlocks(body)
+  const headingIndex = blocks.map(({ kind }) => kind).lastIndexOf('heading')
+  const heading = blocks[headingIndex]
+  const request: unknown = JSON.parse(body)
+  if (
+    !heading ||
+    !isRecord(request) ||
+    typeof request['body_length'] !== 'number'
+  ) {
+    throw new Error('The outline request has no deletable heading')
+  }
+  return {
+    from: heading.deletion_from ?? heading.from,
+    to: blocks[headingIndex + 1]?.from ?? request['body_length'],
+  }
 }
 
 function firstHeadingRange(body: string): { from: number; to: number } {
@@ -143,6 +166,28 @@ function readAcceptanceOutput(input: {
     undo: input.undo,
     afterUndo: input.view.state.doc.toString(),
     yBody: getBody(input.doc).toJSON(),
+  }
+}
+
+function readHeadingDeletionOutput(input: {
+  history: ReturnType<typeof createMoveHistory>
+  ranges: { from: number; to: number }[]
+  view: EditorView
+}) {
+  const bodyAfterDelete = input.view.state.doc.toString()
+  let undo = 'pending'
+  act(() => {
+    undo = input.history.undo(input.view).match(
+      (value) => (value ? 'undone' : 'empty'),
+      () => 'failed',
+    )
+  })
+
+  return {
+    bodyAfterDelete,
+    undo,
+    bodyAfterUndo: input.view.state.doc.toString(),
+    ranges: input.ranges,
   }
 }
 
@@ -416,7 +461,10 @@ describe('outline proposal integration', () => {
             ? { from: paragraph, to: paragraph, replacement: '## Added\n' }
             : operation === 'rename'
               ? { from, to, replacement: '# Updated' }
-              : { from, to: to + 1, replacement: '' }
+              : {
+                  ...headingDeletionRange(requestBody),
+                  replacement: '',
+                }
         return Promise.resolve(responseWithSuggestions([suggestion]))
       }
       const { outlineHost, view } = createFixture(fetcher)
@@ -478,16 +526,80 @@ describe('outline proposal integration', () => {
     })
   })
 
+  it.each([
+    {
+      position: 'middle',
+      markdown: 'A\n\n## H\n\nB',
+      heading: '## H',
+      expectedBody: 'A\n\nB',
+      expectedFrom: 3,
+      expectedTo: 10,
+    },
+    {
+      position: 'first',
+      markdown: '# Intro\n\nP',
+      heading: '# Intro',
+      expectedBody: 'P',
+      expectedFrom: 0,
+      expectedTo: 10,
+    },
+    {
+      position: 'tail',
+      markdown: 'A\n\n## Tail\n',
+      heading: '## Tail',
+      expectedBody: 'A\n',
+      expectedFrom: 2,
+      expectedTo: 12,
+    },
+  ])(
+    'deletes the adjacent blank line for a $position heading and restores it in one undo step',
+    async ({ markdown, heading, expectedBody, expectedFrom, expectedTo }) => {
+      const ranges: { from: number; to: number }[] = []
+      let requestBody = ''
+      const fetcher: typeof fetch = (_input, init) => {
+        requestBody = requestBodyFromInit(init)
+        const range = headingDeletionRange(requestBody)
+        ranges.push(range)
+        return Promise.resolve(
+          responseWithSuggestions([{ ...range, replacement: '' }]),
+        )
+      }
+      const { history, outlineHost, view } = createFixture(fetcher, markdown)
+      const headingFrom = markdown.indexOf(heading)
+      act(() => {
+        view.dispatch({
+          changes: { from: headingFrom + heading.length, insert: '!' },
+        })
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+        for (let index = 0; index < 8; index += 1) await Promise.resolve()
+      })
+      const acceptButton = [...outlineHost.querySelectorAll('button')].find(
+        (button) => button.textContent.includes('採用'),
+      )
+      if (!acceptButton) throw new Error('The heading deletion is missing')
+      await act(async () => {
+        await userEvent.click(acceptButton)
+      })
+      expect(readHeadingDeletionOutput({ history, ranges, view })).toEqual({
+        bodyAfterDelete: expectedBody,
+        undo: 'undone',
+        bodyAfterUndo: markdown.replace(heading, `${heading}!`),
+        ranges: [{ from: expectedFrom, to: expectedTo }],
+      })
+    },
+  )
+
   it('deletes the final heading line and restores it in one undo step', async () => {
     const markdown = '# Intro\n\nParagraph.\n## Tail\n'
     const requests: { url: string; body: string }[] = []
     const fetcher: typeof fetch = (input, init) => {
       const body = requestBodyFromInit(init)
-      const heading = lastHeadingRange(body)
       requests.push({ url: requestUrl(input), body })
       return Promise.resolve(
         responseWithSuggestions([
-          { from: heading.from, to: heading.to + 1, replacement: '' },
+          { ...headingDeletionRange(body), replacement: '' },
         ]),
       )
     }

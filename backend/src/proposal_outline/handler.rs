@@ -40,6 +40,8 @@ pub(crate) struct OutlineProposalArticleBlockRequest {
     pub markdown: String,
     pub from: usize,
     pub to: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletion_from: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -146,6 +148,8 @@ fn to_suggestion(
     operation: OperationKind,
     replacement: String,
     block: &OutlineProposalArticleBlockRequest,
+    block_index: usize,
+    blocks: &[OutlineProposalArticleBlockRequest],
     body_length: usize,
 ) -> Result<OutlineSuggestion, RejectionReason> {
     if block.from > block.to || block.to > body_length {
@@ -183,13 +187,19 @@ fn to_suggestion(
             if heading_level(&block.markdown).is_none() || !replacement.is_empty() {
                 return Err(RejectionReason::InvalidOperation);
             }
-            let to = if block.to < body_length {
-                block.to + 1
-            } else {
-                block.to
-            };
+            let from = block.deletion_from.unwrap_or(block.from);
+            let previous_to = block_index
+                .checked_sub(1)
+                .and_then(|index| blocks.get(index))
+                .map_or(0, |previous| previous.to);
+            let to = blocks
+                .get(block_index + 1)
+                .map_or(body_length, |next| next.from);
+            if from < previous_to || from > block.from || block.to > to || to > body_length {
+                return Err(RejectionReason::OutOfBounds);
+            }
             Ok(OutlineSuggestion {
-                from: block.from,
+                from,
                 to,
                 replacement: String::new(),
             })
@@ -213,9 +223,10 @@ fn to_suggestions(
     blocks: &[OutlineProposalArticleBlockRequest],
     body_length: usize,
 ) -> OutlineProposalResponse {
-    let blocks_by_id: BTreeMap<&str, &OutlineProposalArticleBlockRequest> = blocks
+    let blocks_by_id: BTreeMap<&str, usize> = blocks
         .iter()
-        .map(|block| (block.id.as_str(), block))
+        .enumerate()
+        .map(|(index, block)| (block.id.as_str(), index))
         .collect();
     let mut suggestions = Vec::new();
     let mut rejection_counts = BTreeMap::new();
@@ -225,7 +236,11 @@ fn to_suggestions(
             record_rejection(&mut rejection_counts, RejectionReason::UnknownAlias);
             continue;
         };
-        let Some(block) = blocks_by_id.get(block_id.as_str()) else {
+        let Some(block_index) = blocks_by_id.get(block_id.as_str()) else {
+            record_rejection(&mut rejection_counts, RejectionReason::MissingBlock);
+            continue;
+        };
+        let Some(block) = blocks.get(*block_index) else {
             record_rejection(&mut rejection_counts, RejectionReason::MissingBlock);
             continue;
         };
@@ -233,6 +248,8 @@ fn to_suggestions(
             operation.operation,
             operation.replacement,
             block,
+            *block_index,
+            blocks,
             body_length,
         ) {
             Ok(suggestion) => suggestion,
@@ -369,12 +386,12 @@ mod tests {
             GeneratedOperation { operation: OperationKind::Delete, block_alias: "b3".to_owned(), replacement: "## Not empty".to_owned() },
             GeneratedOperation { operation: OperationKind::Rename, block_alias: "b4".to_owned(), replacement: "# Not a heading".to_owned() },
         ],
-        45,
+        54,
         OutlineProposalResponse {
             suggestions: vec![
                 OutlineSuggestion { from: 0, to: 10, replacement: "# Updated".to_owned() },
                 OutlineSuggestion { from: 12, to: 12, replacement: "## Added\n".to_owned() },
-                OutlineSuggestion { from: 34, to: 45, replacement: String::new() },
+                OutlineSuggestion { from: 34, to: 46, replacement: String::new() },
             ],
         }
     )]
@@ -463,6 +480,67 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::middle_heading(
+        vec![
+            block("previous", "paragraph", "A", 0, 1),
+            block("heading", "heading", "## H", 3, 7),
+            block("next", "paragraph", "B", 9, 10),
+        ],
+        10,
+        3,
+        9,
+    )]
+    #[case::first_heading(
+        vec![
+            block("heading", "heading", "# Intro", 0, 7),
+            block("next", "paragraph", "P", 9, 10),
+        ],
+        10,
+        0,
+        9,
+    )]
+    #[case::tail_heading(
+        vec![
+            block("previous", "paragraph", "A", 0, 1),
+            block_with_deletion_from("heading", "heading", "## Tail", 3, 10, Some(2)),
+        ],
+        11,
+        2,
+        11,
+    )]
+    fn delete_ranges_consume_adjacent_blank_lines(
+        #[case] blocks: Vec<OutlineProposalArticleBlockRequest>,
+        #[case] body_length: usize,
+        #[case] expected_from: usize,
+        #[case] expected_to: usize,
+    ) {
+        let aliases = BTreeMap::from([("b1".to_owned(), "heading".to_owned())]);
+        let actual = to_suggestions(
+            GeneratedOutline {
+                operations: vec![GeneratedOperation {
+                    operation: OperationKind::Delete,
+                    block_alias: "b1".to_owned(),
+                    replacement: String::new(),
+                }],
+            },
+            &aliases,
+            &blocks,
+            body_length,
+        );
+
+        assert_eq!(
+            actual,
+            OutlineProposalResponse {
+                suggestions: vec![OutlineSuggestion {
+                    from: expected_from,
+                    to: expected_to,
+                    replacement: String::new(),
+                }],
+            },
+        );
+    }
+
     fn block(
         id: &str,
         kind: &str,
@@ -470,12 +548,24 @@ mod tests {
         from: usize,
         to: usize,
     ) -> OutlineProposalArticleBlockRequest {
+        block_with_deletion_from(id, kind, markdown, from, to, None)
+    }
+
+    fn block_with_deletion_from(
+        id: &str,
+        kind: &str,
+        markdown: &str,
+        from: usize,
+        to: usize,
+        deletion_from: Option<usize>,
+    ) -> OutlineProposalArticleBlockRequest {
         OutlineProposalArticleBlockRequest {
             id: id.to_owned(),
             kind: kind.to_owned(),
             markdown: markdown.to_owned(),
             from,
             to,
+            deletion_from,
         }
     }
 }
