@@ -1015,7 +1015,7 @@ describe('outline interactions', () => {
     })
     const afterUndo = body.toJSON()
     await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
+      await userEvent.keyboard(`{${modifier}>}{Shift>}Z{/Shift}{/${modifier}}`)
     })
     const afterShiftRedo = body.toJSON()
     await act(async () => {
@@ -1097,7 +1097,7 @@ describe('outline interactions', () => {
     })
     const afterUndo = body.toJSON()
     await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
+      await userEvent.keyboard(`{${modifier}>}{Shift>}Z{/Shift}{/${modifier}}`)
     })
     const afterRedo = body.toJSON()
     await act(async () => {
