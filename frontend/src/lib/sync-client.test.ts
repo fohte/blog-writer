@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
+import { moveBlock, readBody, setBody } from '#article/index'
 import type { SyncClientOptions } from '#lib/sync-client'
 import { createSyncClient } from '#lib/sync-client'
 
@@ -83,8 +84,11 @@ const createFixture = (
   options: Pick<SyncClientOptions, 'checkAccessRedirect'> = {
     checkAccessRedirect: () => Promise.resolve('unreachable'),
   },
+  persistenceFailures = new Set<string>(),
 ) => {
   const providers: FakeWebsocketProvider[] = []
+  const providerAttempts = new Map<string, number>()
+  const persistenceAttempts = new Map<string, number>()
   const docs: Y.Doc[] = []
   let articleId = '018f0000-0000-7000-8000-000000000001'
   let now = 1_800_000_000_000
@@ -94,9 +98,13 @@ const createFixture = (
       docs.push(doc)
       return doc
     },
-    createPersistence: (docId, doc) =>
-      new FakePersistence(docId, doc, savedDocuments),
+    createPersistence: (docId, doc) => {
+      persistenceAttempts.set(docId, (persistenceAttempts.get(docId) ?? 0) + 1)
+      if (persistenceFailures.has(docId)) throw new Error('storage unavailable')
+      return new FakePersistence(docId, doc, savedDocuments)
+    },
     createWebsocketProvider: (url, docId) => {
+      providerAttempts.set(docId, (providerAttempts.get(docId) ?? 0) + 1)
       if (unavailableDocIds.has(docId)) throw new Error('offline')
       const provider = new FakeWebsocketProvider(url, docId)
       providers.push(provider)
@@ -110,6 +118,8 @@ const createFixture = (
   return {
     client: result._unsafeUnwrap(),
     providers,
+    providerAttempts,
+    persistenceAttempts,
     docs,
     savedDocuments,
     setArticleId: (id: string) => {
@@ -142,6 +152,7 @@ describe('createSyncClient', () => {
       () => 'started',
       (error) => error.message,
     )
+    await Promise.resolve()
 
     const readStartupOutput = () => [
       startResult,
@@ -155,6 +166,7 @@ describe('createSyncClient', () => {
         {
           id: '018f0000-0000-7000-8000-000000000001',
           createdAt: 1_800_000_000_000,
+          title: 'Untitled article',
         },
       ],
       [
@@ -178,6 +190,7 @@ describe('createSyncClient', () => {
     setArticleId(id)
     setNow(1_800_000_000_001)
     const createResult = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
     const readArticleOutput = () => [
       createResult,
       client.listArticles(),
@@ -185,8 +198,8 @@ describe('createSyncClient', () => {
     ]
 
     expect(readArticleOutput()).toEqual([
-      { id, createdAt: 1_800_000_000_001 },
-      [{ id, createdAt: 1_800_000_000_001 }],
+      { id, createdAt: 1_800_000_000_001, title: 'Untitled article' },
+      [{ id, createdAt: 1_800_000_000_001, title: 'Untitled article' }],
       true,
     ])
     client.destroy()
@@ -194,19 +207,172 @@ describe('createSyncClient', () => {
     const restored = createFixture(savedDocuments)
     await restored.client.start()
     expect(restored.client.listArticles()).toEqual([
-      { id, createdAt: 1_800_000_000_001 },
+      { id, createdAt: 1_800_000_000_001, title: 'Untitled article' },
     ])
     restored.client.destroy()
+  })
+
+  it('keeps article titles in the index document instead of the article document', () => {
+    const { client } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    const articleDoc = client.openDocument(article.id)._unsafeUnwrap()
+    client.updateArticleTitle(article.id, 'A revised title')._unsafeUnwrap()
+
+    const readTitleOutput = () => ({
+      articles: client.listArticles(),
+      articleDocumentHasTitle: articleDoc.share.has('title'),
+    })
+    expect(readTitleOutput()).toEqual({
+      articles: [
+        {
+          id: article.id,
+          createdAt: article.createdAt,
+          title: 'A revised title',
+        },
+      ],
+      articleDocumentHasTitle: false,
+    })
+    client.destroy()
+  })
+
+  it('keeps a provider creation error visible after an article title changes', async () => {
+    const articleId = 'article-provider-unavailable'
+    const savedIndex = new Y.Doc()
+    const articleEntry = new Y.Map<unknown>()
+    articleEntry.set('createdAt', 1_800_000_000_000)
+    articleEntry.set('title', 'Untitled article')
+    savedIndex.getMap<Y.Map<unknown>>('articles').set(articleId, articleEntry)
+    const savedDocuments = new Map<string, Uint8Array>([
+      ['article-index', Y.encodeStateAsUpdate(savedIndex)],
+    ])
+    savedIndex.destroy()
+    const { client, providerAttempts } = createFixture(
+      savedDocuments,
+      new Set([articleId]),
+    )
+    const startResult = await client.start().match(
+      () => 'started',
+      (error) => error.message,
+    )
+    await Promise.resolve()
+    const errorBeforeTitleChange = client.getError()?.message ?? null
+    client.updateArticleTitle(articleId, 'A revised title')._unsafeUnwrap()
+
+    const readProviderErrorOutput = () => ({
+      startResult,
+      errorBeforeTitleChange,
+      errorAfterTitleChange: client.getError()?.message ?? null,
+      failedArticleProviderAttempts: providerAttempts.get(articleId) ?? 0,
+      article: client.listArticles(),
+    })
+    expect(readProviderErrorOutput()).toEqual({
+      startResult: 'started',
+      errorBeforeTitleChange: 'Failed to initialize document synchronization',
+      errorAfterTitleChange: 'Failed to initialize document synchronization',
+      failedArticleProviderAttempts: 1,
+      article: [
+        {
+          id: articleId,
+          createdAt: 1_800_000_000_000,
+          title: 'A revised title',
+        },
+      ],
+    })
+    client.destroy()
+  })
+
+  it('keeps a synchronous persistence initialization error visible without retrying', () => {
+    const articleId = 'article-persistence-unavailable'
+    const { client, persistenceAttempts } = createFixture(
+      new Map(),
+      new Set(),
+      { checkAccessRedirect: () => Promise.resolve('unreachable') },
+      new Set([articleId]),
+    )
+    const firstOpenResult = client.openDocument(articleId).match(
+      () => 'opened',
+      (error) => error.message,
+    )
+    const errorAfterFirstOpen = client.getError()?.message ?? null
+    const secondOpenResult = client.openDocument(articleId).match(
+      () => 'opened',
+      (error) => error.message,
+    )
+
+    const readInitializationFailureOutput = () => ({
+      firstOpenResult,
+      errorAfterFirstOpen,
+      secondOpenResult,
+      errorAfterSecondOpen: client.getError()?.message ?? null,
+      persistenceAttempts: persistenceAttempts.get(articleId) ?? 0,
+    })
+    expect(readInitializationFailureOutput()).toEqual({
+      firstOpenResult: 'Failed to initialize document synchronization',
+      errorAfterFirstOpen: 'Failed to initialize document synchronization',
+      secondOpenResult: 'Failed to initialize document synchronization',
+      errorAfterSecondOpen: 'Failed to initialize document synchronization',
+      persistenceAttempts: 1,
+    })
+    client.destroy()
+  })
+
+  it('repairs a remote deletion when a move record arrives before the editor opens', async () => {
+    const articleId = '018f0000-0000-7000-8000-000000000003'
+    const baseline = new Y.Doc()
+    baseline.clientID = 71
+    const scenarioMarkdown =
+      '## Cedar\na1\n## Fjord\nmaple maple\n## Vista\nz9\n'
+    setBody(baseline, scenarioMarkdown)
+
+    const offlineEditor = new Y.Doc()
+    offlineEditor.clientID = 73
+    Y.applyUpdate(offlineEditor, Y.encodeStateAsUpdate(baseline))
+    const offlineBody = offlineEditor.getText('body')
+    offlineBody.insert(offlineBody.toJSON().indexOf('maple') + 5, 'xy')
+    offlineBody.delete(offlineBody.toJSON().lastIndexOf('ple'), 3)
+
+    const mover = new Y.Doc()
+    mover.clientID = 72
+    Y.applyUpdate(mover, Y.encodeStateAsUpdate(baseline))
+    moveBlock(mover, {
+      from: scenarioMarkdown.indexOf('## Fjord\n'),
+      destination: scenarioMarkdown.length,
+    })._unsafeUnwrap()
+    const moveUpdate = Y.encodeStateAsUpdate(
+      mover,
+      Y.encodeStateVector(baseline),
+    )
+
+    const savedDocuments = new Map([
+      [articleId, Y.encodeStateAsUpdate(offlineEditor)],
+    ])
+    const { client } = createFixture(savedDocuments)
+    await client.start()
+    const openedDoc = client.openDocument(articleId)._unsafeUnwrap()
+    Y.applyUpdate(openedDoc, moveUpdate, 'remote-move')
+
+    const readMoveOutput = () => ({
+      body: readBody(openedDoc),
+      acknowledgements: openedDoc.getMap('move-acks').size,
+    })
+    expect(readMoveOutput()).toEqual({
+      body: '## Cedar\na1\nxy## Vista\nz9\n\n## Fjord\nmaple ma\n',
+      acknowledgements: 1,
+    })
+
+    client.destroy()
+    baseline.destroy()
+    mover.destroy()
+    offlineEditor.destroy()
   })
 
   it('updates document status across a connection and failed reconnect', async () => {
     const { client, providers } = createFixture()
     await client.start()
     const created = client.createArticle()._unsafeUnwrap()
-    const provider = providers.find(({ docId }) => docId === created.id)
-
     const states = [client.getStatus(created.id)]
     await Promise.resolve()
+    const provider = providers.find(({ docId }) => docId === created.id)
     provider?.emitStatus('connecting')
     states.push(client.getStatus(created.id))
     provider?.emitStatus('connected')
@@ -220,7 +386,7 @@ describe('createSyncClient', () => {
     states.push(client.getStatus(created.id))
 
     expect(states).toEqual([
-      'saved',
+      'unsynced',
       'syncing',
       'synced',
       'unsynced',
@@ -234,9 +400,8 @@ describe('createSyncClient', () => {
     const { client, providers } = createFixture()
     await client.start()
     const created = client.createArticle()._unsafeUnwrap()
-    const provider = providers.find(({ docId }) => docId === created.id)
-
     await Promise.resolve()
+    const provider = providers.find(({ docId }) => docId === created.id)
     const states = [client.getStatus(created.id)]
     provider?.emitConnectionClose()
     states.push(client.getStatus(created.id))
@@ -290,6 +455,7 @@ describe('createSyncClient', () => {
       const { client, providers } = createFixture(new Map(), new Set(), {})
       await client.start()
       const article = client.createArticle()._unsafeUnwrap()
+      await Promise.resolve()
       const provider = providers.find(({ docId }) => docId === article.id)
 
       provider?.emitConnectionClose()
@@ -329,6 +495,7 @@ describe('createSyncClient', () => {
     })
     await client.start()
     const article = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
     const provider = providers.find(({ docId }) => docId === article.id)
 
     provider?.emitConnectionClose()
@@ -362,6 +529,7 @@ describe('createSyncClient', () => {
     })
     await client.start()
     const article = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
     const provider = providers.find(({ docId }) => docId === article.id)
 
     provider?.emitConnectionClose()
@@ -398,6 +566,7 @@ describe('createSyncClient', () => {
     const firstArticle = client.createArticle()._unsafeUnwrap()
     setArticleId('018f0000-0000-7000-8000-000000000006')
     const secondArticle = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
     const articles = [firstArticle, secondArticle]
     const articleProviders = articles.map(({ id }) =>
       providers.find(({ docId }) => docId === id),
@@ -429,6 +598,7 @@ describe('createSyncClient', () => {
     docs[0]
       ?.getMap<Y.Map<unknown>>('articles')
       .set('018f0000-0000-7000-8000-000000000003', entry)
+    await Promise.resolve()
 
     expect(providers.map(({ docId }) => docId)).toEqual([
       'article-index',
@@ -437,9 +607,10 @@ describe('createSyncClient', () => {
     client.destroy()
   })
 
-  it('uses a secure websocket URL for an HTTPS page', () => {
+  it('uses a secure websocket URL for an HTTPS page', async () => {
     vi.stubGlobal('window', { location: { href: 'https://example.test/' } })
     const { client, providers } = createFixture()
+    await Promise.resolve()
 
     expect(providers.map(({ url }) => url)).toEqual([
       'wss://example.test/api/sync',
@@ -467,9 +638,14 @@ describe('createSyncClient', () => {
     ])
   })
 
-  it('does not index an article when its document cannot be opened', () => {
+  it('does not index an article when its local document cannot be created', () => {
     const id = '018f0000-0000-7000-8000-000000000004'
-    const { client, setArticleId } = createFixture(new Map(), new Set([id]))
+    const { client, setArticleId } = createFixture(
+      new Map(),
+      new Set(),
+      undefined,
+      new Set([id]),
+    )
     setArticleId(id)
     const createResult = client.createArticle().match(
       () => 'created',
@@ -485,7 +661,7 @@ describe('createSyncClient', () => {
     client.destroy()
   })
 
-  it('reports when a stored article cannot be opened during startup', async () => {
+  it('reports provider initialization errors after restoring stored articles', async () => {
     const docId = '018f0000-0000-7000-8000-000000000005'
     const savedIndex = new Y.Doc()
     const entry = new Y.Map<unknown>()
@@ -501,15 +677,18 @@ describe('createSyncClient', () => {
       () => 'started',
       (error) => error.message,
     )
+    await Promise.resolve()
 
     const readStartOutput = () => [
       startResult,
       providers.map(({ docId: room }) => room),
+      client.getError()?.message,
     ]
 
     expect(readStartOutput()).toEqual([
-      'Failed to initialize document synchronization',
+      'started',
       ['article-index'],
+      'Failed to initialize document synchronization',
     ])
     client.destroy()
   })

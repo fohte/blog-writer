@@ -22,7 +22,8 @@
     "preview": "vite preview",
     "storybook": "storybook dev -p 6006",
     "storybook:build": "storybook build",
-    "storybook:screenshot": "vitest run --config vitest.screenshot.config.ts"
+    "storybook:screenshot": "bash ./scripts/storybook-screenshot.sh",
+    "storybook:screenshot:desktop": "vitest run --config vitest.screenshot.config.ts"
   },
   "dependencies": {
     "@atlaskit/pragmatic-drag-and-drop": "4.0.0",
@@ -31,6 +32,7 @@
     "@codemirror/lang-markdown": "6.5.2",
     "@codemirror/language": "6.13.1",
     "@codemirror/language-data": "6.5.2",
+    "@codemirror/merge": "6.12.3",
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.15",
     "@fohte/ui": "0.1.7",

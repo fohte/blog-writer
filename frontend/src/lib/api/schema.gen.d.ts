@@ -196,6 +196,38 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/proposals/outline': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['propose_outline']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/proposals/transition': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['propose_transition']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/research/claim-evidence': {
     parameters: {
       query?: never
@@ -408,6 +440,46 @@ export interface components {
       image: string | null
       title: string | null
     }
+    OutlineProposalArticleBlockRequest: {
+      deletion_from?: number | null
+      from: number
+      id: string
+      kind: string
+      markdown: string
+      to: number
+    }
+    OutlineProposalError: {
+      message: string
+    }
+    OutlineProposalEvent:
+      | {
+          data: components['schemas']['OutlineProposalResponse']
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['OutlineProposalError']
+          /** @enum {string} */
+          event: 'error'
+        }
+    OutlineProposalPremiseRequest: {
+      audience: string
+      purpose: string
+      thesis: string
+    }
+    OutlineProposalRequest: {
+      blocks: components['schemas']['OutlineProposalArticleBlockRequest'][]
+      body_length: number
+      premise: components['schemas']['OutlineProposalPremiseRequest']
+    }
+    OutlineProposalResponse: {
+      suggestions: components['schemas']['OutlineSuggestion'][]
+    }
+    OutlineSuggestion: {
+      from: number
+      replacement: string
+      to: number
+    }
     /** @enum {string} */
     ProviderName: 'claude_code' | 'openai_compatible'
     PublishArticleRequest: {
@@ -530,6 +602,54 @@ export interface components {
       article_id: string
       body: string
       source_id: string
+    }
+    TransitionBlock: {
+      id: string
+      kind: string
+      markdown: string
+    }
+    TransitionError: {
+      message: string
+    }
+    TransitionEvent:
+      | {
+          data: components['schemas']['TransitionResponse']
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['TransitionError']
+          /** @enum {string} */
+          event: 'error'
+        }
+    TransitionPremise: {
+      audience: string
+      purpose: string
+      thesis: string
+    }
+    TransitionRequest: {
+      blocks: components['schemas']['TransitionBlock'][]
+      premise: components['schemas']['TransitionPremise']
+      seams: components['schemas']['TransitionSeam'][]
+    }
+    TransitionResponse: {
+      suggestions: components['schemas']['TransitionSuggestion'][]
+    }
+    TransitionSeam: {
+      after_block_id: string
+      after_sentence: string
+      before_block_id: string
+      before_sentence: string
+      from: number
+      id: string
+      middle: string
+      to: number
+    }
+    TransitionSuggestion: {
+      from: number
+      replacement: string
+      seam_id: string
+      to: number
     }
     WriteFromKeyPointsError: {
       message: string
@@ -1330,6 +1450,72 @@ export interface operations {
         }
       }
       /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  propose_outline: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['OutlineProposalRequest']
+      }
+    }
+    responses: {
+      /** @description Outline changes proposed as text replacements */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': components['schemas']['OutlineProposalEvent']
+        }
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  propose_transition: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['TransitionRequest']
+      }
+    }
+    responses: {
+      /** @description Transition sentence suggestions */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': components['schemas']['TransitionEvent']
+        }
+      }
+      /** @description Invalid request body or target block */
       400: {
         headers: {
           [name: string]: unknown

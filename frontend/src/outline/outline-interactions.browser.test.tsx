@@ -131,12 +131,16 @@ describe('outline interactions', () => {
       })
     }
 
-    const menuItems = [...document.querySelectorAll('[role="menuitem"]')].map(
-      (item) => item.textContent,
-    )
-    const moveDown = [
+    const menuButtons = [
       ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    ].find((item) => item.textContent === 'Move down')
+    ]
+    const menuItems = menuButtons.map((item) => ({
+      label: item.textContent,
+      disabled: item.disabled,
+    }))
+    const moveDown = menuButtons.find(
+      (item) => item.textContent === 'Move down',
+    )
     if (!moveDown) throw new Error('The Move down item is missing')
     await act(async () => {
       await userEvent.click(moveDown)
@@ -157,7 +161,10 @@ describe('outline interactions', () => {
     })
     expect(readOutput()).toEqual({
       menuDuringComposition: false,
-      menuItems: ['Move up', 'Move down'],
+      menuItems: [
+        { label: 'Move up', disabled: true },
+        { label: 'Move down', disabled: false },
+      ],
       afterMove: 'Second paragraph.\n\nFirst paragraph.\n',
       afterUndo: markdownText,
       editor: markdownText,
@@ -209,6 +216,71 @@ describe('outline interactions', () => {
     expect(readSelection()).toEqual({
       selection: markdownText.indexOf('# Details'),
       activeHeadings: ['false', 'true'],
+    })
+  })
+
+  it('renders outline proposals and reports accept and reject actions', async () => {
+    const markdownText = '# Overview\n\nFirst section.\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const history = createMoveHistory(doc)
+    const outlineHost = document.createElement('div')
+    document.body.append(outlineHost)
+    const view = new EditorView({
+      state: EditorState.create({ doc: markdownText }),
+    })
+    const root: Root = createRoot(outlineHost)
+    const acceptedIds: string[] = []
+    const rejectedIds: string[] = []
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      view.destroy()
+      history.destroy()
+      doc.destroy()
+      outlineHost.remove()
+    })
+
+    act(() => {
+      root.render(
+        createElement(ArticleOutline, {
+          doc,
+          history,
+          onProposalAccept: (id) => acceptedIds.push(id),
+          onProposalReject: (id) => rejectedIds.push(id),
+          proposalState: {
+            generating: false,
+            suggestions: [
+              {
+                from: markdownText.length,
+                id: 'suggested-heading',
+                replacement: '## Proposed section',
+                to: markdownText.length,
+              },
+            ],
+          },
+          view,
+        }),
+      )
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+      await userEvent.click(page.getByRole('button', { name: '× 却下' }))
+    })
+
+    const readProposalOutput = () => ({
+      proposalText:
+        outlineHost.querySelector('[aria-label="Proposed section"]')
+          ?.textContent ?? null,
+      acceptedIds,
+      rejectedIds,
+    })
+    expect(readProposalOutput()).toEqual({
+      proposalText: 'Proposed section✓ 採用× 却下',
+      acceptedIds: ['suggested-heading'],
+      rejectedIds: ['suggested-heading'],
     })
   })
 

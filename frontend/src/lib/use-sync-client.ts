@@ -64,10 +64,11 @@ export function useSyncClient() {
   }, [])
 
   const createArticle = () => {
-    client?.createArticle().match(
-      () => {},
+    return client?.createArticle().match(
+      (article) => article,
       (createError) => {
         setError(createError.message)
+        return undefined
       },
     )
   }
@@ -75,6 +76,7 @@ export function useSyncClient() {
   return {
     articles,
     statuses,
+    client,
     ready,
     error,
     requiresAuthentication,

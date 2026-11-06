@@ -1,7 +1,4 @@
-import {
-  draggable,
-  dropTargetForElements,
-} from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
+import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
 import { type Extension, Prec, StateEffect } from '@codemirror/state'
 import {
   Decoration,
@@ -12,16 +9,13 @@ import {
   type ViewUpdate,
   WidgetType,
 } from '@codemirror/view'
-import { createElement, type RefObject } from 'react'
-import { flushSync } from 'react-dom'
-import { createRoot, type Root } from 'react-dom/client'
 
-import type { BlockMoveMenuAction } from '#components/block-move-menu'
-import { BlockMoveMenu } from '#components/block-move-menu'
+import { mountBlockMoveMenu } from '#outline/block-move-menu'
 import { adjacentMove, blockStarts, bodyDropInput } from '#outline/block-ranges'
 import type { MoveHistory } from '#outline/move-history'
 
 const refreshBlockHandles = StateEffect.define()
+const blockHandleCleanups = new WeakMap<HTMLElement, () => void>()
 
 class BlockDragHandle extends WidgetType {
   constructor(
@@ -32,8 +26,6 @@ class BlockDragHandle extends WidgetType {
   ) {
     super()
   }
-
-  private cleanup: (() => void) | undefined
 
   override eq(other: BlockDragHandle): boolean {
     return (
@@ -48,86 +40,30 @@ class BlockDragHandle extends WidgetType {
     const wrapper = document.createElement('span')
     const button = document.createElement('button')
     const menuHost = document.createElement('span')
-    const anchor: RefObject<HTMLButtonElement | null> = { current: button }
-    let root: Root | undefined
-    let menuOpen = false
-    let dragStarted = false
-    const actions = (): BlockMoveMenuAction[] => [
-      {
-        label: 'Move up',
-        input: adjacentMove(this.view.state, this.from, 'up'),
-      },
-      {
-        label: 'Move down',
-        input: adjacentMove(this.view.state, this.from, 'down'),
-      },
-    ]
-    const renderMenu = (open: boolean, sync = false) => {
-      menuOpen = open
-      button.setAttribute('aria-expanded', String(open))
-      root ??= createRoot(menuHost)
-      const render = () => {
-        root?.render(
-          createElement(BlockMoveMenu, {
-            actions: actions(),
-            anchor,
-            onMove: (input) => {
-              this.history.move(input, this.view).match(
-                () => true,
-                () => false,
-              )
-            },
-            onOpenChange: renderMenu,
-            open,
-          }),
-        )
-      }
-      if (sync) flushSync(render)
-      else render()
-    }
-    const handleClick = (event: MouseEvent) => {
-      event.preventDefault()
-      event.stopPropagation()
-      if (dragStarted) {
-        dragStarted = false
-        return
-      }
-      if (this.view.composing || this.composingViews.has(this.view)) return
-      renderMenu(!menuOpen, true)
-    }
     button.type = 'button'
     button.className = 'cm-block-drag-handle'
     button.setAttribute('aria-label', 'Move block')
     button.setAttribute('aria-haspopup', 'menu')
     button.setAttribute('aria-expanded', 'false')
     button.textContent = '⠿'
-    button.addEventListener('click', handleClick)
-    button.addEventListener('mousedown', (event) => {
-      event.stopPropagation()
-    })
-    const cleanupDraggable = draggable({
-      element: button,
-      getInitialData: () => ({ kind: 'block', from: this.from }),
-      onDragStart: () => {
-        dragStarted = true
-      },
-      onDrop: () => {
-        window.setTimeout(() => {
-          dragStarted = false
-        }, 0)
-      },
-    })
     wrapper.append(button, menuHost)
-    this.cleanup = () => {
-      cleanupDraggable()
-      button.removeEventListener('click', handleClick)
-      if (root) queueMicrotask(() => root?.unmount())
-    }
+    blockHandleCleanups.set(
+      wrapper,
+      mountBlockMoveMenu({
+        button,
+        composingViews: this.composingViews,
+        from: this.from,
+        history: this.history,
+        host: menuHost,
+        view: this.view,
+      }),
+    )
     return wrapper
   }
 
-  override destroy() {
-    this.cleanup?.()
+  override destroy(dom: HTMLElement) {
+    blockHandleCleanups.get(dom)?.()
+    blockHandleCleanups.delete(dom)
   }
 }
 
