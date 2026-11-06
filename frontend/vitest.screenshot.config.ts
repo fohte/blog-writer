@@ -8,10 +8,14 @@ import { SCREENSHOT_VIEWPORT } from './.storybook/screenshot-viewport'
 import viteConfig from './vite.config'
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
+const screenshotViewport =
+  process.env['VRT_VIEWPORT'] === 'tablet'
+    ? { width: 900, height: 800 }
+    : SCREENSHOT_VIEWPORT
 const storybookProject = createStorybookProject({
   name: 'storybook-screenshot-frontend',
   rootDir: dirname,
-  viewport: SCREENSHOT_VIEWPORT,
+  viewport: screenshotViewport,
   screenshotsSubdir: 'desktop',
   setupFiles: ['./.storybook/vitest.setup.screenshot.ts'],
 })

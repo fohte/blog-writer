@@ -1,10 +1,19 @@
-import { err, ok, Result, ResultAsync } from 'neverthrow'
+import { err, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 import { v7 } from 'uuid'
-import { IndexeddbPersistence } from 'y-indexeddb'
-import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 
+import {
+  buildSyncDocument,
+  createLocalPersistence,
+  createWebsocketConnection,
+  type LocalPersistence,
+  type SyncDocument,
+  type WebsocketConnection,
+} from '#lib/sync-client-document'
+import { SyncClientError, toSyncClientError } from '#lib/sync-client-errors'
+
 const ARTICLE_INDEX_DOC_ID = 'article-index'
+const DEFAULT_ARTICLE_TITLE = 'Untitled article'
 
 export type SyncState = 'saved' | 'unsynced' | 'syncing' | 'synced'
 type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'
@@ -12,32 +21,7 @@ type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'
 export type Article = {
   id: string
   createdAt: number
-}
-
-class SyncClientError extends Error {
-  constructor(message: string, cause: unknown) {
-    super(message, { cause })
-    this.name = 'SyncClientError'
-  }
-}
-
-interface LocalPersistence {
-  synced: boolean
-  on(event: 'synced', listener: () => void): void
-}
-
-interface WebsocketConnection {
-  synced: boolean
-  wsconnected: boolean
-  wsconnecting: boolean
-  onConnectionClose(listener: () => void): void
-  onStatus(
-    listener: (event: {
-      status: 'connected' | 'connecting' | 'disconnected'
-    }) => void,
-  ): void
-  onSync(listener: (isSynced: boolean) => void): void
-  destroy(): void
+  title: string
 }
 
 export type SyncClientOptions = {
@@ -57,6 +41,7 @@ export interface SyncClientApi {
   start(): ResultAsync<void, SyncClientError>
   openDocument(docId: string): Result<Y.Doc, SyncClientError>
   createArticle(): Result<Article, SyncClientError>
+  updateArticleTitle(id: string, title: string): Result<void, SyncClientError>
   listArticles(): Article[]
   getStatus(docId: string): SyncState | undefined
   getError(): SyncClientError | undefined
@@ -65,58 +50,12 @@ export interface SyncClientApi {
   destroy(): void
 }
 
-type SyncDocument = {
-  doc: Y.Doc
-  persistence: LocalPersistence
-  provider: WebsocketConnection
-  status: SyncState
-  subscribe: (listener: (event: SyncDocumentEvent) => void) => () => void
-}
-
-type SyncDocumentEvent = 'status' | 'connection-close' | 'connected'
-
 const defaultOptions: SyncClientOptions = {
   createDoc: () => new Y.Doc(),
-  createPersistence: (docId, doc) => new IndexeddbPersistence(docId, doc),
-  createWebsocketProvider: (url, docId, doc) => {
-    const provider = new WebsocketProvider(url, docId, doc)
-    return {
-      get synced() {
-        return provider.synced
-      },
-      get wsconnected() {
-        return provider.wsconnected
-      },
-      get wsconnecting() {
-        return provider.wsconnecting
-      },
-      onConnectionClose: (listener) =>
-        provider.on('connection-close', listener),
-      onStatus: (listener) => provider.on('status', listener),
-      onSync: (listener) => provider.on('sync', listener),
-      destroy: () => {
-        provider.destroy()
-      },
-    }
-  },
+  createPersistence: createLocalPersistence,
+  createWebsocketProvider: createWebsocketConnection,
   createArticleId: v7,
   now: Date.now,
-}
-
-const toSyncClientError = (cause: unknown) =>
-  cause instanceof SyncClientError
-    ? cause
-    : new SyncClientError(
-        'Failed to initialize document synchronization',
-        cause,
-      )
-
-const createWebsocketUrl = () => {
-  const pageUrl =
-    typeof window === 'undefined' ? 'http://localhost/' : window.location.href
-  const url = new URL('/api/sync', pageUrl)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  return url.toString()
 }
 
 const checkAccessRedirect = () => {
@@ -132,41 +71,12 @@ const checkAccessRedirect = () => {
   )
 }
 
-const buildSyncDocument = (options: SyncClientOptions, docId: string) =>
-  Result.fromThrowable(() => options.createDoc(), toSyncClientError)().andThen(
-    (doc) => {
-      const persistenceResult = Result.fromThrowable(
-        () => options.createPersistence(docId, doc),
-        toSyncClientError,
-      )()
-      if (persistenceResult.isErr()) {
-        doc.destroy()
-        return err(persistenceResult.error)
-      }
-
-      const providerResult = Result.fromThrowable(
-        () => options.createWebsocketProvider(createWebsocketUrl(), docId, doc),
-        toSyncClientError,
-      )()
-      if (providerResult.isErr()) {
-        doc.destroy()
-        return err(providerResult.error)
-      }
-
-      return Result.fromThrowable(
-        () =>
-          makeSyncDocument(doc, persistenceResult.value, providerResult.value),
-        toSyncClientError,
-      )().mapErr((error) => {
-        providerResult.value.destroy()
-        doc.destroy()
-        return error
-      })
-    },
-  )
-
 class SyncClient implements SyncClientApi {
   private readonly documents = new Map<string, SyncDocument>()
+  private readonly documentInitializationErrors = new Map<
+    string,
+    SyncClientError
+  >()
   private readonly listeners = new Set<() => void>()
   private started = false
   private destroyed = false
@@ -185,7 +95,7 @@ class SyncClient implements SyncClientApi {
       this.emitChange()
       if (!this.started || this.destroyed) return
       const result = this.openIndexedArticles()
-      this.syncError = result.isErr() ? result.error : undefined
+      if (result.isErr()) this.syncError = result.error
       this.emitChange()
     })
   }
@@ -200,14 +110,11 @@ class SyncClient implements SyncClientApi {
   }
 
   start() {
-    return ResultAsync.fromPromise(
-      waitForLocalPersistence(this.index.persistence),
-      toSyncClientError,
-    ).andThen(() => {
+    return okAsync(undefined).andThen(() => {
       if (this.destroyed) return err(this.destroyedError())
       this.started = true
       const result = this.openIndexedArticles()
-      this.syncError = result.isErr() ? result.error : undefined
+      if (result.isErr()) this.syncError = result.error
       this.emitChange()
       return result
     })
@@ -218,8 +125,17 @@ class SyncClient implements SyncClientApi {
 
     const existing = this.documents.get(docId)
     if (existing) return ok(existing.doc)
+    const initializationError = this.documentInitializationErrors.get(docId)
+    if (initializationError) return err(initializationError)
 
-    return buildSyncDocument(this.options, docId).andThen((document) =>
+    const buildResult = buildSyncDocument(this.options, docId)
+    if (buildResult.isErr()) {
+      this.documentInitializationErrors.set(docId, buildResult.error)
+      this.syncError = buildResult.error
+      return err(buildResult.error)
+    }
+
+    return buildResult.andThen((document) =>
       Result.fromThrowable(() => {
         this.subscribeToDocument(document)
         this.documents.set(docId, document)
@@ -234,6 +150,7 @@ class SyncClient implements SyncClientApi {
       () => ({
         id: this.options.createArticleId(),
         createdAt: this.options.now(),
+        title: DEFAULT_ARTICLE_TITLE,
       }),
       toSyncClientError,
     )().andThen((article) =>
@@ -241,6 +158,7 @@ class SyncClient implements SyncClientApi {
         Result.fromThrowable(() => {
           const entry = new Y.Map<unknown>()
           entry.set('createdAt', article.createdAt)
+          entry.set('title', article.title)
           this.index.doc
             .getMap<Y.Map<unknown>>('articles')
             .set(article.id, entry)
@@ -251,11 +169,25 @@ class SyncClient implements SyncClientApi {
     )
   }
 
+  updateArticleTitle(id: string, title: string) {
+    const entry = this.index.doc.getMap<Y.Map<unknown>>('articles').get(id)
+    if (!entry)
+      return err(new SyncClientError('Article not found', new Error(id)))
+    return Result.fromThrowable(() => {
+      entry.set('title', title)
+    }, toSyncClientError)()
+  }
+
   listArticles(): Article[] {
     return [...this.index.doc.getMap<Y.Map<unknown>>('articles')]
       .map(([id, entry]) => {
         const createdAt = entry.get('createdAt')
-        return { id, createdAt: typeof createdAt === 'number' ? createdAt : 0 }
+        const title = entry.get('title')
+        return {
+          id,
+          createdAt: typeof createdAt === 'number' ? createdAt : 0,
+          title: typeof title === 'string' ? title : DEFAULT_ARTICLE_TITLE,
+        }
       })
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
   }
@@ -281,10 +213,10 @@ class SyncClient implements SyncClientApi {
     if (this.destroyed) return
     this.destroyed = true
     for (const document of this.documents.values()) {
-      document.provider.destroy()
-      document.doc.destroy()
+      document.destroy()
     }
     this.documents.clear()
+    this.documentInitializationErrors.clear()
     this.listeners.clear()
   }
 
@@ -293,7 +225,13 @@ class SyncClient implements SyncClientApi {
   }
 
   private subscribeToDocument(document: SyncDocument) {
-    document.subscribe((event) => {
+    document.subscribe((event, error) => {
+      if (event === 'error') {
+        this.syncError = error
+        this.emitChange()
+        return
+      }
+
       if (event === 'connection-close') {
         this.emitChange()
         this.checkAuthentication()
@@ -347,89 +285,6 @@ class SyncClient implements SyncClientApi {
       'The sync client has been destroyed',
       new Error('The sync client has been destroyed'),
     )
-  }
-}
-
-const waitForLocalPersistence = (persistence: LocalPersistence) =>
-  persistence.synced
-    ? Promise.resolve()
-    : new Promise<void>((resolve) => {
-        persistence.on('synced', resolve)
-      })
-
-const makeSyncDocument = (
-  doc: Y.Doc,
-  persistence: LocalPersistence,
-  provider: WebsocketConnection,
-): SyncDocument => {
-  let status: SyncState = 'saved'
-  let localReady = persistence.synced
-  let connectionStatus: 'connected' | 'connecting' | 'disconnected' =
-    provider.wsconnected
-      ? 'connected'
-      : provider.wsconnecting
-        ? 'connecting'
-        : 'disconnected'
-  let isSynced = provider.synced
-  let connectionHasFailed = false
-  const listeners = new Set<(event: SyncDocumentEvent) => void>()
-
-  const emit = (event: SyncDocumentEvent) => {
-    for (const listener of listeners) listener(event)
-  }
-
-  const setStatus = (next: SyncState) => {
-    if (status === next) return
-    status = next
-    emit('status')
-  }
-
-  const refreshStatus = () => {
-    if (!localReady) {
-      setStatus('saved')
-      return
-    }
-    if (connectionStatus === 'connecting') {
-      setStatus(connectionHasFailed ? 'unsynced' : 'syncing')
-      return
-    }
-    if (connectionStatus === 'connected') {
-      setStatus(isSynced ? 'synced' : 'syncing')
-      return
-    }
-    setStatus('unsynced')
-  }
-
-  persistence.on('synced', () => {
-    localReady = true
-    refreshStatus()
-  })
-  provider.onStatus(({ status: next }) => {
-    connectionStatus = next
-    if (next === 'connected') emit('connected')
-    refreshStatus()
-  })
-  provider.onConnectionClose(() => {
-    connectionStatus = 'disconnected'
-    connectionHasFailed = true
-    refreshStatus()
-    emit('connection-close')
-  })
-  provider.onSync((synced) => {
-    isSynced = synced
-    refreshStatus()
-  })
-  return {
-    doc,
-    persistence,
-    provider,
-    get status() {
-      return status
-    },
-    subscribe: (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
   }
 }
 

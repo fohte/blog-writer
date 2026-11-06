@@ -15,6 +15,7 @@ export interface ArticleOutlineProps {
   history: MoveHistory
   view: EditorView
   activeFrom?: number
+  onHeadingSelected?: () => void
   proposalState?: OutlineProposalState
   onProposalAccept?: (id: string) => void
   onProposalReject?: (id: string) => void
@@ -41,6 +42,7 @@ export function ArticleOutline({
   history,
   view,
   activeFrom,
+  onHeadingSelected,
   proposalState,
   onProposalAccept,
   onProposalReject,
@@ -78,10 +80,12 @@ export function ArticleOutline({
         ),
       )
     })
+    const configured = activeHeadingCompartment.get(view.state)
     view.dispatch({
-      effects: StateEffect.appendConfig.of(
-        activeHeadingCompartment.of(listener),
-      ),
+      effects:
+        configured === undefined
+          ? StateEffect.appendConfig.of(activeHeadingCompartment.of(listener))
+          : activeHeadingCompartment.reconfigure(listener),
     })
     setSelectedFrom(activeHeadingFrom(headings, view.state.selection.main.head))
     return () => {
@@ -135,6 +139,7 @@ export function ArticleOutline({
           selection: EditorSelection.cursor(from),
           effects: EditorView.scrollIntoView(from, { y: 'start' }),
         })
+        onHeadingSelected?.()
       }}
     />
   )
