@@ -8,22 +8,29 @@ import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.tes
 
 describe('MarkdownEditor', () => {
   it('shows heading and inline-code markers while the cursor is in their ranges', async () => {
-    const { content, host } = mountMarkdownEditor(
-      '## Heading **bold** and `code`',
-    )
+    const markdownText = '## Heading **bold** and `code`'
+    const { content, host } = mountMarkdownEditor(markdownText)
+    const view = content ? EditorView.findFromDOM(content) : null
     content?.focus()
     await act(async () => {
       await userEvent.keyboard('{End}{ArrowLeft}{ArrowLeft}')
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          resolve()
+        })
+      })
     })
 
     const readOutput = () => ({
       text: content?.textContent,
       headingClass: host.querySelector('.cm-line')?.className,
+      selection: view?.state.selection.main.head,
     })
 
     expect(readOutput()).toEqual({
       text: '## Heading bold and `code`',
       headingClass: 'cm-line cm-md-heading cm-md-heading-2',
+      selection: 27,
     })
   })
 
