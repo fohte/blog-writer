@@ -99,7 +99,7 @@ export async function pressRedo(view: EditorView) {
   view.focus()
   const modifier = modifierKey()
   await act(async () => {
-    await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
+    await userEvent.keyboard(`{${modifier}>}{Shift>}Z{/Shift}{/${modifier}}`)
   })
 }
 
