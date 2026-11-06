@@ -20,6 +20,22 @@ describe('getBodyRequestContext', () => {
     })
   })
 
+  it('keeps a previous paragraph outside the cursor paragraph range', () => {
+    const text = 'first paragraph\n\nsecond paragraph'
+    const cursor = text.indexOf('second') + 2
+
+    expect(getBodyRequestContext(text, { from: cursor, to: cursor })).toEqual({
+      headings: [],
+      section:
+        'first paragraph\n\n⟪依頼範囲の開始⟫second paragraph⟪依頼範囲の終了⟫',
+      target: 'second paragraph',
+      range: {
+        from: text.indexOf('second paragraph'),
+        to: text.length,
+      },
+    })
+  })
+
   it('keeps the exact selection as the replacement range', () => {
     const text = '# Article\n\n## First\nrewrite this sentence'
     const from = text.indexOf('this')

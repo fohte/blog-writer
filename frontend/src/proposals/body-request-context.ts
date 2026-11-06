@@ -46,7 +46,7 @@ function resolveBodyRequestRange(
 
   while (start > 0) {
     const previousEnd = start - 1
-    const previousStart = lineStartAt(text, previousEnd - 1)
+    const previousStart = lineStartAt(text, previousEnd)
     if (
       lineIsBlank(text, previousStart, previousEnd) ||
       lineIsHeading(text, previousStart, previousEnd)

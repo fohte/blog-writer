@@ -55,6 +55,13 @@ class BodyRequestManager {
     if (this.activeRequest === controller) this.activeRequest = null
   }
 
+  clearInFlight(): void {
+    this.layer.setInFlight(null).match(
+      () => undefined,
+      () => undefined,
+    )
+  }
+
   cancelRequest(): void {
     this.activeRequest?.abort()
     this.activeRequest = null
@@ -140,10 +147,7 @@ export function BodyRequestAccessory({
     if (pending.isErr()) {
       manager.finishRequest(controller)
       controller.abort()
-      manager.layer.setInFlight(null).match(
-        () => undefined,
-        () => undefined,
-      )
+      manager.clearInFlight()
       setError('この範囲には別の提案が表示されています。')
       setPhase('error')
       setOpen(true)
@@ -170,10 +174,7 @@ export function BodyRequestAccessory({
             setOpen(false)
           },
           () => {
-            manager.layer.setInFlight(null).match(
-              () => undefined,
-              () => undefined,
-            )
+            manager.clearInFlight()
             setError('提案を本文に表示できませんでした。')
             setPhase('error')
             setOpen(true)
@@ -183,10 +184,7 @@ export function BodyRequestAccessory({
       (cause) => {
         manager.finishRequest(controller)
         if (controller.signal.aborted) return
-        manager.layer.setInFlight(null).match(
-          () => undefined,
-          () => undefined,
-        )
+        manager.clearInFlight()
         setError(cause.message)
         setPhase('error')
         setOpen(true)
@@ -196,10 +194,7 @@ export function BodyRequestAccessory({
 
   const cancelRequest = useCallback(() => {
     manager.cancelRequest()
-    manager.layer.setInFlight(null).match(
-      () => undefined,
-      () => undefined,
-    )
+    manager.clearInFlight()
     setPhase('input')
     setOpen(false)
   }, [manager])

@@ -101,6 +101,35 @@ function pressModK(view: EditorView) {
   view.contentDOM.dispatchEvent(event)
 }
 
+async function submitRequest(
+  view: EditorView,
+  instruction: string,
+  requestStarted: () => boolean,
+) {
+  await act(async () => {
+    pressModK(view)
+    await Promise.resolve()
+  })
+  const input = document.querySelector<HTMLInputElement>('#body-request')
+  if (!input) throw new Error('The request input did not open')
+  await act(async () => {
+    await userEvent.fill(input, instruction)
+    await userEvent.keyboard('{Enter}')
+    await vi.waitFor(() => {
+      if (!requestStarted()) throw new Error('The request did not start')
+    })
+  })
+}
+
+async function pressEscape(view: EditorView) {
+  await act(async () => {
+    view.contentDOM.dispatchEvent(
+      new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }),
+    )
+    await Promise.resolve()
+  })
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   window.localStorage.clear()
@@ -116,23 +145,23 @@ afterEach(() => {
 describe('body request', () => {
   it('shows an error without changing the article when the request fails', async () => {
     const { body, view } = createRequestEditor()
+    let requestCount = 0
     vi.stubGlobal('fetch', () =>
-      Promise.resolve(new Response(null, { status: 503 })),
+      Promise.resolve().then(() => {
+        requestCount += 1
+        return new Response(null, { status: 503 })
+      }),
     )
 
+    await submitRequest(view, 'make it concise', () => requestCount === 1)
     await act(async () => {
-      pressModK(view)
-      await Promise.resolve()
-    })
-    const input = document.querySelector<HTMLInputElement>('#body-request')
-    if (!input) throw new Error('The request input did not open')
-    await act(async () => {
-      await userEvent.fill(input, 'make it concise')
-      await userEvent.keyboard('{Enter}')
       await vi.waitFor(() => {
-        expect(document.querySelector('[role="alert"]')?.textContent).toEqual(
-          'LLM API returned status 503',
-        )
+        if (
+          document.querySelector('[role="alert"]')?.textContent !==
+          'LLM API returned status 503'
+        ) {
+          throw new Error('The failed request has not been announced')
+        }
       })
     })
 
@@ -149,84 +178,102 @@ describe('body request', () => {
     })
   })
 
-  it('opens from Mod-K, sends one request, and aborts it with Escape', async () => {
+  it('shows a successful response as a proposal while the article stays unchanged', async () => {
     const { body, view } = createRequestEditor()
     const { fetcher, resolveResponse, signals } = createPendingFetch()
     vi.stubGlobal('fetch', fetcher)
 
+    await submitRequest(view, 'make it concise', () => signals.length === 1)
     await act(async () => {
-      pressModK(view)
-      await Promise.resolve()
+      await resolveResponse(0, 'A shorter sentence.')
     })
-    const input = document.querySelector<HTMLInputElement>('#body-request')
-    if (!input) throw new Error('The request input did not open')
-    await act(async () => {
-      await userEvent.fill(input, 'make it concise')
-      await userEvent.keyboard('{Enter}')
-      await vi.waitFor(() => {
-        expect(signals.length).toEqual(1)
-      })
-    })
-    const readLoadingState = () => ({
-      body: body.toJSON(),
-      loadingMessage:
-        document.querySelector('[role="status"]')?.textContent ?? null,
-    })
-    expect(readLoadingState()).toEqual({
+
+    const readOutput = () => {
+      const proposal = view.dom.querySelector(
+        '.cm-suggestion-widget [aria-label="提案差分"]',
+      )
+      return {
+        body: body.toJSON(),
+        proposal: proposal
+          ? {
+              text:
+                proposal.querySelector('.suggestion-diff-text')?.textContent ??
+                null,
+              removed: [...proposal.querySelectorAll('del')].map(
+                (element) => element.textContent,
+              ),
+              added: [...proposal.querySelectorAll('ins')].map(
+                (element) => element.textContent,
+              ),
+              actions: [...proposal.querySelectorAll('button')].map(
+                (button) => button.textContent,
+              ),
+            }
+          : null,
+      }
+    }
+    expect(readOutput()).toEqual({
       body: content,
-      loadingMessage: '作成中',
+      proposal: {
+        text: 'Rewrite thisA shorter sentence.',
+        removed: ['Rewrite this'],
+        added: ['A shorter'],
+        actions: ['✓ 採用', '× 却下'],
+      },
     })
+  })
 
-    await act(async () => {
-      pressModK(view)
-      await Promise.resolve()
-    })
-    await act(async () => {
-      const nextInput =
-        document.querySelector<HTMLInputElement>('#body-request')
-      if (!nextInput) throw new Error('The next request input did not open')
-      await userEvent.fill(nextInput, 'write another version')
-      await userEvent.keyboard('{Enter}')
-      await vi.waitFor(() => {
-        expect(signals.length).toEqual(2)
-      })
-    })
+  it('aborts the previous request and ignores its late response', async () => {
+    const { body, view } = createRequestEditor()
+    const { fetcher, resolveResponse, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
 
+    await submitRequest(view, 'make it concise', () => signals.length === 1)
+    await submitRequest(
+      view,
+      'write another version',
+      () => signals.length === 2,
+    )
     await act(async () => {
       await resolveResponse(0, 'The stale response must be ignored.')
-    })
-    const readPendingRequest = () => ({
-      body: body.toJSON(),
-      suggestion:
-        view.dom.querySelector('.cm-suggestion-widget')?.textContent ?? null,
-      requestAborted: signals.map((signal) => signal.aborted),
-    })
-    expect(readPendingRequest()).toEqual({
-      body: content,
-      suggestion: '作成中',
-      requestAborted: [true, false],
-    })
-
-    await act(async () => {
-      view.contentDOM.dispatchEvent(
-        new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }),
-      )
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await resolveResponse(1, 'The cancelled response must be ignored.')
     })
 
     const readOutput = () => ({
       body: body.toJSON(),
+      inFlight:
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+      requestAborted: signals.map((signal) => signal.aborted),
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      inFlight: '作成中',
+      requestAborted: [true, false],
+    })
+  })
+
+  it('aborts the active request with Escape and keeps the article unchanged', async () => {
+    const { body, view } = createRequestEditor()
+    const { fetcher, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+
+    await submitRequest(view, 'make it concise', () => signals.length === 1)
+    const loadingMessage =
+      view.dom.querySelector('.suggestion-diff-generating')?.textContent ?? null
+    await pressEscape(view)
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      loadingMessage,
       inFlight:
         view.dom.querySelector('.cm-suggestion-widget')?.textContent ?? null,
       requestAborted: signals.map((signal) => signal.aborted),
     })
     expect(readOutput()).toEqual({
       body: content,
+      loadingMessage: '作成中',
       inFlight: null,
-      requestAborted: [true, true],
+      requestAborted: [true],
     })
   })
 })
