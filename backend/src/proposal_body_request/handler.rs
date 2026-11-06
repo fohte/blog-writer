@@ -93,7 +93,7 @@ pub(crate) async fn propose_body_request(
             system_prompt,
             prompt,
             move |generated| {
-                if target_is_empty && generated.replacement.is_empty() {
+                if target_is_empty && generated.replacement.trim().is_empty() {
                     return Err(LlmError::InvalidResult);
                 }
 

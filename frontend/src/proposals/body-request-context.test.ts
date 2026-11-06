@@ -106,6 +106,60 @@ describe('getBodyRequestContext', () => {
     })
   })
 
+  it('keeps a paragraph before a fenced code block as a separate range', () => {
+    const codeBlock = '```ts\nconst first = 1\n\nconst second = 2\n```'
+    const paragraph = 'paragraph before the fence'
+    const text = `# Main\n\n${paragraph}\n${codeBlock}\n\nAfter.`
+    const from = text.indexOf(paragraph)
+    const to = from + paragraph.length
+
+    expect(
+      getBodyRequestContext(text, { from: from + 2, to: from + 2 }),
+    ).toEqual({
+      headings: ['# Main'],
+      section: `# Main\n\n⟪依頼範囲の開始⟫${paragraph}⟪依頼範囲の終了⟫\n${codeBlock}\n\nAfter.`,
+      target: paragraph,
+      range: { from, to },
+    })
+  })
+
+  it('keeps a paragraph after a fenced code block as a separate range', () => {
+    const codeBlock = '```ts\nconst first = 1\n\nconst second = 2\n```'
+    const paragraph = 'paragraph after the fence\ncontinued line'
+    const text = `# Main\n\n${codeBlock}\n${paragraph}\n\nAfter.`
+    const from = text.indexOf(paragraph)
+    const to = from + paragraph.length
+
+    expect(
+      getBodyRequestContext(text, {
+        from: from + 'paragraph after'.length,
+        to: from + 'paragraph after'.length,
+      }),
+    ).toEqual({
+      headings: ['# Main'],
+      section: `# Main\n\n${codeBlock}\n⟪依頼範囲の開始⟫${paragraph}⟪依頼範囲の終了⟫\n\nAfter.`,
+      target: paragraph,
+      range: { from, to },
+    })
+  })
+
+  it('uses a nested fenced code block range across its blank line', () => {
+    const codeBlock = '```ts\n  const first = 1\n\n  const second = 2\n  ```'
+    const text = `# Main\n\n- item\n  ${codeBlock}\n\nAfter.`
+    const from = text.indexOf(codeBlock)
+    const to = from + codeBlock.length
+    const position = text.indexOf('\n\n', from) + 1
+
+    expect(
+      getBodyRequestContext(text, { from: position, to: position }),
+    ).toEqual({
+      headings: ['# Main'],
+      section: `# Main\n\n- item\n  ⟪依頼範囲の開始⟫${codeBlock}⟪依頼範囲の終了⟫\n\nAfter.`,
+      target: codeBlock,
+      range: { from, to },
+    })
+  })
+
   it('ends an H1 introduction at the next heading of any level', () => {
     const text =
       '# Main\nintroduction paragraph\n\n## Section\nsection paragraph\n\n# Later\nlater paragraph'

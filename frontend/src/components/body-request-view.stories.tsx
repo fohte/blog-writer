@@ -13,7 +13,6 @@ const meta = {
     onOpenChange: () => {},
     onInstructionChange: () => {},
     onSubmit: () => {},
-    onCancel: () => {},
   },
 } satisfies Meta<typeof BodyRequestView>
 
@@ -28,11 +27,6 @@ export const ReadyToRequest: Story = {
 export const TouchRequest: Story = {
   name: 'a touch device shows a request button',
   args: { touchDevice: true },
-}
-
-export const Generating: Story = {
-  name: 'the request is being generated',
-  args: { phase: 'loading', instruction: 'この段落を短くしてください' },
 }
 
 export const Failed: Story = {

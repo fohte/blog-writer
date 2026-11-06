@@ -49,6 +49,7 @@ function createPendingFetch() {
 function createRequestEditor(
   additionalExtensions: Extension[] = [],
   article = content,
+  includeBodyRequestLayer = true,
 ) {
   const doc = new Y.Doc()
   setBody(doc, article)
@@ -72,7 +73,9 @@ function createRequestEditor(
           : { anchor: selectionFrom, head: selectionTo },
       extensions: [
         yCollab(body, null, { undoManager: false }),
-        bodyRequestExtensions({ doc, history }),
+        ...(includeBodyRequestLayer
+          ? [bodyRequestExtensions({ doc, history })]
+          : []),
         ...additionalExtensions,
       ],
     }),
@@ -129,17 +132,22 @@ function pressNonModK(view: EditorView) {
   view.contentDOM.dispatchEvent(event)
 }
 
-async function submitRequest(
-  view: EditorView,
-  instruction: string,
-  requestStarted: () => boolean,
-) {
+async function openRequestInput(view: EditorView): Promise<HTMLInputElement> {
   await act(async () => {
     pressModK(view)
     await Promise.resolve()
   })
   const input = document.querySelector<HTMLInputElement>('#body-request')
   if (!input) throw new Error('The request input did not open')
+  return input
+}
+
+async function submitRequest(
+  view: EditorView,
+  instruction: string,
+  requestStarted: () => boolean,
+) {
+  const input = await openRequestInput(view)
   await act(async () => {
     await userEvent.fill(input, instruction)
     await userEvent.keyboard('{Enter}')
@@ -182,6 +190,35 @@ describe('body request', () => {
     expect(document.querySelector('#body-request')).toEqual(null)
   })
 
+  it('anchors the request input to the cursor line', async () => {
+    const { view } = createRequestEditor()
+    view.dom.style.height = '320px'
+    const { node } = view.domAtPos(view.state.selection.main.head)
+    const cursorElement = node instanceof Element ? node : node.parentElement
+    const cursorLine = cursorElement?.closest('.cm-line')
+    if (!(cursorLine instanceof HTMLElement))
+      throw new Error('The cursor line was not rendered')
+
+    await openRequestInput(view)
+    const popover = document.querySelector<HTMLElement>(
+      '[data-slot="popover-content"]',
+    )
+    if (!popover) throw new Error('The request popover did not open')
+
+    const readOutput = () => ({
+      popoverBelowCursorLine:
+        popover.getBoundingClientRect().top >=
+        cursorLine.getBoundingClientRect().bottom,
+      popoverBeforeEditorBottom:
+        popover.getBoundingClientRect().top <
+        view.dom.getBoundingClientRect().bottom - 100,
+    })
+    expect(readOutput()).toEqual({
+      popoverBelowCursorLine: true,
+      popoverBeforeEditorBottom: true,
+    })
+  })
+
   it('shows an error without changing the article when the request fails', async () => {
     const { body, view } = createRequestEditor()
     let requestCount = 0
@@ -217,12 +254,64 @@ describe('body request', () => {
     })
   })
 
+  it('explains when the proposal layer is not mounted', async () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    const { body, view } = createRequestEditor([], content, false)
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response(null, { status: 503 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const requestButton = document.querySelector<HTMLButtonElement>(
+      '[aria-label="本文を依頼"]',
+    )
+    if (!requestButton) throw new Error('The touch request button did not open')
+    await act(async () => {
+      await userEvent.click(requestButton)
+    })
+    const input = document.querySelector<HTMLInputElement>('#body-request')
+    if (!input) throw new Error('The request input did not open')
+    await act(async () => {
+      await userEvent.fill(input, 'rewrite this sentence')
+      await userEvent.keyboard('{Enter}')
+      await vi.waitFor(() => {
+        if (!document.querySelector('[role="alert"]'))
+          throw new Error('The layer setup failure was not announced')
+      })
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      error: document.querySelector('[role="alert"]')?.textContent ?? null,
+      fetchCalls: fetchMock.mock.calls.length,
+      inFlight:
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      error: '本文エディターを準備できませんでした。',
+      fetchCalls: 0,
+      inFlight: null,
+    })
+  })
+
   it('shows a successful response as a proposal while the article stays unchanged', async () => {
     const { body, view } = createRequestEditor()
     const { fetcher, resolveResponse, signals } = createPendingFetch()
     vi.stubGlobal('fetch', fetcher)
 
     await submitRequest(view, 'make it concise', () => signals.length === 1)
+    const duringGeneration = {
+      inputOpen: document.querySelector('#body-request') !== null,
+      inFlight:
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+    }
     await act(async () => {
       await resolveResponse(0, 'A shorter sentence.')
     })
@@ -233,6 +322,7 @@ describe('body request', () => {
       )
       return {
         body: body.toJSON(),
+        duringGeneration,
         proposal: proposal
           ? {
               text:
@@ -253,6 +343,7 @@ describe('body request', () => {
     }
     expect(readOutput()).toEqual({
       body: content,
+      duringGeneration: { inputOpen: false, inFlight: '作成中' },
       proposal: {
         text: 'Rewrite thisA shorter sentence.',
         removed: ['Rewrite this'],
@@ -333,6 +424,44 @@ describe('body request', () => {
     })
   })
 
+  it('keeps a newer request input open when the previous request resolves', async () => {
+    const { body, view } = createRequestEditor()
+    const { fetcher, resolveResponse, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+
+    await submitRequest(
+      view,
+      'rewrite the paragraph',
+      () => signals.length === 1,
+    )
+    const secondInput = await openRequestInput(view)
+    await act(async () => {
+      await userEvent.fill(secondInput, 'request another version')
+      await resolveResponse(0, 'A proposed version.')
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      error: document.querySelector('[role="alert"]')?.textContent ?? null,
+      inFlight:
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+      input:
+        document.querySelector<HTMLInputElement>('#body-request')?.value ??
+        null,
+      proposals: view.dom.querySelectorAll('[aria-label="提案差分"]').length,
+      requestAborted: signals.map((signal) => signal.aborted),
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      error: null,
+      inFlight: null,
+      input: 'request another version',
+      proposals: 1,
+      requestAborted: [false],
+    })
+  })
+
   it('replaces a non-overlapping proposal instead of stacking it', async () => {
     const { body, view } = createRequestEditor()
     const { fetcher, resolveResponse, signals } = createPendingFetch()
@@ -401,25 +530,25 @@ describe('body request', () => {
     const { body, view } = createRequestEditor([otherLayer.extension])
     const { fetcher, signals } = createPendingFetch()
     vi.stubGlobal('fetch', fetcher)
+    const proposalFrom = content.indexOf('Rewrite this sentence.')
+    const proposalTo = proposalFrom + 'Rewrite this sentence.'.length
     expect(
       otherLayer.setSuggestions([
         {
           id: 'separate-proposal',
-          from: 0,
-          to: '# Article'.length,
-          replacement: '# Revised',
+          from: proposalFrom,
+          to: proposalTo,
+          replacement: 'Other proposal survives.',
         },
       ]),
     ).toEqual(ok(undefined))
     act(() => {
       view.dispatch({
-        selection: { anchor: content.indexOf('Rewrite this sentence.') },
+        selection: { anchor: proposalFrom + 1 },
       })
     })
 
     await submitRequest(view, 'make it concise', () => signals.length === 1)
-    const loadingMessage =
-      view.dom.querySelector('.suggestion-diff-generating')?.textContent ?? null
     const proposalWidgetsBeforeEscape = view.dom.querySelectorAll(
       '.cm-suggestion-widget',
     ).length
@@ -427,7 +556,6 @@ describe('body request', () => {
 
     const readOutput = () => ({
       body: body.toJSON(),
-      loadingMessage,
       inFlight:
         view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
         null,
@@ -435,29 +563,50 @@ describe('body request', () => {
       proposalWidgetsAfterEscape: view.dom.querySelectorAll(
         '.cm-suggestion-widget',
       ).length,
-      separateProposal:
-        view.dom.querySelector('.cm-suggestion-widget') !== null,
+      remainingProposals: Array.from(
+        view.dom.querySelectorAll(
+          '.cm-suggestion-widget [aria-label="提案差分"]',
+        ),
+        (proposal) => ({
+          removed: Array.from(
+            proposal.querySelectorAll('.suggestion-diff-removed'),
+            (node) => node.textContent,
+          ).join(''),
+          added: Array.from(
+            proposal.querySelectorAll('.suggestion-diff-added'),
+            (node) => node.textContent,
+          ).join(''),
+        }),
+      ),
       requestAborted: signals.map((signal) => signal.aborted),
     })
     expect(readOutput()).toEqual({
       body: content,
-      loadingMessage: '作成中',
       inFlight: null,
-      proposalWidgetsBeforeEscape: 2,
+      proposalWidgetsBeforeEscape: 1,
       proposalWidgetsAfterEscape: 1,
-      separateProposal: true,
+      remainingProposals: [
+        { removed: 'Rewrite this sentence', added: 'Other proposal survives' },
+      ],
       requestAborted: [true],
     })
   })
 
-  it('aborts the active request with Escape from the request field', async () => {
+  it('aborts a request with Escape while a newer request input is open', async () => {
     const { body, view } = createRequestEditor()
     const { fetcher, signals } = createPendingFetch()
     vi.stubGlobal('fetch', fetcher)
 
     await submitRequest(view, 'make it concise', () => signals.length === 1)
-    const input = document.querySelector<HTMLInputElement>('#body-request')
-    if (!input) throw new Error('The request input did not stay open')
+    const input = await openRequestInput(view)
+    await act(async () => {
+      await userEvent.fill(input, 'request another version')
+    })
+    const popover = document.querySelector<HTMLElement>(
+      '[data-slot="popover-content"]',
+    )
+    if (!popover) throw new Error('The newer request input did not open')
+    const inputWasOpen = popover.hasAttribute('data-open')
     await act(async () => {
       input.dispatchEvent(
         new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }),
@@ -467,6 +616,11 @@ describe('body request', () => {
 
     const readOutput = () => ({
       body: body.toJSON(),
+      inputOpen:
+        document
+          .querySelector<HTMLElement>('[data-slot="popover-content"]')
+          ?.hasAttribute('data-open') ?? false,
+      inputWasOpen,
       inFlight:
         view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
         null,
@@ -474,6 +628,8 @@ describe('body request', () => {
     })
     expect(readOutput()).toEqual({
       body: content,
+      inputOpen: false,
+      inputWasOpen: true,
       inFlight: null,
       requestAborted: [true],
     })

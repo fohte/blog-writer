@@ -175,25 +175,41 @@ async fn rejects_an_empty_instruction() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[rstest]
-#[case::empty_target(
+#[case::empty_target_empty_replacement(
+    "",
     "",
     json!({
         "data": {"message": "LLM result does not match the request"},
         "event": "error"
     })
 )]
-#[case::non_empty_target(
+#[case::empty_target_whitespace_replacement(
+    "",
+    " \n ",
+    json!({
+        "data": {"message": "LLM result does not match the request"},
+        "event": "error"
+    })
+)]
+#[case::non_empty_target_empty_replacement(
     "既存の文です。",
+    "",
     json!({"data": {"replacement": ""}, "event": "result"})
 )]
+#[case::non_empty_target_whitespace_replacement(
+    "既存の文です。",
+    " \n ",
+    json!({"data": {"replacement": " \n "}, "event": "result"})
+)]
 #[tokio::test]
-async fn handles_an_empty_replacement_according_to_the_target(
+async fn handles_blank_replacements_according_to_the_target(
     #[case] target: &str,
+    #[case] replacement: &str,
     #[case] expected_event: Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let state = LlmState::with_provider(
         FixedProvider {
-            output: json!({"replacement": ""}),
+            output: json!({"replacement": replacement}),
             prompt: Arc::new(Mutex::new(None)),
         },
         ProviderName::ClaudeCode,

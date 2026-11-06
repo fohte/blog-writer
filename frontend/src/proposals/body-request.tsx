@@ -124,6 +124,14 @@ function getManager(doc: Y.Doc): BodyRequestManager {
   return manager
 }
 
+function cursorLineAnchor(view: EditorView | null): HTMLElement | null {
+  if (!view) return null
+  const { node } = view.domAtPos(view.state.selection.main.head)
+  const positionElement = node instanceof Element ? node : node.parentElement
+  const line = positionElement?.closest('.cm-line')
+  return line instanceof HTMLElement ? line : view.dom
+}
+
 export function bodyRequestExtensions(
   context: BodyRequestEditorContext,
 ): Extension[] {
@@ -151,6 +159,7 @@ export function BodyRequestAccessory({
   const manager = useMemo(() => getManager(doc), [doc])
   const [open, setOpen] = useState(false)
   const [phase, setPhase] = useState<BodyRequestPhase>('input')
+  const [requestActive, setRequestActive] = useState(false)
   const [instruction, setInstruction] = useState('')
   const [error, setError] = useState<string>()
   const [touchDevice, setTouchDevice] = useState(false)
@@ -174,6 +183,7 @@ export function BodyRequestAccessory({
         setError(undefined)
         setInstruction('')
         setPhase('input')
+        setRequestActive(false)
       }),
     [manager],
   )
@@ -198,7 +208,12 @@ export function BodyRequestAccessory({
   )
 
   const startRequest = () => {
-    if (!view) return
+    if (!view) {
+      setError('本文エディターを準備できませんでした。')
+      setPhase('error')
+      setOpen(true)
+      return
+    }
     const selection = view.state.selection.main
     const context = getBodyRequestContext(view.state.doc.toString(), {
       from: selection.from,
@@ -224,15 +239,22 @@ export function BodyRequestAccessory({
       manager.finishRequest(controller)
       controller.abort()
       manager.clearInFlight()
-      setError('この範囲には別の提案が表示されています。')
+      setError(
+        pending.error.type === 'not-mounted'
+          ? '本文エディターを準備できませんでした。'
+          : pending.error.type === 'invalid-range'
+            ? '依頼する範囲を特定できませんでした。'
+            : '依頼する範囲に別の提案が重なっています。',
+      )
       setPhase('error')
       setOpen(true)
       return
     }
 
-    setOpen(true)
+    setOpen(false)
     setError(undefined)
-    setPhase('loading')
+    setPhase('input')
+    setRequestActive(true)
     view.focus()
 
     const result = loadLlmSettings(() => window.localStorage).match(
@@ -244,7 +266,7 @@ export function BodyRequestAccessory({
       (response) => {
         if (controller.signal.aborted) return
         manager.finishRequest(controller)
-        setPhase('input')
+        setRequestActive(false)
         manager.layer
           .resolveInFlight((range) =>
             preserveBlankLineSeparators(
@@ -254,9 +276,7 @@ export function BodyRequestAccessory({
             ),
           )
           .match(
-            () => {
-              setOpen(false)
-            },
+            () => undefined,
             () => {
               manager.clearInFlight()
               setError('提案を本文に表示できませんでした。')
@@ -268,6 +288,7 @@ export function BodyRequestAccessory({
       (cause) => {
         manager.finishRequest(controller)
         if (controller.signal.aborted) return
+        setRequestActive(false)
         manager.clearInFlight()
         setError(cause.message)
         setPhase('error')
@@ -279,6 +300,7 @@ export function BodyRequestAccessory({
   const cancelRequest = useCallback(() => {
     manager.cancelRequest()
     manager.clearInFlight()
+    setRequestActive(false)
     setPhase('input')
     setOpen(false)
   }, [manager])
@@ -286,7 +308,7 @@ export function BodyRequestAccessory({
   useEffect(() => {
     if (!view) return
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && phase === 'loading') {
+      if (event.key === 'Escape' && requestActive) {
         if (event.target instanceof Node && view.dom.contains(event.target)) {
           return
         }
@@ -300,14 +322,13 @@ export function BodyRequestAccessory({
     return () => {
       window.removeEventListener('keydown', handleEscape, true)
     }
-  }, [cancelRequest, manager, phase, view])
+  }, [cancelRequest, manager, requestActive, view])
 
   return (
     <BodyRequestView
-      anchor={view?.dom ?? null}
+      anchor={cursorLineAnchor(view)}
       error={error}
       instruction={instruction}
-      onCancel={cancelRequest}
       onInstructionChange={setInstruction}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)

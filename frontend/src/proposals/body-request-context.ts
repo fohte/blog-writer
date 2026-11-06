@@ -1,7 +1,10 @@
+import { GFM, parser } from '@lezer/markdown'
+
 import { deriveHeadingTree } from '#article/headings'
-import { topLevelBlocks } from '#article/move-block-structure'
 
 type TextRange = { from: number; to: number }
+
+type ContextBlockRange = TextRange & { name: string }
 
 type HeadingRange = TextRange & { level: number }
 
@@ -11,6 +14,8 @@ type BodyRequestContext = {
   target: string
   range: TextRange
 }
+
+const markdownParser = parser.configure(GFM)
 
 export function getBlankLineInsertionSeparators(
   before: string,
@@ -41,10 +46,6 @@ function lineEndAt(text: string, position: number): number {
   return newline === -1 ? text.length : newline
 }
 
-function nextLineStart(text: string, lineEnd: number): number {
-  return lineEnd < text.length ? lineEnd + 1 : text.length
-}
-
 function lineIsBlank(text: string, start: number, end: number): boolean {
   return text.slice(start, end).trim().length === 0
 }
@@ -53,15 +54,40 @@ function lineIsHeading(text: string, start: number, end: number): boolean {
   return /^#{1,6}(?:[ \t]+|$)/.test(text.slice(start, end))
 }
 
-function fencedCodeRangeAt(
-  text: string,
+function collectContextBlockRanges(markdown: string): ContextBlockRange[] {
+  const cursor = markdownParser.parse(markdown).cursor()
+  const ranges: ContextBlockRange[] = []
+
+  function visit(): void {
+    if (cursor.name === 'FencedCode' || cursor.name === 'Paragraph') {
+      ranges.push({ from: cursor.from, to: cursor.to, name: cursor.name })
+    }
+    if (cursor.firstChild()) {
+      do {
+        visit()
+      } while (cursor.nextSibling())
+      cursor.parent()
+    }
+  }
+
+  if (cursor.firstChild()) {
+    do {
+      visit()
+    } while (cursor.nextSibling())
+  }
+  return ranges
+}
+
+function findContextBlockRange(
+  blocks: ContextBlockRange[],
+  name: 'FencedCode' | 'Paragraph',
   position: number,
 ): TextRange | undefined {
-  const block = topLevelBlocks(text).find(
-    ({ name, from, contentTo }) =>
-      name === 'FencedCode' && from <= position && position <= contentTo,
+  const block = blocks.find(
+    ({ from, name: blockName, to }) =>
+      blockName === name && from <= position && position <= to,
   )
-  return block ? { from: block.from, to: block.contentTo } : undefined
+  return block ? { from: block.from, to: block.to } : undefined
 }
 
 function resolveBodyRequestRange(
@@ -72,38 +98,19 @@ function resolveBodyRequestRange(
   const to = Math.max(selection.from, selection.to)
   if (from !== to) return { from, to }
 
-  let start = lineStartAt(text, from)
-  let end = lineEndAt(text, from)
-  const fencedCodeRange = fencedCodeRangeAt(text, from)
+  const blocks = collectContextBlockRanges(text)
+  const fencedCodeRange = findContextBlockRange(blocks, 'FencedCode', from)
   if (fencedCodeRange) return fencedCodeRange
+
+  const paragraphRange = findContextBlockRange(blocks, 'Paragraph', from)
+  if (paragraphRange) return paragraphRange
+
+  const start = lineStartAt(text, from)
+  const end = lineEndAt(text, from)
 
   if (lineIsHeading(text, start, end)) return { from: start, to: end }
 
   if (lineIsBlank(text, start, end)) return { from, to: from }
-
-  while (start > 0) {
-    const previousEnd = start - 1
-    const previousStart = lineStartAt(text, previousEnd)
-    if (
-      lineIsBlank(text, previousStart, previousEnd) ||
-      lineIsHeading(text, previousStart, previousEnd)
-    ) {
-      break
-    }
-    start = previousStart
-  }
-
-  while (end < text.length) {
-    const followingStart = nextLineStart(text, end)
-    const followingEnd = lineEndAt(text, followingStart)
-    if (
-      lineIsBlank(text, followingStart, followingEnd) ||
-      lineIsHeading(text, followingStart, followingEnd)
-    ) {
-      break
-    }
-    end = followingEnd
-  }
 
   return { from: start, to: end }
 }
