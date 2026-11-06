@@ -66,7 +66,11 @@ const webkitDriver: ImeDriver = {
         inputType: 'insertCompositionText',
       }),
     )
-    await userEvent.keyboard(text)
+    for (const char of text) {
+      await userEvent.keyboard(char)
+      // WebKit's Page.insertText can ignore the DOM caret while layout is dirty.
+      content?.getBoundingClientRect()
+    }
     await nextFrame()
     const duringComposition = readOutput(body, content)
 
