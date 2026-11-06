@@ -4,7 +4,6 @@ import {
   EditorView,
   ViewPlugin as CodeMirrorViewPlugin,
 } from '@codemirror/view'
-import type { FC } from 'react'
 import type * as Y from 'yjs'
 
 import type { BlockMoved } from '#article/index'
@@ -29,16 +28,11 @@ type ArticleContext = {
   history: MoveHistory
 }
 
-type AccessoryContext = ArticleContext & {
-  view: EditorView | null
-  replaceBody: (value: string) => void
-}
-
 type TextBlock = {
   id: string
   from: number
   contentTo: number
-  kind: string
+  kind: 'heading' | 'paragraph' | 'other'
   markdown: string
 }
 
@@ -155,15 +149,20 @@ function createViewExtension(runtime: Runtime, doc: Y.Doc): Extension {
 }
 
 function blockList(markdown: string): TextBlock[] {
-  return topLevelBlocks(markdown).map((block, index) => ({
-    id: `block-${String(index)}`,
-    from: block.from,
-    contentTo: block.contentTo,
-    kind: /^ATXHeading|^SetextHeading/u.test(block.name)
+  return topLevelBlocks(markdown).map((block, index) => {
+    const kind = /^ATXHeading|^SetextHeading/u.test(block.name)
       ? 'heading'
-      : 'paragraph',
-    markdown: markdown.slice(block.from, block.contentTo),
-  }))
+      : block.name === 'Paragraph'
+        ? 'paragraph'
+        : 'other'
+    return {
+      id: `block-${String(index)}`,
+      from: block.from,
+      contentTo: block.contentTo,
+      kind,
+      markdown: markdown.slice(block.from, block.contentTo),
+    }
+  })
 }
 
 function lastSentence(block: TextBlock): SuggestionPosition | undefined {
@@ -178,8 +177,12 @@ function sentenceRange(
   block: TextBlock,
   side: 'first' | 'last',
 ): SuggestionPosition | undefined {
-  if (block.kind === 'heading') return undefined
-  const endings = [...block.markdown.matchAll(/[.!?。！？]+["'”’）】」』]*/gu)]
+  if (block.kind !== 'paragraph') return undefined
+  const endings = [
+    ...block.markdown.matchAll(
+      /[。！？]+["'”’）】」』]*|[.!?]+["'”’）】」』]*(?=\s|$)/gu,
+    ),
+  ]
   const nonWhitespace = block.markdown.search(/\S/u)
   if (nonWhitespace === -1) return undefined
 
@@ -209,17 +212,32 @@ function blockPairAt(
   blocks: TextBlock[],
   position: number,
 ): [TextBlock, TextBlock] | undefined {
-  const before = [...blocks]
-    .reverse()
-    .find(
-      (block) =>
-        block.contentTo <= position &&
-        block.from < position &&
-        block.kind !== 'heading',
-    )
-  const after = blocks.find(
-    (block) => block.from >= position && block.kind !== 'heading',
+  if (
+    blocks.some((block) => block.from < position && position < block.contentTo)
   )
+    return undefined
+
+  let beforeIndex = -1
+  for (const [index, block] of blocks.entries()) {
+    if (block.contentTo <= position && block.from < position)
+      beforeIndex = index
+  }
+  const afterIndex = blocks.findIndex((block) => block.from >= position)
+  const findParagraph = (start: number, direction: -1 | 1) => {
+    for (
+      let index = start;
+      index >= 0 && index < blocks.length;
+      index += direction
+    ) {
+      const block = blocks[index]
+      if (!block) return undefined
+      if (block.kind === 'paragraph') return block
+      if (block.kind !== 'heading') return undefined
+    }
+    return undefined
+  }
+  const before = findParagraph(beforeIndex, -1)
+  const after = findParagraph(afterIndex, 1)
   return before && after ? [before, after] : undefined
 }
 
@@ -382,14 +400,16 @@ function startProposal(
           ]
         })
         .sort((left, right) => left.from - right.from || left.to - right.to)
-        .filter(
-          (suggestion, index, sorted) =>
-            index === 0 || (sorted[index - 1]?.to ?? 0) <= suggestion.from,
-        )
+      const nonOverlappingProposals: TextSuggestion[] = []
+      for (const proposal of proposals) {
+        const previous = nonOverlappingProposals.at(-1)
+        if (previous && previous.to > proposal.from) continue
+        nonOverlappingProposals.push(proposal)
+      }
       runtime.abortController = null
       runtime.pending = []
       setInFlight(runtime, null)
-      setSuggestions(runtime, proposals)
+      setSuggestions(runtime, nonOverlappingProposals)
     },
     () => {
       if (runtime.abortController !== abortController) return
@@ -405,9 +425,4 @@ export function transitionProposalEditorExtensions(
   context: ArticleContext,
 ): Extension[] {
   return makeRuntime(context).extensions
-}
-
-// The CodeMirror suggestion layer renders every proposal and its in-flight state.
-export const TransitionProposalAccessory: FC<AccessoryContext> = () => {
-  return null
 }

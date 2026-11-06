@@ -1,4 +1,1 @@
-export {
-  TransitionProposalAccessory,
-  transitionProposalEditorExtensions,
-} from '#proposals/transition'
+export { transitionProposalEditorExtensions } from '#proposals/transition'

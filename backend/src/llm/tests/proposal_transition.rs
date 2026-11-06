@@ -269,3 +269,94 @@ async fn returns_only_changed_known_seams_with_their_editor_ranges()
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn drops_replacements_that_contain_line_breaks() -> Result<(), Box<dyn std::error::Error>> {
+    let state = LlmState::with_provider(
+        FixedProvider {
+            output: json!({
+                "replacements": [
+                    {
+                        "before": indoc! {"
+                            見出し
+
+                            ## 架空の見出し"},
+                        "after": "継続する架空の文です。"
+                    },
+                    {
+                        "before": "調整した架空の文です。",
+                        "after": indoc! {"
+                            改行を含む
+                            置換文です。"}
+                    },
+                    {
+                        "before": "調整した最後の架空の文です。",
+                        "after": "つながる最後の架空の文です。"
+                    }
+                ]
+            }),
+            prompt: Arc::new(Mutex::new(None)),
+        },
+        ProviderName::ClaudeCode,
+        Duration::from_secs(1),
+    );
+
+    let actual = post_request(transition_request(), state).await?;
+
+    assert_eq!(
+        actual,
+        (
+            200,
+            json!({
+                "event": "result",
+                "data": {
+                    "suggestions": [{
+                        "seam_id": "seam-c",
+                        "from": 100,
+                        "to": 136,
+                        "replacement": indoc! {"
+                            調整した最後の架空の文です。
+
+                            つながる最後の架空の文です。"}
+                    }]
+                }
+            })
+        ),
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn discards_all_replacements_when_the_response_length_mismatches()
+-> Result<(), Box<dyn std::error::Error>> {
+    let state = LlmState::with_provider(
+        FixedProvider {
+            output: json!({
+                "replacements": [
+                    null,
+                    {
+                        "before": "別の継ぎ目に誤って付く架空の文です。",
+                        "after": "ずれた架空の文です。"
+                    }
+                ]
+            }),
+            prompt: Arc::new(Mutex::new(None)),
+        },
+        ProviderName::ClaudeCode,
+        Duration::from_secs(1),
+    );
+
+    let actual = post_request(transition_request(), state).await?;
+
+    assert_eq!(
+        actual,
+        (
+            200,
+            json!({
+                "event": "result",
+                "data": { "suggestions": [] }
+            })
+        ),
+    );
+    Ok(())
+}

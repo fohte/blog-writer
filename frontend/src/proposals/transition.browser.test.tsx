@@ -2,8 +2,10 @@ import { EditorState, Transaction } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
+import { getBody, setBody } from '#article/body'
 import { blockMoved } from '#article/index'
 import { saveLlmSettings } from '#lib/llm-settings'
 import { createMoveHistory } from '#outline/index'
@@ -72,8 +74,20 @@ function getRequestUrl(input: RequestInfo | URL): string {
   return input.url
 }
 
-function createEditor(): EditorView {
+function transitionResponse(suggestions: unknown[]): Response {
+  return new Response(
+    `data: ${JSON.stringify({
+      event: 'result',
+      data: { suggestions },
+    })}\n\n`,
+    { headers: { 'content-type': 'text/event-stream' } },
+  )
+}
+
+function createEditor(content = beforeMove): EditorView {
   const doc = new Y.Doc()
+  setBody(doc, content)
+  const body = getBody(doc)
   const history = createMoveHistory(doc)
   const host = document.createElement('div')
   document.body.append(host)
@@ -82,9 +96,10 @@ function createEditor(): EditorView {
     view = new EditorView({
       parent: host,
       state: EditorState.create({
-        doc: beforeMove,
+        doc: body.toJSON(),
         extensions: [
           history.extension,
+          yCollab(body, null, { undoManager: false }),
           ...transitionProposalEditorExtensions({ doc, history }),
         ],
       }),
@@ -95,6 +110,51 @@ function createEditor(): EditorView {
   activeHistory = history
   activeView = view
   return view
+}
+
+function moveSection(
+  view: EditorView,
+  heading: string,
+  destinationHeading: string,
+): void {
+  const markdown = view.state.doc.toString()
+  const result = activeHistory?.move(
+    {
+      from: markdown.indexOf(heading),
+      destination: markdown.indexOf(destinationHeading),
+    },
+    view,
+  )
+  if (!result) throw new Error('Could not move the section')
+  if (result.isErr()) throw result.error
+}
+
+function moveParagraph(
+  view: EditorView,
+  paragraph: string,
+  destinationParagraph: string,
+): void {
+  const markdown = view.state.doc.toString()
+  const result = activeHistory?.move(
+    {
+      from: markdown.indexOf(paragraph),
+      destination: markdown.indexOf(destinationParagraph),
+    },
+    view,
+  )
+  if (!result) throw new Error('Could not move the paragraph')
+  if (result.isErr()) throw result.error
+}
+
+function dispatchMoveMarker(
+  view: EditorView,
+  marker: { from: number; to: number; seam: number },
+): void {
+  act(() => {
+    view.dispatch({
+      annotations: [blockMoved.of(marker), Transaction.userEvent.of('move')],
+    })
+  })
 }
 
 afterEach(async () => {
@@ -307,24 +367,350 @@ describe('transition proposal extension', () => {
     })
   })
 
-  it('does not start requests for undo, redo, or remote transactions', async () => {
+  it('keeps non-overlapping proposals after discarding a middle seam', async () => {
+    const paragraphs = [
+      'Alpha sentence.',
+      'Beta sentence.',
+      'Gamma sentence.',
+      'Delta sentence.',
+    ]
+    const content = paragraphs.join('\n\n')
+    const first = paragraphs[0]
+    const second = paragraphs[1]
+    const third = paragraphs[2]
+    const fourth = paragraphs[3]
+    if (
+      first === undefined ||
+      second === undefined ||
+      third === undefined ||
+      fourth === undefined
+    )
+      throw new Error('Could not create test paragraphs')
+    const afterMove = [first, third, second, fourth].join('\n\n')
+    const seamRanges = [
+      {
+        from: afterMove.indexOf(third),
+        to: afterMove.indexOf(second) + second.length,
+      },
+      {
+        from: afterMove.indexOf(second),
+        to: afterMove.indexOf(fourth) + fourth.length,
+      },
+      {
+        from: afterMove.indexOf(first),
+        to: afterMove.indexOf(third) + third.length,
+      },
+    ]
+    let resolveFetch: ((response: Response) => void) | undefined
+    const fetchMock = vi.fn<typeof fetch>(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const view = createEditor(content)
+
+    await act(async () => {
+      moveParagraph(view, second, fourth)
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+    })
+    await act(async () => {
+      resolveFetch?.(
+        transitionResponse([
+          {
+            seam_id: 'seam-0',
+            ...seamRanges[0],
+            replacement: 'Gamma crossed.\n\nBeta crossed.',
+          },
+          {
+            seam_id: 'seam-1',
+            ...seamRanges[1],
+            replacement: 'Beta shifted.\n\nDelta shifted.',
+          },
+          {
+            seam_id: 'seam-2',
+            ...seamRanges[2],
+            replacement: 'Alpha restored.\n\nGamma restored.',
+          },
+        ]),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const readOutput = () => ({
+      request: getRequestBody(fetchMock.mock.calls[0]?.[1]),
+      addedText: Array.from(
+        view.dom.querySelectorAll('.suggestion-diff'),
+        (widget) =>
+          Array.from(widget.querySelectorAll('.suggestion-diff-added'))
+            .map((node) => node.textContent)
+            .join(''),
+      ),
+      documentText: view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      request: {
+        premise: { audience: '', purpose: '', thesis: '' },
+        blocks: [first, third, second, fourth].map((markdown, index) => ({
+          id: `block-${String(index)}`,
+          kind: 'paragraph',
+          markdown,
+        })),
+        seams: [
+          {
+            id: 'seam-0',
+            from: afterMove.indexOf(third),
+            to: afterMove.indexOf(second) + second.length,
+            before_sentence: third,
+            middle: '\n\n',
+            after_sentence: second,
+            before_block_id: 'block-1',
+            after_block_id: 'block-2',
+          },
+          {
+            id: 'seam-1',
+            from: afterMove.indexOf(second),
+            to: afterMove.indexOf(fourth) + fourth.length,
+            before_sentence: second,
+            middle: '\n\n',
+            after_sentence: fourth,
+            before_block_id: 'block-2',
+            after_block_id: 'block-3',
+          },
+          {
+            id: 'seam-2',
+            from: afterMove.indexOf(first),
+            to: afterMove.indexOf(third) + third.length,
+            before_sentence: first,
+            middle: '\n\n',
+            after_sentence: third,
+            before_block_id: 'block-0',
+            after_block_id: 'block-1',
+          },
+        ],
+      },
+      addedText: ['restoredrestored', 'shiftedshifted'],
+      documentText: afterMove,
+    })
+  })
+
+  it('keeps code blocks in context and skips seams that touch them', async () => {
+    const content = [
+      'Before paragraph.',
+      '',
+      '```txt',
+      'opaque line',
+      '```',
+      '',
+      'Middle paragraph.',
+      '',
+      'After paragraph.',
+    ].join('\n')
+    const codeFrom = content.indexOf('```')
+    const middleFrom = content.indexOf('Middle paragraph.')
+    const afterFrom = content.indexOf('After paragraph.')
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(transitionResponse([])),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const view = createEditor(content)
+
+    dispatchMoveMarker(view, {
+      from: codeFrom + 1,
+      to: middleFrom,
+      seam: afterFrom,
+    })
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const readOutput = () => ({
+      request: getRequestBody(fetchMock.mock.calls[0]?.[1]),
+      documentText: view.state.doc.toString(),
+      suggestionCount: view.dom.querySelectorAll('.suggestion-diff').length,
+    })
+    expect(readOutput()).toEqual({
+      request: {
+        premise: { audience: '', purpose: '', thesis: '' },
+        blocks: [
+          { id: 'block-0', kind: 'paragraph', markdown: 'Before paragraph.' },
+          {
+            id: 'block-1',
+            kind: 'other',
+            markdown: '```txt\nopaque line\n```',
+          },
+          { id: 'block-2', kind: 'paragraph', markdown: 'Middle paragraph.' },
+          { id: 'block-3', kind: 'paragraph', markdown: 'After paragraph.' },
+        ],
+        seams: [
+          {
+            id: 'seam-2',
+            from: middleFrom,
+            to: afterFrom + 'After paragraph.'.length,
+            before_sentence: 'Middle paragraph.',
+            middle: '\n\n',
+            after_sentence: 'After paragraph.',
+            before_block_id: 'block-2',
+            after_block_id: 'block-3',
+          },
+        ],
+      },
+      documentText: content,
+      suggestionCount: 0,
+    })
+  })
+
+  it('splits Japanese sentences and ignores periods inside English domains', async () => {
+    const paragraphs = [
+      '概要です。詳細は example.com を参照。',
+      'Use example.com for details. Next sentence.',
+      '末尾です。',
+    ]
+    const content = paragraphs.join('\n\n')
+    const japaneseFrom = content.indexOf(paragraphs[0] ?? '')
+    const englishFrom = content.indexOf(paragraphs[1] ?? '')
+    const finalFrom = content.indexOf(paragraphs[2] ?? '')
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(transitionResponse([])),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const view = createEditor(content)
+
+    dispatchMoveMarker(view, {
+      from: englishFrom,
+      to: finalFrom,
+      seam: content.length,
+    })
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const readOutput = () => ({
+      request: getRequestBody(fetchMock.mock.calls[0]?.[1]),
+      documentText: view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      request: {
+        premise: { audience: '', purpose: '', thesis: '' },
+        blocks: paragraphs.map((markdown, index) => ({
+          id: `block-${String(index)}`,
+          kind: 'paragraph',
+          markdown,
+        })),
+        seams: [
+          {
+            id: 'seam-0',
+            from: japaneseFrom + '概要です。'.length,
+            to: englishFrom + 'Use example.com for details.'.length,
+            before_sentence: '詳細は example.com を参照。',
+            middle: '\n\n',
+            after_sentence: 'Use example.com for details.',
+            before_block_id: 'block-0',
+            after_block_id: 'block-1',
+          },
+          {
+            id: 'seam-1',
+            from: englishFrom + 'Use example.com for details. '.length,
+            to: finalFrom + '末尾です。'.length,
+            before_sentence: 'Next sentence.',
+            middle: '\n\n',
+            after_sentence: '末尾です。',
+            before_block_id: 'block-1',
+            after_block_id: 'block-2',
+          },
+        ],
+      },
+      documentText: content,
+    })
+  })
+
+  it('does not start new requests for move history undo and redo', async () => {
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(transitionResponse([])),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const view = createEditor()
+
+    await act(async () => {
+      moveSection(view, '# Section C', '# Section B')
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+    })
+    const afterMove = view.state.doc.toString()
+    await act(async () => {
+      const undo = activeHistory?.undo(view)
+      if (!undo) throw new Error('Could not undo the move')
+      if (undo.isErr()) throw undo.error
+      const redo = activeHistory?.redo(view)
+      if (!redo) throw new Error('Could not redo the move')
+      if (redo.isErr()) throw redo.error
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const readOutput = () => ({
+      documentText: view.state.doc.toString(),
+      bodyAfterMove: afterMove,
+      requestCount: fetchMock.mock.calls.length,
+    })
+    expect(readOutput()).toEqual({
+      documentText: afterMove,
+      bodyAfterMove: afterMove,
+      requestCount: 1,
+    })
+  })
+
+  it('aborts the previous request when another move starts', async () => {
+    const fetchMock = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(new Error('aborted'))
+            },
+            { once: true },
+          )
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const view = createEditor()
+
+    await act(async () => {
+      moveSection(view, '# Section C', '# Section B')
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+    })
+    await act(async () => {
+      moveSection(view, '# Section B', '# Section A')
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+      })
+    })
+
+    const readOutput = () => ({
+      requestCount: fetchMock.mock.calls.length,
+      abortedSignals: fetchMock.mock.calls.map(
+        ([, options]) => options?.signal?.aborted ?? false,
+      ),
+    })
+    expect(readOutput()).toEqual({
+      requestCount: 2,
+      abortedSignals: [true, false],
+    })
+  })
+
+  it('does not start requests for remote transactions', async () => {
     const fetchMock = vi.fn<typeof fetch>()
     vi.stubGlobal('fetch', fetchMock)
     const view = createEditor()
 
-    for (const userEvent of ['undo', 'redo'] as const) {
-      view.dispatch({
-        changes: {
-          from: 0,
-          to: view.state.doc.length,
-          insert: userEvent === 'undo' ? afterMove : beforeMove,
-        },
-        annotations: [
-          blockMoved.of(movedRange),
-          Transaction.userEvent.of(userEvent),
-        ],
-      })
-    }
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: afterMove },
     })

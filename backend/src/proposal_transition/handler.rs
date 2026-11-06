@@ -146,31 +146,45 @@ pub(crate) async fn propose_transition(
         SYSTEM_PROMPT.to_owned(),
         prompt,
         move |generated| {
-            let suggestions = seams
-                .into_iter()
-                .zip(generated.replacements)
-                .filter_map(|(seam, replacement)| {
-                    let replacement = replacement?;
-                    if replacement.before.trim().is_empty() || replacement.after.trim().is_empty() {
-                        return None;
-                    }
-                    let original = format!(
-                        "{}{}{}",
-                        seam.before_sentence, seam.middle, seam.after_sentence
-                    );
-                    let replacement =
-                        format!("{}{}{}", replacement.before, seam.middle, replacement.after);
-                    (replacement != original).then_some(TransitionSuggestion {
-                        seam_id: seam.id,
-                        from: seam.from,
-                        to: seam.to,
-                        replacement,
+            let suggestions = if generated.replacements.len() != seams.len() {
+                vec![]
+            } else {
+                seams
+                    .into_iter()
+                    .zip(generated.replacements)
+                    .filter_map(|(seam, replacement)| {
+                        let replacement = replacement?;
+                        if replacement.before.trim().is_empty()
+                            || replacement.after.trim().is_empty()
+                            || contains_line_break(&replacement.before)
+                            || contains_line_break(&replacement.after)
+                        {
+                            return None;
+                        }
+                        let original = format!(
+                            "{}{}{}",
+                            seam.before_sentence, seam.middle, seam.after_sentence
+                        );
+                        let replacement =
+                            format!("{}{}{}", replacement.before, seam.middle, replacement.after);
+                        (replacement != original).then_some(TransitionSuggestion {
+                            seam_id: seam.id,
+                            from: seam.from,
+                            to: seam.to,
+                            replacement,
+                        })
                     })
-                })
-                .collect();
+                    .collect()
+            };
             Ok(TransitionResponse { suggestions })
         },
     ))
+}
+
+fn contains_line_break(value: &str) -> bool {
+    value
+        .chars()
+        .any(|character| matches!(character, '\n' | '\r'))
 }
 
 fn append_transition_prompt(prompt: &mut String, seams: &[TransitionSeam]) {
