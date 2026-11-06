@@ -10,7 +10,7 @@ import { GFM } from '@lezer/markdown'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { userEvent } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
@@ -345,6 +345,184 @@ describe('outline interactions', () => {
       body: 'Second paragraph.\n\nFirst paragraph.\n',
       editor: 'Second paragraph.\n\nFirst paragraph.\n',
     })
+  })
+
+  it('keeps body drag handles clear of text at mobile width', async () => {
+    const markdownText =
+      '# Overview\n\nA first paragraph.\n\n## Details\n\nA second paragraph.\n'
+    await page.viewport(320, 800)
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const host = document.createElement('div')
+    host.style.width = '320px'
+    host.style.height = '32rem'
+    document.body.append(host)
+    const root = createRoot(host)
+    const viewRef: { current: EditorView | null } = { current: null }
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      history.destroy()
+      doc.destroy()
+      host.remove()
+    })
+
+    try {
+      act(() => {
+        root.render(
+          createElement(MarkdownEditor, {
+            extensions: [createOutlineEditorExtension(history)],
+            history,
+            initialSelection: { anchor: 0 },
+            onViewChange: (view: EditorView | null) => {
+              viewRef.current = view
+            },
+            text: body,
+          }),
+        )
+      })
+
+      const view = viewRef.current
+      if (view === null) throw new Error('The markdown editor did not mount')
+      const lines = [...view.dom.querySelectorAll<HTMLElement>('.cm-line')]
+      const headingLine = lines.find((line) =>
+        line.classList.contains('cm-md-heading-1'),
+      )
+      const paragraphLine = lines.find((line) =>
+        line.textContent.endsWith('A first paragraph.'),
+      )
+      const subheadingLine = lines.find((line) =>
+        line.classList.contains('cm-md-heading-2'),
+      )
+      if (!headingLine || !paragraphLine || !subheadingLine)
+        throw new Error('A heading or paragraph line is missing')
+
+      const measureLine = (line: HTMLElement) => {
+        const handle = line.querySelector<HTMLElement>('.cm-block-drag-handle')
+        if (!handle) throw new Error('The line drag handle is missing')
+
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT)
+        let firstTextNode = walker.nextNode()
+        while (firstTextNode) {
+          const parent = firstTextNode.parentElement
+          if (
+            firstTextNode.textContent !== '' &&
+            !parent?.closest('.cm-block-drag-handle, .cm-md-hidden-markup')
+          ) {
+            break
+          }
+          firstTextNode = walker.nextNode()
+        }
+        if (!firstTextNode) throw new Error('The line has no visible text')
+
+        const range = document.createRange()
+        range.setStart(firstTextNode, 0)
+        range.setEnd(firstTextNode, 1)
+        const glyph = range.getBoundingClientRect()
+        const handleRect = handle.getBoundingClientRect()
+        const lineRect = line.getBoundingClientRect()
+        const hitTarget = document.elementFromPoint(
+          glyph.left + glyph.width / 2,
+          glyph.top + glyph.height / 2,
+        )
+        return {
+          firstCharacter: firstTextNode.textContent?.[0] ?? '',
+          handleClearsText: handleRect.right <= glyph.left,
+          handleIsCentered:
+            Math.abs(
+              handleRect.top +
+                handleRect.height / 2 -
+                (lineRect.top + lineRect.height / 2),
+            ) < 1,
+          firstCharacterHitByHandle: Boolean(
+            hitTarget?.closest('.cm-block-drag-handle'),
+          ),
+          glyph,
+          lineRect,
+        }
+      }
+
+      const heading = measureLine(headingLine)
+      const paragraph = measureLine(paragraphLine)
+      const subheading = measureLine(subheadingLine)
+      const editorRect = view.dom.getBoundingClientRect()
+      view.dispatch({
+        selection: EditorSelection.cursor(markdownText.length),
+      })
+      const paragraphStart = markdownText.indexOf('A first paragraph.')
+      await page.elementLocator(paragraphLine).click({
+        position: {
+          x:
+            paragraph.glyph.left +
+            paragraph.glyph.width * 0.8 -
+            paragraph.lineRect.left,
+          y:
+            paragraph.glyph.top +
+            paragraph.glyph.height / 2 -
+            paragraph.lineRect.top,
+        },
+      })
+
+      const readOutput = () => ({
+        heading: {
+          firstCharacter: heading.firstCharacter,
+          handleClearsText: heading.handleClearsText,
+          handleIsCentered: heading.handleIsCentered,
+          firstCharacterHitByHandle: heading.firstCharacterHitByHandle,
+        },
+        paragraph: {
+          firstCharacter: paragraph.firstCharacter,
+          handleClearsText: paragraph.handleClearsText,
+          handleIsCentered: paragraph.handleIsCentered,
+          firstCharacterHitByHandle: paragraph.firstCharacterHitByHandle,
+        },
+        subheading: {
+          firstCharacter: subheading.firstCharacter,
+          handleClearsText: subheading.handleClearsText,
+          handleIsCentered: subheading.handleIsCentered,
+          firstCharacterHitByHandle: subheading.firstCharacterHitByHandle,
+        },
+        mobile: {
+          firstCharacterInset: Math.round(
+            paragraph.glyph.left - editorRect.left,
+          ),
+          horizontalOverflow:
+            view.scrollDOM.scrollWidth > view.scrollDOM.clientWidth,
+        },
+        clickMovesCursorAfterFirstCharacter:
+          view.state.selection.main.head === paragraphStart + 1,
+      })
+      expect(readOutput()).toEqual({
+        heading: {
+          firstCharacter: '#',
+          handleClearsText: true,
+          handleIsCentered: true,
+          firstCharacterHitByHandle: false,
+        },
+        paragraph: {
+          firstCharacter: 'A',
+          handleClearsText: true,
+          handleIsCentered: true,
+          firstCharacterHitByHandle: false,
+        },
+        subheading: {
+          firstCharacter: 'D',
+          handleClearsText: true,
+          handleIsCentered: true,
+          firstCharacterHitByHandle: false,
+        },
+        mobile: {
+          firstCharacterInset: 44,
+          horizontalOverflow: false,
+        },
+        clickMovesCursorAfterFirstCharacter: true,
+      })
+    } finally {
+      await page.viewport(1280, 800)
+    }
   })
 
   it('keeps the cursor with a Markdown block moved by Alt plus Down', async () => {

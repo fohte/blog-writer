@@ -219,15 +219,22 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
       ]),
     ),
     createDragPlugin(history, composingViews),
+    EditorView.theme({
+      '.cm-content .cm-line': {
+        paddingInlineStart: '1.5rem',
+      },
+      '.cm-block-drag-handle': {
+        top: '50%',
+        transform: 'translateY(-50%)',
+      },
+    }),
     EditorView.baseTheme({
       '.cm-line': {
         position: 'relative',
-        paddingInlineStart: '1.5rem',
       },
       '.cm-block-drag-handle': {
         position: 'absolute',
         left: '0',
-        top: '0.1rem',
         display: 'flex',
         width: '1.5rem',
         height: '1.5rem',
