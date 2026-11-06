@@ -164,34 +164,53 @@ describe('ported move-conflict experiments', () => {
     })
   })
 
-  it('does not report ordinary typing at the old junction after the move', () => {
-    const A = replica(101)
-    const B = replica(102)
-    setBody(A.doc, initialBody)
-    pull(B.doc, A.doc)
-    moveSection(A.doc, 'end')
-    settle({ A, B })
+  it.each([
+    {
+      name: 'one character before the next heading',
+      insertion: 'W',
+      atEnd: false,
+      expectedBody: '## Cedar\na1\nW## Vista\nz9\n\n## Fjord\nmaple maple\n',
+    },
+    {
+      name: 'a new line before the next heading',
+      insertion: 'hello\n',
+      atEnd: false,
+      expectedBody:
+        '## Cedar\na1\nhello\n## Vista\nz9\n\n## Fjord\nmaple maple\n',
+    },
+    {
+      name: 'a new line at the document end',
+      insertion: 'hello\n',
+      atEnd: true,
+      expectedBody:
+        '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmaple maple\nhello\n',
+    },
+  ])(
+    'does not report ordinary typing after the move: $name',
+    ({ insertion, atEnd, expectedBody }) => {
+      const A = replica(101)
+      const B = replica(102)
+      setBody(A.doc, initialBody)
+      pull(B.doc, A.doc)
+      moveSection(A.doc, 'end')
+      settle({ A, B })
 
-    const online = A.doc.getText('body')
-    online.insert(online.toJSON().indexOf('## Vista'), 'Z')
-    pull(B.doc, A.doc)
-    const peer = B.doc.getText('body')
-    peer.insert(peer.toJSON().indexOf('## Vista'), 'W')
-    settle({ A, B })
+      const body = B.doc.getText('body')
+      const position = atEnd ? body.length : body.toJSON().indexOf('## Vista')
+      body.insert(position, insertion)
+      settle({ A, B })
 
-    const readOutput = () => ({
-      bodies: [readBody(A.doc), readBody(B.doc)],
-      conflicts: [getMoveConflicts(A.doc), getMoveConflicts(B.doc)],
-    })
-    A.stop()
-    B.stop()
+      const readOutput = () => ({
+        bodies: [readBody(A.doc), readBody(B.doc)],
+        conflicts: [getMoveConflicts(A.doc), getMoveConflicts(B.doc)],
+      })
+      A.stop()
+      B.stop()
 
-    expect(readOutput()).toEqual({
-      bodies: [
-        '## Cedar\na1\nZW## Vista\nz9\n\n## Fjord\nmaple maple\n',
-        '## Cedar\na1\nZW## Vista\nz9\n\n## Fjord\nmaple maple\n',
-      ],
-      conflicts: [[], []],
-    })
-  })
+      expect(readOutput()).toEqual({
+        bodies: [expectedBody, expectedBody],
+        conflicts: [[], []],
+      })
+    },
+  )
 })

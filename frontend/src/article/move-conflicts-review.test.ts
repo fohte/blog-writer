@@ -8,6 +8,11 @@ import {
   resolveMoveConflict,
   setBody,
 } from '#article/index'
+import {
+  captureMoveSource,
+  createMoveRecord,
+  getMoveRecords,
+} from '#article/move-conflict-records'
 import { observeMoveConflicts } from '#article/move-conflicts'
 import {
   initialBody,
@@ -58,9 +63,10 @@ describe('move conflict review regressions', () => {
     pull(replicas.B.doc, replicas.A.doc)
 
     const beforeExpiry = {
-      decisions: Object.fromEntries(
-        replicas.A.doc.getMap<boolean>('move-decisions').entries(),
-      ),
+      decisions: replicas.A.doc.getMap('move-decisions').size,
+      decisionKeyExists: replicas.A.doc
+        .getMap('move-decisions')
+        .has(decisionKey),
       conflicts: [
         getMoveConflicts(replicas.A.doc),
         getMoveConflicts(replicas.B.doc),
@@ -80,8 +86,8 @@ describe('move conflict review regressions', () => {
       beforeExpiry,
       afterExpiry: {
         decisions: [
-          replicas.A.doc.getMap<boolean>('move-decisions').size,
-          replicas.B.doc.getMap<boolean>('move-decisions').size,
+          replicas.A.doc.getMap('move-decisions').size,
+          replicas.B.doc.getMap('move-decisions').size,
         ],
         conflicts: [
           getMoveConflicts(replicas.A.doc),
@@ -97,7 +103,8 @@ describe('move conflict review regressions', () => {
     expect(readOutput()).toEqual({
       decisionKey,
       beforeExpiry: {
-        decisions: { [decisionKey]: true },
+        decisions: 1,
+        decisionKeyExists: true,
         conflicts: [[], []],
         records: [1, 1],
       },
@@ -135,6 +142,42 @@ describe('move conflict review regressions', () => {
     expect(readOutput()).toEqual({
       notifications: [[]],
       conflicts: [[], []],
+    })
+  })
+
+  it('keeps a changed conflict range dismissed after its first character is replaced', () => {
+    const replicas = prepareConflict()
+    activeReplicas.push(replicas.A, replicas.B)
+    settle(replicas)
+
+    const conflict = getMoveConflicts(replicas.B.doc)[0]
+    if (!conflict) throw new Error('Expected a move conflict')
+    resolveMoveConflict(replicas.B.doc, conflict.id, 'keep')._unsafeUnwrap()
+    settle(replicas)
+
+    const body = replicas.B.doc.getText('body')
+    body.delete(conflict.from, 1)
+    body.insert(conflict.from, 'q')
+    settle(replicas)
+
+    const readOutput = () => ({
+      bodies: [readBody(replicas.A.doc), readBody(replicas.B.doc)],
+      conflicts: [
+        getMoveConflicts(replicas.A.doc),
+        getMoveConflicts(replicas.B.doc),
+      ],
+      decisions: [
+        replicas.A.doc.getMap('move-decisions').size,
+        replicas.B.doc.getMap('move-decisions').size,
+      ],
+    })
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\nqy## Vista\nz9\n\n## Fjord\nmaple ma\n',
+        '## Cedar\na1\nqy## Vista\nz9\n\n## Fjord\nmaple ma\n',
+      ],
+      conflicts: [[], []],
+      decisions: [1, 1],
     })
   })
 
@@ -180,6 +223,77 @@ describe('move conflict review regressions', () => {
         '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmapleNEW maple\n',
       ],
       conflicts: [[], [], []],
+    })
+  })
+
+  it('rechecks a source deletion received after an existing move record', () => {
+    const A = new Y.Doc()
+    const B = new Y.Doc()
+    const C = new Y.Doc()
+    const D = new Y.Doc()
+    A.clientID = 74
+    B.clientID = 75
+    C.clientID = 76
+    D.clientID = 77
+    setBody(A, initialBody)
+    pull(B, A)
+    pull(C, A)
+    pull(D, A)
+
+    const source = initialBody.indexOf('## Fjord\n')
+    const destination = initialBody.indexOf('## Vista\n')
+    const copyText = initialBody.slice(source, destination)
+    const cBody = C.getText('body')
+    const sourceRuns = captureMoveSource(cBody, source, destination)
+    const stateVector = Object.fromEntries(
+      Y.decodeStateVector(Y.encodeStateVector(C)),
+    )
+    const copyFrom = cBody.length
+    C.transact(() => {
+      cBody.insert(copyFrom, copyText)
+      const record = createMoveRecord({
+        text: cBody,
+        copyFrom,
+        src: sourceRuns,
+        sv: stateVector,
+        offsets: Array.from({ length: copyText.length }, (_, index) => index),
+      })
+      if (record) getMoveRecords(C).push([record])
+    }, 'move-copy')
+    pull(A, C)
+    pull(B, C)
+
+    activeObservers.push(observeMoveConflicts(A), observeMoveConflicts(B))
+    const dBody = D.getText('body')
+    dBody.delete(dBody.toJSON().lastIndexOf('ple'), 3)
+    pull(A, D)
+    pull(B, D)
+    for (let round = 0; round < 3; round += 1) {
+      pull(A, B)
+      pull(B, A)
+      pull(A, C)
+      pull(C, A)
+      pull(A, D)
+      pull(D, A)
+    }
+
+    const readOutput = () => ({
+      bodies: [readBody(A), readBody(B), readBody(C), readBody(D)],
+      conflicts: [
+        getMoveConflicts(A),
+        getMoveConflicts(B),
+        getMoveConflicts(C),
+        getMoveConflicts(D),
+      ],
+    })
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\n## Fjord\nmaple ma\n## Vista\nz9\n## Fjord\nmaple ma\n',
+        '## Cedar\na1\n## Fjord\nmaple ma\n## Vista\nz9\n## Fjord\nmaple ma\n',
+        '## Cedar\na1\n## Fjord\nmaple ma\n## Vista\nz9\n## Fjord\nmaple ma\n',
+        '## Cedar\na1\n## Fjord\nmaple ma\n## Vista\nz9\n## Fjord\nmaple ma\n',
+      ],
+      conflicts: [[], [], [], []],
     })
   })
 

@@ -5,6 +5,7 @@ import {
   getMoveConflicts,
   moveBlock,
   readBody,
+  recordMoveConflictRestoration,
   resolveMoveConflict,
   setBody,
 } from '#article/index'
@@ -26,6 +27,23 @@ function makeReplica(clientId: number): ReturnType<typeof replica> {
   return result
 }
 
+function observeUndoRestorations(
+  doc: Y.Doc,
+  body: Y.Text,
+  undoManager: Y.UndoManager,
+): void {
+  undoManager.on('stack-item-popped', ({ changedParentTypes }) => {
+    for (const [parent, parentEvents] of changedParentTypes) {
+      if (!Object.is(parent, body)) continue
+      const events = parentEvents.filter(
+        (event): event is Y.YTextEvent => event instanceof Y.YTextEvent,
+      )
+      if (events.length > 0)
+        recordMoveConflictRestoration(doc, events)._unsafeUnwrap()
+    }
+  })
+}
+
 afterEach(() => {
   for (const undoManager of undoManagers.splice(0)) undoManager.destroy()
   for (const { stop } of activeReplicas.splice(0)) stop()
@@ -40,6 +58,7 @@ describe('move conflict detection', () => {
     const body = B.doc.getText('body')
     const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
     undoManagers.push(undoManager)
+    observeUndoRestorations(B.doc, body, undoManager)
 
     body.delete(body.toJSON().lastIndexOf('ple'), 3)
     moveSection(A.doc, 'end')
@@ -66,7 +85,7 @@ describe('move conflict detection', () => {
     })
   })
 
-  it('reports text restored at the old location by the mover undo', () => {
+  it('reports text restored on the device that receives a remote move', () => {
     const A = makeReplica(73)
     const B = makeReplica(74)
     setBody(A.doc, initialBody)
@@ -74,6 +93,7 @@ describe('move conflict detection', () => {
     const body = A.doc.getText('body')
     const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
     undoManagers.push(undoManager)
+    observeUndoRestorations(A.doc, body, undoManager)
 
     body.delete(body.toJSON().lastIndexOf('ple'), 3)
     moveSection(B.doc, 'end')
@@ -107,6 +127,7 @@ describe('move conflict detection', () => {
     const body = A.doc.getText('body')
     const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
     undoManagers.push(undoManager)
+    observeUndoRestorations(A.doc, body, undoManager)
     body.delete(0, 'one '.length)
     pull(B.doc, A.doc)
     const remoteBody = B.doc.getText('body').toJSON()

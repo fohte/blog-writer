@@ -1,15 +1,33 @@
 import * as Y from 'yjs'
 
 import {
-  getMoveConflictRelocation,
+  findItem,
+  indexInternalItems,
+  indexRelocations,
+  type InternalItemIndex,
+  type RelocationIndex,
+  sourceCandidatesFromAnchor,
+  sourceOffsetFromAnchor,
+  targetPositionFromIndex,
+} from '#article/move-conflict-index'
+import {
+  coalesceIdRanges,
+  getMoveConflictRestorations,
   getMoveRecords,
-  isAcknowledged,
   isConcurrent,
   locate,
   recordMoveConflictRelocations,
+  recordMoveConflictRestorations,
   targetFor,
+  type TrackedIdRange,
   type TrackedTarget,
 } from '#article/move-conflict-records'
+import type { MoveRecord } from '#article/move-conflict-source'
+import {
+  indexMoveRecordSources,
+  type MoveRecordSourceIndex,
+  moveSourcesAt,
+} from '#article/move-conflict-source-index'
 import {
   type InternalItem,
   internalItems,
@@ -27,6 +45,7 @@ export type MoveConflict = {
 
 type MoveConflictDetail = {
   conflict: MoveConflict
+  decisionRanges: TrackedIdRange[]
   recordId: string
   target: TrackedTarget
 }
@@ -36,136 +55,81 @@ function idEqual(left: TrackedId, right: TrackedId): boolean {
 }
 
 function moveRecordId(record: { copy: [number, number] }): string {
-  return `${record.copy[0].toString()}:${record.copy[1].toString()}`
+  const cached = moveRecordIds.get(record)
+  if (cached !== undefined) return cached
+  const id = `${record.copy[0].toString()}:${record.copy[1].toString()}`
+  moveRecordIds.set(record, id)
+  return id
 }
 
-type MoveRecord = Parameters<typeof locate>[0]
+const moveRecordIds = new WeakMap<object, string>()
 
-type InternalItemIndex = {
-  items: InternalItem[]
-  byClient: Map<number, InternalItem[]>
-  positionByItem: Map<InternalItem, number>
-  documentOffsetByItem: Map<InternalItem, number>
-}
-
-function indexInternalItems(text: Y.Text): InternalItemIndex {
-  const items = [...internalItems(text)]
-  const byClient = new Map<number, InternalItem[]>()
-  const positionByItem = new Map<InternalItem, number>()
-  const documentOffsetByItem = new Map<InternalItem, number>()
-  let documentOffset = 0
-  for (const [position, item] of items.entries()) {
-    const clientItems = byClient.get(item.id.client) ?? []
-    clientItems.push(item)
-    byClient.set(item.id.client, clientItems)
-    positionByItem.set(item, position)
-    documentOffsetByItem.set(item, documentOffset)
-    if (!item.deleted && item.countable) documentOffset += item.length
-  }
-  for (const clientItems of byClient.values()) {
-    clientItems.sort((left, right) => left.id.clock - right.id.clock)
-  }
-  return { items, byClient, positionByItem, documentOffsetByItem }
-}
-
-function findItem(
-  index: InternalItemIndex,
-  id: TrackedId,
-): InternalItem | undefined {
-  const clientItems = index.byClient.get(id.client)
-  if (!clientItems) return undefined
-  let low = 0
-  let high = clientItems.length - 1
-  while (low <= high) {
-    const middle = Math.floor((low + high) / 2)
-    const item = clientItems[middle]
-    if (!item) return undefined
-    if (id.clock < item.id.clock) high = middle - 1
-    else if (id.clock >= item.id.clock + item.length) low = middle + 1
-    else return item
-  }
-  return undefined
-}
-
-function targetPositionFromIndex(
-  index: InternalItemIndex,
-  target: TrackedTarget,
-): number | undefined {
-  const item = findItem(index, target)
-  if (!item) return undefined
-  const position = index.documentOffsetByItem.get(item)
-  if (position === undefined || item.deleted) return position
-  return (
-    position + target.clock - item.id.clock + (target.side === 'after' ? 1 : 0)
-  )
-}
-
-function sourceOffsetFromAnchor(
-  record: MoveRecord,
-  anchor: TrackedId,
-  side: 'before' | 'after',
-  index: InternalItemIndex,
-): number | undefined {
-  const direct = locate(record, anchor.client, anchor.clock)
-  if (direct !== undefined) return direct
-
-  const anchorItem = findItem(index, anchor)
-  if (!anchorItem) return undefined
-  if (!anchorItem.deleted) return undefined
-  const itemIndex = index.positionByItem.get(anchorItem)
-  if (itemIndex === undefined) return undefined
-  const direction = side === 'before' ? 1 : -1
-  for (
-    let clock = anchor.clock + direction;
-    clock >= anchorItem.id.clock &&
-    clock < anchorItem.id.clock + anchorItem.length;
-    clock += direction
-  ) {
-    const offset = locate(record, anchor.client, clock)
-    if (offset !== undefined) return offset
-  }
-  for (
-    let position = itemIndex + direction;
-    position >= 0 && position < index.items.length;
-    position += direction
-  ) {
-    const item = index.items[position]
-    if (!item) continue
-    if (!item.deleted) break
-    const clock = item.id.clock + (direction < 0 ? item.length - 1 : 0)
-    const offset = locate(record, item.id.client, clock)
-    if (offset !== undefined) return offset
-  }
-  return undefined
+function decisionRangesForItem(item: InternalItem): TrackedIdRange[] {
+  return coalesceIdRanges([
+    { ...item.id, length: item.length },
+    ...(item.origin ? [{ ...item.origin, length: 1 }] : []),
+    ...(item.rightOrigin ? [{ ...item.rightOrigin, length: 1 }] : []),
+  ])
 }
 
 function targetFromAnchor(
   doc: Y.Doc,
   records: MoveRecord[],
+  sourceIndex: MoveRecordSourceIndex,
+  relocations: RelocationIndex,
+  restorations: Map<string, TrackedIdRange[]>,
   item: InternalItem,
   anchor: TrackedId | null,
   side: 'before' | 'after',
   index: InternalItemIndex,
 ): { target: TrackedTarget; position: number; recordId: string } | undefined {
   if (!anchor) return undefined
-  for (const record of records) {
-    if (
-      locate(record, item.id.client, item.id.clock) !== undefined ||
-      item.id.client === record.copy[0]
-    ) {
+  const candidates = sourceCandidatesFromAnchor(
+    sourceIndex,
+    anchor,
+    side,
+    index,
+  )
+  const candidatesByRecord = new Map(
+    candidates.map((candidate) => [moveRecordId(candidate.record), candidate]),
+  )
+  const relocatedAnchors =
+    relocations.get(`${anchor.client.toString()}:${anchor.clock.toString()}`) ??
+    new Map<string, TrackedId>()
+  for (const recordId of relocatedAnchors.keys()) {
+    if (!candidatesByRecord.has(recordId)) {
+      const recordOrder = records.findIndex(
+        (record) => moveRecordId(record) === recordId,
+      )
+      const record = records[recordOrder]
+      if (record && recordOrder >= 0) {
+        candidatesByRecord.set(recordId, {
+          record,
+          recordOrder,
+        })
+      }
+    }
+  }
+  const orderedCandidates = [...candidatesByRecord.values()].toSorted(
+    (left, right) => left.recordOrder - right.recordOrder,
+  )
+  for (const candidate of orderedCandidates) {
+    const record = candidate.record
+    if (item.id.client === record.copy[0]) {
       continue
     }
+    const itemSourceOffset = locate(record, item.id.client, item.id.clock)
+    if (itemSourceOffset !== undefined) continue
     const recordId = moveRecordId(record)
-    const relocatedAnchor = getMoveConflictRelocation(doc, recordId, anchor)
+    const relocatedAnchor = relocatedAnchors.get(recordId)
     if (relocatedAnchor) {
-      const laterMove = records.find(
-        (candidate) =>
-          locate(candidate, relocatedAnchor.client, relocatedAnchor.clock) !==
-          undefined,
-      )
-      const laterOffset = laterMove
-        ? locate(laterMove, relocatedAnchor.client, relocatedAnchor.clock)
-        : undefined
+      const laterSource = moveSourcesAt(
+        sourceIndex,
+        relocatedAnchor.client,
+        relocatedAnchor.clock,
+      )[0]
+      const laterMove = laterSource?.record
+      const laterOffset = laterSource?.sourceOffset
       const mapped =
         laterMove && laterOffset !== undefined
           ? targetFor(records, laterMove, laterOffset)
@@ -177,26 +141,18 @@ function targetFromAnchor(
       }
       continue
     }
-    const sourceOffset = sourceOffsetFromAnchor(record, anchor, side, index)
-    if (
-      sourceOffset === undefined ||
-      locate(record, item.id.client, item.id.clock) !== undefined
-    ) {
-      continue
-    }
+    const sourceOffset = candidate.sourceOffset
+    if (sourceOffset === undefined) continue
     const concurrent =
       (side === 'after' || sourceOffset > 0) &&
       isConcurrent(doc, record, item.id.client, item.id.clock)
-    const leftOffset = item.origin
-      ? sourceOffsetFromAnchor(record, item.origin, 'after', index)
-      : undefined
-    const rightOffset = item.rightOrigin
-      ? sourceOffsetFromAnchor(record, item.rightOrigin, 'before', index)
-      : undefined
-    const restoredAfterAcknowledgement =
-      isAcknowledged(doc, record, item.id.client, item.id.clock) &&
-      (leftOffset !== undefined || rightOffset !== undefined)
-    if (!concurrent && !restoredAfterAcknowledgement) continue
+    const restored = (restorations.get(recordId) ?? []).some(
+      (range) =>
+        range.client === item.id.client &&
+        item.id.clock >= range.clock &&
+        item.id.clock < range.clock + range.length,
+    )
+    if (!concurrent && !restored) continue
 
     const mapped = targetFor(records, record, sourceOffset)
     if (mapped) {
@@ -236,9 +192,12 @@ function targetPosition(doc: Y.Doc, target: TrackedTarget): number | undefined {
 export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
   const text = doc.getText('body')
   const records = getMoveRecords(doc).toArray()
-  const itemIndex = indexInternalItems(text)
+  const sourceIndex = indexMoveRecordSources(records)
+  const relocations = indexRelocations(doc, records)
+  const itemIndex = indexInternalItems(text, sourceIndex)
+  const restorations = new Map(getMoveConflictRestorations(doc).entries())
   const tainted = new Map<
-    string,
+    InternalItem,
     { target: TrackedTarget; position: number; recordId: string }
   >()
   const ranges: Array<{
@@ -248,6 +207,7 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
     targetPosition: number
     id: string
     recordId: string
+    decisionRanges: TrackedIdRange[]
   }> = []
   let position = 0
   let last: (typeof ranges)[number] | undefined
@@ -256,6 +216,9 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
     const originTarget = targetFromAnchor(
       doc,
       records,
+      sourceIndex,
+      relocations,
+      restorations,
       item,
       item.origin,
       'after',
@@ -264,6 +227,9 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
     const rightOriginTarget = targetFromAnchor(
       doc,
       records,
+      sourceIndex,
+      relocations,
+      restorations,
       item,
       item.rightOrigin,
       'before',
@@ -273,29 +239,14 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
     if (!target) {
       for (const anchor of [item.origin, item.rightOrigin]) {
         if (!anchor) continue
-        for (const [key, taintedTarget] of tainted) {
-          const [client, clock, length] = key.split(':').map(Number)
-          if (
-            client === anchor.client &&
-            clock !== undefined &&
-            length !== undefined &&
-            anchor.clock >= clock &&
-            anchor.clock < clock + length
-          ) {
-            target = taintedTarget
-            break
-          }
-        }
+        const anchorItem = findItem(itemIndex, anchor)
+        const taintedTarget = anchorItem ? tainted.get(anchorItem) : undefined
+        if (taintedTarget) target = taintedTarget
         if (target) break
       }
     }
 
-    if (target) {
-      tainted.set(
-        `${item.id.client.toString()}:${item.id.clock.toString()}:${item.length.toString()}`,
-        target,
-      )
-    }
+    if (target) tainted.set(item, target)
     if (item.deleted || !item.countable) continue
     if (!target) {
       last = undefined
@@ -309,6 +260,7 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
       last.recordId === target.recordId
     ) {
       last.to += item.length
+      last.decisionRanges.push(...decisionRangesForItem(item))
     } else {
       last = {
         from: position,
@@ -317,6 +269,7 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
         targetPosition: target.position,
         id: `${item.id.client.toString()}:${item.id.clock.toString()}`,
         recordId: target.recordId,
+        decisionRanges: decisionRangesForItem(item),
       }
       ranges.push(last)
     }
@@ -333,8 +286,82 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
       target: range.targetPosition,
     },
     recordId: range.recordId,
+    decisionRanges: coalesceIdRanges(range.decisionRanges),
     target: range.target,
   }))
+}
+
+export function recordMoveConflictRestoration(
+  doc: Y.Doc,
+  events: readonly Y.YTextEvent[],
+): void {
+  const text = doc.getText('body')
+  const records = getMoveRecords(doc).toArray()
+  if (records.length === 0 || events.length === 0) return
+  const index = indexInternalItems(text)
+  const restorations: Array<{ recordId: string; range: TrackedIdRange }> = []
+
+  for (const event of events) {
+    if (event.target !== text) continue
+    let position = 0
+    for (const operation of event.delta) {
+      if (operation.retain !== undefined) position += operation.retain
+      if (typeof operation.insert !== 'string') continue
+      const from = position
+      position += operation.insert.length
+      const to = position
+      if (from === to) continue
+
+      for (const item of index.items) {
+        if (item.deleted || !item.countable) continue
+        const itemFrom = index.documentOffsetByItem.get(item)
+        if (itemFrom === undefined) continue
+        const start = Math.max(from - itemFrom, 0)
+        const end = Math.min(to - itemFrom, item.length)
+        if (start >= end) continue
+
+        for (const record of records) {
+          if (
+            item.id.client === record.copy[0] ||
+            locate(record, item.id.client, item.id.clock) !== undefined
+          ) {
+            continue
+          }
+          const sourceOffsets = [
+            ...(item.origin
+              ? [sourceOffsetFromAnchor(record, item.origin, 'after', index)]
+              : []),
+            ...(item.rightOrigin
+              ? [
+                  sourceOffsetFromAnchor(
+                    record,
+                    item.rightOrigin,
+                    'before',
+                    index,
+                  ),
+                ]
+              : []),
+          ]
+          const sourceOffset = sourceOffsets.find(
+            (offset) =>
+              offset !== undefined &&
+              targetFor(records, record, offset) !== undefined,
+          )
+          if (sourceOffset === undefined) continue
+          restorations.push({
+            recordId: moveRecordId(record),
+            range: {
+              client: item.id.client,
+              clock: item.id.clock + start,
+              length: end - start,
+            },
+          })
+        }
+      }
+    }
+  }
+
+  recordMoveConflictRestorations(doc, restorations)
 }
 
 export function resolveMoveConflictRange(

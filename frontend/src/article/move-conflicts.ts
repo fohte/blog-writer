@@ -5,13 +5,14 @@ import { InvalidBlockMoveError } from '#article/errors'
 import {
   detectMoveConflictDetails,
   type MoveConflict,
+  recordMoveConflictRestoration as recordRestoration,
   resolveMoveConflictRange,
 } from '#article/move-conflict-detection'
 import {
   cleanupMoveRecords,
   isMoveConflictKept,
   keepMoveConflict,
-  observeMoveConflictDecisions,
+  observeMoveConflictState,
   registerMoveConflictObserver,
 } from '#article/move-conflict-records'
 
@@ -21,8 +22,8 @@ export function getMoveConflicts(doc: Y.Doc): MoveConflict[] {
   cleanupMoveRecords(doc)
   return detectMoveConflictDetails(doc)
     .filter(
-      ({ conflict, recordId }) =>
-        !isMoveConflictKept(doc, recordId, conflict.id),
+      ({ decisionRanges, recordId }) =>
+        !isMoveConflictKept(doc, recordId, decisionRanges),
     )
     .map(({ conflict }) => conflict)
 }
@@ -40,10 +41,25 @@ export function resolveMoveConflict(
       new InvalidBlockMoveError('The move conflict is no longer available'),
     )
   if (resolution === 'keep') {
-    keepMoveConflict(doc, detail.recordId, conflictId)
+    keepMoveConflict(doc, detail.recordId, conflictId, detail.decisionRanges)
     return ok()
   }
   resolveMoveConflictRange(doc, detail.conflict, detail.recordId, detail.target)
+  return ok()
+}
+
+export function recordMoveConflictRestoration(
+  doc: Y.Doc,
+  events: readonly Y.YTextEvent[],
+): Result<void, InvalidBlockMoveError> {
+  const body = doc.getText('body')
+  if (events.some((event) => event.target !== body))
+    return err(
+      new InvalidBlockMoveError(
+        'Move conflict restorations must target the article body',
+      ),
+    )
+  recordRestoration(doc, events)
   return ok()
 }
 
@@ -59,10 +75,10 @@ export function observeMoveConflicts(
     onAcknowledgement()
   }
   acknowledgements.observe(notify)
-  const stopObservingDecisions = observeMoveConflictDecisions(doc, notify)
+  const stopObservingState = observeMoveConflictState(doc, notify)
   return () => {
     acknowledgements.unobserve(notify)
-    stopObservingDecisions()
+    stopObservingState()
     stopObservingRecords()
   }
 }

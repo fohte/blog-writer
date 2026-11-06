@@ -7,7 +7,11 @@ import * as Y from 'yjs'
 
 import { setBody } from '#article/body'
 import { moveBlock } from '#article/move-block'
-import { observeMoveConflicts } from '#article/move-conflicts'
+import {
+  getMoveConflicts,
+  observeMoveConflicts,
+  resolveMoveConflict,
+} from '#article/move-conflicts'
 import { moveConflictExtension } from '#editor/move-conflict-extension'
 
 const initialBody = '## Ember\nu1\n## Brindle\nrho rho\n## Quartz\nv1\n'
@@ -77,7 +81,7 @@ function createConflictEditor() {
       host.querySelector('.cm-move-conflict-range')?.textContent ?? null,
   })
 
-  return { host, readOutput, view }
+  return { host, offline, readOutput, source, view }
 }
 
 beforeEach(() => {
@@ -124,6 +128,35 @@ describe('moveConflictExtension', () => {
       body: 'x',
       notice: null,
       highlightedText: null,
+    })
+  })
+
+  it('recomputes decorations after another replica keeps the conflict', async () => {
+    const { offline, readOutput, source, view } = createConflictEditor()
+    const conflict = getMoveConflicts(offline)[0]
+    if (!conflict) throw new Error('Expected a move conflict')
+    const body = source.getText('body')
+    resolveMoveConflict(offline, conflict.id, 'keep')._unsafeUnwrap()
+
+    await act(async () => {
+      Y.applyUpdate(
+        source,
+        Y.encodeStateAsUpdate(offline, Y.encodeStateVector(source)),
+        'remote-keep',
+      )
+      await Promise.resolve()
+    })
+
+    const readEditorOutput = () => ({
+      body: body.toJSON(),
+      ...readOutput(),
+      document: view.state.doc.toString(),
+    })
+    expect(readEditorOutput()).toEqual({
+      body: '## Ember\nu1\nxy## Quartz\nv1\n\n## Brindle\nrho rho\n',
+      notice: null,
+      highlightedText: null,
+      document: '## Ember\nu1\nxy## Quartz\nv1\n\n## Brindle\nrho rho\n',
     })
   })
 })

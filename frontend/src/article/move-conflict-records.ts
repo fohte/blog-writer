@@ -1,6 +1,7 @@
 import * as Y from 'yjs'
 
 import type { MoveRecord } from '#article/move-conflict-source'
+import { locate } from '#article/move-conflict-source-index'
 import {
   internalItems,
   MOVE_CONFLICT_TRANSACTION_ORIGIN,
@@ -11,14 +12,17 @@ export {
   captureMoveSource,
   createMoveRecord,
 } from '#article/move-conflict-source'
+export { locate } from '#article/move-conflict-source-index'
 
 const MOVE_RECORDS = 'moves'
 const MOVE_ACKS = 'move-acks'
 const MOVE_DECISIONS = 'move-decisions'
+const MOVE_CONFLICT_RESTORATIONS = 'move-conflict-restorations'
 const MOVE_CONFLICT_RELOCATIONS = 'move-conflict-relocations'
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
 export type TrackedTarget = TrackedId & { side: 'before' | 'after' }
+export type TrackedIdRange = TrackedId & { length: number }
 
 export function getMoveRecords(doc: Y.Doc): Y.Array<MoveRecord> {
   return doc.getArray<MoveRecord>(MOVE_RECORDS)
@@ -28,8 +32,14 @@ function getMoveAcks(doc: Y.Doc): Y.Map<number> {
   return doc.getMap<number>(MOVE_ACKS)
 }
 
-function getMoveDecisions(doc: Y.Doc): Y.Map<boolean> {
-  return doc.getMap<boolean>(MOVE_DECISIONS)
+function getMoveDecisions(doc: Y.Doc): Y.Map<TrackedIdRange[]> {
+  return doc.getMap<TrackedIdRange[]>(MOVE_DECISIONS)
+}
+
+export function getMoveConflictRestorations(
+  doc: Y.Doc,
+): Y.Map<TrackedIdRange[]> {
+  return doc.getMap<TrackedIdRange[]>(MOVE_CONFLICT_RESTORATIONS)
 }
 
 function getMoveConflictRelocations(doc: Y.Doc): Y.Map<TrackedId> {
@@ -98,6 +108,8 @@ export function cleanupMoveRecords(doc: Y.Doc, now = Date.now()): void {
       if (removed.some((id) => key.startsWith(`${id}/`)))
         relocations.delete(key)
     }
+    const restorations = getMoveConflictRestorations(doc)
+    for (const id of removedIds) restorations.delete(id)
   })
 }
 
@@ -105,32 +117,85 @@ function moveDecisionKey(recordId: string, conflictId: string): string {
   return `${recordId}/${conflictId}`
 }
 
+export function coalesceIdRanges(ranges: TrackedIdRange[]): TrackedIdRange[] {
+  const sorted = ranges.toSorted(
+    (left, right) => left.client - right.client || left.clock - right.clock,
+  )
+  const result: TrackedIdRange[] = []
+  for (const range of sorted) {
+    const last = result.at(-1)
+    if (
+      last &&
+      last.client === range.client &&
+      last.clock + last.length >= range.clock
+    ) {
+      last.length =
+        Math.max(last.clock + last.length, range.clock + range.length) -
+        last.clock
+    } else {
+      result.push({ ...range })
+    }
+  }
+  return result
+}
+
+function idRangesOverlap(left: TrackedIdRange, right: TrackedIdRange): boolean {
+  return (
+    left.client === right.client &&
+    left.clock < right.clock + right.length &&
+    right.clock < left.clock + left.length
+  )
+}
+
 export function isMoveConflictKept(
   doc: Y.Doc,
   recordId: string,
-  conflictId: string,
+  decisionRanges: TrackedIdRange[],
 ): boolean {
-  return getMoveDecisions(doc).has(moveDecisionKey(recordId, conflictId))
+  const prefix = `${recordId}/`
+  for (const [key, storedRanges] of getMoveDecisions(doc)) {
+    if (
+      key.startsWith(prefix) &&
+      storedRanges.some((stored) =>
+        decisionRanges.some((current) => idRangesOverlap(stored, current)),
+      )
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 export function keepMoveConflict(
   doc: Y.Doc,
   recordId: string,
   conflictId: string,
+  decisionRanges: TrackedIdRange[],
 ): void {
-  getMoveDecisions(doc).set(moveDecisionKey(recordId, conflictId), true)
+  getMoveDecisions(doc).set(
+    moveDecisionKey(recordId, conflictId),
+    coalesceIdRanges(decisionRanges),
+  )
+}
+
+export function recordMoveConflictRestorations(
+  doc: Y.Doc,
+  restorations: Array<{ recordId: string; range: TrackedIdRange }>,
+): void {
+  if (restorations.length === 0) return
+  const stored = getMoveConflictRestorations(doc)
+  doc.transact(() => {
+    for (const { recordId, range } of restorations) {
+      stored.set(
+        recordId,
+        coalesceIdRanges([...(stored.get(recordId) ?? []), range]),
+      )
+    }
+  }, MOVE_CONFLICT_TRANSACTION_ORIGIN)
 }
 
 function relocationKey(recordId: string, id: TrackedId): string {
   return `${recordId}/${id.client.toString()}:${id.clock.toString()}`
-}
-
-export function getMoveConflictRelocation(
-  doc: Y.Doc,
-  recordId: string,
-  id: TrackedId,
-): TrackedId | undefined {
-  return getMoveConflictRelocations(doc).get(relocationKey(recordId, id))
 }
 
 export function recordMoveConflictRelocations(
@@ -149,34 +214,18 @@ export function recordMoveConflictRelocations(
   }
 }
 
-export function observeMoveConflictDecisions(
+export function observeMoveConflictState(
   doc: Y.Doc,
   onChange: () => void,
 ): () => void {
   const decisions = getMoveDecisions(doc)
+  const restorations = getMoveConflictRestorations(doc)
   decisions.observe(onChange)
+  restorations.observe(onChange)
   return () => {
     decisions.unobserve(onChange)
+    restorations.unobserve(onChange)
   }
-}
-
-export function locate(
-  record: MoveRecord,
-  client: number,
-  clock: number,
-): number | undefined {
-  let offset = 0
-  for (const [sourceClient, sourceClock, length, visible] of record.src) {
-    if (
-      sourceClient === client &&
-      clock >= sourceClock &&
-      clock < sourceClock + length
-    ) {
-      return visible === 1 ? offset + clock - sourceClock : offset - 1
-    }
-    if (visible === 1) offset += length
-  }
-  return undefined
 }
 
 function mappedOffset(
@@ -239,16 +288,6 @@ export function isConcurrent(
     clock >= (record.sv[client.toString()] ?? 0) &&
     clock < (ack ?? Number.POSITIVE_INFINITY)
   )
-}
-
-export function isAcknowledged(
-  doc: Y.Doc,
-  record: MoveRecord,
-  client: number,
-  clock: number,
-): boolean {
-  const ack = getMoveAcks(doc).get(moveAckKey(record, client))
-  return clock >= (ack ?? Number.POSITIVE_INFINITY)
 }
 
 function deleteSetIntersectsSource(
