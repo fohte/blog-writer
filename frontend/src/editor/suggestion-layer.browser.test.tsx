@@ -128,6 +128,7 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -836,30 +837,60 @@ describe('suggestion layer', () => {
     expect(readOutput()).toEqual({ afterMove: true, afterEdit: false })
   })
 
-  it('accepts a focused suggestion as one undo step', () => {
-    const { body, history, setSuggestion, view } = createEditor()
-    const from = initialText.indexOf('selected')
+  it('keeps adjacent typing separate from an accepted suggestion in history', () => {
+    const content = 'before selected after'
+    const from = content.indexOf('selected')
+    const { body, history, layer, setSuggestion, view } = createEditor(content)
     setSuggestion({
       id: 'suggestion-a',
       from,
-      to: from + 'selected sentence'.length,
+      to: from + 'selected'.length,
       replacement: 'revised sentence',
     })
-    act(() => {
-      view.dispatch({ selection: { anchor: from } })
-      dispatchKey(view, 'Tab')
-    })
-    const afterAccept = body.toJSON()
-    const undo = history.undo(view).match(
-      (didUndo) => didUndo,
-      () => false,
-    )
 
-    const readOutput = () => ({ afterAccept, undo, afterUndo: body.toJSON() })
+    vi.spyOn(Date, 'now').mockReturnValue(10_100)
+    act(() => {
+      view.dispatch({
+        changes: { from, insert: '!' },
+        annotations: [
+          Transaction.userEvent.of('input.type'),
+          Transaction.time.of(10_000),
+        ],
+      })
+      layer.accept('suggestion-a')
+      view.dispatch({
+        changes: { from: from + 1 + 'revised sentence'.length, insert: '?' },
+        annotations: [
+          Transaction.userEvent.of('input.type'),
+          Transaction.time.of(10_200),
+        ],
+      })
+    })
+
+    const afterEdits = body.toJSON()
+    const undoResults: boolean[] = []
+    const afterUndo: string[] = []
+    act(() => {
+      for (let step = 0; step < 3; step += 1) {
+        undoResults.push(
+          history.undo(view).match(
+            (didUndo) => didUndo,
+            () => false,
+          ),
+        )
+        afterUndo.push(body.toJSON())
+      }
+    })
+
+    const readOutput = () => ({ afterEdits, undoResults, afterUndo })
     expect(readOutput()).toEqual({
-      afterAccept: initialText.replace('selected sentence', 'revised sentence'),
-      undo: true,
-      afterUndo: initialText,
+      afterEdits: 'before !revised sentence? after',
+      undoResults: [true, true, true],
+      afterUndo: [
+        'before !revised sentence after',
+        'before !selected after',
+        content,
+      ],
     })
   })
 
