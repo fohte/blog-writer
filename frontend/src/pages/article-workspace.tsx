@@ -1,11 +1,11 @@
-import type { ReactNode } from 'react'
 import { useState } from 'react'
 
+import type { ArticleEditorViewProps } from '#components/article-editor-view'
 import { ArticleListView } from '#components/article-list-view'
 import type { Article, SyncClientApi, SyncState } from '#lib/sync-client'
 import { ArticleEditorPage } from '#pages/article-editor-page'
 
-export interface ArticleWorkspaceProps {
+export type ArticleWorkspaceProps = {
   articles: Article[]
   statuses: Record<string, SyncState>
   client?: SyncClientApi | undefined
@@ -14,8 +14,16 @@ export interface ArticleWorkspaceProps {
   requiresAuthentication: boolean
   onCreateArticle: () => Article | undefined
   onOpenSettings: () => void
-  sourcesPanel?: ReactNode | undefined
-}
+} & Pick<
+  ArticleEditorViewProps,
+  | 'bodyAccessory'
+  | 'editorExtensions'
+  | 'headerActions'
+  | 'onViewChange'
+  | 'outlineAccessory'
+  | 'premiseAccessory'
+  | 'sourcesPanel'
+>
 
 export function ArticleWorkspace({
   articles,
@@ -26,6 +34,12 @@ export function ArticleWorkspace({
   requiresAuthentication,
   onCreateArticle,
   onOpenSettings,
+  bodyAccessory,
+  editorExtensions,
+  headerActions,
+  onViewChange,
+  outlineAccessory,
+  premiseAccessory,
   sourcesPanel,
 }: ArticleWorkspaceProps) {
   const [selectedArticleId, setSelectedArticleId] = useState<string>()
@@ -35,10 +49,16 @@ export function ArticleWorkspace({
     return (
       <ArticleEditorPage
         article={article}
+        bodyAccessory={bodyAccessory}
         client={client}
+        editorExtensions={editorExtensions}
+        headerActions={headerActions}
         onBack={() => {
           setSelectedArticleId(undefined)
         }}
+        onViewChange={onViewChange}
+        outlineAccessory={outlineAccessory}
+        premiseAccessory={premiseAccessory}
         sourcesPanel={sourcesPanel}
       />
     )

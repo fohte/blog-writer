@@ -12,6 +12,8 @@ import { ArticleWorkspace } from '#pages/article-workspace'
 let host: HTMLDivElement | undefined
 let root: Root | undefined
 let doc: Y.Doc | undefined
+let editorExtensionCalls = 0
+let viewChanges: boolean[] = []
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -24,6 +26,8 @@ afterEach(() => {
   host = undefined
   doc?.destroy()
   doc = undefined
+  editorExtensionCalls = 0
+  viewChanges = []
   vi.unstubAllGlobals()
 })
 
@@ -40,6 +44,8 @@ describe('article editor screen', () => {
     const initialBody =
       '# First section\n\nFirst paragraph.\n\n# Second section\n\nSecond paragraph.\n'
     setBody(articleDoc, initialBody)
+    editorExtensionCalls = 0
+    viewChanges = []
     function ArticleWorkspaceHarness() {
       const [articles, setArticles] = useState([article])
       const [client] = useState<SyncClientApi>(() => ({
@@ -73,6 +79,13 @@ describe('article editor screen', () => {
           ready
           requiresAuthentication={false}
           statuses={{ [article.id]: 'synced' }}
+          editorExtensions={() => {
+            editorExtensionCalls += 1
+            return []
+          }}
+          onViewChange={(view) => {
+            viewChanges.push(view !== null)
+          }}
         />
       )
     }
@@ -126,16 +139,20 @@ describe('article editor screen', () => {
     const readScreenOutput = () => ({
       bodyAfterMove,
       bodyAfterUndo,
+      editorExtensionCalls,
       listTitle: host?.querySelector('[role="listitem"] button span')
         ?.textContent,
       editorCount: host?.querySelectorAll('.cm-content').length,
+      viewChanges,
     })
     expect(readScreenOutput()).toEqual({
       bodyAfterMove:
         '# Second section\n\nSecond paragraph.\n\n# Updated First section\n\nFirst paragraph.\n',
       bodyAfterUndo: editedBody,
+      editorExtensionCalls: 1,
       listTitle: renamedTitle,
       editorCount: 0,
+      viewChanges: [true, false],
     })
   })
 })

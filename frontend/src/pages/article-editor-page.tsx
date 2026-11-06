@@ -1,21 +1,37 @@
-import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import * as Y from 'yjs'
 
-import { ArticleEditorView } from '#components/article-editor-view'
+import {
+  ArticleEditorView,
+  type ArticleEditorViewProps,
+} from '#components/article-editor-view'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
 type ArticleEditorPageProps = {
   article: Article
   client: SyncClientApi
   onBack: () => void
-  sourcesPanel?: ReactNode | undefined
-}
+} & Pick<
+  ArticleEditorViewProps,
+  | 'bodyAccessory'
+  | 'editorExtensions'
+  | 'headerActions'
+  | 'onViewChange'
+  | 'outlineAccessory'
+  | 'premiseAccessory'
+  | 'sourcesPanel'
+>
 
 export function ArticleEditorPage({
   article,
   client,
   onBack,
+  bodyAccessory,
+  editorExtensions,
+  headerActions,
+  onViewChange,
+  outlineAccessory,
+  premiseAccessory,
   sourcesPanel,
 }: ArticleEditorPageProps) {
   const [doc, setDoc] = useState<Y.Doc>()
@@ -36,8 +52,14 @@ export function ArticleEditorPage({
 
   return (
     <ArticleEditorView
+      bodyAccessory={bodyAccessory}
       doc={doc}
+      editorExtensions={editorExtensions}
+      headerActions={headerActions}
       onBack={onBack}
+      onViewChange={onViewChange}
+      outlineAccessory={outlineAccessory}
+      premiseAccessory={premiseAccessory}
       onTitleChange={(title) => {
         client.updateArticleTitle(article.id, title).match(
           () => {

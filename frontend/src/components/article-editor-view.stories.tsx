@@ -1,3 +1,4 @@
+import { EditorView } from '@codemirror/view'
 import { Button } from '@fohte/ui/button'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useEffect, useMemo } from 'react'
@@ -15,6 +16,7 @@ type StoryArgs = {
   initialMobilePanel: ArticleEditorPanel
   sources: boolean
   status: 'ready' | 'loading' | 'error'
+  integrations: boolean
 }
 
 function ArticleEditorPreview({
@@ -22,6 +24,7 @@ function ArticleEditorPreview({
   initialMobilePanel,
   sources,
   status,
+  integrations,
 }: StoryArgs) {
   const doc = useMemo(() => {
     if (status !== 'ready') return undefined
@@ -46,22 +49,66 @@ function ArticleEditorPreview({
   return (
     <ArticleEditorView
       doc={doc}
-      headerActions={({ doc: articleDoc, replaceBody }) => (
-        <Button
-          onClick={() => {
-            const body = getBody(articleDoc).toJSON()
-            replaceBody(body)
-          }}
-          type="button"
-          variant="outline"
-        >
-          Export
-        </Button>
-      )}
+      bodyAccessory={
+        integrations
+          ? () => (
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                Draft request
+              </div>
+            )
+          : undefined
+      }
+      editorExtensions={
+        integrations
+          ? () => [
+              EditorView.theme({
+                '.cm-content': {
+                  borderLeft: '3px solid var(--primary)',
+                  paddingLeft: '0.5rem',
+                },
+              }),
+            ]
+          : undefined
+      }
+      headerActions={
+        integrations
+          ? ({ doc: articleDoc, replaceBody }) => (
+              <Button
+                onClick={() => {
+                  const body = getBody(articleDoc).toJSON()
+                  replaceBody(body)
+                }}
+                type="button"
+                variant="outline"
+              >
+                Export
+              </Button>
+            )
+          : undefined
+      }
       initialMobilePanel={initialMobilePanel}
       layout={layout}
       onBack={() => {}}
+      onViewChange={integrations ? () => {} : undefined}
+      outlineAccessory={
+        integrations
+          ? () => (
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                Outline suggestion
+              </div>
+            )
+          : undefined
+      }
       onTitleChange={() => {}}
+      premiseAccessory={
+        integrations
+          ? () => (
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm sm:col-span-3">
+                Premise guidance
+              </div>
+            )
+          : undefined
+      }
       status={
         status === 'loading'
           ? { kind: 'loading' }
@@ -95,6 +142,7 @@ const meta = {
     layout: 'desktop',
     sources: false,
     status: 'ready',
+    integrations: false,
   },
 } satisfies Meta<StoryArgs>
 
@@ -102,17 +150,40 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const Desktop: Story = {
-  name: 'the desktop layout shows the outline, memos, premise, and article together.',
+  name: 'the desktop layout shows the workspace without injected controls.',
+}
+
+export const DesktopWithIntegrations: Story = {
+  name: 'the desktop layout places injected controls near their related content.',
+  args: { integrations: true, sources: true },
 }
 
 export const MobileArticle: Story = {
-  name: 'the mobile layout opens on the article tab.',
+  name: 'the mobile layout opens on the article tab without injected controls.',
   args: { layout: 'mobile', initialMobilePanel: 'body' },
 }
 
+export const MobileArticleWithIntegrations: Story = {
+  name: 'the mobile article tab keeps the injected request inside the article panel.',
+  args: {
+    integrations: true,
+    layout: 'mobile',
+    initialMobilePanel: 'body',
+  },
+}
+
 export const MobileOutline: Story = {
-  name: 'the mobile layout can open directly on the outline tab.',
+  name: 'the mobile layout opens on the outline tab without injected controls.',
   args: { layout: 'mobile', initialMobilePanel: 'outline' },
+}
+
+export const MobileOutlineWithIntegrations: Story = {
+  name: 'the mobile outline tab places outline suggestions above the outline.',
+  args: {
+    integrations: true,
+    layout: 'mobile',
+    initialMobilePanel: 'outline',
+  },
 }
 
 export const MobileSources: Story = {

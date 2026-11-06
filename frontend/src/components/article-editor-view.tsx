@@ -1,3 +1,4 @@
+import type { Extension } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { Button } from '@fohte/ui/button'
 import { Input } from '@fohte/ui/input'
@@ -24,10 +25,17 @@ import {
   ArticleOutline,
   createMoveHistory,
   createOutlineEditorExtension,
+  type MoveHistory,
 } from '#outline/index'
 
 export type ArticleEditorPanel = 'memo' | 'outline' | 'body' | 'sources'
 export type ArticleEditorLayout = 'responsive' | 'mobile' | 'desktop'
+export type ArticleEditorContext = {
+  doc: Y.Doc
+  history: MoveHistory
+  view: EditorView | null
+  replaceBody: (value: string) => void
+}
 
 function isArticleEditorPanel(value: string): value is ArticleEditorPanel {
   return (
@@ -44,11 +52,14 @@ export interface ArticleEditorViewProps {
   status?: { kind: 'loading' } | { kind: 'error'; message: string } | undefined
   layout?: ArticleEditorLayout
   initialMobilePanel?: ArticleEditorPanel
-  headerActions?: (context: {
-    doc: Y.Doc
-    replaceBody: (value: string) => void
-  }) => ReactNode
+  editorExtensions?:
+    ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
+  bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  outlineAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  premiseAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  headerActions?: ((context: ArticleEditorContext) => ReactNode) | undefined
   sourcesPanel?: ReactNode | undefined
+  onViewChange?: ((view: EditorView | null) => void) | undefined
   onTitleChange: (title: string) => void
   onBack: () => void
 }
@@ -86,8 +97,13 @@ export function ArticleEditorView({
   status,
   layout = 'responsive',
   initialMobilePanel = 'body',
+  editorExtensions,
+  bodyAccessory,
+  outlineAccessory,
+  premiseAccessory,
   headerActions,
   sourcesPanel,
+  onViewChange,
   onTitleChange,
   onBack,
 }: ArticleEditorViewProps) {
@@ -104,10 +120,16 @@ export function ArticleEditorView({
   const body = doc ? getBody(doc) : undefined
   const [view, setView] = useState<EditorView | null>(null)
   const editorRef = useRef<MarkdownEditorHandle>(null)
+  const editorExtensionsRef = useRef(editorExtensions)
+  editorExtensionsRef.current = editorExtensions
   const extensions = useMemo(
     () =>
       doc && history
-        ? [moveConflictExtension(doc), createOutlineEditorExtension(history)]
+        ? [
+            moveConflictExtension(doc),
+            createOutlineEditorExtension(history),
+            ...(editorExtensionsRef.current?.({ doc, history }) ?? []),
+          ]
         : [],
     [doc, history],
   )
@@ -143,12 +165,30 @@ export function ArticleEditorView({
     else setBody(doc, value)
   }
 
+  const context =
+    doc && history ? { doc, history, view, replaceBody } : undefined
+
+  const handleViewChange = (nextView: EditorView | null) => {
+    setView(nextView)
+    onViewChange?.(nextView)
+  }
+
   const renderPanel = (panel: ArticleEditorPanel) => {
     if (panel === 'memo') return doc ? <MemoPanel doc={doc} /> : null
     if (panel === 'outline') {
-      return doc && history && view ? (
-        <ArticleOutline doc={doc} history={history} view={view} />
-      ) : null
+      if (!context) return null
+      return (
+        <div className="flex flex-col gap-4">
+          {outlineAccessory?.(context)}
+          {view ? (
+            <ArticleOutline
+              doc={context.doc}
+              history={context.history}
+              view={view}
+            />
+          ) : null}
+        </div>
+      )
     }
     if (panel === 'sources') return sourcesPanel ?? null
     return doc && body && history ? (
@@ -158,10 +198,11 @@ export function ArticleEditorView({
           className="min-h-96"
           extensions={extensions}
           history={history}
-          onViewChange={setView}
+          onViewChange={handleViewChange}
           ref={editorRef}
           text={body}
         />
+        {context ? bodyAccessory?.(context) : null}
       </Panel>
     ) : null
   }
@@ -183,7 +224,7 @@ export function ArticleEditorView({
             Back to articles
           </Button>
           <div className="flex items-center gap-2">
-            {doc ? headerActions?.({ doc, replaceBody }) : null}
+            {context ? headerActions?.(context) : null}
           </div>
         </div>
         <div className="flex flex-col gap-4">
@@ -222,6 +263,7 @@ export function ArticleEditorView({
                   />
                 </label>
               ))}
+              {context ? premiseAccessory?.(context) : null}
             </section>
           ) : null}
         </div>
