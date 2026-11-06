@@ -1,4 +1,4 @@
-import { indentMore } from '@codemirror/commands'
+import { indentMore, isolateHistory } from '@codemirror/commands'
 import {
   type ChangeSet,
   type Extension,
@@ -11,7 +11,6 @@ import { EditorView, keymap, ViewPlugin } from '@codemirror/view'
 import { err, ok, type Result } from 'neverthrow'
 
 import { createSuggestionDecorations } from '#editor/suggestion-layer-view'
-import { undoManagerFacet } from '#editor/undo-manager-facet'
 
 export interface TextSuggestion {
   id: string
@@ -348,7 +347,6 @@ export class SuggestionLayerController {
     const suggestion = this.findSuggestion(id)
     if (!view || !suggestion) return
 
-    view.state.facet(undoManagerFacet)?.stopCapturing()
     view.dispatch({
       changes: {
         from: suggestion.from,
@@ -356,9 +354,11 @@ export class SuggestionLayerController {
         insert: suggestion.replacement,
       },
       effects: removeSuggestion.of(id),
-      annotations: Transaction.userEvent.of('input.type'),
+      annotations: [
+        Transaction.userEvent.of('input.type'),
+        isolateHistory.of('full'),
+      ],
     })
-    view.state.facet(undoManagerFacet)?.stopCapturing()
     view.focus()
     this.options.onResolve?.(suggestion, 'accept')
   }

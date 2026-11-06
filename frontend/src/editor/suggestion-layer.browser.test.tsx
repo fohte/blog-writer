@@ -19,7 +19,7 @@ import {
   createSuggestionLayer,
   type SuggestionLayerOptions,
 } from '#editor/suggestion-layer'
-import { undoManagerFacet } from '#editor/undo-manager-facet'
+import { createMoveHistory } from '#outline/index'
 
 const initialText = 'opening sentence\nselected sentence\nclosing sentence'
 const cleanups: (() => void)[] = []
@@ -38,7 +38,7 @@ function createEditor(
   const doc = new Y.Doc()
   setBody(doc, content)
   const body = getBody(doc)
-  const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
+  const history = createMoveHistory(doc)
   const host = document.createElement('div')
   document.body.append(host)
   const layer = createSuggestionLayer({
@@ -58,8 +58,8 @@ function createEditor(
           : { selection: { anchor: options.selection } }),
         extensions: [
           indentUnit.of('  '),
-          yCollab(body, null, { undoManager }),
-          undoManagerFacet.of(undoManager),
+          history.extension,
+          yCollab(body, null, { undoManager: false }),
           layer.extension,
           ...additionalExtensions,
         ],
@@ -70,7 +70,7 @@ function createEditor(
   if (!view) throw new Error('The suggestion editor did not mount')
   cleanups.push(() => {
     act(() => view?.destroy())
-    undoManager.destroy()
+    history.destroy()
     doc.destroy()
     host.remove()
   })
@@ -90,7 +90,7 @@ function createEditor(
       throw new Error(`Could not set suggestion: ${result.error.type}`)
   }
 
-  return { body, doc, host, layer, setSuggestion, undoManager, view }
+  return { body, doc, history, host, layer, setSuggestion, view }
 }
 
 function dispatchKey(view: EditorView, key: string): void {
@@ -836,8 +836,8 @@ describe('suggestion layer', () => {
     expect(readOutput()).toEqual({ afterMove: true, afterEdit: false })
   })
 
-  it('accepts a focused suggestion as one Yjs undo step', () => {
-    const { body, setSuggestion, undoManager, view } = createEditor()
+  it('accepts a focused suggestion as one undo step', () => {
+    const { body, history, setSuggestion, view } = createEditor()
     const from = initialText.indexOf('selected')
     setSuggestion({
       id: 'suggestion-a',
@@ -850,11 +850,15 @@ describe('suggestion layer', () => {
       dispatchKey(view, 'Tab')
     })
     const afterAccept = body.toJSON()
-    undoManager.undo()
+    const undo = history.undo(view).match(
+      (didUndo) => didUndo,
+      () => false,
+    )
 
-    const readOutput = () => ({ afterAccept, afterUndo: body.toJSON() })
+    const readOutput = () => ({ afterAccept, undo, afterUndo: body.toJSON() })
     expect(readOutput()).toEqual({
       afterAccept: initialText.replace('selected sentence', 'revised sentence'),
+      undo: true,
       afterUndo: initialText,
     })
   })
@@ -865,15 +869,23 @@ describe('suggestion layer', () => {
     const body = getBody(doc)
     const host = document.createElement('div')
     document.body.append(host)
+    const history = createMoveHistory(doc)
     const layer = createSuggestionLayer()
     const root = createRoot(host)
     act(() => {
-      root.render(<MarkdownEditor extensions={[layer.extension]} text={body} />)
+      root.render(
+        <MarkdownEditor
+          extensions={[layer.extension]}
+          history={history}
+          text={body}
+        />,
+      )
     })
     cleanups.push(() => {
       act(() => {
         root.unmount()
       })
+      history.destroy()
       doc.destroy()
       host.remove()
     })

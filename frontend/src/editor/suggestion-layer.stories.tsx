@@ -9,6 +9,7 @@ import {
   type SuggestionPosition,
   type TextSuggestion,
 } from '#editor/index'
+import { createMoveHistory } from '#outline/index'
 
 interface StoryArgs {
   content: string
@@ -25,27 +26,30 @@ function SuggestionEditorPreview({
   initialInFlight,
   width,
 }: StoryArgs) {
-  const { body, doc, layer } = useMemo(() => {
+  const { body, doc, history, layer } = useMemo(() => {
     const doc = new Y.Doc()
     const body = getBody(doc)
     body.insert(0, content)
+    const history = createMoveHistory(doc)
     const layer = createSuggestionLayer({
       initialSuggestions: suggestion ? [suggestion] : [],
       ...(initialInFlight ? { initialInFlight } : {}),
     })
-    return { body, doc, layer }
+    return { body, doc, history, layer }
   }, [content, initialInFlight, initialSelectionHead, suggestion])
 
   useEffect(() => {
     return () => {
+      history.destroy()
       doc.destroy()
     }
-  }, [doc])
+  }, [doc, history])
 
   return (
     <div style={{ height: '24rem', width }}>
       <MarkdownEditor
         extensions={[layer.extension]}
+        history={history}
         initialSelection={{ anchor: initialSelectionHead }}
         text={body}
       />
