@@ -51,15 +51,15 @@ class BodyRequestManager {
       this.cancelRequest()
     },
     onInFlightRangeEdited: () => {
-      this.cancelRequest()
+      this.cancelRequest(true)
     },
   })
 
   private activeRequest: AbortController | null = null
-  private readonly listeners = new Set<() => void>()
+  private readonly listeners = new Set<(preserveInput: boolean) => void>()
   private readonly openListeners = new Set<() => void>()
 
-  subscribe(listener: () => void): () => void {
+  subscribe(listener: (preserveInput: boolean) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
   }
@@ -105,10 +105,10 @@ class BodyRequestManager {
     this.activeRequest = null
   }
 
-  cancelRequest(): void {
+  cancelRequest(preserveInput = false): void {
     this.abortActiveRequest()
     this.listeners.forEach((listener) => {
-      listener()
+      listener(preserveInput)
     })
   }
 }
@@ -126,8 +126,26 @@ function getManager(doc: Y.Doc): BodyRequestManager {
 
 function cursorLineAnchor(view: EditorView | null): HTMLElement | null {
   if (!view) return null
-  const { node } = view.domAtPos(view.state.selection.main.head)
+  const position = view.state.selection.main.head
+  const { node } = view.domAtPos(position)
   const positionElement = node instanceof Element ? node : node.parentElement
+  const directWidget = positionElement?.closest('.cm-suggestion-widget')
+  if (directWidget instanceof HTMLElement) return directWidget
+
+  const matchingWidget = Array.from(
+    view.dom.querySelectorAll<HTMLElement>('.cm-suggestion-widget'),
+  ).find((widget) => {
+    const from = Number(widget.dataset['suggestionFrom'])
+    const to = Number(widget.dataset['suggestionTo'])
+    return (
+      Number.isInteger(from) &&
+      Number.isInteger(to) &&
+      from <= position &&
+      position <= to
+    )
+  })
+  if (matchingWidget) return matchingWidget
+
   const line = positionElement?.closest('.cm-line')
   return line instanceof HTMLElement ? line : view.dom
 }
@@ -178,12 +196,13 @@ export function BodyRequestAccessory({
 
   useEffect(
     () =>
-      manager.subscribe(() => {
+      manager.subscribe((preserveInput) => {
+        setRequestActive(false)
+        if (preserveInput) return
         setOpen(false)
         setError(undefined)
         setInstruction('')
         setPhase('input')
-        setRequestActive(false)
       }),
     [manager],
   )
@@ -231,6 +250,12 @@ export function BodyRequestAccessory({
       section: context.section,
       target: context.target,
     }
+    if (manager.layer.overlapsOtherLayer(context.range)) {
+      setError('この範囲には別の提案が表示されています')
+      setPhase('error')
+      setOpen(true)
+      return
+    }
     const controller = manager.beginRequest()
     manager.clearSuggestions()
     manager.clearInFlight()
@@ -244,7 +269,7 @@ export function BodyRequestAccessory({
           ? '本文エディターを準備できませんでした。'
           : pending.error.type === 'invalid-range'
             ? '依頼する範囲を特定できませんでした。'
-            : '依頼する範囲に別の提案が重なっています。',
+            : 'この範囲には別の提案が表示されています',
       )
       setPhase('error')
       setOpen(true)
@@ -332,7 +357,13 @@ export function BodyRequestAccessory({
       onInstructionChange={setInstruction}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
-        if (!nextOpen && phase === 'input') setError(undefined)
+        if (nextOpen) {
+          setError(undefined)
+          setInstruction('')
+          setPhase('input')
+        } else if (phase === 'input') {
+          setError(undefined)
+        }
       }}
       onSubmit={startRequest}
       open={open}

@@ -34,6 +34,8 @@ export type {
 
 type ScopedEffect<Value> = { scope: symbol; value: Value }
 
+const mountedSuggestionLayers = new Set<SuggestionLayerController>()
+
 const replaceSuggestions =
   StateEffect.define<ScopedEffect<readonly TextSuggestion[]>>()
 const replaceInFlight =
@@ -163,9 +165,13 @@ export class SuggestionLayerController {
       this.stateField,
       ViewPlugin.define((view) => {
         this.view = view
+        mountedSuggestionLayers.add(this)
         return {
           destroy: () => {
-            if (this.view === view) this.view = null
+            if (this.view === view) {
+              this.view = null
+              mountedSuggestionLayers.delete(this)
+            }
           },
         }
       }),
@@ -280,6 +286,27 @@ export class SuggestionLayerController {
       effects: replaceInFlight.of({ scope: this.effectScope, value: position }),
     })
     return ok(undefined)
+  }
+
+  overlapsOtherLayer(position: SuggestionPosition): boolean {
+    const view = this.view
+    if (!view) return false
+
+    for (const layer of mountedSuggestionLayers) {
+      if (layer === this || layer.view !== view) continue
+      const state = view.state.field(layer.stateField, false)
+      if (!state) continue
+      if (
+        state.suggestions.some((suggestion) =>
+          rangesOverlap(suggestion, position),
+        ) ||
+        (state.inFlight !== null && rangesOverlap(state.inFlight, position))
+      ) {
+        return true
+      }
+    }
+
+    return false
   }
 
   accept(id: string): void {

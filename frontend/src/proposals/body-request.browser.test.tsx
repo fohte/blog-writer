@@ -219,6 +219,51 @@ describe('body request', () => {
     })
   })
 
+  it('anchors the request input to a visible proposal widget', async () => {
+    const { view } = createRequestEditor()
+    const { fetcher, resolveResponse, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+
+    await submitRequest(
+      view,
+      'rewrite this paragraph',
+      () => signals.length === 1,
+    )
+    await act(async () => {
+      await resolveResponse(0, 'A rewritten paragraph.')
+    })
+    const widget = view.dom.querySelector<HTMLElement>(
+      '.cm-suggestion-widget[data-suggestion-from]',
+    )
+    if (!widget) throw new Error('The proposal widget was not rendered')
+    await act(async () => {
+      await userEvent.click(widget)
+    })
+    const proposalRange = {
+      from: Number(widget.dataset['suggestionFrom']),
+      to: Number(widget.dataset['suggestionTo']),
+    }
+    await openRequestInput(view)
+    const popover = document.querySelector<HTMLElement>(
+      '[data-slot="popover-content"]',
+    )
+    if (!popover) throw new Error('The request popover did not open')
+
+    const readOutput = () => ({
+      selection: {
+        from: view.state.selection.main.from,
+        to: view.state.selection.main.to,
+      },
+      popoverBelowWidget:
+        popover.getBoundingClientRect().top >=
+        widget.getBoundingClientRect().bottom,
+    })
+    expect(readOutput()).toEqual({
+      selection: { from: proposalRange.from, to: proposalRange.from },
+      popoverBelowWidget: true,
+    })
+  })
+
   it('shows an error without changing the article when the request fails', async () => {
     const { body, view } = createRequestEditor()
     let requestCount = 0
@@ -297,6 +342,106 @@ describe('body request', () => {
       error: '本文エディターを準備できませんでした。',
       fetchCalls: 0,
       inFlight: null,
+    })
+  })
+
+  it('rejects a request that overlaps a visible proposal from another layer', async () => {
+    const otherLayer = createSuggestionLayer()
+    const { body, view } = createRequestEditor([otherLayer.extension])
+    const from = content.indexOf('Rewrite this sentence.')
+    const to = from + 'Rewrite this sentence.'.length
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response(null, { status: 503 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    expect(
+      otherLayer.setSuggestions([
+        {
+          id: 'other-layer-proposal',
+          from,
+          to,
+          replacement: 'A proposal from another feature.',
+        },
+      ]),
+    ).toEqual(ok(undefined))
+
+    const input = await openRequestInput(view)
+    await act(async () => {
+      await userEvent.fill(input, 'rewrite this paragraph')
+      await userEvent.keyboard('{Enter}')
+      await vi.waitFor(() => {
+        if (!document.querySelector('[role="alert"]'))
+          throw new Error('The overlapping range was not announced')
+      })
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      error: document.querySelector('[role="alert"]')?.textContent ?? null,
+      fetchCalls: fetchMock.mock.calls.length,
+      proposal: Array.from(
+        view.dom.querySelectorAll(
+          '.cm-suggestion-widget [aria-label="提案差分"]',
+        ),
+        (proposal) => ({
+          removed: Array.from(
+            proposal.querySelectorAll('.suggestion-diff-removed'),
+            (node) => node.textContent,
+          ).join(''),
+          added: Array.from(
+            proposal.querySelectorAll('.suggestion-diff-added'),
+            (node) => node.textContent,
+          ).join(''),
+        }),
+      ),
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      error: 'この範囲には別の提案が表示されています',
+      fetchCalls: 0,
+      proposal: [
+        {
+          removed: 'Rewrite this sentence',
+          added: 'A proposal from another feature',
+        },
+      ],
+    })
+  })
+
+  it('rejects a request that overlaps an in-flight range from another layer', async () => {
+    const otherLayer = createSuggestionLayer()
+    const { body, view } = createRequestEditor([otherLayer.extension])
+    const from = content.indexOf('Rewrite this sentence.')
+    const to = from + 'Rewrite this sentence.'.length
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response(null, { status: 503 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    expect(otherLayer.setInFlight({ from, to })).toEqual(ok(undefined))
+
+    const input = await openRequestInput(view)
+    await act(async () => {
+      await userEvent.fill(input, 'rewrite this paragraph')
+      await userEvent.keyboard('{Enter}')
+      await vi.waitFor(() => {
+        if (!document.querySelector('[role="alert"]'))
+          throw new Error('The overlapping range was not announced')
+      })
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      error: document.querySelector('[role="alert"]')?.textContent ?? null,
+      fetchCalls: fetchMock.mock.calls.length,
+      inFlight:
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      error: 'この範囲には別の提案が表示されています',
+      fetchCalls: 0,
+      inFlight: '作成中',
     })
   })
 
@@ -530,32 +675,35 @@ describe('body request', () => {
     const { body, view } = createRequestEditor([otherLayer.extension])
     const { fetcher, signals } = createPendingFetch()
     vi.stubGlobal('fetch', fetcher)
-    const proposalFrom = content.indexOf('Rewrite this sentence.')
-    const proposalTo = proposalFrom + 'Rewrite this sentence.'.length
+    const proposalFrom = content.indexOf('## Section')
+    const proposalTo = proposalFrom + '## Section'.length
     expect(
       otherLayer.setSuggestions([
         {
           id: 'separate-proposal',
           from: proposalFrom,
           to: proposalTo,
-          replacement: 'Other proposal survives.',
+          replacement: '## Other heading',
         },
       ]),
     ).toEqual(ok(undefined))
+    await submitRequest(view, 'make it concise', () => signals.length === 1)
+    const proposalWidgetsBeforeEscape = view.dom.querySelectorAll(
+      '.cm-suggestion-widget',
+    ).length
+    const loadingMessageBeforeEscape = view.dom.querySelector(
+      '.suggestion-diff-generating',
+    )?.textContent
     act(() => {
       view.dispatch({
         selection: { anchor: proposalFrom + 1 },
       })
     })
-
-    await submitRequest(view, 'make it concise', () => signals.length === 1)
-    const proposalWidgetsBeforeEscape = view.dom.querySelectorAll(
-      '.cm-suggestion-widget',
-    ).length
     await pressEscape(view)
 
     const readOutput = () => ({
       body: body.toJSON(),
+      loadingMessageBeforeEscape,
       inFlight:
         view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
         null,
@@ -582,12 +730,11 @@ describe('body request', () => {
     })
     expect(readOutput()).toEqual({
       body: content,
+      loadingMessageBeforeEscape: '作成中',
       inFlight: null,
-      proposalWidgetsBeforeEscape: 1,
+      proposalWidgetsBeforeEscape: 2,
       proposalWidgetsAfterEscape: 1,
-      remainingProposals: [
-        { removed: 'Rewrite this sentence', added: 'Other proposal survives' },
-      ],
+      remainingProposals: [{ removed: 'Section', added: 'Other heading' }],
       requestAborted: [true],
     })
   })
@@ -635,12 +782,16 @@ describe('body request', () => {
     })
   })
 
-  it('aborts the active request when its target range is edited', async () => {
+  it('keeps the newer input open when the active request target is edited', async () => {
     const { body, view } = createRequestEditor()
     const { fetcher, signals } = createPendingFetch()
     vi.stubGlobal('fetch', fetcher)
 
     await submitRequest(view, 'make it concise', () => signals.length === 1)
+    const input = await openRequestInput(view)
+    await act(async () => {
+      await userEvent.fill(input, 'request another version')
+    })
     const targetStart = content.indexOf('Rewrite this sentence.')
     act(() => {
       view.dispatch({
@@ -650,6 +801,10 @@ describe('body request', () => {
 
     const readOutput = () => ({
       body: body.toJSON(),
+      error: document.querySelector('[role="alert"]')?.textContent ?? null,
+      input:
+        document.querySelector<HTMLInputElement>('#body-request')?.value ??
+        null,
       inFlight:
         view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
         null,
@@ -657,8 +812,69 @@ describe('body request', () => {
     })
     expect(readOutput()).toEqual({
       body: content.replace('Rewrite', 'Rexrite'),
+      error: null,
+      input: 'request another version',
       inFlight: null,
       requestAborted: [true],
+    })
+  })
+
+  it('clears the previous request when the touch request button reopens', async () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    const { body, view } = createRequestEditor()
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response(null, { status: 503 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const requestButton = document.querySelector<HTMLButtonElement>(
+      '[aria-label="本文を依頼"]',
+    )
+    if (!requestButton)
+      throw new Error('The touch request button was not shown')
+    await act(async () => {
+      await userEvent.click(requestButton)
+    })
+    const input = document.querySelector<HTMLInputElement>('#body-request')
+    if (!input) throw new Error('The request input did not open')
+    await act(async () => {
+      await userEvent.fill(input, 'make it concise')
+      await userEvent.keyboard('{Enter}')
+      await vi.waitFor(() => {
+        if (!document.querySelector('[role="alert"]'))
+          throw new Error('The request failure was not announced')
+      })
+    })
+    await act(async () => {
+      await userEvent.keyboard('{Escape}')
+    })
+    await act(async () => {
+      await userEvent.click(requestButton)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      editorMounted: view.dom.isConnected,
+      error: document.querySelector('[role="alert"]')?.textContent ?? null,
+      fetchCalls: fetchMock.mock.calls.length,
+      input:
+        document.querySelector<HTMLInputElement>('#body-request')?.value ??
+        null,
+      inputOpen:
+        document
+          .querySelector<HTMLElement>('[data-slot="popover-content"]')
+          ?.hasAttribute('data-open') ?? false,
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      editorMounted: true,
+      error: null,
+      fetchCalls: 1,
+      input: '',
+      inputOpen: true,
     })
   })
 

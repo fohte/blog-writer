@@ -90,6 +90,24 @@ function findContextBlockRange(
   return block ? { from: block.from, to: block.to } : undefined
 }
 
+function findFencedCodeRangeAt(
+  markdown: string,
+  blocks: ContextBlockRange[],
+  position: number,
+): TextRange | undefined {
+  const containingRange = findContextBlockRange(blocks, 'FencedCode', position)
+  if (containingRange) return containingRange
+
+  const lineStart = lineStartAt(markdown, position)
+  const firstContentPositionOnLine = blocks.find(
+    ({ from, name }) =>
+      name === 'FencedCode' && lineStartAt(markdown, from) === lineStart,
+  )?.from
+  if (firstContentPositionOnLine === undefined) return undefined
+
+  return findContextBlockRange(blocks, 'FencedCode', firstContentPositionOnLine)
+}
+
 function resolveBodyRequestRange(
   text: string,
   selection: TextRange,
@@ -99,7 +117,7 @@ function resolveBodyRequestRange(
   if (from !== to) return { from, to }
 
   const blocks = collectContextBlockRanges(text)
-  const fencedCodeRange = findContextBlockRange(blocks, 'FencedCode', from)
+  const fencedCodeRange = findFencedCodeRangeAt(text, blocks, from)
   if (fencedCodeRange) return fencedCodeRange
 
   const paragraphRange = findContextBlockRange(blocks, 'Paragraph', from)

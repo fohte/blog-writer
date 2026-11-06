@@ -160,6 +160,40 @@ describe('getBodyRequestContext', () => {
     })
   })
 
+  it('uses a list-nested fence when the cursor is in its indentation prefix', () => {
+    const codeBlock = '```ts\n  const first = 1\n\n  const second = 2\n  ```'
+    const text = `# Main\n\n- item\n  ${codeBlock}\n\nAfter.`
+    const from = text.indexOf(codeBlock)
+    const to = from + codeBlock.length
+    const position = text.indexOf('\n  ```ts') + 1
+
+    expect(
+      getBodyRequestContext(text, { from: position, to: position }),
+    ).toEqual({
+      headings: ['# Main'],
+      section: `# Main\n\n- item\n  ⟪依頼範囲の開始⟫${codeBlock}⟪依頼範囲の終了⟫\n\nAfter.`,
+      target: codeBlock,
+      range: { from, to },
+    })
+  })
+
+  it('uses a blockquote fence when the cursor is on its quote prefix', () => {
+    const codeBlock = '```ts\n> const first = 1\n>\n> const second = 2\n> ```'
+    const text = `# Main\n\n> ${codeBlock}\n\nAfter.`
+    const from = text.indexOf(codeBlock)
+    const to = from + codeBlock.length
+    const position = text.indexOf('> ```ts')
+
+    expect(
+      getBodyRequestContext(text, { from: position, to: position }),
+    ).toEqual({
+      headings: ['# Main'],
+      section: `# Main\n\n> ⟪依頼範囲の開始⟫${codeBlock}⟪依頼範囲の終了⟫\n\nAfter.`,
+      target: codeBlock,
+      range: { from, to },
+    })
+  })
+
   it('ends an H1 introduction at the next heading of any level', () => {
     const text =
       '# Main\nintroduction paragraph\n\n## Section\nsection paragraph\n\n# Later\nlater paragraph'
