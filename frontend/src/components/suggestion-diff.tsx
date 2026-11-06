@@ -7,6 +7,7 @@ export interface SuggestionDiffProps {
   original: string
   replacement: string
   focused?: boolean
+  inline?: boolean
   generating?: boolean
   onAccept?: () => void
   onReject?: () => void
@@ -69,43 +70,50 @@ export function SuggestionDiff({
   original,
   replacement,
   focused = false,
+  inline = false,
   generating = false,
   onAccept,
   onReject,
 }: SuggestionDiffProps) {
   if (generating) {
+    const Status = inline ? 'span' : 'div'
     return (
-      <div
+      <Status
         aria-live="polite"
         className="suggestion-diff-generating"
         role="status"
       >
         作成中
-      </div>
+      </Status>
     )
   }
 
+  const Container = inline ? 'span' : 'div'
+  const Text = inline ? 'span' : 'div'
+  const Actions = inline ? 'span' : 'div'
+
   return (
-    <div
+    <Container
       aria-label="提案差分"
       className="suggestion-diff"
       data-focused={focused}
       style={{
+        display: inline ? 'inline' : undefined,
         borderInlineStart: focused
           ? '2px solid var(--color-tint-green)'
           : '2px solid transparent',
         paddingInlineStart: '0.5rem',
       }}
     >
-      <div className="suggestion-diff-text" style={{ whiteSpace: 'pre-wrap' }}>
+      <Text className="suggestion-diff-text" style={{ whiteSpace: 'pre-wrap' }}>
         {renderChanges(
           original,
           replacement,
           presentableDiff(original, replacement),
         )}
-      </div>
+      </Text>
       {focused && (onAccept || onReject) ? (
-        <div className="suggestion-diff-actions">
+        <Actions className="suggestion-diff-actions">
           {onAccept ? (
             <Button onClick={onAccept} size="sm" type="button">
               ✓ 採用
@@ -121,8 +129,8 @@ export function SuggestionDiff({
               × 却下
             </Button>
           ) : null}
-        </div>
+        </Actions>
       ) : null}
-    </div>
+    </Container>
   )
 }

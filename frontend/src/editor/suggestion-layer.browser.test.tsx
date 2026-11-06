@@ -1,9 +1,15 @@
 import { indentUnit } from '@codemirror/language'
-import { EditorState, Transaction } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import {
+  EditorState,
+  type Extension,
+  Prec,
+  Transaction,
+} from '@codemirror/state'
+import { EditorView, keymap } from '@codemirror/view'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
@@ -18,6 +24,7 @@ const cleanups: (() => void)[] = []
 function createEditor(
   content = initialText,
   onResolve?: (decision: string) => void,
+  additionalExtensions: Extension[] = [],
 ) {
   const doc = new Y.Doc()
   setBody(doc, content)
@@ -41,6 +48,7 @@ function createEditor(
           yCollab(body, null, { undoManager }),
           undoManagerFacet.of(undoManager),
           layer.extension,
+          ...additionalExtensions,
         ],
       }),
     })
@@ -119,6 +127,191 @@ describe('suggestion layer', () => {
     })
   })
 
+  it('keeps an inline suggestion on the same paragraph line', () => {
+    const content = 'A sentence with selected words in the middle.'
+    const { host, setSuggestion } = createEditor(content)
+    const from = content.indexOf('selected')
+    setSuggestion({
+      id: 'suggestion-a',
+      from,
+      to: from + 'selected words'.length,
+      replacement: 'revised words',
+    })
+
+    const readOutput = () => ({
+      lineCount: host.querySelectorAll('.cm-line').length,
+      text: host.querySelector('.cm-content')?.textContent,
+    })
+    expect(readOutput()).toEqual({
+      lineCount: 1,
+      text: 'A sentence with selectedrevised words in the middle.',
+    })
+  })
+
+  it('focuses an unfocused suggestion when it is clicked', async () => {
+    const { host, setSuggestion } = createEditor()
+    const from = initialText.indexOf('selected')
+    setSuggestion({
+      id: 'suggestion-a',
+      from,
+      to: from + 'selected sentence'.length,
+      replacement: 'revised sentence',
+    })
+    const widget = host.querySelector<HTMLElement>('.cm-suggestion-widget')
+    if (!widget) throw new Error('Could not find suggestion widget')
+
+    await userEvent.click(widget)
+
+    const readOutput = () => ({
+      editorFocused:
+        host.querySelector('.cm-content') === document.activeElement,
+      focused: host.querySelector('[data-focused="true"]') !== null,
+      buttonCount: host.querySelectorAll('button').length,
+    })
+    expect(readOutput()).toEqual({
+      editorFocused: true,
+      focused: true,
+      buttonCount: 2,
+    })
+  })
+
+  it('displays a zero-length suggestion at its insertion point', () => {
+    const content = 'before after'
+    const { body, host, layer, view } = createEditor(content)
+    const from = 'before '.length
+    const result = layer.setSuggestions([
+      {
+        id: 'suggestion-insert',
+        from,
+        to: from,
+        replacement: 'new ',
+      },
+    ])
+    if (result.isErr()) throw new Error('Could not set suggestion')
+    act(() => {
+      view.dispatch({ selection: { anchor: from } })
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      focused: host.querySelector('[data-focused="true"]') !== null,
+      text: host.querySelector('.suggestion-diff-text')?.textContent,
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      focused: true,
+      text: 'new ',
+    })
+  })
+
+  it('accepts a zero-length suggestion as an insertion', () => {
+    const content = 'before after'
+    const { body, layer } = createEditor(content)
+    const from = 'before '.length
+    const result = layer.setSuggestions([
+      {
+        id: 'suggestion-insert',
+        from,
+        to: from,
+        replacement: 'new ',
+      },
+    ])
+    if (result.isErr()) throw new Error('Could not set suggestion')
+
+    act(() => {
+      layer.accept('suggestion-insert')
+    })
+
+    expect(body.toJSON()).toEqual('before new after')
+  })
+
+  it('rejects a zero-length suggestion without changing the document', () => {
+    const content = 'before after'
+    const { body, host, layer } = createEditor(content)
+    const from = 'before '.length
+    const result = layer.setSuggestions([
+      {
+        id: 'suggestion-insert',
+        from,
+        to: from,
+        replacement: 'new ',
+      },
+    ])
+    if (result.isErr()) throw new Error('Could not set suggestion')
+
+    act(() => {
+      layer.reject('suggestion-insert')
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      visible: host.querySelector('.cm-suggestion-widget') !== null,
+    })
+    expect(readOutput()).toEqual({ body: content, visible: false })
+  })
+
+  it.each(['start', 'end'] as const)(
+    'keeps a suggestion when text is inserted at its %s boundary',
+    (boundary) => {
+      const { body, host, layer, view } = createEditor()
+      const from = initialText.indexOf('selected')
+      const to = from + 'selected sentence'.length
+      const insertion = boundary === 'start' ? 'prefix ' : ' suffix'
+      const insertionPosition = boundary === 'start' ? from : to
+      const result = layer.setSuggestions([
+        {
+          id: 'suggestion-a',
+          from,
+          to,
+          replacement: 'revised sentence',
+        },
+      ])
+      if (result.isErr()) throw new Error('Could not set suggestion')
+
+      act(() => {
+        view.dispatch({
+          changes: { from: insertionPosition, insert: insertion },
+        })
+      })
+      const diff =
+        host.querySelector('.suggestion-diff-text')?.textContent ?? null
+      act(() => {
+        layer.accept('suggestion-a')
+      })
+
+      const expected =
+        boundary === 'start'
+          ? initialText.replace('selected sentence', 'prefix revised sentence')
+          : initialText.replace('selected sentence', 'revised sentence suffix')
+      const readOutput = () => ({ diff, body: body.toJSON() })
+      expect(readOutput()).toEqual({
+        diff: 'selectedrevised sentence',
+        body: expected,
+      })
+    },
+  )
+
+  it('drops a zero-length suggestion when text is inserted at its position', () => {
+    const content = 'before after'
+    const { host, layer, view } = createEditor(content)
+    const from = 'before '.length
+    const result = layer.setSuggestions([
+      {
+        id: 'suggestion-insert',
+        from,
+        to: from,
+        replacement: 'new ',
+      },
+    ])
+    if (result.isErr()) throw new Error('Could not set suggestion')
+
+    act(() => {
+      view.dispatch({ changes: { from, insert: 'edited ' } })
+    })
+
+    expect(host.querySelector('.cm-suggestion-widget') !== null).toEqual(false)
+  })
+
   it('drops a suggestion when a remote Yjs edit changes its range', () => {
     const { doc, host, setSuggestion } = createEditor()
     const peer = new Y.Doc()
@@ -145,6 +338,70 @@ describe('suggestion layer', () => {
       host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
     ).toEqual(null)
     peer.destroy()
+  })
+
+  it('resolves an in-flight suggestion at its mapped position after an outside edit', () => {
+    const { body, layer, view } = createEditor()
+    const from = initialText.indexOf('selected')
+    let inFlightResult: ReturnType<typeof layer.setInFlight> | undefined
+    act(() => {
+      inFlightResult = layer.setInFlight({
+        from,
+        to: from + 'selected sentence'.length,
+      })
+    })
+    if (!inFlightResult) throw new Error('Could not set in-flight state')
+    if (inFlightResult.isErr()) throw new Error('Could not set in-flight state')
+
+    let resolveResult: ReturnType<typeof layer.resolveInFlight> | undefined
+    act(() => {
+      view.dispatch({ changes: { from: 0, insert: 'new ' } })
+      resolveResult = layer.resolveInFlight('revised sentence')
+      view.dispatch({ selection: { anchor: from + 'new '.length } })
+      dispatchKey(view, 'Tab')
+    })
+    if (!resolveResult)
+      throw new Error('Could not resolve in-flight suggestion')
+    if (resolveResult.isErr())
+      throw new Error('Could not resolve in-flight suggestion')
+
+    expect(body.toJSON()).toEqual(
+      `new ${initialText.replace('selected sentence', 'revised sentence')}`,
+    )
+  })
+
+  it('ignores an in-flight result after an edit inside its range', () => {
+    const { body, host, layer, view } = createEditor()
+    const from = initialText.indexOf('selected')
+    let inFlightResult: ReturnType<typeof layer.setInFlight> | undefined
+    act(() => {
+      inFlightResult = layer.setInFlight({
+        from,
+        to: from + 'selected sentence'.length,
+      })
+    })
+    if (!inFlightResult) throw new Error('Could not set in-flight state')
+    if (inFlightResult.isErr()) throw new Error('Could not set in-flight state')
+
+    let resolveResult: ReturnType<typeof layer.resolveInFlight> | undefined
+    act(() => {
+      view.dispatch({ changes: { from: from + 2, insert: 'x' } })
+      resolveResult = layer.resolveInFlight('revised sentence')
+    })
+    if (!resolveResult)
+      throw new Error('Could not resolve in-flight suggestion')
+    if (resolveResult.isErr())
+      throw new Error('Could not resolve in-flight suggestion')
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      suggestion:
+        host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
+    })
+    expect(readOutput()).toEqual({
+      body: initialText.replace('selected sentence', 'sexlected sentence'),
+      suggestion: null,
+    })
   })
 
   it('drops a suggestion when its block is moved by delete and insert', () => {
@@ -301,16 +558,16 @@ describe('suggestion layer', () => {
     const second = initialText.indexOf('closing')
     const result = layer.setSuggestions([
       {
-        id: 'suggestion-a',
-        from: first,
-        to: first + 'opening sentence'.length,
-        replacement: 'first replacement',
-      },
-      {
         id: 'suggestion-b',
         from: second,
         to: initialText.length,
         replacement: 'last replacement',
+      },
+      {
+        id: 'suggestion-a',
+        from: first,
+        to: first + 'opening sentence'.length,
+        replacement: 'first replacement',
       },
     ])
     if (result.isErr()) throw new Error('Could not set suggestions')
@@ -325,6 +582,30 @@ describe('suggestion layer', () => {
       focusedCount: host.querySelectorAll('[data-focused="true"]').length,
     })
     expect(readOutput()).toEqual({ cursor: first, focusedCount: 1 })
+  })
+
+  it('passes Tab to the next keymap when no suggestion or list item is active', () => {
+    let fallbackRuns = 0
+    const { body, view } = createEditor(initialText, undefined, [
+      Prec.lowest(
+        keymap.of([
+          {
+            key: 'Tab',
+            run: () => {
+              fallbackRuns += 1
+              return true
+            },
+          },
+        ]),
+      ),
+    ])
+
+    act(() => {
+      dispatchKey(view, 'Tab')
+    })
+
+    const readOutput = () => ({ body: body.toJSON(), fallbackRuns })
+    expect(readOutput()).toEqual({ body: initialText, fallbackRuns: 1 })
   })
 
   it('accepts a focused suggestion from its button', () => {
@@ -391,6 +672,28 @@ describe('suggestion layer', () => {
     expect(body.toJSON()).toEqual('  - list item\n\nlast line')
   })
 
+  it('accepts a focused suggestion in a list before indenting on Tab', () => {
+    const content = '- selected sentence\nnext line'
+    const { body, layer, view } = createEditor(content)
+    const from = content.indexOf('selected')
+    const result = layer.setSuggestions([
+      {
+        id: 'suggestion-list',
+        from,
+        to: from + 'selected sentence'.length,
+        replacement: 'revised sentence',
+      },
+    ])
+    if (result.isErr()) throw new Error('Could not set suggestion')
+
+    act(() => {
+      view.dispatch({ selection: { anchor: from } })
+      dispatchKey(view, 'Tab')
+    })
+
+    expect(body.toJSON()).toEqual('- revised sentence\nnext line')
+  })
+
   it('cancels in-flight work before rejecting a focused suggestion', () => {
     const events: string[] = []
     const { body, host, layer, view } = createEditor(initialText, (event) => {
@@ -438,5 +741,29 @@ describe('suggestion layer', () => {
       body: initialText,
       events: ['cancel', 'reject'],
     })
+  })
+
+  it('passes Escape to the next keymap when there is no active state', () => {
+    let fallbackRuns = 0
+    const { body, view } = createEditor(initialText, undefined, [
+      Prec.lowest(
+        keymap.of([
+          {
+            key: 'Escape',
+            run: () => {
+              fallbackRuns += 1
+              return true
+            },
+          },
+        ]),
+      ),
+    ])
+
+    act(() => {
+      dispatchKey(view, 'Escape')
+    })
+
+    const readOutput = () => ({ body: body.toJSON(), fallbackRuns })
+    expect(readOutput()).toEqual({ body: initialText, fallbackRuns: 1 })
   })
 })

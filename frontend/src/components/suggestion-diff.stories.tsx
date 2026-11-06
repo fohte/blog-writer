@@ -53,3 +53,15 @@ export const Narrow: Story = {
       'A more specific sentence that still reads clearly on a narrow screen.',
   },
 }
+
+export const Inline: Story = {
+  name: 'an inline diff stays within the sentence.',
+  args: {
+    focused: true,
+    inline: true,
+    onAccept: () => {},
+    onReject: () => {},
+    original: 'a short phrase',
+    replacement: 'a clearer phrase',
+  },
+}

@@ -1,25 +1,16 @@
 import { indentMore } from '@codemirror/commands'
 import {
   type ChangeSet,
-  type EditorState,
   type Extension,
   Prec,
   StateEffect,
   StateField,
   Transaction,
 } from '@codemirror/state'
-import {
-  Decoration,
-  type DecorationSet,
-  EditorView,
-  keymap,
-  ViewPlugin,
-  WidgetType,
-} from '@codemirror/view'
+import { EditorView, keymap, ViewPlugin } from '@codemirror/view'
 import { err, ok, type Result } from 'neverthrow'
-import { createRoot, type Root } from 'react-dom/client'
 
-import { SuggestionDiff } from '#components/suggestion-diff'
+import { createSuggestionDecorations } from '#editor/suggestion-layer-view'
 import { undoManagerFacet } from '#editor/undo-manager-facet'
 
 export interface TextSuggestion {
@@ -41,7 +32,7 @@ export type SuggestionLayerError =
   | { type: 'overlapping-ranges' }
   | { type: 'not-mounted' }
 
-interface SuggestionLayerState {
+export interface SuggestionLayerState {
   suggestions: readonly TextSuggestion[]
   inFlight: SuggestionPosition | null
   focusedId: string | null
@@ -50,7 +41,6 @@ interface SuggestionLayerState {
 const replaceSuggestions = StateEffect.define<readonly TextSuggestion[]>()
 const replaceInFlight = StateEffect.define<SuggestionPosition | null>()
 const removeSuggestion = StateEffect.define<string>()
-const rootsByDOM = new WeakMap<HTMLElement, Root>()
 
 function changedRangeTouchesSuggestion(
   from: number,
@@ -59,7 +49,9 @@ function changedRangeTouchesSuggestion(
   changedTo: number,
 ): boolean {
   if (changedFrom === changedTo) {
-    return changedFrom >= from && changedFrom <= to
+    return from === to
+      ? changedFrom === from
+      : changedFrom > from && changedFrom < to
   }
   if (from === to) return changedFrom <= from && changedTo >= from
   return changedFrom < to && changedTo > from
@@ -79,7 +71,7 @@ function mapRange(
   }
   return {
     from: changes.mapPos(range.from, 1),
-    to: changes.mapPos(range.to, 1),
+    to: changes.mapPos(range.to, -1),
   }
 }
 
@@ -93,6 +85,12 @@ function isRangeValid(from: number, to: number, docLength: number): boolean {
   )
 }
 
+function orderSuggestions(
+  suggestions: readonly TextSuggestion[],
+): TextSuggestion[] {
+  return [...suggestions].sort((a, b) => a.from - b.from || a.to - b.to)
+}
+
 function focusForSelection(
   suggestions: readonly TextSuggestion[],
   head: number,
@@ -104,98 +102,10 @@ function focusForSelection(
   )
 }
 
-function createDecorations(
-  state: SuggestionLayerState,
-  editorState: EditorState,
-  controller: SuggestionLayerController,
-): DecorationSet {
-  const decorations = state.suggestions.map((suggestion) => {
-    const original = editorState.doc.sliceString(suggestion.from, suggestion.to)
-    return Decoration.replace({
-      block: true,
-      widget: new SuggestionDiffWidget(
-        suggestion,
-        original,
-        suggestion.id === state.focusedId,
-        controller,
-      ),
-    }).range(suggestion.from, suggestion.to)
-  })
-
-  if (state.inFlight) {
-    decorations.push(
-      Decoration.widget({
-        block: true,
-        side: 1,
-        widget: new SuggestionDiffWidget(null, '', false, controller),
-      }).range(state.inFlight.from),
-    )
-  }
-
-  return Decoration.set(decorations, true)
-}
-
-class SuggestionDiffWidget extends WidgetType {
-  constructor(
-    readonly suggestion: TextSuggestion | null,
-    readonly original: string,
-    readonly focused: boolean,
-    private readonly controller: SuggestionLayerController,
-  ) {
-    super()
-  }
-
-  override eq(other: WidgetType): boolean {
-    return (
-      other instanceof SuggestionDiffWidget &&
-      other.suggestion?.id === this.suggestion?.id &&
-      other.suggestion?.replacement === this.suggestion?.replacement &&
-      other.original === this.original &&
-      other.focused === this.focused
-    )
-  }
-
-  override toDOM(): HTMLElement {
-    const dom = document.createElement('div')
-    dom.className = 'cm-suggestion-widget'
-    const root = createRoot(dom)
-    const suggestion = this.suggestion
-    rootsByDOM.set(dom, root)
-    root.render(
-      suggestion ? (
-        <SuggestionDiff
-          focused={this.focused}
-          {...(this.focused
-            ? {
-                onAccept: () => {
-                  this.controller.accept(suggestion.id)
-                },
-                onReject: () => {
-                  this.controller.reject(suggestion.id)
-                },
-              }
-            : {})}
-          original={this.original}
-          replacement={suggestion.replacement}
-        />
-      ) : (
-        <SuggestionDiff generating original="" replacement="" />
-      ),
-    )
-    return dom
-  }
-
-  override destroy(dom: HTMLElement): void {
-    rootsByDOM.get(dom)?.unmount()
-    rootsByDOM.delete(dom)
-  }
-
-  override ignoreEvent(): boolean {
-    return true
-  }
-}
-
 export interface SuggestionLayerOptions {
+  initialSuggestions?: readonly TextSuggestion[]
+  initialSelectionHead?: number
+  initialInFlight?: SuggestionPosition
   onResolve?: (suggestion: TextSuggestion, decision: SuggestionDecision) => void
   onCancelInFlight?: () => void
 }
@@ -204,14 +114,21 @@ export class SuggestionLayerController {
   readonly extension: Extension
   private view: EditorView | null = null
   private readonly stateField: StateField<SuggestionLayerState>
+  private nextGeneratedId = 0
 
   constructor(private readonly options: SuggestionLayerOptions = {}) {
     this.stateField = StateField.define<SuggestionLayerState>({
-      create: () => ({
-        suggestions: [],
-        inFlight: null,
-        focusedId: null,
-      }),
+      create: (state) => {
+        const suggestions = orderSuggestions(options.initialSuggestions ?? [])
+        return {
+          suggestions,
+          inFlight: options.initialInFlight ?? null,
+          focusedId: focusForSelection(
+            suggestions,
+            options.initialSelectionHead ?? state.selection.main.head,
+          ),
+        }
+      },
       update: (value, transaction) => {
         let suggestions = value.suggestions
         let inFlight = value.inFlight
@@ -272,7 +189,7 @@ export class SuggestionLayerController {
       },
       provide: (field) => {
         return EditorView.decorations.compute([field], (state) =>
-          createDecorations(state.field(field), state, this),
+          createSuggestionDecorations(state.field(field), state, this),
         )
       },
     })
@@ -318,9 +235,7 @@ export class SuggestionLayerController {
       ids.add(suggestion.id)
     }
 
-    const ordered = [...suggestions].sort(
-      (a, b) => a.from - b.from || a.to - b.to,
-    )
+    const ordered = orderSuggestions(suggestions)
     for (const [index, current] of ordered.slice(1).entries()) {
       const previous = ordered[index]
       if (!previous) continue
@@ -329,8 +244,22 @@ export class SuggestionLayerController {
       }
     }
 
-    view.dispatch({ effects: replaceSuggestions.of(suggestions) })
+    view.dispatch({ effects: replaceSuggestions.of(ordered) })
     return ok(undefined)
+  }
+
+  resolveInFlight(replacement: string): Result<void, SuggestionLayerError> {
+    const view = this.view
+    const state = view?.state.field(this.stateField, false)
+    if (!view || !state?.inFlight) return ok(undefined)
+
+    const id = this.createSuggestionId(state.suggestions)
+    const result = this.setSuggestions([
+      ...state.suggestions,
+      { ...state.inFlight, id, replacement },
+    ])
+    if (result.isErr()) return result
+    return this.setInFlight(null)
   }
 
   setInFlight(
@@ -373,6 +302,16 @@ export class SuggestionLayerController {
     if (!view || !suggestion) return
     view.dispatch({ effects: removeSuggestion.of(id) })
     this.options.onResolve?.(suggestion, 'reject')
+  }
+
+  focus(id: string): void {
+    const suggestion = this.findSuggestion(id)
+    if (!suggestion || !this.view) return
+    this.view.dispatch({
+      selection: { anchor: suggestion.from },
+      scrollIntoView: true,
+    })
+    this.view.focus()
   }
 
   private handleTab(view: EditorView): boolean {
@@ -428,6 +367,16 @@ export class SuggestionLayerController {
   private focusedSuggestion(): TextSuggestion | undefined {
     const state = this.view?.state.field(this.stateField, false)
     return state?.suggestions.find(({ id }) => id === state.focusedId)
+  }
+
+  private createSuggestionId(suggestions: readonly TextSuggestion[]): string {
+    let id = `in-flight-${String(this.nextGeneratedId)}`
+    while (suggestions.some((suggestion) => suggestion.id === id)) {
+      this.nextGeneratedId += 1
+      id = `in-flight-${String(this.nextGeneratedId)}`
+    }
+    this.nextGeneratedId += 1
+    return id
   }
 }
 
