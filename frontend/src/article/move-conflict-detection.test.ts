@@ -27,21 +27,17 @@ function makeReplica(clientId: number): ReturnType<typeof replica> {
   return result
 }
 
-function observeUndoRestorations(
+function stateVector(doc: Y.Doc): Map<number, number> {
+  return Y.decodeStateVector(Y.encodeStateVector(doc))
+}
+
+function undoAndRecordRestoration(
   doc: Y.Doc,
-  body: Y.Text,
   undoManager: Y.UndoManager,
 ): void {
-  undoManager.on('stack-item-popped', ({ changedParentTypes }) => {
-    for (const [parent, parentEvents] of changedParentTypes) {
-      if (!Object.is(parent, body)) continue
-      const events = parentEvents.filter(
-        (event): event is Y.YTextEvent => event instanceof Y.YTextEvent,
-      )
-      if (events.length > 0)
-        recordMoveConflictRestoration(doc, events)._unsafeUnwrap()
-    }
-  })
+  const beforeState = stateVector(doc)
+  undoManager.undo()
+  recordMoveConflictRestoration(doc, beforeState, stateVector(doc))
 }
 
 afterEach(() => {
@@ -59,13 +55,12 @@ describe('move conflict detection', () => {
     const body = B.doc.getText('body')
     const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
     undoManagers.push(undoManager)
-    observeUndoRestorations(B.doc, body, undoManager)
 
     body.delete(body.toJSON().lastIndexOf('ple'), 3)
     moveSection(A.doc, 'end')
     settle({ A, B })
     const beforeUndo = [getMoveConflicts(A.doc), getMoveConflicts(B.doc)]
-    undoManager.undo()
+    undoAndRecordRestoration(B.doc, undoManager)
     settle({ A, B })
 
     const readOutput = () => ({
@@ -102,8 +97,6 @@ describe('move conflict detection', () => {
       captureTimeout: 0,
     })
     undoManagers.push(undoA, undoC)
-    observeUndoRestorations(A.doc, A.doc.getText('body'), undoA)
-    observeUndoRestorations(C.doc, C.doc.getText('body'), undoC)
     A.doc.getText('body').delete(0, 3)
     C.doc.getText('body').delete(3, 3)
     const source = B.doc.getText('body').toJSON()
@@ -114,8 +107,8 @@ describe('move conflict detection', () => {
     pull(A.doc, B.doc)
     pull(C.doc, B.doc)
 
-    undoA.undo()
-    undoC.undo()
+    undoAndRecordRestoration(A.doc, undoA)
+    undoAndRecordRestoration(C.doc, undoC)
     settle({ A, B, peers: [C] })
 
     const documents = [A.doc, B.doc, C.doc]
@@ -143,45 +136,45 @@ describe('move conflict detection', () => {
     })
   })
 
-  it('rejects restoration events after the body changes again', () => {
+  it('tracks restored text after later deletions shift its old position', () => {
     const A = makeReplica(88)
     const B = makeReplica(89)
-    setBody(A.doc, initialBody)
+    const article = '# Aaa\naa\n# Bbb\none two\n# Ccc\ncc\n'
+    setBody(A.doc, article)
     pull(B.doc, A.doc)
-    const body = B.doc.getText('body')
-    const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
-    undoManagers.push(undoManager)
-    const undoEvents: Y.YTextEvent[] = []
-    undoManager.on('stack-item-popped', ({ changedParentTypes }) => {
-      for (const [parent, parentEvents] of changedParentTypes) {
-        if (!Object.is(parent, body)) continue
-        undoEvents.push(
-          ...parentEvents.filter(
-            (event): event is Y.YTextEvent => event instanceof Y.YTextEvent,
-          ),
-        )
-      }
-    })
 
-    body.delete(body.toJSON().lastIndexOf('ple'), 3)
-    moveSection(A.doc, 'end')
+    const body = A.doc.getText('body')
+    body.delete(article.indexOf('one '), 'one '.length)
+    const remoteBody = B.doc.getText('body').toJSON()
+    moveBlock(B.doc, {
+      from: article.indexOf('# Bbb'),
+      destination: remoteBody.length,
+    })._unsafeUnwrap()
     settle({ A, B })
-    undoManager.undo()
-    body.insert(0, 'q')
-    const result = recordMoveConflictRestoration(B.doc, undoEvents)
+
+    const beforeState = stateVector(A.doc)
+    const restoreAt = body.toJSON().indexOf('# Ccc')
+    body.insert(restoreAt, 'one ')
+    const afterState = stateVector(A.doc)
+    body.delete(0, 2)
+    recordMoveConflictRestoration(A.doc, beforeState, afterState)
+    settle({ A, B })
 
     const readOutput = () => ({
-      result: result.match(
-        () => ({ ok: true, error: null }),
-        (error) => ({ ok: false, error: error.message }),
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflicts: [A, B].map(({ doc }) =>
+        getMoveConflicts(doc).map(({ text, target }) => ({ text, target })),
       ),
     })
     expect(readOutput()).toEqual({
-      result: {
-        ok: false,
-        error:
-          'Move conflict restoration events must describe the current document state',
-      },
+      bodies: [
+        'Aaa\naa\none # Ccc\ncc\n\n# Bbb\ntwo\n',
+        'Aaa\naa\none # Ccc\ncc\n\n# Bbb\ntwo\n',
+      ],
+      conflicts: [
+        [{ text: 'one ', target: 31 }],
+        [{ text: 'one ', target: 31 }],
+      ],
     })
   })
 
@@ -194,12 +187,11 @@ describe('move conflict detection', () => {
     const body = B.doc.getText('body')
     const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
     undoManagers.push(undoManager)
-    observeUndoRestorations(B.doc, body, undoManager)
 
     body.delete(body.toJSON().lastIndexOf('ple'), 3)
     moveSection(A.doc, 'end')
     settle({ A, B })
-    undoManager.undo()
+    undoAndRecordRestoration(B.doc, undoManager)
     settle({ A, B })
 
     const beforeExpiry = [
@@ -234,13 +226,12 @@ describe('move conflict detection', () => {
     const body = A.doc.getText('body')
     const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
     undoManagers.push(undoManager)
-    observeUndoRestorations(A.doc, body, undoManager)
 
     body.delete(body.toJSON().lastIndexOf('ple'), 3)
     moveSection(B.doc, 'end')
     settle({ A, B })
     const beforeUndo = [getMoveConflicts(A.doc), getMoveConflicts(B.doc)]
-    undoManager.undo()
+    undoAndRecordRestoration(A.doc, undoManager)
     settle({ A, B })
     const readOutput = () => ({
       beforeUndo,
@@ -268,7 +259,6 @@ describe('move conflict detection', () => {
     const body = A.doc.getText('body')
     const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
     undoManagers.push(undoManager)
-    observeUndoRestorations(A.doc, body, undoManager)
     body.delete(0, 'one '.length)
     pull(B.doc, A.doc)
     const remoteBody = B.doc.getText('body').toJSON()
@@ -278,7 +268,7 @@ describe('move conflict detection', () => {
     })._unsafeUnwrap()
     settle({ A, B })
     const beforeUndo = [getMoveConflicts(A.doc), getMoveConflicts(B.doc)]
-    undoManager.undo()
+    undoAndRecordRestoration(A.doc, undoManager)
     settle({ A, B })
     const readOutput = () => ({
       beforeUndo,

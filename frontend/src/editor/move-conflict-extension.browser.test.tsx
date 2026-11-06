@@ -10,6 +10,7 @@ import { moveBlock } from '#article/move-block'
 import {
   getMoveConflicts,
   observeMoveConflicts,
+  recordMoveConflictRestoration,
   resolveMoveConflict,
 } from '#article/move-conflicts'
 import { moveConflictExtension } from '#editor/move-conflict-extension'
@@ -17,7 +18,10 @@ import { moveConflictExtension } from '#editor/move-conflict-extension'
 const initialBody = '## Ember\nu1\n## Brindle\nrho rho\n## Quartz\nv1\n'
 const cleanups: (() => void)[] = []
 
-function createConflictEditor({ deferRemoteEdit = false } = {}) {
+function createConflictEditor({
+  deferRemoteEdit = false,
+  receiveMoveOnOffline = true,
+} = {}) {
   const source = new Y.Doc()
   source.clientID = 71
   setBody(source, initialBody)
@@ -34,11 +38,12 @@ function createConflictEditor({ deferRemoteEdit = false } = {}) {
     from: markdown.indexOf('## Brindle\n'),
     destination: markdown.length,
   })._unsafeUnwrap()
-  Y.applyUpdate(
-    offline,
-    Y.encodeStateAsUpdate(source, Y.encodeStateVector(offline)),
-    'remote',
-  )
+  if (receiveMoveOnOffline)
+    Y.applyUpdate(
+      offline,
+      Y.encodeStateAsUpdate(source, Y.encodeStateVector(offline)),
+      'remote',
+    )
   const applyRemoteEditToSource = () => {
     Y.applyUpdate(
       source,
@@ -87,6 +92,10 @@ function createConflictEditor({ deferRemoteEdit = false } = {}) {
   return { applyRemoteEditToSource, host, offline, readOutput, source, view }
 }
 
+function stateVector(doc: Y.Doc): Map<number, number> {
+  return Y.decodeStateVector(Y.encodeStateVector(doc))
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 })
@@ -98,23 +107,139 @@ afterEach(() => {
 
 describe('moveConflictExtension', () => {
   it('shows a remote conflict after the editor has mounted', async () => {
-    const { applyRemoteEditToSource, readOutput } = createConflictEditor({
-      deferRemoteEdit: true,
-    })
+    const { applyRemoteEditToSource, readOutput, source } =
+      createConflictEditor({
+        deferRemoteEdit: true,
+        receiveMoveOnOffline: false,
+      })
     const outputs = [readOutput()]
+    const acknowledgementCounts = [source.getMap('move-acks').size]
 
     await act(async () => {
       applyRemoteEditToSource()
       await Promise.resolve()
     })
     outputs.push(readOutput())
+    acknowledgementCounts.push(source.getMap('move-acks').size)
+
+    const readOutputWithAcknowledgements = () => ({
+      acknowledgementCounts,
+      outputs,
+    })
+    expect(readOutputWithAcknowledgements()).toEqual({
+      acknowledgementCounts: [0, 0],
+      outputs: [
+        { notice: null, highlightedText: null },
+        {
+          notice:
+            'This text was written in a section that has moved.xyMove it with the sectionKeep it here',
+          highlightedText: 'xy',
+        },
+      ],
+    })
+  })
+
+  it('refreshes the notice after a remote restoration record arrives alone', async () => {
+    const receiver = new Y.Doc()
+    receiver.clientID = 83
+    setBody(receiver, 'one # Brindle\n# Quartz\n')
+    const mover = new Y.Doc()
+    mover.clientID = 84
+    Y.applyUpdate(mover, Y.encodeStateAsUpdate(receiver))
+    const stopReceiver = observeMoveConflicts(receiver)
+    const stopMover = observeMoveConflicts(mover)
+    const body = receiver.getText('body')
+    const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
+    body.delete(0, 'one '.length)
+    Y.applyUpdate(
+      mover,
+      Y.encodeStateAsUpdate(receiver, Y.encodeStateVector(mover)),
+      'remote',
+    )
+    const moverBody = mover.getText('body').toJSON()
+    moveBlock(mover, {
+      from: moverBody.indexOf('# Brindle'),
+      destination: moverBody.length,
+    })._unsafeUnwrap()
+    Y.applyUpdate(
+      receiver,
+      Y.encodeStateAsUpdate(mover, Y.encodeStateVector(receiver)),
+      'remote',
+    )
+
+    const beforeState = stateVector(receiver)
+    undoManager.undo()
+    const afterState = stateVector(receiver)
+    const editorDoc = new Y.Doc()
+    Y.applyUpdate(editorDoc, Y.encodeStateAsUpdate(receiver))
+    const editorBody = editorDoc.getText('body')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const editorUndoManager = new Y.UndoManager(editorBody)
+    let view: EditorView | undefined
+    act(() => {
+      view = new EditorView({
+        parent: host,
+        state: EditorState.create({
+          doc: editorBody.toJSON(),
+          extensions: [
+            yCollab(editorBody, null, { undoManager: editorUndoManager }),
+            moveConflictExtension(editorDoc),
+          ],
+        }),
+      })
+    })
+    if (view === undefined)
+      throw new Error('Expected the editor view to be mounted')
+
+    cleanups.push(() => {
+      act(() => view?.destroy())
+      editorUndoManager.destroy()
+      undoManager.destroy()
+      stopReceiver()
+      stopMover()
+      receiver.destroy()
+      mover.destroy()
+      editorDoc.destroy()
+      host.remove()
+    })
+
+    const readRestorationOutput = () => ({
+      body: editorBody.toJSON(),
+      acknowledgements: editorDoc.getMap('move-acks').size,
+      notice: host.querySelector('[role="status"]')?.textContent ?? null,
+      highlightedText:
+        host.querySelector('.cm-move-conflict-range')?.textContent ?? null,
+      restorations: editorDoc.getMap('move-conflict-restorations').size,
+    })
+    const outputs = [readRestorationOutput()]
+    recordMoveConflictRestoration(receiver, beforeState, afterState)
+    const restorationOnlyUpdate = Y.encodeStateAsUpdate(
+      receiver,
+      Y.encodeStateVector(editorDoc),
+    )
+
+    await act(async () => {
+      Y.applyUpdate(editorDoc, restorationOnlyUpdate, 'remote-restoration')
+      await Promise.resolve()
+    })
+    outputs.push(readRestorationOutput())
 
     expect(outputs).toEqual([
-      { notice: null, highlightedText: null },
       {
+        body: 'one # Quartz\n\n# Brindle\n',
+        acknowledgements: 2,
+        notice: null,
+        highlightedText: null,
+        restorations: 0,
+      },
+      {
+        body: 'one # Quartz\n\n# Brindle\n',
+        acknowledgements: 2,
         notice:
-          'This text was written in a section that has moved.xyMove it with the sectionKeep it here',
-        highlightedText: 'xy',
+          'This text was written in a section that has moved.one Move it with the sectionKeep it here',
+        highlightedText: 'one ',
+        restorations: 1,
       },
     ])
   })

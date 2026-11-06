@@ -9,12 +9,14 @@ import {
   sourceCandidatesFromAnchor,
   sourceOffsetFromAnchor,
   targetPositionFromIndex,
-  visibleItemsInRange,
 } from '#article/move-conflict-index'
 import {
   coalesceIdRanges,
-  getMoveRecords,
   getUnkeptMoveConflictRanges,
+  type TrackedIdRange,
+} from '#article/move-conflict-ranges'
+import {
+  getMoveRecords,
   indexMoveConflictDecisions,
   indexMoveConflictRestorations,
   isConcurrent,
@@ -22,7 +24,6 @@ import {
   recordMoveConflictRelocations,
   recordMoveConflictRestorations,
   targetFor,
-  type TrackedIdRange,
   type TrackedTarget,
 } from '#article/move-conflict-records'
 import { type MoveRecord, moveRecordId } from '#article/move-conflict-source'
@@ -326,93 +327,98 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
 
 export function recordMoveConflictRestoration(
   doc: Y.Doc,
-  events: readonly Y.YTextEvent[],
+  beforeState: ReadonlyMap<number, number>,
+  afterState: ReadonlyMap<number, number>,
 ): void {
   const text = doc.getText('body')
   const records = getMoveRecords(doc).toArray()
-  if (records.length === 0 || events.length === 0) return
+  if (records.length === 0) return
+  const addedRanges = coalesceIdRanges(
+    [...afterState].flatMap(([client, end]) => {
+      const start = beforeState.get(client) ?? 0
+      return start < end ? [{ client, clock: start, length: end - start }] : []
+    }),
+  )
+  if (addedRanges.length === 0) return
   const sourceIndex = indexMoveRecordSources(records)
-  const index = indexInternalItems(text, undefined, true)
+  const index = indexInternalItems(text)
   const restorations: Array<{ recordId: string; range: TrackedIdRange }> = []
 
-  for (const event of events) {
-    if (event.target !== text) continue
-    let position = 0
-    for (const operation of event.delta) {
-      if (operation.retain !== undefined) position += operation.retain
-      if (typeof operation.insert !== 'string') continue
-      const from = position
-      position += operation.insert.length
-      const to = position
-      if (from === to) continue
+  const rangesByClient = new Map<number, TrackedIdRange[]>()
+  for (const range of addedRanges) {
+    const ranges = rangesByClient.get(range.client) ?? []
+    ranges.push(range)
+    rangesByClient.set(range.client, ranges)
+  }
 
-      for (const span of visibleItemsInRange(index, from, to)) {
-        const { item, from: itemFrom } = span
-        const start = Math.max(from - itemFrom, 0)
-        const end = Math.min(to - itemFrom, item.length)
-        if (start >= end) continue
+  for (const item of index.items) {
+    if (item.deleted || !item.countable) continue
+    const itemEnd = item.id.clock + item.length
+    for (const range of rangesByClient.get(item.id.client) ?? []) {
+      const startClock = Math.max(range.clock, item.id.clock)
+      const endClock = Math.min(range.clock + range.length, itemEnd)
+      if (startClock >= endClock) continue
 
-        const candidates = new Map<number, MoveSourceMatch>()
-        if (item.origin) {
-          for (const candidate of sourceCandidatesFromAnchor(
-            sourceIndex,
-            item.origin,
-            'after',
-            index,
-          )) {
-            candidates.set(candidate.recordOrder, candidate)
-          }
+      const candidates = new Map<number, MoveSourceMatch>()
+      if (item.origin) {
+        for (const candidate of sourceCandidatesFromAnchor(
+          sourceIndex,
+          item.origin,
+          'after',
+          index,
+        )) {
+          candidates.set(candidate.recordOrder, candidate)
         }
-        if (item.rightOrigin) {
-          for (const candidate of sourceCandidatesFromAnchor(
-            sourceIndex,
-            item.rightOrigin,
-            'before',
-            index,
-          )) {
-            candidates.set(candidate.recordOrder, candidate)
-          }
+      }
+      if (item.rightOrigin) {
+        for (const candidate of sourceCandidatesFromAnchor(
+          sourceIndex,
+          item.rightOrigin,
+          'before',
+          index,
+        )) {
+          candidates.set(candidate.recordOrder, candidate)
         }
+      }
 
-        for (const candidate of candidates.values()) {
-          const { record } = candidate
-          // The mover's own undo restores its moved text as an intentional inverse move.
-          if (
-            item.id.client === record.copy[0] ||
-            locate(record, item.id.client, item.id.clock) !== undefined
-          ) {
-            continue
-          }
-          const sourceOffsets = [
-            ...(item.origin
-              ? [sourceOffsetFromAnchor(record, item.origin, 'after', index)]
-              : []),
-            ...(item.rightOrigin
-              ? [
-                  sourceOffsetFromAnchor(
-                    record,
-                    item.rightOrigin,
-                    'before',
-                    index,
-                  ),
-                ]
-              : []),
-          ]
-          const sourceOffset = sourceOffsets.find(
-            (offset) =>
-              offset !== undefined &&
-              targetFor(records, record, offset) !== undefined,
-          )
-          if (sourceOffset === undefined) continue
-          restorations.push({
-            recordId: moveRecordId(record),
-            range: {
-              client: item.id.client,
-              clock: item.id.clock + start,
-              length: end - start,
-            },
-          })
+      for (const candidate of candidates.values()) {
+        const { record } = candidate
+        // The mover's own undo restores its moved text as an intentional inverse move.
+        if (
+          item.id.client === record.copy[0] ||
+          locate(record, item.id.client, startClock) !== undefined
+        ) {
+          continue
         }
+        const sourceOffsets = [
+          ...(item.origin
+            ? [sourceOffsetFromAnchor(record, item.origin, 'after', index)]
+            : []),
+          ...(item.rightOrigin
+            ? [
+                sourceOffsetFromAnchor(
+                  record,
+                  item.rightOrigin,
+                  'before',
+                  index,
+                ),
+              ]
+            : []),
+        ]
+        const sourceOffset = sourceOffsets.find(
+          (offset) =>
+            offset !== undefined &&
+            targetFor(records, record, offset) !== undefined,
+        )
+        if (sourceOffset === undefined) continue
+        restorations.push({
+          recordId: moveRecordId(record),
+          range: {
+            client: item.id.client,
+            clock: startClock,
+            length: endClock - startClock,
+          },
+        })
       }
     }
   }

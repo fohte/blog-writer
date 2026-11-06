@@ -1,5 +1,9 @@
 import * as Y from 'yjs'
 
+import {
+  coalesceIdRanges,
+  type TrackedIdRange,
+} from '#article/move-conflict-ranges'
 import { type MoveRecord, moveRecordId } from '#article/move-conflict-source'
 import { locate } from '#article/move-conflict-source-index'
 import {
@@ -22,7 +26,6 @@ const MOVE_CONFLICT_RELOCATIONS = 'move-conflict-relocations'
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
 export type TrackedTarget = TrackedId & { side: 'before' | 'after' }
-export type TrackedIdRange = TrackedId & { length: number }
 
 export function getMoveRecords(doc: Y.Doc): Y.Array<MoveRecord> {
   return doc.getArray<MoveRecord>(MOVE_RECORDS)
@@ -122,28 +125,6 @@ function moveConflictRestorationKey(
   return `${recordId}/${range.client.toString()}:${range.clock.toString()}:${range.length.toString()}`
 }
 
-export function coalesceIdRanges(ranges: TrackedIdRange[]): TrackedIdRange[] {
-  const sorted = ranges.toSorted(
-    (left, right) => left.client - right.client || left.clock - right.clock,
-  )
-  const result: TrackedIdRange[] = []
-  for (const range of sorted) {
-    const last = result.at(-1)
-    if (
-      last &&
-      last.client === range.client &&
-      last.clock + last.length >= range.clock
-    ) {
-      last.length =
-        Math.max(last.clock + last.length, range.clock + range.length) -
-        last.clock
-    } else {
-      result.push({ ...range })
-    }
-  }
-  return result
-}
-
 function groupRangesByRecordId(
   entries: Iterable<[string, TrackedIdRange[]]>,
 ): Map<string, TrackedIdRange[]> {
@@ -176,37 +157,6 @@ export function indexMoveConflictRestorations(
     ([key, range]) => [key, [range]] as [string, TrackedIdRange[]],
   )
   return groupRangesByRecordId(entries)
-}
-
-export function getUnkeptMoveConflictRanges(
-  decisionsByRecord: ReadonlyMap<string, TrackedIdRange[]>,
-  recordId: string,
-  range: TrackedIdRange,
-): TrackedIdRange[] {
-  const keptRanges = (decisionsByRecord.get(recordId) ?? []).filter(
-    (stored) => stored.client === range.client,
-  )
-  if (keptRanges.length === 0) return [range]
-
-  const end = range.clock + range.length
-  let cursor = range.clock
-  const unkept: TrackedIdRange[] = []
-  for (const kept of keptRanges) {
-    const keptEnd = kept.clock + kept.length
-    if (keptEnd <= cursor || kept.clock >= end) continue
-    const overlapStart = Math.max(cursor, kept.clock)
-    if (cursor < overlapStart)
-      unkept.push({
-        client: range.client,
-        clock: cursor,
-        length: overlapStart - cursor,
-      })
-    cursor = Math.max(cursor, keptEnd)
-    if (cursor >= end) break
-  }
-  if (cursor < end)
-    unkept.push({ client: range.client, clock: cursor, length: end - cursor })
-  return unkept
 }
 
 export function keepMoveConflict(

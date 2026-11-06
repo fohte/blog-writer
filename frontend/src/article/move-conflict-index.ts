@@ -19,15 +19,8 @@ export type InternalItemIndex = {
   byClient: Map<number, InternalItem[]>
   positionByItem: Map<InternalItem, number>
   documentOffsetByItem: Map<InternalItem, number>
-  visibleItems: VisibleItemSpan[] | undefined
   sourceCandidatesToLeft: Array<MoveSourceMatch[] | undefined>
   sourceCandidatesToRight: Array<MoveSourceMatch[] | undefined>
-}
-
-export type VisibleItemSpan = {
-  item: InternalItem
-  from: number
-  to: number
 }
 
 export type RelocationIndex = Map<string, Map<string, TrackedId>>
@@ -35,15 +28,11 @@ export type RelocationIndex = Map<string, Map<string, TrackedId>>
 export function indexInternalItems(
   text: Y.Text,
   sourceIndex?: MoveRecordSourceIndex,
-  includeVisibleItems = false,
 ): InternalItemIndex {
   const items = [...internalItems(text)]
   const byClient = new Map<number, InternalItem[]>()
   const positionByItem = new Map<InternalItem, number>()
   const documentOffsetByItem = new Map<InternalItem, number>()
-  const visibleItems: VisibleItemSpan[] | undefined = includeVisibleItems
-    ? []
-    : undefined
   let documentOffset = 0
   for (const [position, item] of items.entries()) {
     const clientItems = byClient.get(item.id.client) ?? []
@@ -52,11 +41,6 @@ export function indexInternalItems(
     positionByItem.set(item, position)
     documentOffsetByItem.set(item, documentOffset)
     if (!item.deleted && item.countable) {
-      visibleItems?.push({
-        item,
-        from: documentOffset,
-        to: documentOffset + item.length,
-      })
       documentOffset += item.length
     }
   }
@@ -98,35 +82,9 @@ export function indexInternalItems(
     byClient,
     positionByItem,
     documentOffsetByItem,
-    visibleItems,
     sourceCandidatesToLeft,
     sourceCandidatesToRight,
   }
-}
-
-export function visibleItemsInRange(
-  index: InternalItemIndex,
-  from: number,
-  to: number,
-): VisibleItemSpan[] {
-  if (from >= to) return []
-  const items = index.visibleItems ?? []
-  let low = 0
-  let high = items.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    const span = items[middle]
-    if (!span || span.to <= from) low = middle + 1
-    else high = middle
-  }
-
-  const result: VisibleItemSpan[] = []
-  for (let position = low; position < items.length; position += 1) {
-    const span = items[position]
-    if (!span || span.from >= to) break
-    result.push(span)
-  }
-  return result
 }
 
 export function findItem(

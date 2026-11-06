@@ -44,33 +44,10 @@ export function resolveMoveConflict(
 
 export function recordMoveConflictRestoration(
   doc: Y.Doc,
-  events: readonly Y.YTextEvent[],
-): Result<void, InvalidBlockMoveError> {
-  const body = doc.getText('body')
-  if (events.some((event) => event.target !== body))
-    return err(
-      new InvalidBlockMoveError(
-        'Move conflict restorations must target the article body',
-      ),
-    )
-  const currentState = Y.decodeStateVector(Y.encodeStateVector(doc))
-  if (
-    events.some((event) => {
-      if (event.transaction.doc !== doc) return true
-      const eventState = event.transaction.afterState
-      const clients = new Set([...currentState.keys(), ...eventState.keys()])
-      return [...clients].some(
-        (client) => currentState.get(client) !== eventState.get(client),
-      )
-    })
-  )
-    return err(
-      new InvalidBlockMoveError(
-        'Move conflict restoration events must describe the current document state',
-      ),
-    )
-  recordRestoration(doc, events)
-  return ok()
+  beforeState: ReadonlyMap<number, number>,
+  afterState: ReadonlyMap<number, number>,
+): void {
+  recordRestoration(doc, beforeState, afterState)
 }
 
 export function observeMoveConflicts(
