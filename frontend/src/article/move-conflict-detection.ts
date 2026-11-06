@@ -159,8 +159,7 @@ function targetFromAnchor(
             target,
             position,
             recordId,
-            includeConcurrent: false,
-            includeAll: true,
+            eligibility: 'all',
           }
       }
       continue
@@ -184,8 +183,9 @@ function targetFromAnchor(
         target,
         position,
         recordId: moveRecordId(record),
-        includeConcurrent,
-        includeAll: false,
+        eligibility: includeConcurrent
+          ? 'concurrent-or-restored'
+          : 'restored-only',
       }
     }
   }
@@ -271,7 +271,13 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
           (isConcurrent(doc, record, item.id.client, item.id.clock) ||
             isItemRestored(restorations, taintedTarget.recordId, item))
         ) {
-          target = { ...taintedTarget, includeConcurrent: true }
+          target = {
+            ...taintedTarget,
+            eligibility:
+              taintedTarget.eligibility === 'all'
+                ? 'all'
+                : 'concurrent-or-restored',
+          }
         }
         if (target) break
       }
@@ -345,7 +351,7 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
   }))
 }
 
-// Pass state snapshots from immediately before and after undo; every new body item in that interval is treated as restored.
+// Pass snapshots from immediately before and after undo; all new body IDs in the interval are examined as restoration candidates.
 export function recordMoveConflictRestoration(
   doc: Y.Doc,
   beforeState: ReadonlyMap<number, number>,

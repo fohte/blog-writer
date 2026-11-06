@@ -2,6 +2,7 @@ import * as Y from 'yjs'
 
 import {
   coalesceIdRanges,
+  intersectIdRange,
   type TrackedIdRange,
 } from '#article/move-conflict-ranges'
 import {
@@ -14,8 +15,7 @@ export type MoveConflictTarget = {
   target: TrackedTarget
   position: number
   recordId: string
-  includeConcurrent: boolean
-  includeAll: boolean
+  eligibility: 'all' | 'concurrent-or-restored' | 'restored-only'
 }
 
 export function getMoveConflictEligibleRanges(
@@ -25,37 +25,18 @@ export function getMoveConflictEligibleRanges(
   target: MoveConflictTarget,
   restorations: TrackedIdRange[],
 ): TrackedIdRange[] {
-  if (target.includeAll) return [range]
-
-  const end = range.clock + range.length
-  const eligible: TrackedIdRange[] = []
-  if (target.includeConcurrent && record) {
-    const concurrent = getConcurrentClockRange(doc, record, range.client)
-    if (concurrent) {
-      const start = Math.max(range.clock, concurrent.clock)
-      const concurrentEnd = concurrent.clock + concurrent.length
-      const overlapEnd = Math.min(end, concurrentEnd)
-      if (start < overlapEnd) {
-        eligible.push({
-          client: range.client,
-          clock: start,
-          length: overlapEnd - start,
-        })
-      }
-    }
-  }
-  for (const restoration of restorations) {
-    if (restoration.client !== range.client) continue
-    const start = Math.max(range.clock, restoration.clock)
-    const restorationEnd = restoration.clock + restoration.length
-    const overlapEnd = Math.min(end, restorationEnd)
-    if (start < overlapEnd) {
-      eligible.push({
-        client: range.client,
-        clock: start,
-        length: overlapEnd - start,
-      })
-    }
-  }
-  return coalesceIdRanges(eligible)
+  if (target.eligibility === 'all') return [range]
+  const candidateRanges = [
+    ...(target.eligibility === 'concurrent-or-restored' && record
+      ? [getConcurrentClockRange(doc, record, range.client)]
+      : []),
+    ...restorations,
+  ]
+  return coalesceIdRanges(
+    candidateRanges.flatMap((candidate) => {
+      if (!candidate) return []
+      const intersection = intersectIdRange(range, candidate)
+      return intersection ? [intersection] : []
+    }),
+  )
 }

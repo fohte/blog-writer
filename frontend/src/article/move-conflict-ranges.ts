@@ -2,6 +2,18 @@ import type { TrackedId } from '#article/yjs-internals'
 
 export type TrackedIdRange = TrackedId & { length: number }
 
+export function intersectIdRange(
+  left: TrackedIdRange,
+  right: TrackedIdRange,
+): TrackedIdRange | undefined {
+  if (left.client !== right.client) return undefined
+  const clock = Math.max(left.clock, right.clock)
+  const end = Math.min(left.clock + left.length, right.clock + right.length)
+  return clock < end
+    ? { client: left.client, clock, length: end - clock }
+    : undefined
+}
+
 export function coalesceIdRanges(ranges: TrackedIdRange[]): TrackedIdRange[] {
   const sorted = ranges.toSorted(
     (left, right) => left.client - right.client || left.clock - right.clock,
