@@ -9,6 +9,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { MoveBlockInput } from '#article/index'
 import type { Heading } from '#article/types'
+import { SuggestionDiff } from '#components/suggestion-diff'
+import type {
+  OutlineProposalState,
+  OutlineSuggestion,
+} from '#proposals/outline'
 
 type OutlineDropTarget = {
   from: number
@@ -22,8 +27,11 @@ export interface OutlineViewProps {
   openMenuFrom?: number
   dropTarget?: OutlineDropTarget
   error?: string
+  proposalState?: OutlineProposalState
   onSelect: (from: number) => void
   onMove: (input: MoveBlockInput) => void
+  onProposalAccept?: (id: string) => void
+  onProposalReject?: (id: string) => void
 }
 
 type FlatHeading = { heading: Heading; depth: number }
@@ -85,6 +93,9 @@ function OutlineRow({
   openMenu,
   onSelect,
   onMove,
+  proposal,
+  onProposalAccept,
+  onProposalReject,
 }: {
   heading: Heading
   depth: number
@@ -95,6 +106,9 @@ function OutlineRow({
   openMenu: boolean
   onSelect: () => void
   onMove: (input: MoveBlockInput) => void
+  proposal?: OutlineSuggestion
+  onProposalAccept?: (id: string) => void
+  onProposalReject?: (id: string) => void
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<HTMLButtonElement>(null)
@@ -204,7 +218,30 @@ function OutlineRow({
           className="min-w-0 flex-1 truncate"
           style={{ paddingInlineStart: `${String(depth)}rem` }}
         >
-          {heading.text || 'Untitled heading'}
+          {proposal ? (
+            <SuggestionDiff
+              focused
+              inline
+              original={heading.text || 'Untitled heading'}
+              replacement={headingText(proposal.replacement)}
+              {...(onProposalAccept === undefined
+                ? {}
+                : {
+                    onAccept: () => {
+                      onProposalAccept(proposal.id)
+                    },
+                  })}
+              {...(onProposalReject === undefined
+                ? {}
+                : {
+                    onReject: () => {
+                      onProposalReject(proposal.id)
+                    },
+                  })}
+            />
+          ) : (
+            heading.text || 'Untitled heading'
+          )}
         </span>
         <Popover anchor={handleRef} onOpenChange={setMenuOpen} open={menuOpen}>
           <button
@@ -302,10 +339,40 @@ export function OutlineView({
   openMenuFrom,
   dropTarget,
   error,
+  proposalState,
   onSelect,
   onMove,
+  onProposalAccept,
+  onProposalReject,
 }: OutlineViewProps) {
   const flattened = useMemo(() => flattenHeadings(headings), [headings])
+  const suggestions = proposalState?.suggestions ?? []
+  const headingProposals = new Map(
+    suggestions
+      .filter((proposal) => proposal.from !== proposal.to)
+      .map((proposal) => [proposal.from, proposal]),
+  )
+  const additions = suggestions.filter(
+    (proposal) => proposal.from === proposal.to,
+  )
+  const entries = [
+    ...flattened.map(({ heading, depth }) => {
+      const proposal = headingProposals.get(heading.from)
+      return {
+        kind: 'heading' as const,
+        from: heading.from,
+        heading,
+        depth,
+        ...(proposal === undefined ? {} : { proposal }),
+      }
+    }),
+    ...additions.map((proposal) => ({
+      kind: 'addition' as const,
+      from: proposal.from,
+      proposal,
+      depth: headingLevel(proposal.replacement) - 1,
+    })),
+  ].sort((left, right) => left.from - right.from)
 
   return (
     <section
@@ -316,28 +383,112 @@ export function OutlineView({
       {error !== undefined && error.length > 0 ? (
         <p role="alert">{error}</p>
       ) : null}
-      {flattened.length === 0 ? (
+      {proposalState?.generating === true ? (
+        <SuggestionDiff generating original="" replacement="" />
+      ) : null}
+      {entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">No headings yet.</p>
       ) : (
         <List aria-label="Headings" role="listbox">
-          {flattened.map(({ heading, depth }) => (
-            <OutlineRow
-              active={heading.from === activeFrom}
-              allHeadings={flattened}
-              bodyLength={bodyLength}
-              depth={depth}
-              dropTarget={dropTarget}
-              heading={heading}
-              key={heading.from}
-              openMenu={heading.from === openMenuFrom}
-              onMove={onMove}
-              onSelect={() => {
-                onSelect(heading.from)
-              }}
-            />
-          ))}
+          {entries.map((entry) =>
+            entry.kind === 'heading' ? (
+              <OutlineRow
+                active={entry.heading.from === activeFrom}
+                allHeadings={flattened}
+                bodyLength={bodyLength}
+                depth={entry.depth}
+                dropTarget={dropTarget}
+                heading={entry.heading}
+                key={`heading-${String(entry.from)}`}
+                onMove={onMove}
+                {...(onProposalAccept === undefined
+                  ? {}
+                  : { onProposalAccept })}
+                {...(onProposalReject === undefined
+                  ? {}
+                  : { onProposalReject })}
+                onSelect={() => {
+                  onSelect(entry.heading.from)
+                }}
+                openMenu={openMenuFrom === entry.heading.from}
+                {...(entry.proposal === undefined
+                  ? {}
+                  : { proposal: entry.proposal })}
+              />
+            ) : (
+              <OutlineProposalRow
+                depth={entry.depth}
+                key={entry.proposal.id}
+                {...(onProposalAccept === undefined
+                  ? {}
+                  : { onAccept: onProposalAccept })}
+                {...(onProposalReject === undefined
+                  ? {}
+                  : { onReject: onProposalReject })}
+                proposal={entry.proposal}
+              />
+            ),
+          )}
         </List>
       )}
     </section>
+  )
+}
+
+function headingLevel(markdown: string): number {
+  const prefix = /^#{1,6}(?=[ \t]|$)/u.exec(markdown)?.[0]
+  return prefix?.length ?? 1
+}
+
+function headingText(markdown: string): string {
+  return markdown
+    .replace(/^#{1,6}[ \t]*/u, '')
+    .replace(/[ \t]+#+[ \t]*$/u, '')
+    .trim()
+}
+
+function OutlineProposalRow({
+  depth,
+  proposal,
+  onAccept,
+  onReject,
+}: {
+  depth: number
+  proposal: OutlineSuggestion
+  onAccept?: (id: string) => void
+  onReject?: (id: string) => void
+}) {
+  return (
+    <ListItem
+      aria-label={headingText(proposal.replacement)}
+      indent={0}
+      selected={false}
+    >
+      <span
+        className="min-w-0 flex-1 truncate"
+        style={{ paddingInlineStart: `${String(depth)}rem` }}
+      >
+        <SuggestionDiff
+          focused
+          inline
+          original=""
+          replacement={headingText(proposal.replacement)}
+          {...(onAccept === undefined
+            ? {}
+            : {
+                onAccept: () => {
+                  onAccept(proposal.id)
+                },
+              })}
+          {...(onReject === undefined
+            ? {}
+            : {
+                onReject: () => {
+                  onReject(proposal.id)
+                },
+              })}
+        />
+      </span>
+    </ListItem>
   )
 }

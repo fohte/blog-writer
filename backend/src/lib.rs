@@ -12,6 +12,7 @@ mod llm;
 pub mod llm_context;
 pub mod local_file_sync;
 pub mod ogp;
+pub(crate) mod proposal_outline;
 pub(crate) mod research_claim_evidence;
 pub(crate) mod research_key_points;
 pub mod safe_fetch;
