@@ -70,7 +70,8 @@ export function evidenceDecorations(doc: Y.Doc, onOpen: (id: string) => void) {
       }
 
       update(update: ViewUpdate): void {
-        if (update.docChanged) pruneEvidence(doc)
+        if (update.docChanged && doc.getMap('evidence').size > 0)
+          pruneEvidence(doc)
         if (
           update.docChanged ||
           update.transactions.some((transaction) =>
@@ -94,6 +95,7 @@ function buildDecorations(
   doc: Y.Doc,
   onOpen: (id: string) => void,
 ) {
+  if (doc.getMap('evidence').size === 0) return Decoration.none
   const sources = new Map(listSources(doc).map((source) => [source.id, source]))
   const decorations = []
   for (const item of listEvidence(doc)) {

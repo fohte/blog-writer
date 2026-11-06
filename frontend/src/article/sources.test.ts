@@ -36,8 +36,16 @@ function readSourceDeletionOutput(
   sources: ReturnType<typeof listSources>,
   findings: ReturnType<typeof listFindings>,
   evidenceIds: string[],
+  transactionCount: number,
 ) {
-  return { mergedSource, removed, sources, findings, evidenceIds }
+  return {
+    mergedSource,
+    removed,
+    sources,
+    findings,
+    evidenceIds,
+    transactionCount,
+  }
 }
 
 function readDuplicateSourceOutput(
@@ -127,7 +135,7 @@ describe('article sources', () => {
     doc.destroy()
   })
 
-  it('preserves concurrent field updates and removes findings with their source', () => {
+  it('deletes a source, its findings, and its evidence in one transaction', () => {
     const first = new Y.Doc({ guid: 'article-a' })
     const second = new Y.Doc({ guid: 'article-a' })
     addSource(first, {
@@ -162,6 +170,10 @@ describe('article sources', () => {
       checkedAt: '2026-02-01T00:00:00.000Z',
     })._unsafeUnwrap()
     const mergedSource = listSources(first)[0]
+    let transactionCount = 0
+    first.on('afterTransaction', () => {
+      transactionCount += 1
+    })
     const removed = deleteSource(first, 'source-a').match(
       () => true,
       () => false,
@@ -174,6 +186,7 @@ describe('article sources', () => {
         listSources(first),
         listFindings(first),
         [...first.getMap('evidence').keys()],
+        transactionCount,
       ),
     ).toEqual({
       mergedSource: {
@@ -190,6 +203,7 @@ describe('article sources', () => {
       sources: [],
       findings: [],
       evidenceIds: [],
+      transactionCount: 1,
     })
     first.destroy()
     second.destroy()

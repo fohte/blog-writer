@@ -84,6 +84,44 @@ function readPendingMoveOutput(doc: Y.Doc, errors: string[]) {
   }
 }
 
+function readFallbackDropOutput(
+  drop: DragEvent,
+  doc: Y.Doc,
+  requestCount: number,
+) {
+  return {
+    defaultPrevented: drop.defaultPrevented,
+    body: readBody(doc),
+    sourceIds: [...doc.getMap('sources').keys()],
+    evidenceIds: [...doc.getMap('evidence').keys()],
+    requestCount,
+  }
+}
+
+function readTypingOutput(
+  doc: Y.Doc,
+  bodyStringifications: number,
+  text: string | undefined,
+) {
+  return {
+    bodyStringifications,
+    text,
+    evidence: listEvidence(doc),
+  }
+}
+
+function readEditorEvidenceOutput(doc: Y.Doc, host: HTMLElement) {
+  return {
+    body: readBody(doc),
+    evidence: listEvidence(doc).map(({ currentClaim, edited, id }) => ({
+      currentClaim,
+      edited,
+      id,
+    })),
+    markers: host.querySelectorAll('.cm-evidence-marker').length,
+  }
+}
+
 describe('MarkdownEditor', () => {
   it.each([
     {
@@ -371,10 +409,127 @@ describe('MarkdownEditor', () => {
     })
   })
 
+  it('keeps an internal URL drag on CodeMirror’s move path', async () => {
+    const url = 'https://example.invalid/report'
+    const markdown = `Start ${url} end.`
+    let requestCount = 0
+    const fetcher: typeof fetch = () => {
+      requestCount += 1
+      return Promise.resolve(new Response('{}'))
+    }
+    const { content, doc } = mountMarkdownEditor(markdown, [], (doc) =>
+      evidenceDrop(
+        doc,
+        'article-example',
+        () => undefined,
+        () => undefined,
+        evidenceDropOptions(fetcher),
+      ),
+    )
+    const view = content ? EditorView.findFromDOM(content) : null
+    if (!view) throw new Error('CodeMirror view was not rendered')
+    const from = markdown.indexOf(url)
+    view.dispatch({ selection: { anchor: from, head: from + url.length } })
+    const dataTransfer = new DataTransfer()
+    dataTransfer.setData('text/plain', url)
+    vi.spyOn(EditorView.prototype, 'posAtCoords').mockReturnValue(0)
+    content?.dispatchEvent(
+      new DragEvent('dragstart', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }),
+    )
+    const drop = new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    })
+    content?.dispatchEvent(drop)
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve()
+      })
+    })
+
+    expect(readFallbackDropOutput(drop, doc, requestCount)).toEqual({
+      defaultPrevented: true,
+      body: `${url}Start  end.`,
+      sourceIds: [],
+      evidenceIds: [],
+      requestCount: 0,
+    })
+  })
+
+  it.each([
+    {
+      name: 'a file',
+      kind: 'file',
+      expectedBody: 'A ressource textearch sentence.',
+      defaultPrevented: true,
+    },
+    {
+      name: 'plain text that is not a URL',
+      kind: 'text',
+      expectedBody: 'A resordinary textearch sentence.',
+      defaultPrevented: true,
+    },
+  ])(
+    'leaves $name drops to CodeMirror’s default handling',
+    async (scenario) => {
+      let requestCount = 0
+      const fetcher: typeof fetch = () => {
+        requestCount += 1
+        return Promise.resolve(new Response('{}'))
+      }
+      const { content, doc } = mountMarkdownEditor(
+        'A research sentence.',
+        [],
+        (doc) =>
+          evidenceDrop(
+            doc,
+            'article-example',
+            () => undefined,
+            () => undefined,
+            evidenceDropOptions(fetcher),
+          ),
+      )
+      vi.spyOn(EditorView.prototype, 'posAtCoords').mockReturnValue(5)
+      const dataTransfer = new DataTransfer()
+      if (scenario.kind === 'file')
+        dataTransfer.items.add(
+          new File(['source text'], 'source.txt', { type: 'text/plain' }),
+        )
+      else dataTransfer.setData('text/plain', 'ordinary text')
+      const drop = new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      })
+      content?.dispatchEvent(drop)
+      if (scenario.kind === 'file') {
+        await vi.waitFor(() => {
+          if (readBody(doc) !== scenario.expectedBody)
+            throw new Error(
+              'CodeMirror did not apply its default drop behavior',
+            )
+        })
+      }
+
+      expect(readFallbackDropOutput(drop, doc, requestCount)).toEqual({
+        defaultPrevented: scenario.defaultPrevented,
+        body: scenario.expectedBody,
+        sourceIds: [],
+        evidenceIds: [],
+        requestCount: 0,
+      })
+    },
+  )
+
   it('reattaches a pending judgment when its section moves', async () => {
     const claim = 'The result improved.'
     const markdown =
-      '# Alpha\n\nThe result improved.\n\n# Beta\n\nOther sentence.\n'
+      '# Alpha\n\nOther sentence.\n\n# Beta\n\nThe result improved.'
     let sourceId = ''
     let resolveJudgement: ((response: Response) => void) | undefined
     let signalJudgementStarted: (() => void) | undefined
@@ -447,7 +602,10 @@ describe('MarkdownEditor', () => {
     updateExtensions([
       EditorView.contentAttributes.of({ 'data-extension': 'updated' }),
     ])
-    moveBlock(doc, { from: 0, destination: markdown.length })._unsafeUnwrap()
+    moveBlock(doc, {
+      from: markdown.indexOf('# Beta'),
+      destination: 0,
+    })._unsafeUnwrap()
     const resolve = resolveJudgement
     if (!resolve) throw new Error('The claim judgment did not start')
     resolve(
@@ -462,7 +620,7 @@ describe('MarkdownEditor', () => {
     })
 
     expect(readPendingMoveOutput(doc, errors)).toEqual({
-      body: '# Beta\n\nOther sentence.\n\n# Alpha\n\nThe result improved.\n',
+      body: '# Beta\n\nThe result improved.\n\n# Alpha\n\nOther sentence.\n',
       errors: [],
       evidence: [
         {
@@ -568,6 +726,64 @@ describe('MarkdownEditor', () => {
     })
   })
 
+  it.each([
+    { name: 'the marker is clicked again', closeWithEscape: false },
+    { name: 'Escape is pressed', closeWithEscape: true },
+  ])('closes an open source card when $name', async (scenario) => {
+    const claim = 'A research sentence.'
+    const { doc, host } = mountMarkdownEditor(claim)
+    act(() => {
+      addSource(doc, {
+        id: 'source-example',
+        kind: 'url',
+        title: 'Example source',
+        url: 'https://example.invalid/report',
+        fileName: null,
+        checkedAt: '2026-02-01T00:00:00.000Z',
+      })._unsafeUnwrap()
+      addEvidence(doc, {
+        id: 'evidence-example',
+        from: 0,
+        to: claim.length,
+        claim,
+        sourceId: 'source-example',
+        quote: 'A quoted sentence.',
+        verdict: 'supported',
+        checkedAt: '2026-02-01T00:00:00.000Z',
+      })._unsafeUnwrap()
+    })
+    await vi.waitFor(() => {
+      if (!host.querySelector('.cm-evidence-marker'))
+        throw new Error('Evidence marker was not rendered')
+    })
+    const marker = host.querySelector<HTMLButtonElement>('.cm-evidence-marker')
+    if (!marker) throw new Error('Evidence marker was not rendered')
+    act(() => {
+      marker.click()
+    })
+    await vi.waitFor(() => {
+      if (!host.querySelector('.cm-evidence-card'))
+        throw new Error('Evidence card was not opened')
+    })
+    const card = host.querySelector<HTMLElement>('.cm-evidence-card')
+    if (!card) throw new Error('Evidence card was not opened')
+    act(() => {
+      if (scenario.closeWithEscape)
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      else marker.click()
+    })
+    await vi.waitFor(() => {
+      if (card.isConnected) throw new Error('Evidence card was not closed')
+    })
+
+    expect(readEvidenceCardOutput(marker, card, doc, host)).toEqual({
+      markerClass: 'cm-evidence-marker cm-evidence-supported',
+      cardConnected: false,
+      remainingEvidence: ['evidence-example'],
+      remainingMarkers: 1,
+    })
+  })
+
   it('reconfigures extensions without remounting the editor', () => {
     const { content, host, updateExtensions } = mountMarkdownEditor('body')
     updateExtensions([
@@ -585,6 +801,37 @@ describe('MarkdownEditor', () => {
       sameContentElement: true,
       text: 'body',
       extension: 'included',
+    })
+  })
+
+  it('keeps a caller-provided editor height without adding a conflicting height', () => {
+    const { host } = mountMarkdownEditor('body', [], undefined, {
+      className: 'h-[240px]',
+    })
+    const readOutput = () => ({
+      wrapperClassName: host.querySelector('.relative')?.className,
+      editorHostClassName: host.querySelector('.relative > div')?.className,
+    })
+
+    expect(readOutput()).toEqual({
+      wrapperClassName: 'relative h-full',
+      editorHostClassName: 'h-[240px]',
+    })
+  })
+
+  it('skips body stringification while typing with no evidence', () => {
+    const { body, content, doc } = mountMarkdownEditor('A research sentence.')
+    const toJSON = vi.spyOn(body, 'toJSON')
+    toJSON.mockClear()
+    const view = content ? EditorView.findFromDOM(content) : null
+    view?.dispatch({ changes: { from: 0, insert: '!' } })
+
+    expect(
+      readTypingOutput(doc, toJSON.mock.calls.length, content?.textContent),
+    ).toEqual({
+      bodyStringifications: 0,
+      text: '!A research sentence.',
+      evidence: [],
     })
   })
 
@@ -685,5 +932,62 @@ describe('MarkdownEditor', () => {
     )
 
     expect(body.toJSON()).toEqual('original body!')
+  })
+
+  it('restores evidence when a moved section is undone in the editor', () => {
+    const markdown = '# Alpha\n\nFirst sentence.\n\n# Beta\n\nFinal sentence.'
+    const claim = 'Final sentence.'
+    const { content, doc, host } = mountMarkdownEditor(
+      markdown,
+      [],
+      undefined,
+      {
+        prepareDoc: (doc) => {
+          addSource(doc, {
+            id: 'source-example',
+            kind: 'url',
+            title: 'Example source',
+            url: 'https://example.invalid/report',
+            fileName: null,
+            checkedAt: '2026-02-01T00:00:00.000Z',
+          })._unsafeUnwrap()
+          addEvidence(doc, {
+            id: 'evidence-example',
+            from: markdown.indexOf(claim),
+            to: markdown.length,
+            claim,
+            sourceId: 'source-example',
+            quote: 'A quoted sentence.',
+            verdict: 'supported',
+            checkedAt: '2026-02-01T00:00:00.000Z',
+          })._unsafeUnwrap()
+        },
+      },
+    )
+    act(() => {
+      moveBlock(doc, {
+        from: markdown.indexOf('# Beta'),
+        destination: 0,
+      })._unsafeUnwrap()
+    })
+    content?.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'z',
+        bubbles: true,
+        [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
+      }),
+    )
+
+    expect(readEditorEvidenceOutput(doc, host)).toEqual({
+      body: markdown,
+      evidence: [
+        {
+          id: 'evidence-example',
+          currentClaim: claim,
+          edited: false,
+        },
+      ],
+      markers: 1,
+    })
   })
 })

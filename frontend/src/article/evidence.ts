@@ -115,9 +115,11 @@ function inspectEvidence(
   sources: Y.Map<unknown>,
 ): EvidenceInspection {
   const item = readEvidence(id, data)
-  if (!item || !sources.has(item.sourceId)) return { kind: 'prune' }
+  if (!item) return { kind: 'hidden' }
+  if (!sources.has(item.sourceId)) return { kind: 'prune' }
   const range = resolveRange(doc, item)
-  if (!range || range.to === range.from) return { kind: 'prune' }
+  if (!range) return { kind: 'hidden' }
+  if (range.to === range.from) return { kind: 'prune' }
   if (range.to < range.from) return { kind: 'hidden' }
   const currentClaim = markdown.slice(range.from, range.to)
   return {
@@ -161,11 +163,13 @@ export function addEvidence(
 }
 
 export function listEvidence(doc: Y.Doc): EvidenceView[] {
+  const evidence = getEvidenceMap(doc)
+  if (evidence.size === 0) return []
   const markdown = getBody(doc).toJSON()
   const sources = doc.getMap('sources')
   const result: Extract<EvidenceInspection, { kind: 'visible' }>[] = []
 
-  for (const [id, data] of getEvidenceMap(doc).entries()) {
+  for (const [id, data] of evidence.entries()) {
     const inspection = inspectEvidence(doc, id, data, markdown, sources)
     if (inspection.kind === 'visible') result.push(inspection)
   }
@@ -175,9 +179,10 @@ export function listEvidence(doc: Y.Doc): EvidenceView[] {
 }
 
 export function pruneEvidence(doc: Y.Doc): void {
+  const evidence = getEvidenceMap(doc)
+  if (evidence.size === 0) return
   const markdown = getBody(doc).toJSON()
   const sources = doc.getMap('sources')
-  const evidence = getEvidenceMap(doc)
   for (const [id, data] of evidence.entries()) {
     if (inspectEvidence(doc, id, data, markdown, sources).kind === 'prune')
       evidence.delete(id)

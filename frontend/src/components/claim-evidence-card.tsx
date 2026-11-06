@@ -59,8 +59,11 @@ export function ClaimEvidenceCard({
       >
         <h3 className="font-semibold">{source.title}</h3>
         <p className="text-sm text-muted-foreground">
-          {edited ? '確認後に編集' : verdictLabels[verdict]}
+          {verdictLabels[verdict]}
         </p>
+        {edited ? (
+          <p className="text-sm text-muted-foreground">確認後に編集</p>
+        ) : null}
         <blockquote className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
           {quote || '引用箇所はありません。'}
         </blockquote>

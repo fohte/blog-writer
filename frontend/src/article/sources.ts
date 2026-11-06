@@ -166,14 +166,16 @@ export function deleteSource(
 ): Result<void, SourceNotFoundError> {
   const sources = getSourcesMap(doc)
   if (!sources.has(id)) return err(new SourceNotFoundError(id))
-  sources.delete(id)
-  const findings = getFindingsMap(doc)
-  for (const [findingId, finding] of findings.entries()) {
-    if (finding.get('sourceId') === id) findings.delete(findingId)
-  }
-  const evidence = doc.getMap<Y.Map<unknown>>('evidence')
-  for (const [evidenceId, item] of evidence.entries()) {
-    if (item.get('sourceId') === id) evidence.delete(evidenceId)
-  }
+  doc.transact(() => {
+    sources.delete(id)
+    const findings = getFindingsMap(doc)
+    for (const [findingId, finding] of findings.entries()) {
+      if (finding.get('sourceId') === id) findings.delete(findingId)
+    }
+    const evidence = doc.getMap<Y.Map<unknown>>('evidence')
+    for (const [evidenceId, item] of evidence.entries()) {
+      if (item.get('sourceId') === id) evidence.delete(evidenceId)
+    }
+  })
   return ok()
 }

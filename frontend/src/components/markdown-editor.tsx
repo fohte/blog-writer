@@ -74,7 +74,7 @@ export const MarkdownEditor = forwardRef<
   const onEvidenceErrorRef = useRef(onEvidenceError)
   onEvidenceErrorRef.current = onEvidenceError
   const openEvidence = useCallback((id: string) => {
-    setActiveEvidenceId(id)
+    setActiveEvidenceId((current) => (current === id ? undefined : id))
   }, [])
   const reportEvidenceError = useCallback((message: string) => {
     setEvidenceError(message)
@@ -119,10 +119,24 @@ export const MarkdownEditor = forwardRef<
   )
 
   useEffect(() => {
+    if (activeEvidenceId === undefined) return
+    const closeEvidence = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActiveEvidenceId(undefined)
+    }
+    window.addEventListener('keydown', closeEvidence)
+    return () => {
+      window.removeEventListener('keydown', closeEvidence)
+    }
+  }, [activeEvidenceId])
+
+  useEffect(() => {
     const host = hostRef.current
     if (!host) return
 
-    const undoManager = new Y.UndoManager(text)
+    const undoManager = new Y.UndoManager(
+      text.doc ? [text, text.doc.getMap('evidence')] : text,
+      { trackedOrigins: new Set([null, Array]) },
+    )
     const view = new EditorView({
       parent: host,
       state: EditorState.create({
@@ -226,7 +240,7 @@ export const MarkdownEditor = forwardRef<
         <div
           className={
             className !== undefined && className.length > 0
-              ? `h-full ${className}`
+              ? className
               : 'h-full'
           }
           ref={hostRef}

@@ -110,6 +110,45 @@ function readAddEvidenceOutput(
   }
 }
 
+function readDelayedBodyOutput(
+  visibleBeforeBody: ReturnType<typeof listEvidence>,
+  storedBeforeBody: string[],
+  storedAfterPrune: string[],
+  visibleAfterBody: ReturnType<typeof listEvidence>,
+) {
+  return {
+    visibleBeforeBody,
+    storedBeforeBody,
+    storedAfterPrune,
+    visibleAfterBody: visibleAfterBody.map(({ currentClaim, edited, id }) => ({
+      currentClaim,
+      edited,
+      id,
+    })),
+  }
+}
+
+function readBoundaryMoveOutput(doc: Y.Doc) {
+  return {
+    body: readBody(doc),
+    evidence: listEvidence(doc).map(({ currentClaim, edited, id }) => ({
+      currentClaim,
+      edited,
+      id,
+    })),
+  }
+}
+
+function readPartialEvidenceOutput(
+  doc: Y.Doc,
+  visible: ReturnType<typeof listEvidence>,
+) {
+  return {
+    visible,
+    storedEvidenceIds: [...doc.getMap('evidence').keys()],
+  }
+}
+
 describe('article evidence', () => {
   it.each([
     {
@@ -368,6 +407,131 @@ describe('article evidence', () => {
     })
     evidenceWriter.destroy()
     sourceRemover.destroy()
+  })
+
+  it('keeps evidence hidden until its referenced body arrives', () => {
+    const articleId = 'article-delayed-body'
+    const sourceWriter = new Y.Doc({ guid: articleId })
+    addSource(sourceWriter, {
+      id: 'source-a',
+      kind: 'url',
+      title: '資料',
+      url: 'https://example.invalid/report',
+      fileName: null,
+      checkedAt: '2026-02-01T00:00:00.000Z',
+    })._unsafeUnwrap()
+    const sourceUpdate = Y.encodeStateAsUpdate(sourceWriter)
+    const sourceVector = Y.encodeStateVector(sourceWriter)
+    setBody(sourceWriter, 'The result increased.')
+    const bodyUpdate = Y.encodeStateAsUpdate(sourceWriter, sourceVector)
+
+    const evidenceWriter = new Y.Doc({ guid: articleId })
+    Y.applyUpdate(evidenceWriter, sourceUpdate)
+    Y.applyUpdate(evidenceWriter, bodyUpdate)
+    const evidenceVector = Y.encodeStateVector(evidenceWriter)
+    addEvidence(evidenceWriter, {
+      id: 'evidence-a',
+      from: 0,
+      to: 'The result increased.'.length,
+      claim: 'The result increased.',
+      sourceId: 'source-a',
+      quote: 'A supporting quote.',
+      verdict: 'supported',
+      checkedAt: '2026-02-01T00:00:00.000Z',
+    })._unsafeUnwrap()
+    const evidenceUpdate = Y.encodeStateAsUpdate(evidenceWriter, evidenceVector)
+
+    const reader = new Y.Doc({ guid: articleId })
+    Y.applyUpdate(reader, sourceUpdate)
+    Y.applyUpdate(reader, evidenceUpdate)
+    const visibleBeforeBody = listEvidence(reader)
+    const storedBeforeBody = [...reader.getMap('evidence').keys()]
+    pruneEvidence(reader)
+    const storedAfterPrune = [...reader.getMap('evidence').keys()]
+    Y.applyUpdate(reader, bodyUpdate)
+
+    expect(
+      readDelayedBodyOutput(
+        visibleBeforeBody,
+        storedBeforeBody,
+        storedAfterPrune,
+        listEvidence(reader),
+      ),
+    ).toEqual({
+      visibleBeforeBody: [],
+      storedBeforeBody: ['evidence-a'],
+      storedAfterPrune: ['evidence-a'],
+      visibleAfterBody: [
+        {
+          id: 'evidence-a',
+          currentClaim: 'The result increased.',
+          edited: false,
+        },
+      ],
+    })
+    sourceWriter.destroy()
+    evidenceWriter.destroy()
+    reader.destroy()
+  })
+
+  it('keeps an incomplete evidence record until its fields arrive', () => {
+    const doc = new Y.Doc()
+    const claim = 'The result increased.'
+    setBody(doc, claim)
+    makeSource(doc)
+    const data = new Y.Map<unknown>()
+    data.set(
+      'from',
+      Y.relativePositionToJSON(
+        Y.createRelativePositionFromTypeIndex(getBody(doc), 0, 1),
+      ),
+    )
+    data.set('claim', claim)
+    data.set('sourceId', 'source-a')
+    doc.getMap('evidence').set('evidence-partial', data)
+    const visible = listEvidence(doc)
+    pruneEvidence(doc)
+
+    expect(readPartialEvidenceOutput(doc, visible)).toEqual({
+      visible: [],
+      storedEvidenceIds: ['evidence-partial'],
+    })
+    doc.destroy()
+  })
+
+  it('keeps an evidence range at the moved section end exclusive', () => {
+    const doc = new Y.Doc()
+    const markdown = '# Alpha\n\nFirst sentence.\n\n# Beta\n\nFinal sentence.'
+    const claim = 'Final sentence.'
+    setBody(doc, markdown)
+    makeSource(doc)
+    const from = markdown.indexOf(claim)
+    addEvidence(doc, {
+      id: 'evidence-a',
+      from,
+      to: markdown.length,
+      claim,
+      sourceId: 'source-a',
+      quote: 'A supporting quote.',
+      verdict: 'supported',
+      checkedAt: '2026-02-01T00:00:00.000Z',
+    })._unsafeUnwrap()
+    moveBlock(doc, {
+      from: markdown.indexOf('# Beta'),
+      destination: 0,
+    })._unsafeUnwrap()
+
+    expect(readBoundaryMoveOutput(doc)).toEqual({
+      body: '# Beta\n\nFinal sentence.\n\n# Alpha\n\nFirst sentence.\n',
+      evidence: [
+        {
+          id: 'evidence-a',
+          currentClaim: claim,
+          edited: false,
+        },
+      ],
+    })
+    doc.destroy()
   })
 
   it('hides a reversed range after a partial section move and restores it on undo', () => {

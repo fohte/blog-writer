@@ -16,6 +16,8 @@ import {
 
 type DropPlugin = {
   handleDrop(event: DragEvent, view: EditorView): boolean
+  startInternalDrag(): void
+  endInternalDrag(): void
   destroy(): void
 }
 
@@ -187,6 +189,7 @@ export function evidenceDrop(
     (view) => {
       const controllers = new Map<AbortController, () => void>()
       const body = getBody(doc)
+      let internalDrag = false
       const cancelPending = () => {
         for (const [controller, unregister] of controllers) {
           controller.abort()
@@ -203,6 +206,7 @@ export function evidenceDrop(
 
       const instance: DropPlugin = {
         handleDrop(event, editorView) {
+          if (internalDrag) return false
           if (!event.dataTransfer) return false
           const position = editorView.posAtCoords({
             x: event.clientX,
@@ -262,6 +266,12 @@ export function evidenceDrop(
 
           return true
         },
+        startInternalDrag() {
+          internalDrag = true
+        },
+        endInternalDrag() {
+          internalDrag = false
+        },
         destroy() {
           window.removeEventListener('keydown', cancel)
           window.removeEventListener('offline', cancelPending)
@@ -273,6 +283,12 @@ export function evidenceDrop(
     },
     {
       eventHandlers: {
+        dragstart(_event, view) {
+          plugins.get(view)?.startInternalDrag()
+        },
+        dragend(_event, view) {
+          plugins.get(view)?.endInternalDrag()
+        },
         drop(event, view) {
           return plugins.get(view)?.handleDrop(event, view) ?? false
         },

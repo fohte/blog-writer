@@ -56,6 +56,11 @@ export const EditedAfterCheck: Story = {
   args: { ...common, verdict: 'supported', edited: true },
 }
 
+export const InsufficientAfterEdit: Story = {
+  name: 'the checked sentence has changed and the source lacks enough support.',
+  args: { ...common, verdict: 'insufficient', edited: true },
+}
+
 export const SummaryUnavailable: Story = {
   name: 'the source has no generated summary.',
   args: {

@@ -18,7 +18,9 @@ interface MountedMarkdownEditor {
 
 type MarkdownEditorMountOptions = {
   articleId?: string
+  className?: string
   onEvidenceError?: (message: string) => void
+  prepareDoc?: (doc: Y.Doc) => void
 }
 
 const cleanups: (() => void)[] = []
@@ -45,6 +47,7 @@ export function mountMarkdownEditor(
   const doc = new Y.Doc()
   const body = getBody(doc)
   body.insert(0, value)
+  options.prepareDoc?.(doc)
   const mountedExtensions = [...extensions, ...(extensionFactory?.(doc) ?? [])]
   const editor = createRef<MarkdownEditorHandle>()
 
@@ -55,6 +58,9 @@ export function mountMarkdownEditor(
           ? { articleId: options.articleId }
           : {})}
         extensions={mountedExtensions}
+        {...(options.className !== undefined
+          ? { className: options.className }
+          : {})}
         {...(options.onEvidenceError !== undefined
           ? { onEvidenceError: options.onEvidenceError }
           : {})}
@@ -86,6 +92,9 @@ export function mountMarkdownEditor(
               ? { articleId: options.articleId }
               : {})}
             extensions={extensions}
+            {...(options.className !== undefined
+              ? { className: options.className }
+              : {})}
             {...(options.onEvidenceError !== undefined
               ? { onEvidenceError: options.onEvidenceError }
               : {})}
