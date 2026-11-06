@@ -36,6 +36,10 @@ const phrasingParents = new Set([
   'strong',
   'tableCell',
 ])
+const htmlRewritePattern = new RegExp(
+  `<!--[\\s\\S]*?-->|<(${[...voidHtmlElements].join('|')})(?=[\\s/>])([^<>]*?)\\s*\\/?>`,
+  'gi',
+)
 
 class ArticleExportError extends Error {
   constructor(cause: unknown) {
@@ -76,7 +80,7 @@ function rewriteHtml(node: ExportNode): void {
   if (node.type !== 'html' || node.value === undefined) return
 
   node.value = node.value.replace(
-    /<!--[\s\S]*?-->|<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b([^<>]*?)\s*\/?>/gi,
+    htmlRewritePattern,
     (match, tagName: string | undefined, attributes: string | undefined) => {
       if (tagName === undefined) {
         const content = match.slice(4, -3).replaceAll('*/', '*\\/')
