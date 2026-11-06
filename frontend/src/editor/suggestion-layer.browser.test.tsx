@@ -86,6 +86,29 @@ function dispatchKey(view: EditorView, key: string): void {
   )
 }
 
+function dispatchUndo(view: EditorView): void {
+  view.contentDOM.dispatchEvent(
+    new KeyboardEvent('keydown', {
+      key: 'z',
+      bubbles: true,
+      [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
+    }),
+  )
+}
+
+function createInsertionEditor() {
+  const content = 'before after'
+  const editor = createEditor(content)
+  const from = 'before '.length
+  editor.setSuggestion({
+    id: 'suggestion-insert',
+    from,
+    to: from,
+    replacement: 'new ',
+  })
+  return { ...editor, content, from }
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 })
@@ -96,6 +119,39 @@ afterEach(() => {
 })
 
 describe('suggestion layer', () => {
+  it('ignores invalid initial suggestion and in-flight ranges', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const layer = createSuggestionLayer({
+      initialSuggestions: [
+        { id: 'suggestion-a', from: 0, to: 3, replacement: 'one' },
+        { id: 'suggestion-b', from: 2, to: 4, replacement: 'two' },
+      ],
+      initialInFlight: { from: 0, to: 10 },
+    })
+    let view: EditorView | undefined
+    act(() => {
+      view = new EditorView({
+        parent: host,
+        state: EditorState.create({
+          doc: 'short',
+          extensions: [layer.extension],
+        }),
+      })
+    })
+    if (!view) throw new Error('The suggestion editor did not mount')
+    cleanups.push(() => {
+      act(() => view?.destroy())
+      host.remove()
+    })
+
+    const readOutput = () => ({
+      content: host.querySelector('.cm-content')?.textContent,
+      suggestionWidgets: host.querySelectorAll('.cm-suggestion-widget').length,
+    })
+    expect(readOutput()).toEqual({ content: 'short', suggestionWidgets: 0 })
+  })
+
   it('maps a suggestion after an outside edit and removes it after an edit inside the range', () => {
     const { host, setSuggestion, view } = createEditor()
     const from = initialText.indexOf('selected')
@@ -176,18 +232,7 @@ describe('suggestion layer', () => {
   })
 
   it('displays a zero-length suggestion at its insertion point', () => {
-    const content = 'before after'
-    const { body, host, layer, view } = createEditor(content)
-    const from = 'before '.length
-    const result = layer.setSuggestions([
-      {
-        id: 'suggestion-insert',
-        from,
-        to: from,
-        replacement: 'new ',
-      },
-    ])
-    if (result.isErr()) throw new Error('Could not set suggestion')
+    const { body, content, from, host, view } = createInsertionEditor()
     act(() => {
       view.dispatch({ selection: { anchor: from } })
     })
@@ -205,18 +250,7 @@ describe('suggestion layer', () => {
   })
 
   it('accepts a zero-length suggestion as an insertion', () => {
-    const content = 'before after'
-    const { body, layer } = createEditor(content)
-    const from = 'before '.length
-    const result = layer.setSuggestions([
-      {
-        id: 'suggestion-insert',
-        from,
-        to: from,
-        replacement: 'new ',
-      },
-    ])
-    if (result.isErr()) throw new Error('Could not set suggestion')
+    const { body, layer } = createInsertionEditor()
 
     act(() => {
       layer.accept('suggestion-insert')
@@ -226,18 +260,7 @@ describe('suggestion layer', () => {
   })
 
   it('rejects a zero-length suggestion without changing the document', () => {
-    const content = 'before after'
-    const { body, host, layer } = createEditor(content)
-    const from = 'before '.length
-    const result = layer.setSuggestions([
-      {
-        id: 'suggestion-insert',
-        from,
-        to: from,
-        replacement: 'new ',
-      },
-    ])
-    if (result.isErr()) throw new Error('Could not set suggestion')
+    const { body, content, host, layer } = createInsertionEditor()
 
     act(() => {
       layer.reject('suggestion-insert')
@@ -292,18 +315,7 @@ describe('suggestion layer', () => {
   )
 
   it('drops a zero-length suggestion when text is inserted at its position', () => {
-    const content = 'before after'
-    const { host, layer, view } = createEditor(content)
-    const from = 'before '.length
-    const result = layer.setSuggestions([
-      {
-        id: 'suggestion-insert',
-        from,
-        to: from,
-        replacement: 'new ',
-      },
-    ])
-    if (result.isErr()) throw new Error('Could not set suggestion')
+    const { host, from, view } = createInsertionEditor()
 
     act(() => {
       view.dispatch({ changes: { from, insert: 'edited ' } })
@@ -532,23 +544,29 @@ describe('suggestion layer', () => {
       layer.accept('suggestion-a')
     })
     const afterAccept = body.toJSON()
-    const undoManager = view.state.facet(undoManagerFacet)
-    let didUndo = false
     act(() => {
-      didUndo = Boolean(undoManager?.undo())
+      view.dispatch({
+        changes: { from: body.toJSON().length, insert: '!' },
+        annotations: Transaction.userEvent.of('input.type'),
+      })
+      dispatchUndo(view)
+    })
+    const afterFirstUndo = body.toJSON()
+    act(() => {
+      dispatchUndo(view)
     })
 
     const readOutput = () => ({
       afterAccept,
       afterTyping,
-      afterUndo: body.toJSON(),
-      didUndo,
+      afterFirstUndo,
+      afterSecondUndo: body.toJSON(),
     })
     expect(readOutput()).toEqual({
       afterAccept: `new ${initialText.replace('selected sentence', 'revised sentence')}`,
       afterTyping: `new ${initialText}`,
-      afterUndo: `new ${initialText}`,
-      didUndo: true,
+      afterFirstUndo: `new ${initialText.replace('selected sentence', 'revised sentence')}`,
+      afterSecondUndo: `new ${initialText}`,
     })
   })
 

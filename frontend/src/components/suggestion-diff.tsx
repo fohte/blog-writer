@@ -75,25 +75,22 @@ export function SuggestionDiff({
   onAccept,
   onReject,
 }: SuggestionDiffProps) {
+  const Tag = inline ? 'span' : 'div'
+
   if (generating) {
-    const Status = inline ? 'span' : 'div'
     return (
-      <Status
+      <Tag
         aria-live="polite"
         className="suggestion-diff-generating"
         role="status"
       >
         作成中
-      </Status>
+      </Tag>
     )
   }
 
-  const Container = inline ? 'span' : 'div'
-  const Text = inline ? 'span' : 'div'
-  const Actions = inline ? 'span' : 'div'
-
   return (
-    <Container
+    <Tag
       aria-label="提案差分"
       className="suggestion-diff"
       data-focused={focused}
@@ -105,15 +102,15 @@ export function SuggestionDiff({
         paddingInlineStart: '0.5rem',
       }}
     >
-      <Text className="suggestion-diff-text" style={{ whiteSpace: 'pre-wrap' }}>
+      <Tag className="suggestion-diff-text" style={{ whiteSpace: 'pre-wrap' }}>
         {renderChanges(
           original,
           replacement,
           presentableDiff(original, replacement),
         )}
-      </Text>
+      </Tag>
       {focused && (onAccept || onReject) ? (
-        <Actions className="suggestion-diff-actions">
+        <Tag className="suggestion-diff-actions">
           {onAccept ? (
             <Button onClick={onAccept} size="sm" type="button">
               ✓ 採用
@@ -129,8 +126,8 @@ export function SuggestionDiff({
               × 却下
             </Button>
           ) : null}
-        </Actions>
+        </Tag>
       ) : null}
-    </Container>
+    </Tag>
   )
 }
