@@ -80,6 +80,53 @@ function resolveRange(
   return { from: from.index, to: to.index }
 }
 
+function writeEvidenceAnchors(
+  data: EvidenceData,
+  body: Y.Text,
+  from?: number,
+  to?: number,
+): void {
+  if (from !== undefined)
+    data.set(
+      'from',
+      Y.relativePositionToJSON(
+        Y.createRelativePositionFromTypeIndex(body, from, 1),
+      ),
+    )
+  if (to !== undefined)
+    data.set(
+      'to',
+      Y.relativePositionToJSON(
+        Y.createRelativePositionFromTypeIndex(body, to, -1),
+      ),
+    )
+}
+
+type EvidenceInspection =
+  | { kind: 'visible'; from: number; view: EvidenceView }
+  | { kind: 'hidden' }
+  | { kind: 'prune' }
+
+function inspectEvidence(
+  doc: Y.Doc,
+  id: string,
+  data: EvidenceData,
+  markdown: string,
+  sources: Y.Map<unknown>,
+): EvidenceInspection {
+  const item = readEvidence(id, data)
+  if (!item || !sources.has(item.sourceId)) return { kind: 'prune' }
+  const range = resolveRange(doc, item)
+  if (!range || range.to === range.from) return { kind: 'prune' }
+  if (range.to < range.from) return { kind: 'hidden' }
+  const currentClaim = markdown.slice(range.from, range.to)
+  return {
+    kind: 'visible',
+    from: range.from,
+    view: { ...item, currentClaim, edited: currentClaim !== item.claim },
+  }
+}
+
 export function addEvidence(
   doc: Y.Doc,
   input: AddEvidenceInput,
@@ -100,18 +147,7 @@ export function addEvidence(
     return err(new InvalidEvidenceError('Evidence already exists'))
 
   const data = new Y.Map<unknown>()
-  data.set(
-    'from',
-    Y.relativePositionToJSON(
-      Y.createRelativePositionFromTypeIndex(body, input.from, 1),
-    ),
-  )
-  data.set(
-    'to',
-    Y.relativePositionToJSON(
-      Y.createRelativePositionFromTypeIndex(body, input.to, -1),
-    ),
-  )
+  writeEvidenceAnchors(data, body, input.from, input.to)
   data.set('claim', input.claim)
   data.set('sourceId', input.sourceId)
   data.set('quote', input.quote)
@@ -125,36 +161,27 @@ export function addEvidence(
 }
 
 export function listEvidence(doc: Y.Doc): EvidenceView[] {
-  const body = getBody(doc)
-  const markdown = body.toJSON()
-  const evidence = getEvidenceMap(doc)
+  const markdown = getBody(doc).toJSON()
   const sources = doc.getMap('sources')
-  const result: EvidenceView[] = []
+  const result: Extract<EvidenceInspection, { kind: 'visible' }>[] = []
 
-  for (const [id, data] of evidence.entries()) {
-    const item = readEvidence(id, data)
-    if (!item) {
-      evidence.delete(id)
-      continue
-    }
-    const range = resolveRange(doc, item)
-    if (!sources.has(item.sourceId) || !range) {
-      evidence.delete(id)
-      continue
-    }
-    if (range.to < range.from) continue
-    if (range.to === range.from) {
-      evidence.delete(id)
-      continue
-    }
-    const currentClaim = markdown.slice(range.from, range.to)
-    result.push({ ...item, currentClaim, edited: currentClaim !== item.claim })
+  for (const [id, data] of getEvidenceMap(doc).entries()) {
+    const inspection = inspectEvidence(doc, id, data, markdown, sources)
+    if (inspection.kind === 'visible') result.push(inspection)
   }
-  return result.sort((left, right) => {
-    const leftRange = resolveRange(doc, left)
-    const rightRange = resolveRange(doc, right)
-    return (leftRange?.from ?? 0) - (rightRange?.from ?? 0)
-  })
+  return result
+    .sort((left, right) => left.from - right.from)
+    .map(({ view }) => view)
+}
+
+export function pruneEvidence(doc: Y.Doc): void {
+  const markdown = getBody(doc).toJSON()
+  const sources = doc.getMap('sources')
+  const evidence = getEvidenceMap(doc)
+  for (const [id, data] of evidence.entries()) {
+    if (inspectEvidence(doc, id, data, markdown, sources).kind === 'prune')
+      evidence.delete(id)
+  }
 }
 
 export function removeEvidence(doc: Y.Doc, id: string): void {
@@ -185,21 +212,7 @@ export function prepareEvidenceAnchorMove(
   }
 
   return () => {
-    for (const { data, from, to } of relocations) {
-      if (from !== undefined)
-        data.set(
-          'from',
-          Y.relativePositionToJSON(
-            Y.createRelativePositionFromTypeIndex(body, from, 1),
-          ),
-        )
-      if (to !== undefined)
-        data.set(
-          'to',
-          Y.relativePositionToJSON(
-            Y.createRelativePositionFromTypeIndex(body, to, -1),
-          ),
-        )
-    }
+    for (const { data, from, to } of relocations)
+      writeEvidenceAnchors(data, body, from, to)
   }
 }

@@ -11,15 +11,14 @@ import { getSourceHost } from '#research/source-format'
 type ClaimEvidenceResult = components['schemas']['JudgeClaimEvidenceResult']
 type ClaimEvidenceRequest = components['schemas']['JudgeClaimEvidenceRequest']
 
-type ImportedClaimEvidence = {
+export type ImportedClaimEvidence = {
   title: string
   url: string
-  body: string
   verdict: EvidenceVerdict
   quote: string
 }
 
-class ClaimEvidenceImportError extends Error {
+export class ClaimEvidenceImportError extends Error {
   constructor(
     message: string,
     readonly phase: 'source' | 'judgement',
@@ -134,7 +133,6 @@ export function importClaimEvidence(
               return okAsync({
                 title: response.title,
                 url: response.final_url,
-                body: source.body,
                 verdict: result.verdict,
                 quote: result.quote?.text ?? '',
               })

@@ -16,6 +16,11 @@ interface MountedMarkdownEditor {
   updateExtensions: (extensions: Extension[]) => void
 }
 
+type MarkdownEditorMountOptions = {
+  articleId?: string
+  onEvidenceError?: (message: string) => void
+}
+
 const cleanups: (() => void)[] = []
 
 beforeEach(() => {
@@ -32,6 +37,7 @@ export function mountMarkdownEditor(
   value: string,
   extensions: Extension[] = [],
   extensionFactory?: (doc: Y.Doc) => Extension[],
+  options: MarkdownEditorMountOptions = {},
 ): MountedMarkdownEditor {
   const host = document.createElement('div')
   document.body.append(host)
@@ -45,7 +51,13 @@ export function mountMarkdownEditor(
   act(() => {
     root.render(
       <MarkdownEditor
+        {...(options.articleId !== undefined
+          ? { articleId: options.articleId }
+          : {})}
         extensions={mountedExtensions}
+        {...(options.onEvidenceError !== undefined
+          ? { onEvidenceError: options.onEvidenceError }
+          : {})}
         ref={editor}
         text={body}
       />,
@@ -69,7 +81,17 @@ export function mountMarkdownEditor(
     updateExtensions: (extensions) => {
       act(() => {
         root.render(
-          <MarkdownEditor extensions={extensions} ref={editor} text={body} />,
+          <MarkdownEditor
+            {...(options.articleId !== undefined
+              ? { articleId: options.articleId }
+              : {})}
+            extensions={extensions}
+            {...(options.onEvidenceError !== undefined
+              ? { onEvidenceError: options.onEvidenceError }
+              : {})}
+            ref={editor}
+            text={body}
+          />,
         )
       })
     },

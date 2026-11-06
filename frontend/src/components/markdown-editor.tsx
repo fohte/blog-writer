@@ -69,11 +69,21 @@ export const MarkdownEditor = forwardRef<
   const viewRef = useRef<EditorView | null>(null)
   const undoManagerRef = useRef<Y.UndoManager | null>(null)
   const extensionsCompartment = useRef(new Compartment()).current
+  const evidenceExtensionsCompartment = useRef(new Compartment()).current
   const initialSelectionAtMount = useRef(initialSelection).current
+  const onEvidenceErrorRef = useRef(onEvidenceError)
+  onEvidenceErrorRef.current = onEvidenceError
   const openEvidence = useCallback((id: string) => {
     setActiveEvidenceId(id)
   }, [])
-  const editorExtensions = useMemo(
+  const reportEvidenceError = useCallback((message: string) => {
+    setEvidenceError(message)
+    onEvidenceErrorRef.current?.(message)
+  }, [])
+  const clearEvidenceError = useCallback(() => {
+    setEvidenceError(undefined)
+  }, [])
+  const evidenceExtensions = useMemo(
     () => [
       ...(text.doc !== null
         ? [evidenceDecorations(text.doc, openEvidence)]
@@ -83,21 +93,18 @@ export const MarkdownEditor = forwardRef<
             evidenceDrop(
               text.doc,
               articleId,
-              (message) => {
-                setEvidenceError(message)
-                onEvidenceError?.(message)
-              },
-              () => {
-                setEvidenceError(undefined)
-              },
+              reportEvidenceError,
+              clearEvidenceError,
             ),
           ]
         : []),
-      ...extensions,
     ],
-    [articleId, extensions, onEvidenceError, openEvidence, text],
+    [articleId, clearEvidenceError, openEvidence, reportEvidenceError, text],
   )
-  const initialEditorExtensions = useRef(editorExtensions).current
+  const initialEvidenceExtensions = useRef(evidenceExtensions).current
+  const initialCustomExtensions = useRef(extensions).current
+  const appliedEvidenceExtensions = useRef(initialEvidenceExtensions)
+  const appliedCustomExtensions = useRef(initialCustomExtensions)
 
   useImperativeHandle(
     ref,
@@ -137,7 +144,8 @@ export const MarkdownEditor = forwardRef<
             spellcheck: 'false',
           }),
           yCollab(text, null, { undoManager }),
-          extensionsCompartment.of(initialEditorExtensions),
+          evidenceExtensionsCompartment.of(initialEvidenceExtensions),
+          extensionsCompartment.of(initialCustomExtensions),
         ],
       }),
     })
@@ -151,16 +159,34 @@ export const MarkdownEditor = forwardRef<
       viewRef.current = null
       undoManagerRef.current = null
     }
-  }, [ariaLabel, extensionsCompartment, initialEditorExtensions, text])
+  }, [
+    ariaLabel,
+    evidenceExtensionsCompartment,
+    extensionsCompartment,
+    initialCustomExtensions,
+    initialEvidenceExtensions,
+    text,
+  ])
 
   useEffect(() => {
+    if (appliedEvidenceExtensions.current === evidenceExtensions) return
+    appliedEvidenceExtensions.current = evidenceExtensions
     const view = viewRef.current
     if (view) {
       view.dispatch({
-        effects: extensionsCompartment.reconfigure(editorExtensions),
+        effects: evidenceExtensionsCompartment.reconfigure(evidenceExtensions),
       })
     }
-  }, [editorExtensions, extensionsCompartment])
+  }, [evidenceExtensions, evidenceExtensionsCompartment])
+
+  useEffect(() => {
+    if (appliedCustomExtensions.current === extensions) return
+    appliedCustomExtensions.current = extensions
+    const view = viewRef.current
+    if (view) {
+      view.dispatch({ effects: extensionsCompartment.reconfigure(extensions) })
+    }
+  }, [extensions, extensionsCompartment])
 
   useEffect(() => {
     const doc = text.doc

@@ -73,7 +73,6 @@ describe('claim evidence import', () => {
       result: {
         title: 'Research report',
         url: 'https://example.invalid/report',
-        body: 'The report says the value increased.',
         verdict: 'supported',
         quote: 'The value increased.',
       },

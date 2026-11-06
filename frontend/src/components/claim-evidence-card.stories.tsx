@@ -1,10 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import type { ComponentProps } from 'react'
 
 import type { Source } from '#article/types'
-import {
-  ClaimEvidenceCard,
-  type ClaimEvidenceCardProps,
-} from '#components/claim-evidence-card'
+import { ClaimEvidenceCard } from '#components/claim-evidence-card'
 
 const source: Source = {
   id: 'source-example',
@@ -23,7 +21,7 @@ const common = {
   checkedAt: '2026-02-01T00:00:00.000Z',
   publishedAt: '2025-10-01',
   open: true,
-} satisfies Omit<ClaimEvidenceCardProps, 'verdict' | 'edited'>
+} satisfies Omit<ComponentProps<typeof ClaimEvidenceCard>, 'verdict' | 'edited'>
 
 const meta = {
   title: 'Research/ClaimEvidenceCard',

@@ -1,6 +1,8 @@
+import { Button } from '@fohte/ui/button'
+
 import type { EvidenceVerdict, Source } from '#article/types'
 
-export type ClaimEvidenceCardProps = {
+type ClaimEvidenceCardProps = {
   source: Source
   quote: string
   verdict: EvidenceVerdict
@@ -77,9 +79,14 @@ export function ClaimEvidenceCard({
           </a>
         ) : null}
         {onRemove ? (
-          <button className="self-start text-sm underline" onClick={onRemove}>
+          <Button
+            className="self-start text-sm underline"
+            onClick={onRemove}
+            type="button"
+            variant="plain"
+          >
             外す
-          </button>
+          </Button>
         ) : null}
       </section>
     </div>

@@ -16,6 +16,7 @@ export {
   addEvidence,
   listEvidence,
   observeEvidence,
+  pruneEvidence,
   removeEvidence,
 } from '#article/evidence'
 export { deriveHeadingTree } from '#article/headings'

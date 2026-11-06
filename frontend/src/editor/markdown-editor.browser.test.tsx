@@ -1,4 +1,5 @@
 import { EditorView } from '@codemirror/view'
+import { ok } from 'neverthrow'
 import { act } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
@@ -9,16 +10,35 @@ import { listEvidence, listSources, moveBlock, readBody } from '#article/index'
 import { addSource } from '#article/sources'
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
 import { evidenceDrop } from '#editor/evidence-drop'
+import type { LlmSettings } from '#lib/llm-settings'
 
 function readEvidenceCardOutput(
   marker: HTMLButtonElement,
   card: HTMLElement | null,
   doc: Y.Doc,
+  host: HTMLElement,
 ) {
   return {
     markerClass: marker.className,
     cardConnected: card?.isConnected,
     remainingEvidence: [...doc.getMap('evidence').keys()],
+    remainingMarkers: host.querySelectorAll('.cm-evidence-marker').length,
+  }
+}
+
+function evidenceDropOptions(
+  fetcher: typeof fetch,
+  route: string | undefined = 'server',
+) {
+  let id = 0
+  const settings: LlmSettings = {
+    route: route === 'local' ? 'local' : 'server',
+    bridgeUrl: '',
+  }
+  return {
+    fetcher,
+    loadSettings: () => ok(settings),
+    newId: () => `drop-id-${(id++).toString()}`,
   }
 }
 
@@ -129,12 +149,6 @@ describe('MarkdownEditor', () => {
         ),
       )
     }
-    vi.stubGlobal('fetch', fetcher)
-    window.localStorage.removeItem('blog-writer.llm.route')
-    window.localStorage.removeItem('blog-writer.llm.bridge-url')
-    if ('route' in scenario) {
-      window.localStorage.setItem('blog-writer.llm.route', scenario.route)
-    }
     const errors: string[] = []
     const { content, doc } = mountMarkdownEditor(
       'A research sentence.',
@@ -145,6 +159,7 @@ describe('MarkdownEditor', () => {
           'article-example',
           (message) => errors.push(message),
           () => undefined,
+          evidenceDropOptions(fetcher, scenario.route ?? 'server'),
         ),
     )
     vi.spyOn(EditorView.prototype, 'posAtCoords').mockReturnValue(5)
@@ -200,8 +215,6 @@ describe('MarkdownEditor', () => {
         )
       })
     }
-    vi.stubGlobal('fetch', fetcher)
-    window.localStorage.removeItem('blog-writer.llm.route')
     const errors: string[] = []
     const { content, doc } = mountMarkdownEditor(
       'A research sentence.',
@@ -212,6 +225,7 @@ describe('MarkdownEditor', () => {
           'article-example',
           (message) => errors.push(message),
           () => undefined,
+          evidenceDropOptions(fetcher),
         ),
     )
     vi.spyOn(EditorView.prototype, 'posAtCoords').mockReturnValue(5)
@@ -295,8 +309,6 @@ describe('MarkdownEditor', () => {
         ),
       )
     }
-    vi.stubGlobal('fetch', fetcher)
-    window.localStorage.removeItem('blog-writer.llm.route')
     const errors: string[] = []
     const { content, doc } = mountMarkdownEditor(claim, [], (doc) =>
       evidenceDrop(
@@ -304,6 +316,7 @@ describe('MarkdownEditor', () => {
         'article-example',
         (message) => errors.push(message),
         () => undefined,
+        evidenceDropOptions(fetcher),
       ),
     )
     vi.spyOn(EditorView.prototype, 'posAtCoords').mockReturnValue(5)
@@ -408,14 +421,16 @@ describe('MarkdownEditor', () => {
     }
     vi.stubGlobal('fetch', fetcher)
     window.localStorage.removeItem('blog-writer.llm.route')
+    window.localStorage.removeItem('blog-writer.llm.bridge-url')
     const errors: string[] = []
-    const { content, doc } = mountMarkdownEditor(markdown, [], (doc) =>
-      evidenceDrop(
-        doc,
-        'article-example',
-        (message) => errors.push(message),
-        () => undefined,
-      ),
+    const { content, doc, updateExtensions } = mountMarkdownEditor(
+      markdown,
+      [],
+      undefined,
+      {
+        articleId: 'article-example',
+        onEvidenceError: (message) => errors.push(message),
+      },
     )
     vi.spyOn(EditorView.prototype, 'posAtCoords').mockReturnValue(
       markdown.indexOf(claim) + 5,
@@ -429,6 +444,9 @@ describe('MarkdownEditor', () => {
     })
     content?.dispatchEvent(drop)
     await judgementStarted
+    updateExtensions([
+      EditorView.contentAttributes.of({ 'data-extension': 'updated' }),
+    ])
     moveBlock(doc, { from: 0, destination: markdown.length })._unsafeUnwrap()
     const resolve = resolveJudgement
     if (!resolve) throw new Error('The claim judgment did not start')
@@ -542,10 +560,11 @@ describe('MarkdownEditor', () => {
         throw new Error('Evidence was not removed')
     })
 
-    expect(readEvidenceCardOutput(marker, card, doc)).toEqual({
+    expect(readEvidenceCardOutput(marker, card, doc, host)).toEqual({
       markerClass: 'cm-evidence-marker cm-evidence-supported',
       cardConnected: false,
       remainingEvidence: [],
+      remainingMarkers: 0,
     })
   })
 

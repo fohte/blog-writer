@@ -99,27 +99,4 @@ export const editorTheme = EditorView.theme({
   '.cm-evidence-needs-review, .cm-evidence-edited': {
     color: 'var(--tint-orange-foreground)',
   },
-  '.cm-evidence-card': {
-    position: 'absolute',
-    zIndex: '10',
-    top: '1.25rem',
-    right: '0',
-    display: 'flex',
-    width: '20rem',
-    flexDirection: 'column',
-    gap: '0.5rem',
-    border: '1px solid var(--border)',
-    borderRadius: '0.5rem',
-    backgroundColor: 'var(--popover)',
-    color: 'var(--popover-foreground)',
-    padding: '0.75rem',
-    whiteSpace: 'normal',
-    boxShadow: '0 4px 12px rgb(0 0 0 / 15%)',
-    fontSize: '0.8rem',
-  },
-  '.cm-evidence-card[hidden]': { display: 'none' },
-  '.cm-evidence-card a': {
-    color: 'var(--primary)',
-    textDecoration: 'underline',
-  },
 })

@@ -5,14 +5,170 @@ import * as Y from 'yjs'
 import { getBody } from '#article/body'
 import { addEvidence } from '#article/evidence'
 import { registerBlockMoveUpdater } from '#article/move-block'
-import { addSource } from '#article/sources'
+import { addSource, type AddSourceInput } from '#article/sources'
 import { droppedClaim } from '#editor/evidence-range'
 import { loadLlmSettings } from '#lib/llm-settings'
-import { importClaimEvidence } from '#research/claim-evidence'
+import {
+  ClaimEvidenceImportError,
+  importClaimEvidence,
+  type ImportedClaimEvidence,
+} from '#research/claim-evidence'
 
 type DropPlugin = {
   handleDrop(event: DragEvent, view: EditorView): boolean
   destroy(): void
+}
+
+type EvidenceDropOptions = {
+  fetcher?: typeof fetch
+  loadSettings?: () => ReturnType<typeof loadLlmSettings>
+  newId?: () => string
+}
+
+type TextRange = { from: number; to: number }
+
+function trackRange(
+  doc: Y.Doc,
+  body: Y.Text,
+  fromIndex: number,
+  toIndex: number,
+): { current: () => TextRange | undefined; unregister: () => void } {
+  let from = Y.createRelativePositionFromTypeIndex(body, fromIndex, 1)
+  let to = Y.createRelativePositionFromTypeIndex(body, toIndex, -1)
+  const unregisterUpdater = registerBlockMoveUpdater(doc, (mapping) => {
+    const start = Y.createAbsolutePositionFromRelativePosition(from, doc)
+    const end = Y.createAbsolutePositionFromRelativePosition(to, doc)
+    const nextFrom =
+      start?.type === body ? mapping.mapPosition(start.index) : undefined
+    const nextTo =
+      end?.type === body ? mapping.mapPosition(end.index) : undefined
+    return () => {
+      if (nextFrom !== undefined)
+        from = Y.createRelativePositionFromTypeIndex(body, nextFrom, 1)
+      if (nextTo !== undefined)
+        to = Y.createRelativePositionFromTypeIndex(body, nextTo, -1)
+    }
+  })
+  let registered = true
+
+  return {
+    current() {
+      const start = Y.createAbsolutePositionFromRelativePosition(from, doc)
+      const end = Y.createAbsolutePositionFromRelativePosition(to, doc)
+      return start &&
+        end &&
+        start.type === body &&
+        end.type === body &&
+        end.index > start.index
+        ? { from: start.index, to: end.index }
+        : undefined
+    },
+    unregister() {
+      if (!registered) return
+      registered = false
+      unregisterUpdater()
+    },
+  }
+}
+
+function saveSource(
+  doc: Y.Doc,
+  sourceId: string,
+  source: Omit<AddSourceInput, 'id'>,
+  saveError: string,
+  onError: (message: string) => void,
+): boolean {
+  return addSource(doc, { id: sourceId, ...source }).match(
+    () => true,
+    () => {
+      onError(saveError)
+      return false
+    },
+  )
+}
+
+function saveJudgement(
+  doc: Y.Doc,
+  sourceId: string,
+  claim: string,
+  imported: ImportedClaimEvidence,
+  range: TextRange | undefined,
+  newId: () => string,
+  onError: (message: string) => void,
+): void {
+  const checkedAt = new Date().toISOString()
+  doc.transact(() => {
+    if (
+      !saveSource(
+        doc,
+        sourceId,
+        {
+          kind: 'url',
+          title: imported.title,
+          url: imported.url,
+          fileName: null,
+          checkedAt,
+          status: 'ready',
+        },
+        '資料を保存できませんでした。',
+        onError,
+      )
+    )
+      return
+    if (!range) {
+      onError('対象の文が変更されたため、資料のみ登録しました。')
+      return
+    }
+    addEvidence(doc, {
+      id: newId(),
+      ...range,
+      claim,
+      sourceId,
+      quote: imported.quote,
+      verdict: imported.verdict,
+      checkedAt,
+    }).match(
+      () => undefined,
+      () => {
+        onError('根拠を保存できませんでした。')
+      },
+    )
+  })
+}
+
+function saveImportFailure(
+  doc: Y.Doc,
+  sourceId: string,
+  error: Error,
+  onError: (message: string) => void,
+): void {
+  if (error instanceof ClaimEvidenceImportError) {
+    const sourceFailure = error.phase === 'source'
+    saveSource(
+      doc,
+      sourceId,
+      {
+        kind: 'url',
+        title: error.title,
+        url: error.url,
+        fileName: null,
+        checkedAt: sourceFailure ? null : new Date().toISOString(),
+        status: sourceFailure ? 'unavailable' : 'analysisFailed',
+        summary: '',
+      },
+      sourceFailure
+        ? '取得できない資料を保存できませんでした。'
+        : '判定に失敗した資料を保存できませんでした。',
+      onError,
+    )
+    if (sourceFailure) onError(error.message)
+    else
+      onError(
+        `資料は登録しましたが、根拠を判定できませんでした: ${error.message}`,
+      )
+    return
+  }
+  onError(error.message)
 }
 
 export function evidenceDrop(
@@ -20,7 +176,12 @@ export function evidenceDrop(
   articleId: string,
   onError: (message: string) => void,
   onStart: () => void,
+  options: EvidenceDropOptions = {},
 ) {
+  const fetcher = options.fetcher ?? fetch
+  const loadSettings =
+    options.loadSettings ?? (() => loadLlmSettings(() => window.localStorage))
+  const newId = options.newId ?? (() => crypto.randomUUID())
   const plugins = new WeakMap<EditorView, DropPlugin>()
   const plugin = ViewPlugin.define<DropPlugin>(
     (view) => {
@@ -57,60 +218,19 @@ export function evidenceDrop(
           event.preventDefault()
           onStart()
 
-          const sourceId = crypto.randomUUID()
+          const sourceId = newId()
           const controller = new AbortController()
-          const from = Y.createRelativePositionFromTypeIndex(
-            body,
-            target.from,
-            1,
-          )
-          const to = Y.createRelativePositionFromTypeIndex(body, target.to, -1)
-          let pendingFrom = from
-          let pendingTo = to
-          const unregisterMoveUpdater = registerBlockMoveUpdater(
-            doc,
-            (mapping) => {
-              const start = Y.createAbsolutePositionFromRelativePosition(
-                pendingFrom,
-                doc,
-              )
-              const end = Y.createAbsolutePositionFromRelativePosition(
-                pendingTo,
-                doc,
-              )
-              const nextFrom =
-                start?.type === body
-                  ? mapping.mapPosition(start.index)
-                  : undefined
-              const nextTo =
-                end?.type === body ? mapping.mapPosition(end.index) : undefined
-              return () => {
-                if (nextFrom !== undefined)
-                  pendingFrom = Y.createRelativePositionFromTypeIndex(
-                    body,
-                    nextFrom,
-                    1,
-                  )
-                if (nextTo !== undefined)
-                  pendingTo = Y.createRelativePositionFromTypeIndex(
-                    body,
-                    nextTo,
-                    -1,
-                  )
-              }
-            },
-          )
-          controllers.set(controller, unregisterMoveUpdater)
-          const settings = loadLlmSettings(() => window.localStorage)
-          const result = settings.match(
-            (value) =>
+          const range = trackRange(doc, body, target.from, target.to)
+          controllers.set(controller, range.unregister)
+          const result = loadSettings().match(
+            (settings) =>
               importClaimEvidence(
-                fetch,
+                fetcher,
                 articleId,
                 sourceId,
                 target.url,
                 target.claim,
-                value,
+                settings,
                 controller.signal,
               ),
             (error) => errAsync(error),
@@ -120,107 +240,24 @@ export function evidenceDrop(
             .match(
               (imported) => {
                 if (controller.signal.aborted) return
-                const start = Y.createAbsolutePositionFromRelativePosition(
-                  pendingFrom,
+                saveJudgement(
                   doc,
+                  sourceId,
+                  target.claim,
+                  imported,
+                  range.current(),
+                  newId,
+                  onError,
                 )
-                const end = Y.createAbsolutePositionFromRelativePosition(
-                  pendingTo,
-                  doc,
-                )
-                const range =
-                  start &&
-                  end &&
-                  start.type === body &&
-                  end.type === body &&
-                  end.index > start.index
-                    ? { from: start.index, to: end.index }
-                    : undefined
-                const checkedAt = new Date().toISOString()
-                doc.transact(() => {
-                  addSource(doc, {
-                    id: sourceId,
-                    kind: 'url',
-                    title: imported.title,
-                    url: imported.url,
-                    fileName: null,
-                    checkedAt,
-                    status: 'ready',
-                  }).match(
-                    () => {
-                      if (!range) {
-                        onError(
-                          '対象の文が変更されたため、資料のみ登録しました。',
-                        )
-                        return
-                      }
-                      addEvidence(doc, {
-                        id: crypto.randomUUID(),
-                        from: range.from,
-                        to: range.to,
-                        claim: target.claim,
-                        sourceId,
-                        quote: imported.quote,
-                        verdict: imported.verdict,
-                        checkedAt,
-                      }).match(
-                        () => undefined,
-                        () => {
-                          onError('根拠を保存できませんでした。')
-                        },
-                      )
-                    },
-                    () => {
-                      onError('資料を保存できませんでした。')
-                    },
-                  )
-                })
               },
               (error) => {
                 if (controller.signal.aborted) return
-                if ('phase' in error && error.phase === 'source') {
-                  addSource(doc, {
-                    id: sourceId,
-                    kind: 'url',
-                    title: error.title,
-                    url: error.url,
-                    fileName: null,
-                    checkedAt: null,
-                    status: 'unavailable',
-                    summary: '',
-                  }).match(
-                    () => undefined,
-                    () => {
-                      onError('取得できない資料を保存できませんでした。')
-                    },
-                  )
-                } else if ('phase' in error && error.phase === 'judgement') {
-                  addSource(doc, {
-                    id: sourceId,
-                    kind: 'url',
-                    title: error.title,
-                    url: error.url,
-                    fileName: null,
-                    checkedAt: new Date().toISOString(),
-                    status: 'analysisFailed',
-                    summary: '',
-                  }).match(
-                    () => undefined,
-                    () => {
-                      onError('判定に失敗した資料を保存できませんでした。')
-                    },
-                  )
-                  onError(
-                    `資料は登録しましたが、根拠を判定できませんでした: ${error.message}`,
-                  )
-                }
-                if (!('phase' in error) || error.phase === 'source')
-                  onError(error.message)
+                saveImportFailure(doc, sourceId, error, onError)
               },
             )
             .finally(() => {
               controllers.delete(controller)
-              unregisterMoveUpdater()
+              range.unregister()
             })
 
           return true

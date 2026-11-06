@@ -8,6 +8,7 @@ import {
   getBody,
   listEvidence,
   moveBlock,
+  pruneEvidence,
   readBody,
   reverseBlockMove,
   setBody,
@@ -78,15 +79,150 @@ function readReattachedOutput(
   return { afterMove, afterUndo }
 }
 
-function readConcurrentSourceRemovalOutput(doc: Y.Doc) {
+function readConcurrentSourceRemovalOutput(
+  doc: Y.Doc,
+  visibleBeforePrune: ReturnType<typeof listEvidence>,
+  storedBeforePrune: string[],
+) {
   return {
-    visibleEvidence: listEvidence(doc),
+    visibleBeforePrune,
+    storedBeforePrune,
+    visibleAfterPrune: listEvidence(doc),
     storedEvidenceIds: [...doc.getMap('evidence').keys()],
     sources: [...doc.getMap('sources').keys()],
   }
 }
 
+function readAddEvidenceOutput(
+  doc: Y.Doc,
+  result: ReturnType<typeof addEvidence>,
+) {
+  return {
+    result: result.match(
+      (evidence) => ({ kind: 'ok' as const, id: evidence.id }),
+      (error) => ({
+        kind: 'error' as const,
+        name: error.name,
+        message: error.message,
+      }),
+    ),
+    evidenceIds: [...doc.getMap('evidence').keys()],
+  }
+}
+
 describe('article evidence', () => {
+  it.each([
+    {
+      name: 'empty ID',
+      input: { id: '', from: 0, to: 'The result increased.'.length },
+      sourceExists: true,
+      duplicate: false,
+      expectedError: {
+        name: 'InvalidEvidenceError',
+        message: 'Invalid evidence range',
+      },
+      expectedEvidenceIds: [],
+    },
+    {
+      name: 'empty claim',
+      input: {
+        id: 'evidence-a',
+        claim: '',
+        from: 0,
+        to: 'The result increased.'.length,
+      },
+      sourceExists: true,
+      duplicate: false,
+      expectedError: {
+        name: 'InvalidEvidenceError',
+        message: 'Invalid evidence range',
+      },
+      expectedEvidenceIds: [],
+    },
+    {
+      name: 'empty range',
+      input: { id: 'evidence-a', from: 0, to: 0 },
+      sourceExists: true,
+      duplicate: false,
+      expectedError: {
+        name: 'InvalidEvidenceError',
+        message: 'Invalid evidence range',
+      },
+      expectedEvidenceIds: [],
+    },
+    {
+      name: 'out-of-bounds range',
+      input: {
+        id: 'evidence-a',
+        from: 0,
+        to: 'The result increased.'.length + 1,
+      },
+      sourceExists: true,
+      duplicate: false,
+      expectedError: {
+        name: 'InvalidEvidenceError',
+        message: 'Invalid evidence range',
+      },
+      expectedEvidenceIds: [],
+    },
+    {
+      name: 'duplicate ID',
+      input: {
+        id: 'evidence-a',
+        from: 0,
+        to: 'The result increased.'.length,
+      },
+      sourceExists: true,
+      duplicate: true,
+      expectedError: {
+        name: 'InvalidEvidenceError',
+        message: 'Evidence already exists',
+      },
+      expectedEvidenceIds: ['evidence-a'],
+    },
+    {
+      name: 'missing source',
+      input: {
+        id: 'evidence-a',
+        sourceId: 'source-missing',
+        from: 0,
+        to: 'The result increased.'.length,
+      },
+      sourceExists: false,
+      duplicate: false,
+      expectedError: {
+        name: 'SourceNotFoundError',
+        message: 'Source not found: source-missing',
+      },
+      expectedEvidenceIds: [],
+    },
+  ])('rejects evidence with $name', (scenario) => {
+    const doc = new Y.Doc()
+    const claim = 'The result increased.'
+    setBody(doc, claim)
+    if (scenario.sourceExists) makeSource(doc)
+    const defaults = {
+      id: 'evidence-a',
+      from: 0,
+      to: claim.length,
+      claim,
+      sourceId: 'source-a',
+      quote: 'A supporting quote.',
+      verdict: 'supported' as const,
+      checkedAt: '2026-02-01T00:00:00.000Z',
+    }
+    const input = { ...defaults, ...scenario.input }
+    if (scenario.duplicate) addEvidence(doc, input)._unsafeUnwrap()
+    if (!scenario.sourceExists) input.sourceId = 'source-missing'
+    const result = addEvidence(doc, input)
+
+    expect(readAddEvidenceOutput(doc, result)).toEqual({
+      result: { kind: 'error', ...scenario.expectedError },
+      evidenceIds: scenario.expectedEvidenceIds,
+    })
+    doc.destroy()
+  })
+
   it('syncs the evidence map and relative text range to another document', () => {
     const first = new Y.Doc({ guid: 'article-a' })
     const second = new Y.Doc({ guid: 'article-a' })
@@ -173,6 +309,7 @@ describe('article evidence', () => {
       }),
     )
     body.delete(0, body.length)
+    pruneEvidence(doc)
 
     expect(readEditOutput(doc, edited)).toEqual({
       edited: [
@@ -212,9 +349,20 @@ describe('article evidence', () => {
     })._unsafeUnwrap()
     deleteSource(sourceRemover, 'source-a')._unsafeUnwrap()
     Y.applyUpdate(evidenceWriter, Y.encodeStateAsUpdate(sourceRemover))
+    const visibleBeforePrune = listEvidence(evidenceWriter)
+    const storedBeforePrune = [...evidenceWriter.getMap('evidence').keys()]
+    pruneEvidence(evidenceWriter)
 
-    expect(readConcurrentSourceRemovalOutput(evidenceWriter)).toEqual({
-      visibleEvidence: [],
+    expect(
+      readConcurrentSourceRemovalOutput(
+        evidenceWriter,
+        visibleBeforePrune,
+        storedBeforePrune,
+      ),
+    ).toEqual({
+      visibleBeforePrune: [],
+      storedBeforePrune: ['evidence-a'],
+      visibleAfterPrune: [],
       storedEvidenceIds: [],
       sources: [],
     })
