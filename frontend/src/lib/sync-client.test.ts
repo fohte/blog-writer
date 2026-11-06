@@ -9,17 +9,10 @@ class FakePersistence {
   synced = false
   private readonly listeners = new Set<() => void>()
 
-  constructor(
-    docId: string,
-    doc: Y.Doc,
-    storage: Map<string, Uint8Array>,
-    syncedImmediately: boolean,
-  ) {
-    this.synced = syncedImmediately
+  constructor(docId: string, doc: Y.Doc, storage: Map<string, Uint8Array>) {
     const savedUpdate = storage.get(docId)
     if (savedUpdate) Y.applyUpdate(doc, savedUpdate)
     doc.on('update', () => storage.set(docId, Y.encodeStateAsUpdate(doc)))
-    if (syncedImmediately) return
     queueMicrotask(() => {
       this.synced = true
       for (const listener of this.listeners) listener()
@@ -92,10 +85,10 @@ const createFixture = (
     checkAccessRedirect: () => Promise.resolve('unreachable'),
   },
   persistenceFailures = new Set<string>(),
-  immediatelySyncedDocIds = new Set<string>(),
 ) => {
   const providers: FakeWebsocketProvider[] = []
   const providerAttempts = new Map<string, number>()
+  const persistenceAttempts = new Map<string, number>()
   const docs: Y.Doc[] = []
   let articleId = '018f0000-0000-7000-8000-000000000001'
   let now = 1_800_000_000_000
@@ -106,13 +99,9 @@ const createFixture = (
       return doc
     },
     createPersistence: (docId, doc) => {
+      persistenceAttempts.set(docId, (persistenceAttempts.get(docId) ?? 0) + 1)
       if (persistenceFailures.has(docId)) throw new Error('storage unavailable')
-      return new FakePersistence(
-        docId,
-        doc,
-        savedDocuments,
-        immediatelySyncedDocIds.has(docId),
-      )
+      return new FakePersistence(docId, doc, savedDocuments)
     },
     createWebsocketProvider: (url, docId) => {
       providerAttempts.set(docId, (providerAttempts.get(docId) ?? 0) + 1)
@@ -130,6 +119,7 @@ const createFixture = (
     client: result._unsafeUnwrap(),
     providers,
     providerAttempts,
+    persistenceAttempts,
     docs,
     savedDocuments,
     setArticleId: (id: string) => {
@@ -287,6 +277,41 @@ describe('createSyncClient', () => {
           title: 'A revised title',
         },
       ],
+    })
+    client.destroy()
+  })
+
+  it('keeps a synchronous persistence initialization error visible without retrying', () => {
+    const articleId = 'article-persistence-unavailable'
+    const { client, persistenceAttempts } = createFixture(
+      new Map(),
+      new Set(),
+      { checkAccessRedirect: () => Promise.resolve('unreachable') },
+      new Set([articleId]),
+    )
+    const firstOpenResult = client.openDocument(articleId).match(
+      () => 'opened',
+      (error) => error.message,
+    )
+    const errorAfterFirstOpen = client.getError()?.message ?? null
+    const secondOpenResult = client.openDocument(articleId).match(
+      () => 'opened',
+      (error) => error.message,
+    )
+
+    const readInitializationFailureOutput = () => ({
+      firstOpenResult,
+      errorAfterFirstOpen,
+      secondOpenResult,
+      errorAfterSecondOpen: client.getError()?.message ?? null,
+      persistenceAttempts: persistenceAttempts.get(articleId) ?? 0,
+    })
+    expect(readInitializationFailureOutput()).toEqual({
+      firstOpenResult: 'Failed to initialize document synchronization',
+      errorAfterFirstOpen: 'Failed to initialize document synchronization',
+      secondOpenResult: 'Failed to initialize document synchronization',
+      errorAfterSecondOpen: 'Failed to initialize document synchronization',
+      persistenceAttempts: 1,
     })
     client.destroy()
   })
