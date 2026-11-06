@@ -8,7 +8,7 @@ import {
   MemoAlreadyExistsError,
   MemoNotFoundError,
 } from '#article/errors'
-import { deriveHeadingTree } from '#article/headings'
+import { deriveHeadingTree, flattenHeadingTree } from '#article/headings'
 import type { MovePositionMapping } from '#article/move-block'
 import type { Heading, Memo, MemoData, MemoState } from '#article/types'
 
@@ -140,13 +140,6 @@ export function listMemos(doc: Y.Doc): Memo[] {
     )
 }
 
-function flattenHeadings(headings: Heading[]): Heading[] {
-  return headings.flatMap((heading) => [
-    heading,
-    ...flattenHeadings(heading.children),
-  ])
-}
-
 export function captureDeletedMemoAdoptions(
   doc: Y.Doc,
   getPreviousMarkdown: () => string,
@@ -190,7 +183,7 @@ export function captureDeletedMemoAdoptions(
 
   if (adoptedMemos.length === 0) return []
 
-  const deletedHeadings = flattenHeadings(
+  const deletedHeadings = flattenHeadingTree(
     deriveHeadingTree(getPreviousMarkdown()),
   ).filter((heading) =>
     deletedRanges.some(
@@ -226,7 +219,7 @@ export function restoreMemoAdoptions(
   if (snapshots.length === 0 || insertedRanges.length === 0) return
 
   const body = getBody(doc)
-  const headings = flattenHeadings(deriveHeadingTree(body.toJSON()))
+  const headings = flattenHeadingTree(deriveHeadingTree(body.toJSON()))
   for (const snapshot of snapshots) {
     const markerOffset = snapshot.markerOffset ?? 0
     const insertion = insertedRanges.find(

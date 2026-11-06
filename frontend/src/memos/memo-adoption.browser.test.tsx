@@ -112,6 +112,14 @@ function readOutput() {
   }
 }
 
+function readAdoptionFailureOutput() {
+  const { host } = currentEditor()
+  return {
+    output: readOutput(),
+    alert: host.querySelector('[role="alert"]')?.textContent ?? null,
+  }
+}
+
 function findButton(label: string) {
   return [...document.body.querySelectorAll('button')].find(
     (button) => button.textContent.trim() === label,
@@ -302,6 +310,63 @@ describe('memo adoption', () => {
         },
       ],
       renderedStates: ['採用済み: Add a summary'],
+    })
+  })
+
+  it('inserts a memo at the end from the memo panel', async () => {
+    const initial = '# First\n\nbody'
+    mount(initial, 'Add a summary')
+    const chooseTarget = findButton('採用先を選ぶ')
+    if (!chooseTarget) throw new Error('The memo target menu is missing')
+    await act(async () => {
+      await userEvent.click(chooseTarget)
+    })
+    const insertAtEnd = findButton('末尾に追加')
+    if (!insertAtEnd)
+      throw new Error('The end insertion target is missing from the memo menu')
+    await act(async () => {
+      await userEvent.click(insertAtEnd)
+    })
+
+    expect(readOutput()).toEqual({
+      body: '# First\n\nbody\n\n# Add a summary\n\n',
+      editor: '# First\n\nbody\n\n# Add a summary\n\n',
+      memos: [
+        {
+          id: 'memo-a',
+          state: {
+            kind: 'adopted',
+            heading: { from: 15, level: 1, text: 'Add a summary' },
+          },
+        },
+      ],
+      renderedStates: ['採用済み: Add a summary'],
+    })
+  })
+
+  it('leaves a memo unchanged when insertion would land inside a code fence', async () => {
+    const initial = '# First\n\n```md\nbody'
+    mount(initial, 'Add a summary')
+    const chooseTarget = findButton('採用先を選ぶ')
+    if (!chooseTarget) throw new Error('The memo target menu is missing')
+    await act(async () => {
+      await userEvent.click(chooseTarget)
+    })
+    const insertAtEnd = findButton('末尾に追加')
+    if (!insertAtEnd)
+      throw new Error('The end insertion target is missing from the memo menu')
+    await act(async () => {
+      await userEvent.click(insertAtEnd)
+    })
+
+    expect(readAdoptionFailureOutput()).toEqual({
+      output: {
+        body: initial,
+        editor: initial,
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        renderedStates: ['未整理'],
+      },
+      alert: 'No ATX heading marker at body index 21',
     })
   })
 })

@@ -15,6 +15,7 @@ import {
 } from 'react'
 
 import type { MoveBlockInput } from '#article/index'
+import { flattenHeadingTreeWithDepth } from '#article/index'
 import type { Heading } from '#article/types'
 import { OutlineMemoDropGap } from '#components/outline-memo-drop-gap'
 import { memoIdFrom } from '#outline/memo-drag'
@@ -37,14 +38,7 @@ export interface OutlineViewProps {
   onMove: (input: MoveBlockInput) => void
 }
 
-type FlatHeading = { heading: Heading; depth: number }
-
-function flattenHeadings(headings: Heading[], depth = 0): FlatHeading[] {
-  return headings.flatMap((heading) => [
-    { heading, depth },
-    ...flattenHeadings(heading.children, depth + 1),
-  ])
-}
+type FlatHeading = ReturnType<typeof flattenHeadingTreeWithDepth>[number]
 
 function sectionEnd(headings: FlatHeading[], from: number, bodyLength: number) {
   const index = headings.findIndex(({ heading }) => heading.from === from)
@@ -133,6 +127,30 @@ function OutlineRow({
       element: handle,
       getInitialData: () => ({ kind: 'block', from: heading.from }),
     })
+    const updateDropTarget = ({
+      self,
+    }: {
+      self: { data: Record<string, unknown> }
+    }) => {
+      if (
+        self.data['kind'] === 'memo-heading-target' &&
+        typeof self.data['from'] === 'number'
+      ) {
+        onMemoDropTargetChange({
+          kind: 'memo-heading',
+          from: self.data['from'],
+        })
+        return
+      }
+      const placement = self.data['placement']
+      if (
+        placement === 'before' ||
+        placement === 'after' ||
+        placement === 'child'
+      ) {
+        setLocalDrop({ kind: 'move', from: heading.from, placement })
+      }
+    }
     const cleanupDropTarget = dropTargetForElements({
       element: row,
       canDrop: ({ source }) =>
@@ -155,46 +173,8 @@ function OutlineRow({
           ...(placement === 'child' ? { childOf: heading.from } : {}),
         }
       },
-      onDragEnter: ({ self }) => {
-        if (
-          self.data['kind'] === 'memo-heading-target' &&
-          typeof self.data['from'] === 'number'
-        ) {
-          onMemoDropTargetChange({
-            kind: 'memo-heading',
-            from: self.data['from'],
-          })
-          return
-        }
-        const placement = self.data['placement']
-        if (
-          placement === 'before' ||
-          placement === 'after' ||
-          placement === 'child'
-        ) {
-          setLocalDrop({ kind: 'move', from: heading.from, placement })
-        }
-      },
-      onDrag: ({ self }) => {
-        if (
-          self.data['kind'] === 'memo-heading-target' &&
-          typeof self.data['from'] === 'number'
-        ) {
-          onMemoDropTargetChange({
-            kind: 'memo-heading',
-            from: self.data['from'],
-          })
-          return
-        }
-        const placement = self.data['placement']
-        if (
-          placement === 'before' ||
-          placement === 'after' ||
-          placement === 'child'
-        ) {
-          setLocalDrop({ kind: 'move', from: heading.from, placement })
-        }
-      },
+      onDragEnter: updateDropTarget,
+      onDrag: updateDropTarget,
       onDragLeave: () => {
         setLocalDrop(undefined)
         onMemoDropTargetChange(undefined)
@@ -368,7 +348,10 @@ export function OutlineView({
   onSelect,
   onMove,
 }: OutlineViewProps) {
-  const flattened = useMemo(() => flattenHeadings(headings), [headings])
+  const flattened = useMemo(
+    () => flattenHeadingTreeWithDepth(headings),
+    [headings],
+  )
   const [localMemoDropTarget, setLocalMemoDropTarget] =
     useState<OutlineDropTarget>()
   const memoDropTarget =

@@ -10,7 +10,12 @@ export {
   SourceAlreadyExistsError,
   SourceNotFoundError,
 } from '#article/errors'
-export { deriveHeadingTree } from '#article/headings'
+export type { HeadingWithDepth } from '#article/headings'
+export {
+  deriveHeadingTree,
+  flattenHeadingTree,
+  flattenHeadingTreeWithDepth,
+} from '#article/headings'
 export {
   addMemo,
   captureDeletedMemoAdoptions,

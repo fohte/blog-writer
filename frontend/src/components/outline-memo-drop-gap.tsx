@@ -22,21 +22,18 @@ export function OutlineMemoDropGap({
     const element = gapRef.current
     if (!element) return
 
+    const updateDropTarget = () => {
+      onDragChange({
+        ...(beforeFrom === undefined ? {} : { beforeFrom }),
+      })
+    }
     return dropTargetForElements({
       element,
       canDrop: ({ source }) =>
         memoIdFrom(source) !== undefined && onInsertMemo !== undefined,
       getData: () => ({ kind: 'memo-gap-target', beforeFrom }),
-      onDragEnter: () => {
-        onDragChange({
-          ...(beforeFrom === undefined ? {} : { beforeFrom }),
-        })
-      },
-      onDrag: () => {
-        onDragChange({
-          ...(beforeFrom === undefined ? {} : { beforeFrom }),
-        })
-      },
+      onDragEnter: updateDropTarget,
+      onDrag: updateDropTarget,
       onDragLeave: () => {
         onDragChange(undefined)
       },

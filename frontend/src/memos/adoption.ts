@@ -5,19 +5,22 @@ import * as Y from 'yjs'
 
 import {
   deriveHeadingTree,
+  flattenHeadingTree,
+  getBody,
   InvalidHeadingError,
   InvalidMemoError,
   listMemos,
   MemoNotFoundError,
   setMemoAdoptedTo,
 } from '#article/index'
-import type { Heading } from '#article/types'
 
-function flattenHeadings(headings: Heading[]): Heading[] {
-  return headings.flatMap((heading) => [
-    heading,
-    ...flattenHeadings(heading.children),
-  ])
+export function memoAdoptionErrorMessage<T, E extends Error>(
+  operation: () => Result<T, E>,
+): string | undefined {
+  return operation().match(
+    () => undefined,
+    (adoptionError) => adoptionError.message,
+  )
 }
 
 export function insertMemoAsHeading(
@@ -32,7 +35,9 @@ export function insertMemoAsHeading(
     return err(new InvalidMemoError('Dismissed memos cannot be adopted'))
 
   const markdown = view.state.doc.toString()
-  const headings = flattenHeadings(deriveHeadingTree(markdown))
+  if (getBody(doc).toJSON() !== markdown)
+    return err(new InvalidMemoError('Editor content is out of date'))
+  const headings = flattenHeadingTree(deriveHeadingTree(markdown))
   const target =
     beforeFrom === undefined
       ? undefined
@@ -57,10 +62,18 @@ export function insertMemoAsHeading(
   const level = target?.level ?? headings.at(-1)?.level ?? 2
   const markerIndex = position + separator.length
   const cursor = markerIndex + level + 1 + headingText.length
+  const insertion = `${separator}${'#'.repeat(level)} ${headingText}\n\n`
+  const insertedHeading = flattenHeadingTree(
+    deriveHeadingTree(
+      `${markdown.slice(0, position)}${insertion}${markdown.slice(position)}`,
+    ),
+  ).find(({ from }) => from === markerIndex)
+  if (!insertedHeading) return err(new InvalidHeadingError(markerIndex))
+
   view.dispatch({
     changes: {
       from: position,
-      insert: `${separator}${'#'.repeat(level)} ${headingText}\n\n`,
+      insert: insertion,
     },
     selection: EditorSelection.cursor(cursor),
   })

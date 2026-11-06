@@ -3,6 +3,7 @@ import { Popover, PopoverContent } from '@fohte/ui/popover'
 import { useRef } from 'react'
 
 import type { Heading, Memo } from '#article/index'
+import { flattenHeadingTreeWithDepth } from '#article/index'
 
 type MemoAdoptionMenuProps = {
   memo: Memo
@@ -14,15 +15,6 @@ type MemoAdoptionMenuProps = {
     ((memoId: string, beforeFrom?: number) => void) | undefined
 }
 
-type FlatHeading = { heading: Heading; depth: number }
-
-function flattenHeadings(headings: Heading[], depth = 0): FlatHeading[] {
-  return headings.flatMap((heading) => [
-    { heading, depth },
-    ...flattenHeadings(heading.children, depth + 1),
-  ])
-}
-
 export function MemoAdoptionMenu({
   memo,
   headings,
@@ -32,7 +24,7 @@ export function MemoAdoptionMenu({
   onInsertAsHeading,
 }: MemoAdoptionMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const flatHeadings = flattenHeadings(headings)
+  const flatHeadings = flattenHeadingTreeWithDepth(headings)
 
   return (
     <Popover anchor={triggerRef} onOpenChange={onOpenChange} open={open}>

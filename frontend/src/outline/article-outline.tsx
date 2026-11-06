@@ -4,10 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type * as Y from 'yjs'
 
 import type { MoveBlockInput } from '#article/index'
-import { deriveHeadingTree, getBody, readBody } from '#article/index'
+import { flattenHeadingTree } from '#article/index'
 import type { Heading } from '#article/types'
 import { OutlineView } from '#components/outline-view'
-import { adoptMemoToHeading, insertMemoAsHeading } from '#memos/adoption'
+import { useArticleHeadings } from '#hooks/use-article-headings'
+import {
+  adoptMemoToHeading,
+  insertMemoAsHeading,
+  memoAdoptionErrorMessage,
+} from '#memos/adoption'
 import type { MoveHistory } from '#outline/move-history'
 
 export interface ArticleOutlineProps {
@@ -21,16 +26,9 @@ function activeHeadingFrom(
   headings: Heading[],
   position: number,
 ): number | undefined {
-  return flattenHeadings(headings).findLast(
+  return flattenHeadingTree(headings).findLast(
     (heading) => heading.from <= position,
   )?.from
-}
-
-function flattenHeadings(headings: Heading[]): Heading[] {
-  return headings.flatMap((heading) => [
-    heading,
-    ...flattenHeadings(heading.children),
-  ])
 }
 
 export function ArticleOutline({
@@ -39,10 +37,8 @@ export function ArticleOutline({
   view,
   activeFrom,
 }: ArticleOutlineProps) {
-  const body = getBody(doc)
-  const [markdown, setMarkdown] = useState(() => readBody(doc))
+  const { headings, markdown } = useArticleHeadings(doc)
   const [error, setError] = useState<string>()
-  const headings = useMemo(() => deriveHeadingTree(markdown), [markdown])
   const activeHeadingCompartment = useMemo(() => new Compartment(), [])
   const headingsRef = useRef(headings)
   headingsRef.current = headings
@@ -52,15 +48,8 @@ export function ArticleOutline({
   )
 
   useEffect(() => {
-    const update = () => {
-      setMarkdown(body.toJSON())
-      setError(undefined)
-    }
-    body.observe(update)
-    return () => {
-      body.unobserve(update)
-    }
-  }, [body])
+    setError(undefined)
+  }, [markdown])
 
   useEffect(() => {
     const listener = EditorView.updateListener.of((update) => {
@@ -110,26 +99,20 @@ export function ArticleOutline({
   )
   const handleAdoptMemo = useCallback(
     (memoId: string, markerIndex: number) => {
-      adoptMemoToHeading(doc, memoId, markerIndex).match(
-        () => {
-          setError(undefined)
-        },
-        (adoptionError) => {
-          setError(adoptionError.message)
-        },
+      setError(
+        memoAdoptionErrorMessage(() =>
+          adoptMemoToHeading(doc, memoId, markerIndex),
+        ),
       )
     },
     [doc],
   )
   const handleInsertMemo = useCallback(
     (memoId: string, beforeFrom?: number) => {
-      insertMemoAsHeading(doc, view, memoId, beforeFrom).match(
-        () => {
-          setError(undefined)
-        },
-        (adoptionError) => {
-          setError(adoptionError.message)
-        },
+      setError(
+        memoAdoptionErrorMessage(() =>
+          insertMemoAsHeading(doc, view, memoId, beforeFrom),
+        ),
       )
     },
     [doc, view],
