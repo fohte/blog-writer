@@ -41,6 +41,15 @@ export function requestBody(
   }
 }
 
+export function suggestionTargetTo(
+  block: { to: number },
+  replacement: string,
+  bodyLength: number,
+): number {
+  // Deleting a heading includes its following newline when one exists.
+  return replacement === '' && block.to < bodyLength ? block.to + 1 : block.to
+}
+
 export function isOutlineProposalResponse(
   value: unknown,
 ): value is OutlineProposalResponse {

@@ -2,6 +2,7 @@ import { isolateHistory } from '@codemirror/commands'
 import {
   type ChangeSet,
   type Extension,
+  Facet,
   StateEffect,
   StateField,
   Transaction,
@@ -26,6 +27,7 @@ import {
   type OutlineProposalResponse,
   requestBody,
   requestUrl,
+  suggestionTargetTo,
 } from '#proposals/outline-request'
 
 export type OutlineSuggestion = {
@@ -78,7 +80,6 @@ const updateSuggestions = StateEffect.define<ManagedSuggestion[]>()
 const updateGenerating = StateEffect.define<boolean>()
 const acceptSuggestion = StateEffect.define<string>()
 const rejectSuggestion = StateEffect.define<string>()
-const stateByDocument = new WeakMap<Y.Doc, OutlineProposalController>()
 
 function touchesRange(
   from: number,
@@ -182,6 +183,7 @@ class OutlineProposalController {
     this.options = options
     this.extension = [
       this.stateField,
+      outlineProposalControllerFacet.of(this),
       ViewPlugin.define((view) => {
         this.mount(view)
         return {
@@ -194,10 +196,6 @@ class OutlineProposalController {
         }
       }),
     ]
-  }
-
-  configure(options: OutlineProposalOptions): void {
-    this.options = { ...this.options, ...options }
   }
 
   getState(): OutlineProposalState {
@@ -251,9 +249,6 @@ class OutlineProposalController {
     this.activeRequest = undefined
     this.trackers.clear()
     this.view = null
-    if (stateByDocument.get(this.context.doc) === this) {
-      stateByDocument.delete(this.context.doc)
-    }
     this.notify()
   }
 
@@ -354,26 +349,26 @@ class OutlineProposalController {
         if (suggestion.from === suggestion.to) {
           return block.kind === 'paragraph' && block.from === suggestion.from
         }
-        if (block.kind !== 'heading' || block.from !== suggestion.from) {
-          return false
-        }
-        const targetTo =
-          suggestion.replacement === '' && block.to < request.body_length
-            ? block.to + 1
-            : block.to
-        return targetTo === suggestion.to
+        return block.kind === 'heading' && block.from === suggestion.from
       })
       if (!targetBlock) return []
       const targetTo =
-        suggestion.replacement === '' && targetBlock.to < request.body_length
-          ? targetBlock.to + 1
-          : targetBlock.to
+        suggestion.from === suggestion.to
+          ? targetBlock.from
+          : suggestionTargetTo(
+              targetBlock,
+              suggestion.replacement,
+              request.body_length,
+            )
+      if (targetTo !== suggestion.to) return []
+      const guardTo =
+        suggestion.from === suggestion.to ? targetBlock.to : targetTo
       let mapped: TrackedSuggestion | null = {
         from: suggestion.from,
         to: suggestion.to,
         replacement: suggestion.replacement,
         guardFrom: targetBlock.from,
-        guardTo: targetTo,
+        guardTo,
       }
       for (const changes of tracker) {
         if (!mapped) break
@@ -426,25 +421,16 @@ class OutlineProposalController {
   }
 }
 
+const outlineProposalControllerFacet = Facet.define<
+  OutlineProposalController,
+  OutlineProposalController | null
+>({ combine: (controllers) => controllers[0] ?? null })
+
 export function createOutlineProposalExtension(
   context: OutlineProposalEditorContext,
   options: OutlineProposalOptions = {},
 ): Extension {
-  return controllerFor(context, options).extension
-}
-
-function controllerFor(
-  context: OutlineProposalEditorContext,
-  options: OutlineProposalOptions = {},
-): OutlineProposalController {
-  const existing = stateByDocument.get(context.doc)
-  if (existing) {
-    existing.configure(options)
-    return existing
-  }
-  const controller = new OutlineProposalController(context, options)
-  stateByDocument.set(context.doc, controller)
-  return controller
+  return new OutlineProposalController(context, options).extension
 }
 
 export function OutlineProposalAccessory({
@@ -452,13 +438,13 @@ export function OutlineProposalAccessory({
   history,
   view,
 }: OutlineProposalAccessoryContext) {
-  const controller = controllerFor({ doc, history })
-  const [state, setState] = useState<OutlineProposalState>(() =>
-    controller.getState(),
+  const controller = view?.state.facet(outlineProposalControllerFacet) ?? null
+  const [state, setState] = useState<OutlineProposalState>(
+    () => controller?.getState() ?? { suggestions: [], generating: false },
   )
 
   useEffect(() => {
-    if (view === null) return
+    if (view === null || controller === null) return
     const update = () => {
       setState(controller.getState())
     }
@@ -466,7 +452,7 @@ export function OutlineProposalAccessory({
     return controller.subscribe(update)
   }, [controller, view])
 
-  if (!view) return null
+  if (!view || !controller) return null
   return (
     <ArticleOutline
       doc={doc}

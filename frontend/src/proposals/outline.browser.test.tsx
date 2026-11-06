@@ -58,6 +58,12 @@ function lastHeadingRange(body: string): { from: number; to: number } {
   return { from: heading.from, to: heading.to }
 }
 
+function firstHeadingRange(body: string): { from: number; to: number } {
+  const heading = readRequestBlocks(body).find(({ kind }) => kind === 'heading')
+  if (!heading) throw new Error('The outline request has no heading')
+  return { from: heading.from, to: heading.to }
+}
+
 function requestBodyFromInit(init: RequestInit | undefined): string {
   if (typeof init?.body !== 'string') {
     throw new Error('The outline request body is not a string')
@@ -155,16 +161,6 @@ function createFixture(
   const outlineHost = document.createElement('div')
   document.body.append(editorHost, outlineHost)
   const root: Root = createRoot(outlineHost)
-  act(() => {
-    root.render(
-      createElement(OutlineProposalAccessory, {
-        doc,
-        history,
-        view: null,
-        replaceBody: () => {},
-      }),
-    )
-  })
   const extension = createOutlineProposalExtension(
     { doc, history },
     {
@@ -405,44 +401,50 @@ describe('outline proposal integration', () => {
     })
   })
 
-  it('does not offer a rejected proposal again while the page stays open', async () => {
-    let requestCount = 0
-    let requestBody = ''
-    const fetcher: typeof fetch = (_input, init) => {
-      requestCount += 1
-      requestBody = requestBodyFromInit(init)
-      const from = paragraphFrom(requestBody)
-      return Promise.resolve(
-        responseWithSuggestions([
-          { from, to: from, replacement: '## Added\n' },
-        ]),
+  it.each(['addition', 'rename', 'deletion'] as const)(
+    'does not offer a rejected %s proposal again while the page stays open',
+    async (operation) => {
+      let requestCount = 0
+      let requestBody = ''
+      const fetcher: typeof fetch = (_input, init) => {
+        requestCount += 1
+        requestBody = requestBodyFromInit(init)
+        const { from, to } = firstHeadingRange(requestBody)
+        const paragraph = paragraphFrom(requestBody)
+        const suggestion =
+          operation === 'addition'
+            ? { from: paragraph, to: paragraph, replacement: '## Added\n' }
+            : operation === 'rename'
+              ? { from, to, replacement: '# Updated' }
+              : { from, to: to + 1, replacement: '' }
+        return Promise.resolve(responseWithSuggestions([suggestion]))
+      }
+      const { outlineHost, view } = createFixture(fetcher)
+      await act(async () => {
+        view.dispatch({ changes: { from: view.state.doc.length, insert: '!' } })
+        await vi.advanceTimersByTimeAsync(30_000)
+        for (let index = 0; index < 8; index += 1) await Promise.resolve()
+      })
+      const rejectButton = [...outlineHost.querySelectorAll('button')].find(
+        (button) => button.textContent.includes('却下'),
       )
-    }
-    const { outlineHost, view } = createFixture(fetcher)
-    await act(async () => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: '!' } })
-      await vi.advanceTimersByTimeAsync(30_000)
-      for (let index = 0; index < 8; index += 1) await Promise.resolve()
-    })
-    const rejectButton = [...outlineHost.querySelectorAll('button')].find(
-      (button) => button.textContent.includes('却下'),
-    )
-    if (!rejectButton) throw new Error('The outline suggestion is missing')
-    const paragraph = paragraphFrom(requestBody)
-    await act(async () => {
-      await userEvent.click(rejectButton)
-      view.dispatch({ changes: { from: paragraph, insert: 'Updated ' } })
-      await vi.advanceTimersByTimeAsync(30_000)
-      for (let index = 0; index < 8; index += 1) await Promise.resolve()
-    })
+      if (!rejectButton) throw new Error('The outline suggestion is missing')
+      const paragraph = paragraphFrom(requestBody)
+      await act(async () => {
+        await userEvent.click(rejectButton)
+        view.dispatch({ changes: { from: paragraph, insert: 'Updated ' } })
+        await vi.advanceTimersByTimeAsync(30_000)
+        for (let index = 0; index < 8; index += 1) await Promise.resolve()
+      })
 
-    expect(readProposalOutput(outlineHost, view, requestCount)).toEqual({
-      requestCount: 2,
-      body: '# Intro\n\nUpdated Paragraph.\n!',
-      proposalButtons: [],
-      alert: null,
-    })
-  })
+      expect(readProposalOutput(outlineHost, view, requestCount)).toEqual({
+        requestCount: 2,
+        body: '# Intro\n\nUpdated Paragraph.\n!',
+        proposalButtons: [],
+        alert: null,
+      })
+    },
+  )
 
   it('retries a failed request after the body returns to the same text', async () => {
     const requestBodies: string[] = []

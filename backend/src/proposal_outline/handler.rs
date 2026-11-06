@@ -135,6 +135,13 @@ enum RejectionReason {
     OverlappingRange,
 }
 
+fn record_rejection(
+    rejection_counts: &mut BTreeMap<RejectionReason, usize>,
+    reason: RejectionReason,
+) {
+    *rejection_counts.entry(reason).or_insert(0) += 1;
+}
+
 fn to_suggestion(
     operation: OperationKind,
     replacement: String,
@@ -215,15 +222,11 @@ fn to_suggestions(
 
     for operation in generated.operations {
         let Some(block_id) = aliases.get(&operation.block_alias) else {
-            *rejection_counts
-                .entry(RejectionReason::UnknownAlias)
-                .or_insert(0) += 1;
+            record_rejection(&mut rejection_counts, RejectionReason::UnknownAlias);
             continue;
         };
         let Some(block) = blocks_by_id.get(block_id.as_str()) else {
-            *rejection_counts
-                .entry(RejectionReason::MissingBlock)
-                .or_insert(0) += 1;
+            record_rejection(&mut rejection_counts, RejectionReason::MissingBlock);
             continue;
         };
         let suggestion = match to_suggestion(
@@ -234,7 +237,7 @@ fn to_suggestions(
         ) {
             Ok(suggestion) => suggestion,
             Err(reason) => {
-                *rejection_counts.entry(reason).or_insert(0) += 1;
+                record_rejection(&mut rejection_counts, reason);
                 continue;
             }
         };
@@ -243,9 +246,7 @@ fn to_suggestions(
             .iter()
             .any(|existing| conflicts(&suggestion, existing))
         {
-            *rejection_counts
-                .entry(RejectionReason::OverlappingRange)
-                .or_insert(0) += 1;
+            record_rejection(&mut rejection_counts, RejectionReason::OverlappingRange);
             continue;
         }
         suggestions.push(suggestion);
