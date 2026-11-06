@@ -13,3 +13,4 @@ export {
   type SuggestionPosition,
   type TextSuggestion,
 } from '#editor/suggestion-layer'
+export { transitionProposalEditorExtensions } from '#proposals/transition'
