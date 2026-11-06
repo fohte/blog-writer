@@ -45,6 +45,18 @@ function readConversionError() {
   }
 }
 
+function readInitialFocusState() {
+  return {
+    focusedButton:
+      document.activeElement instanceof HTMLButtonElement
+        ? document.activeElement.textContent
+        : null,
+    selectedFormat: document.querySelector<HTMLButtonElement>(
+      '[data-slot="segmented-control-item"][aria-pressed="true"]',
+    )?.textContent,
+  }
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   blob = undefined
@@ -80,6 +92,35 @@ afterEach(() => {
 })
 
 describe('ArticleExportPopover', () => {
+  it('focuses the download button when the options open', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    const testDoc = new Y.Doc()
+    doc = testDoc
+    setBody(testDoc, 'A short article body.')
+    root = createRoot(host)
+
+    act(() => {
+      root?.render(
+        <ArticleExportPopover
+          articleId="sample-article"
+          articleTitle="Sample article"
+          defaultFormat="mdx"
+          doc={testDoc}
+        />,
+      )
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '書き出す' }))
+    })
+
+    expect(readInitialFocusState()).toEqual({
+      focusedButton: 'ダウンロード',
+      selectedFormat: 'MDX',
+    })
+  })
+
   it('shows an MDX conversion error without starting a download', async () => {
     exportFailure.active = true
     host = document.createElement('div')

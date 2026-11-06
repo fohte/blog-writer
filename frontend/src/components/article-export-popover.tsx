@@ -1,4 +1,5 @@
 import { Button } from '@fohte/ui/button'
+import { Panel } from '@fohte/ui/panel'
 import { Popover, PopoverContent, PopoverTrigger } from '@fohte/ui/popover'
 import { SegmentedControl } from '@fohte/ui/segmented-control'
 import { useRef, useState } from 'react'
@@ -37,6 +38,7 @@ export function ArticleExportPopover({
   const [open, setOpen] = useState(defaultOpen)
   const [format, setFormat] = useState(defaultFormat)
   const [error, setError] = useState(initialError)
+  const downloadButtonRef = useRef<HTMLButtonElement>(null)
   const conversionAttempt = useRef(0)
 
   function handleOpenChange(nextOpen: boolean) {
@@ -80,7 +82,10 @@ export function ArticleExportPopover({
       <PopoverTrigger render={<Button type="button" variant="outline" />}>
         書き出す
       </PopoverTrigger>
-      <PopoverContent className="flex w-64 flex-col gap-3">
+      <PopoverContent
+        className="flex w-64 flex-col gap-3"
+        initialFocus={downloadButtonRef}
+      >
         <h2 className="font-semibold">形式</h2>
         <SegmentedControl
           aria-label="書き出し形式"
@@ -89,9 +94,16 @@ export function ArticleExportPopover({
           value={format}
         />
         {error !== undefined && error.length > 0 ? (
-          <p role="alert">{error}</p>
+          <Panel
+            aria-live="assertive"
+            className="rounded-md border-destructive/40 bg-destructive/10 text-sm text-destructive"
+            padding="sm"
+            role="alert"
+          >
+            {error}
+          </Panel>
         ) : null}
-        <Button onClick={handleDownload} type="button">
+        <Button onClick={handleDownload} ref={downloadButtonRef} type="button">
           ダウンロード
         </Button>
       </PopoverContent>
