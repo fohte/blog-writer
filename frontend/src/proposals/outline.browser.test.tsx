@@ -125,6 +125,20 @@ function createFixture(fetcher: typeof fetch) {
   setPremise(doc, 'claim', 'The outline guides the article')
   const body = getBody(doc)
   const history = createMoveHistory(doc)
+  const editorHost = document.createElement('div')
+  const outlineHost = document.createElement('div')
+  document.body.append(editorHost, outlineHost)
+  const root: Root = createRoot(outlineHost)
+  act(() => {
+    root.render(
+      createElement(OutlineProposalAccessory, {
+        doc,
+        history,
+        view: null,
+        replaceBody: () => {},
+      }),
+    )
+  })
   const extension = createOutlineProposalExtension(
     { doc, history },
     {
@@ -133,9 +147,6 @@ function createFixture(fetcher: typeof fetch) {
       getSettings: () => ok({ route: 'server', bridgeUrl: '' }),
     },
   )
-  const editorHost = document.createElement('div')
-  const outlineHost = document.createElement('div')
-  document.body.append(editorHost, outlineHost)
   const view = new EditorView({
     parent: editorHost,
     state: EditorState.create({
@@ -147,7 +158,6 @@ function createFixture(fetcher: typeof fetch) {
       ],
     }),
   })
-  const root: Root = createRoot(outlineHost)
   act(() => {
     root.render(
       createElement(OutlineProposalAccessory, {
@@ -280,6 +290,92 @@ describe('outline proposal integration', () => {
       undo: 'undone',
       afterUndo: `${changedHeading}\n\nParagraph.\n`,
       yBody: `${changedHeading}\n\nParagraph.\n`,
+    })
+  })
+
+  it('accepts a heading rename in one undo step', async () => {
+    const requests: { url: string; body: string }[] = []
+    const fetcher: typeof fetch = (input, init) => {
+      requests.push({
+        url: requestUrl(input),
+        body: requestBodyFromInit(init),
+      })
+      return Promise.resolve(
+        responseWithSuggestions([
+          { from: 0, to: '# Intro'.length, replacement: '# Updated' },
+        ]),
+      )
+    }
+    const { doc, markdown, outlineHost, view, history } = createFixture(fetcher)
+    act(() => {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: '!' } })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+      for (let index = 0; index < 8; index += 1) await Promise.resolve()
+    })
+    const acceptButton = [...outlineHost.querySelectorAll('button')].find(
+      (button) => button.textContent.includes('採用'),
+    )
+    if (!acceptButton) throw new Error('The heading rename is missing')
+    await act(async () => {
+      await userEvent.click(acceptButton)
+    })
+    const beforeUndo = view.state.doc.toString()
+    let undo = 'pending'
+    act(() => {
+      undo = history.undo(view).match(
+        (value) => (value ? 'undone' : 'empty'),
+        () => 'failed',
+      )
+    })
+
+    expect(
+      readAcceptanceOutput({
+        requestsWithoutBodyChange: 0,
+        requestsBeforeIdle: 0,
+        requests,
+        beforeUndo,
+        undo,
+        view,
+        doc,
+      }),
+    ).toEqual({
+      requestsWithoutBodyChange: 0,
+      requestsBeforeIdle: 0,
+      requests: [
+        {
+          url: '/api/proposals/outline',
+          body: JSON.stringify({
+            premise: {
+              audience: 'New readers',
+              purpose: 'Explain the subject',
+              thesis: 'The outline guides the article',
+            },
+            body_length: markdown.length + 1,
+            blocks: [
+              {
+                id: 'article-block-1',
+                kind: 'heading',
+                markdown: '# Intro',
+                from: 0,
+                to: 7,
+              },
+              {
+                id: 'article-block-2',
+                kind: 'paragraph',
+                markdown: 'Paragraph.\n!',
+                from: 9,
+                to: 21,
+              },
+            ],
+          }),
+        },
+      ],
+      beforeUndo: '# Updated\n\nParagraph.\n!',
+      undo: 'undone',
+      afterUndo: '# Intro\n\nParagraph.\n!',
+      yBody: '# Intro\n\nParagraph.\n!',
     })
   })
 

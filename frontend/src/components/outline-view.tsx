@@ -83,6 +83,39 @@ function sourceFrom(source: { data: Record<string, unknown> }) {
     : undefined
 }
 
+function proposalHandlers(
+  onProposalAccept?: (id: string) => void,
+  onProposalReject?: (id: string) => void,
+) {
+  return {
+    ...(onProposalAccept === undefined ? {} : { onProposalAccept }),
+    ...(onProposalReject === undefined ? {} : { onProposalReject }),
+  }
+}
+
+function proposalDiffActions(
+  proposal: OutlineSuggestion,
+  onProposalAccept?: (id: string) => void,
+  onProposalReject?: (id: string) => void,
+) {
+  return {
+    ...(onProposalAccept === undefined
+      ? {}
+      : {
+          onAccept: () => {
+            onProposalAccept(proposal.id)
+          },
+        }),
+    ...(onProposalReject === undefined
+      ? {}
+      : {
+          onReject: () => {
+            onProposalReject(proposal.id)
+          },
+        }),
+  }
+}
+
 function OutlineRow({
   heading,
   depth,
@@ -224,20 +257,11 @@ function OutlineRow({
               inline
               original={heading.text || 'Untitled heading'}
               replacement={headingText(proposal.replacement)}
-              {...(onProposalAccept === undefined
-                ? {}
-                : {
-                    onAccept: () => {
-                      onProposalAccept(proposal.id)
-                    },
-                  })}
-              {...(onProposalReject === undefined
-                ? {}
-                : {
-                    onReject: () => {
-                      onProposalReject(proposal.id)
-                    },
-                  })}
+              {...proposalDiffActions(
+                proposal,
+                onProposalAccept,
+                onProposalReject,
+              )}
             />
           ) : (
             heading.text || 'Untitled heading'
@@ -355,6 +379,7 @@ export function OutlineView({
   const additions = suggestions.filter(
     (proposal) => proposal.from === proposal.to,
   )
+  const handlers = proposalHandlers(onProposalAccept, onProposalReject)
   const entries = [
     ...flattened.map(({ heading, depth }) => {
       const proposal = headingProposals.get(heading.from)
@@ -401,12 +426,7 @@ export function OutlineView({
                 heading={entry.heading}
                 key={`heading-${String(entry.from)}`}
                 onMove={onMove}
-                {...(onProposalAccept === undefined
-                  ? {}
-                  : { onProposalAccept })}
-                {...(onProposalReject === undefined
-                  ? {}
-                  : { onProposalReject })}
+                {...handlers}
                 onSelect={() => {
                   onSelect(entry.heading.from)
                 }}
@@ -419,12 +439,7 @@ export function OutlineView({
               <OutlineProposalRow
                 depth={entry.depth}
                 key={entry.proposal.id}
-                {...(onProposalAccept === undefined
-                  ? {}
-                  : { onAccept: onProposalAccept })}
-                {...(onProposalReject === undefined
-                  ? {}
-                  : { onReject: onProposalReject })}
+                {...handlers}
                 proposal={entry.proposal}
               />
             ),
@@ -450,13 +465,13 @@ function headingText(markdown: string): string {
 function OutlineProposalRow({
   depth,
   proposal,
-  onAccept,
-  onReject,
+  onProposalAccept,
+  onProposalReject,
 }: {
   depth: number
   proposal: OutlineSuggestion
-  onAccept?: (id: string) => void
-  onReject?: (id: string) => void
+  onProposalAccept?: (id: string) => void
+  onProposalReject?: (id: string) => void
 }) {
   return (
     <ListItem
@@ -473,20 +488,7 @@ function OutlineProposalRow({
           inline
           original=""
           replacement={headingText(proposal.replacement)}
-          {...(onAccept === undefined
-            ? {}
-            : {
-                onAccept: () => {
-                  onAccept(proposal.id)
-                },
-              })}
-          {...(onReject === undefined
-            ? {}
-            : {
-                onReject: () => {
-                  onReject(proposal.id)
-                },
-              })}
+          {...proposalDiffActions(proposal, onProposalAccept, onProposalReject)}
         />
       </span>
     </ListItem>

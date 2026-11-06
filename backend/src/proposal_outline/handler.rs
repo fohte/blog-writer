@@ -90,7 +90,7 @@ pub(crate) struct OutlineProposalError {
     pub message: String,
 }
 
-fn is_heading_line(value: &str) -> Option<usize> {
+fn heading_level(value: &str) -> Option<usize> {
     let heading = value.strip_suffix('\n').unwrap_or(value);
     if heading.is_empty() || heading.contains('\r') || heading.contains('\n') {
         return None;
@@ -105,6 +105,73 @@ fn is_heading_line(value: &str) -> Option<usize> {
         .filter(|level| heading.chars().nth(*level).is_some_and(char::is_whitespace))
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum RejectionReason {
+    UnknownAlias,
+    MissingBlock,
+    OutOfBounds,
+    UnsupportedTarget,
+    InvalidOperation,
+    OverlappingRange,
+}
+
+fn to_suggestion(
+    operation: OperationKind,
+    replacement: String,
+    block: &OutlineProposalArticleBlockRequest,
+    body_length: usize,
+) -> Result<OutlineSuggestion, RejectionReason> {
+    if block.from > block.to || block.to > body_length {
+        return Err(RejectionReason::OutOfBounds);
+    }
+
+    match operation {
+        OperationKind::Add if block.kind == "paragraph" => {
+            if !replacement.ends_with('\n') || heading_level(&replacement).is_none() {
+                return Err(RejectionReason::InvalidOperation);
+            }
+            Ok(OutlineSuggestion {
+                from: block.from,
+                to: block.from,
+                replacement,
+            })
+        }
+        OperationKind::Rename if block.kind == "heading" => {
+            let Some(previous_level) = heading_level(&block.markdown) else {
+                return Err(RejectionReason::InvalidOperation);
+            };
+            if replacement.ends_with('\n') || heading_level(&replacement) != Some(previous_level) {
+                return Err(RejectionReason::InvalidOperation);
+            }
+            Ok(OutlineSuggestion {
+                from: block.from,
+                to: block.to,
+                replacement,
+            })
+        }
+        OperationKind::Delete if block.kind == "heading" => {
+            if heading_level(&block.markdown).is_none() || !replacement.is_empty() {
+                return Err(RejectionReason::InvalidOperation);
+            }
+            Ok(OutlineSuggestion {
+                from: block.from,
+                to: block.to,
+                replacement: String::new(),
+            })
+        }
+        _ => Err(RejectionReason::UnsupportedTarget),
+    }
+}
+
+fn conflicts(left: &OutlineSuggestion, right: &OutlineSuggestion) -> bool {
+    match (left.from == left.to, right.from == right.to) {
+        (true, true) => left.from == right.from,
+        (true, false) => left.from >= right.from && left.from < right.to,
+        (false, true) => right.from >= left.from && right.from < left.to,
+        (false, false) => left.from < right.to && right.from < left.to,
+    }
+}
+
 fn to_suggestions(
     generated: GeneratedOutline,
     aliases: &BTreeMap<String, String>,
@@ -116,76 +183,53 @@ fn to_suggestions(
         .map(|block| (block.id.as_str(), block))
         .collect();
     let mut suggestions = Vec::new();
+    let mut rejection_counts = BTreeMap::new();
 
     for operation in generated.operations {
         let Some(block_id) = aliases.get(&operation.block_alias) else {
+            *rejection_counts
+                .entry(RejectionReason::UnknownAlias)
+                .or_insert(0) += 1;
             continue;
         };
         let Some(block) = blocks_by_id.get(block_id.as_str()) else {
+            *rejection_counts
+                .entry(RejectionReason::MissingBlock)
+                .or_insert(0) += 1;
             continue;
         };
-        if block.from > block.to || block.to > body_length {
-            continue;
-        }
-
-        let suggestion = match operation.operation {
-            OperationKind::Add if block.kind == "paragraph" => {
-                if !operation.replacement.ends_with('\n')
-                    || is_heading_line(&operation.replacement).is_none()
-                {
-                    continue;
-                }
-                OutlineSuggestion {
-                    from: block.from,
-                    to: block.from,
-                    replacement: operation.replacement,
-                }
+        let suggestion = match to_suggestion(
+            operation.operation,
+            operation.replacement,
+            block,
+            body_length,
+        ) {
+            Ok(suggestion) => suggestion,
+            Err(reason) => {
+                *rejection_counts.entry(reason).or_insert(0) += 1;
+                continue;
             }
-            OperationKind::Rename if block.kind == "heading" => {
-                if operation.replacement.ends_with('\n') {
-                    continue;
-                }
-                let Some(previous_level) = is_heading_line(&block.markdown) else {
-                    continue;
-                };
-                let Some(replacement_level) = is_heading_line(&operation.replacement) else {
-                    continue;
-                };
-                if replacement_level != previous_level {
-                    continue;
-                }
-                OutlineSuggestion {
-                    from: block.from,
-                    to: block.to,
-                    replacement: operation.replacement,
-                }
-            }
-            OperationKind::Delete if block.kind == "heading" => {
-                if is_heading_line(&block.markdown).is_none() || !operation.replacement.is_empty() {
-                    continue;
-                }
-                OutlineSuggestion {
-                    from: block.from,
-                    to: block.to,
-                    replacement: String::new(),
-                }
-            }
-            _ => continue,
         };
 
-        if suggestions.iter().any(|existing: &OutlineSuggestion| {
-            (suggestion.from == suggestion.to
-                && existing.from <= suggestion.from
-                && suggestion.from < existing.to)
-                || (existing.from == existing.to
-                    && suggestion.from <= existing.from
-                    && existing.from < suggestion.to)
-                || (suggestion.from < existing.to && existing.from < suggestion.to)
-                || (suggestion.from == existing.from && suggestion.to == existing.to)
-        }) {
+        if suggestions
+            .iter()
+            .any(|existing| conflicts(&suggestion, existing))
+        {
+            *rejection_counts
+                .entry(RejectionReason::OverlappingRange)
+                .or_insert(0) += 1;
             continue;
         }
         suggestions.push(suggestion);
+    }
+
+    let discarded_count: usize = rejection_counts.values().sum();
+    if discarded_count > 0 {
+        tracing::warn!(
+            discarded_count,
+            rejection_reasons = ?rejection_counts,
+            "Discarded invalid outline proposal operations"
+        );
     }
 
     OutlineProposalResponse { suggestions }
@@ -309,6 +353,16 @@ mod tests {
         vec![GeneratedOperation { operation: OperationKind::Add, block_alias: "b2".to_owned(), replacement: "## Added\n".to_owned() }],
         11,
         OutlineProposalResponse { suggestions: Vec::new() }
+    )]
+    #[case::drops_overlapping_ranges(
+        vec![
+            GeneratedOperation { operation: OperationKind::Add, block_alias: "b2".to_owned(), replacement: "## First\n".to_owned() },
+            GeneratedOperation { operation: OperationKind::Add, block_alias: "b2".to_owned(), replacement: "## Second\n".to_owned() },
+        ],
+        54,
+        OutlineProposalResponse {
+            suggestions: vec![OutlineSuggestion { from: 12, to: 12, replacement: "## First\n".to_owned() }],
+        }
     )]
     fn translates_only_valid_operations(
         #[case] operations: Vec<GeneratedOperation>,

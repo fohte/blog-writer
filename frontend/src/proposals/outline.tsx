@@ -11,16 +11,17 @@ import type { Result } from 'neverthrow'
 import { useEffect, useState } from 'react'
 import type * as Y from 'yjs'
 
-import { getPremise } from '#article/index'
-import { topLevelBlocks } from '#article/move-block-structure'
-import type { components } from '#lib/api/schema.gen.d.ts'
 import { type LlmSettings, loadLlmSettings } from '#lib/llm-settings'
 import { postLlmResult } from '#lib/llm-sse'
 import { ArticleOutline } from '#outline/article-outline'
 import type { MoveHistory } from '#outline/move-history'
-
-type OutlineProposalRequest = components['schemas']['OutlineProposalRequest']
-type OutlineProposalResponse = components['schemas']['OutlineProposalResponse']
+import {
+  isOutlineProposalResponse,
+  type OutlineProposalRequest,
+  type OutlineProposalResponse,
+  requestBody,
+  requestUrl,
+} from '#proposals/outline-request'
 
 export type OutlineSuggestion = {
   id: string
@@ -113,53 +114,6 @@ function mapRange(
   }
 }
 
-function requestUrl(settings: LlmSettings): string {
-  if (settings.route === 'server') return '/api/proposals/outline'
-  return `${settings.bridgeUrl.replace(/\/+$/, '')}/api/proposals/outline`
-}
-
-function requestBody(doc: Y.Doc, markdown: string): OutlineProposalRequest {
-  const premise = getPremise(doc)
-  return {
-    premise: {
-      audience: premise.audience ?? '',
-      purpose: premise.purpose ?? '',
-      thesis: premise.claim ?? '',
-    },
-    body_length: markdown.length,
-    blocks: topLevelBlocks(markdown).map((block, index) => ({
-      id: `article-block-${String(index + 1)}`,
-      kind: /^ATXHeading[1-6]$/u.test(block.name)
-        ? 'heading'
-        : block.name === 'Paragraph'
-          ? 'paragraph'
-          : block.name.toLowerCase(),
-      markdown: markdown.slice(block.from, block.contentTo),
-      from: block.from,
-      to: block.contentTo,
-    })),
-  }
-}
-
-function isOutlineProposalResponse(
-  value: unknown,
-): value is OutlineProposalResponse {
-  if (typeof value !== 'object' || value === null) return false
-  const suggestions = (value as { suggestions?: unknown }).suggestions
-  return (
-    Array.isArray(suggestions) &&
-    suggestions.every(
-      (suggestion: unknown) =>
-        typeof suggestion === 'object' &&
-        suggestion !== null &&
-        Number.isInteger((suggestion as { from?: unknown }).from) &&
-        Number.isInteger((suggestion as { to?: unknown }).to) &&
-        typeof (suggestion as { replacement?: unknown }).replacement ===
-          'string',
-    )
-  )
-}
-
 class OutlineProposalController {
   readonly extension: Extension
   private view: EditorView | null = null
@@ -224,11 +178,13 @@ class OutlineProposalController {
   private activeRequest: AbortController | undefined
   private requestId = 0
   private suggestionId = 0
+  private options: OutlineProposalOptions
 
   constructor(
     private readonly context: OutlineProposalEditorContext,
-    private readonly options: OutlineProposalOptions = {},
+    options: OutlineProposalOptions = {},
   ) {
+    this.options = options
     this.extension = [
       this.stateField,
       ViewPlugin.define((view) => {
@@ -243,7 +199,10 @@ class OutlineProposalController {
         }
       }),
     ]
-    stateByDocument.set(context.doc, this)
+  }
+
+  configure(options: OutlineProposalOptions): void {
+    this.options = { ...this.options, ...options }
   }
 
   getState(): OutlineProposalState {
@@ -456,7 +415,21 @@ export function createOutlineProposalExtension(
   context: OutlineProposalEditorContext,
   options: OutlineProposalOptions = {},
 ): Extension {
-  return new OutlineProposalController(context, options).extension
+  return controllerFor(context, options).extension
+}
+
+function controllerFor(
+  context: OutlineProposalEditorContext,
+  options: OutlineProposalOptions = {},
+): OutlineProposalController {
+  const existing = stateByDocument.get(context.doc)
+  if (existing) {
+    existing.configure(options)
+    return existing
+  }
+  const controller = new OutlineProposalController(context, options)
+  stateByDocument.set(context.doc, controller)
+  return controller
 }
 
 export function OutlineProposalAccessory({
@@ -464,19 +437,19 @@ export function OutlineProposalAccessory({
   history,
   view,
 }: OutlineProposalAccessoryContext) {
-  const controller = stateByDocument.get(doc)
-  const [state, setState] = useState<OutlineProposalState>(
-    () => controller?.getState() ?? { suggestions: [], generating: false },
+  const controller = controllerFor({ doc, history })
+  const [state, setState] = useState<OutlineProposalState>(() =>
+    controller.getState(),
   )
 
   useEffect(() => {
-    if (!controller) return
+    if (view === null) return
     const update = () => {
       setState(controller.getState())
     }
     update()
     return controller.subscribe(update)
-  }, [controller])
+  }, [controller, view])
 
   if (!view) return null
   return (
@@ -485,8 +458,12 @@ export function OutlineProposalAccessory({
       history={history}
       view={view}
       proposalState={state}
-      onProposalAccept={(id) => controller?.accept(id)}
-      onProposalReject={(id) => controller?.reject(id)}
+      onProposalAccept={(id) => {
+        controller.accept(id)
+      }}
+      onProposalReject={(id) => {
+        controller.reject(id)
+      }}
     />
   )
 }
