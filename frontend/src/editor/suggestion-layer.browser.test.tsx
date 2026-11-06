@@ -628,7 +628,7 @@ describe('suggestion layer', () => {
 
   it('resolves an in-flight insertion after accepting a suggestion before it', () => {
     const content = 'abcdefghijklmnop'
-    const { body, host, layer } = createEditor(content)
+    const { body, host, layer, view } = createEditor(content)
     const suggestionResult = layer.setSuggestions([
       {
         id: 'suggestion-main',
@@ -657,6 +657,11 @@ describe('suggestion layer', () => {
       throw new Error('Could not resolve in-flight suggestion')
     const resolutionResult = resolveResult
 
+    act(() => {
+      view.dispatch({ selection: { anchor: 8 } })
+      dispatchKey(view, 'Tab')
+    })
+
     const readOutput = () => ({
       widgetCountAfterAccept,
       resolveError: resolutionResult.match(
@@ -665,75 +670,79 @@ describe('suggestion layer', () => {
       ),
       body: body.toJSON(),
       suggestionCount: host.querySelectorAll('.cm-suggestion-widget').length,
-      pendingCount: host.querySelectorAll('.suggestion-diff-generating').length,
     })
     expect(readOutput()).toEqual({
       widgetCountAfterAccept: 1,
       resolveError: null,
-      body: 'abcdeXYZnop',
-      suggestionCount: 1,
-      pendingCount: 0,
+      body: 'abcdeXYZ!nop',
+      suggestionCount: 0,
     })
   })
 
-  it('keeps a zero-length suggestion at an accepted suggestion end', () => {
-    const content = 'abcdefghijklmnop'
-    const { body, host, layer } = createEditor(content)
-    const result = layer.setSuggestions([
-      {
-        id: 'suggestion-main',
-        from: 5,
-        to: 13,
-        replacement: 'XYZ',
-      },
-      {
-        id: 'suggestion-end',
-        from: 13,
-        to: 13,
-        replacement: '!',
-      },
-    ])
+  it.each([
+    {
+      name: 'keeps an insertion proposal at an accepted suggestion end',
+      suggestions: [
+        {
+          id: 'suggestion-main',
+          from: 5,
+          to: 13,
+          replacement: 'XYZ',
+        },
+        {
+          id: 'suggestion-end',
+          from: 13,
+          to: 13,
+          replacement: '!',
+        },
+      ],
+      action: 'accept' as const,
+      actionId: 'suggestion-main',
+      acceptedSuggestionId: 'suggestion-end',
+      expectedBody: 'abcdeXYZ!nop',
+    },
+    {
+      name: 'keeps an insertion proposal when a replacement starts at its position',
+      suggestions: [
+        {
+          id: 'suggestion-start',
+          from: 5,
+          to: 5,
+          replacement: '!',
+        },
+      ],
+      action: 'replace' as const,
+      from: 5,
+      to: 9,
+      insert: 'WXYZ',
+      acceptedSuggestionId: 'suggestion-start',
+      expectedBody: 'abcde!WXYZjklmnop',
+    },
+  ])('$name', (testCase) => {
+    const { body, layer, view } = createEditor('abcdefghijklmnop')
+    const result = layer.setSuggestions(testCase.suggestions)
     if (result.isErr()) throw new Error('Could not set suggestions')
 
+    if (testCase.action === 'accept') {
+      act(() => {
+        layer.accept(testCase.actionId)
+      })
+    } else {
+      act(() => {
+        view.dispatch({
+          changes: {
+            from: testCase.from,
+            to: testCase.to,
+            insert: testCase.insert,
+          },
+        })
+      })
+    }
     act(() => {
-      layer.accept('suggestion-main')
+      layer.accept(testCase.acceptedSuggestionId)
     })
 
-    const readOutput = () => ({
-      body: body.toJSON(),
-      suggestionCount: host.querySelectorAll('.cm-suggestion-widget').length,
-    })
-    expect(readOutput()).toEqual({
-      body: 'abcdeXYZnop',
-      suggestionCount: 1,
-    })
-  })
-
-  it('keeps a zero-length suggestion when a replacement starts at its position', () => {
-    const content = 'abcdefghijklmnop'
-    const { body, host, layer, view } = createEditor(content)
-    const result = layer.setSuggestions([
-      {
-        id: 'suggestion-start',
-        from: 5,
-        to: 5,
-        replacement: '!',
-      },
-    ])
-    if (result.isErr()) throw new Error('Could not set suggestion')
-
-    act(() => {
-      view.dispatch({ changes: { from: 5, to: 9, insert: 'WXYZ' } })
-    })
-
-    const readOutput = () => ({
-      body: body.toJSON(),
-      suggestionCount: host.querySelectorAll('.cm-suggestion-widget').length,
-    })
-    expect(readOutput()).toEqual({
-      body: 'abcdeWXYZjklmnop',
-      suggestionCount: 1,
-    })
+    expect(body.toJSON()).toEqual(testCase.expectedBody)
   })
 
   it('ignores an in-flight result after an edit inside its range', () => {
