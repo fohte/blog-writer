@@ -13,4 +13,13 @@ export {
   type SuggestionPosition,
   type TextSuggestion,
 } from '#editor/suggestion-layer'
+export {
+  createOutlineProposalExtension,
+  OutlineProposalAccessory,
+  type OutlineProposalAccessoryContext,
+  type OutlineProposalEditorContext,
+  type OutlineProposalOptions,
+  type OutlineProposalState,
+  type OutlineSuggestion,
+} from '#proposals/outline'
 export { transitionProposalEditorExtensions } from '#proposals/transition'

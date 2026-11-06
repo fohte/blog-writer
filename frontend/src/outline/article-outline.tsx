@@ -8,12 +8,16 @@ import { deriveHeadingTree, getBody, readBody } from '#article/index'
 import type { Heading } from '#article/types'
 import { OutlineView } from '#components/outline-view'
 import type { MoveHistory } from '#outline/move-history'
+import type { OutlineProposalState } from '#proposals/outline'
 
 export interface ArticleOutlineProps {
   doc: Y.Doc
   history: MoveHistory
   view: EditorView
   activeFrom?: number
+  proposalState?: OutlineProposalState
+  onProposalAccept?: (id: string) => void
+  onProposalReject?: (id: string) => void
 }
 
 function activeHeadingFrom(
@@ -37,6 +41,9 @@ export function ArticleOutline({
   history,
   view,
   activeFrom,
+  proposalState,
+  onProposalAccept,
+  onProposalReject,
 }: ArticleOutlineProps) {
   const body = getBody(doc)
   const [markdown, setMarkdown] = useState(() => readBody(doc))
@@ -117,7 +124,10 @@ export function ArticleOutline({
         ? {}
         : { activeFrom: selectedHeadingFrom })}
       {...(error === undefined ? {} : { error })}
+      {...(proposalState === undefined ? {} : { proposalState })}
       onMove={handleMove}
+      {...(onProposalAccept === undefined ? {} : { onProposalAccept })}
+      {...(onProposalReject === undefined ? {} : { onProposalReject })}
       onSelect={(from) => {
         setError(undefined)
         view.focus()

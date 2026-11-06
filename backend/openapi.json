@@ -943,6 +943,43 @@
         }
       }
     },
+    "/api/proposals/outline": {
+      "post": {
+        "operationId": "propose_outline",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutlineProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Outline changes proposed as text replacements",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutlineProposalEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/proposals/transition": {
       "post": {
         "operationId": "propose_transition",
@@ -1528,6 +1565,135 @@
           },
           "title": {
             "type": ["string", "null"]
+          }
+        }
+      },
+      "OutlineProposalArticleBlockRequest": {
+        "type": "object",
+        "required": ["id", "kind", "markdown", "from", "to"],
+        "properties": {
+          "deletion_from": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "OutlineProposalError": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "OutlineProposalEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/OutlineProposalResponse"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/OutlineProposalError"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "OutlineProposalPremiseRequest": {
+        "type": "object",
+        "required": ["audience", "purpose", "thesis"],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
+          }
+        }
+      },
+      "OutlineProposalRequest": {
+        "type": "object",
+        "required": ["premise", "body_length", "blocks"],
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutlineProposalArticleBlockRequest"
+            }
+          },
+          "body_length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "premise": {
+            "$ref": "#/components/schemas/OutlineProposalPremiseRequest"
+          }
+        }
+      },
+      "OutlineProposalResponse": {
+        "type": "object",
+        "required": ["suggestions"],
+        "properties": {
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutlineSuggestion"
+            }
+          }
+        }
+      },
+      "OutlineSuggestion": {
+        "type": "object",
+        "required": ["from", "to", "replacement"],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "replacement": {
+            "type": "string"
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },

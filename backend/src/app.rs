@@ -302,6 +302,7 @@ mod tests {
 
     #[rstest]
     #[case::write_from_key_points("/api/write-from-key-points")]
+    #[case::propose_outline("/api/proposals/outline")]
     #[case::research_key_points("/api/research/key-points")]
     #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[case::research_job("/api/research/jobs")]
@@ -338,6 +339,7 @@ mod tests {
 
     #[rstest]
     #[case::write_from_key_points("/api/write-from-key-points")]
+    #[case::propose_outline("/api/proposals/outline")]
     #[case::research_key_points("/api/research/key-points")]
     #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[case::research_job("/api/research/jobs")]
