@@ -20,7 +20,6 @@ export type TextHistoryEntry = {
 type MoveHistoryEntry = {
   kind: 'move'
   move: MoveBlockResult
-  inverse: ChangeSet
   failure?: string
 }
 

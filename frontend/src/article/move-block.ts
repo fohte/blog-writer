@@ -13,7 +13,7 @@ import { prepareMemoAnchorMove } from '#article/memos'
 import {
   changeSetForMove,
   mapMoveHistoryRemote,
-  type MoveHistory,
+  type MoveRecord,
   type MoveSeparator,
 } from '#article/move-block-history'
 import type { MoveInsertion, MoveSource } from '#article/move-block-plan'
@@ -73,7 +73,7 @@ type ApplyMoveOptions = {
   removeRanges?: { from: number; to: number; text: string }[]
 }
 const updatersByDoc = new WeakMap<Y.Doc, Set<BlockMoveUpdater>>()
-const historyByMove = new WeakMap<MoveBlockResult, MoveHistory>()
+const historyByMove = new WeakMap<MoveBlockResult, MoveRecord>()
 
 function rememberMove(input: {
   move: MoveBlockResult
@@ -307,7 +307,6 @@ export function mapMoveBlockHistoryRemote(
 ): Result<
   {
     move: MoveBlockResult
-    inverse: ChangeSet
     changeBeforeMove: ChangeSet
     markdownBeforeMove: string
   },
@@ -338,7 +337,6 @@ export function mapMoveBlockHistoryRemote(
   historyByMove.set(updatedMove, mappedHistory)
   return ok({
     move: updatedMove,
-    inverse: mappedMove.inverse,
     changeBeforeMove: mappedMove.changeBeforeMove,
     markdownBeforeMove: mappedMove.markdownBeforeMove,
   })

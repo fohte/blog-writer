@@ -16,7 +16,6 @@ import { InvalidBlockMoveError } from '#article/errors'
 import {
   blockMoved,
   captureDeletedMemoAdoptions,
-  getReverseMoveChange,
   mapMoveBlockPosition,
   moveBlock,
   type MoveBlockResult,
@@ -25,6 +24,7 @@ import {
   reverseBlockMove,
 } from '#article/index'
 import type { MemoTextRange } from '#article/memos'
+import { mapMemoAdoptions } from '#outline/move-history-mapping'
 import { mapRemoteHistoryEntries } from '#outline/move-history-remote'
 import type {
   HistoryStateValue,
@@ -130,8 +130,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         const to = direction === 'undo' ? redo : undo
         const entry = from.pop()
         if (entry?.kind !== 'move') return current
-        const inverse = getReverseMoveChange(move)
-        if (inverse) to.push({ kind: 'move', move, inverse })
+        to.push({ kind: 'move', move })
         groupBarrier = true
       }
 
@@ -149,8 +148,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         move?.is(recordMove) === true &&
         transaction.annotation(blockMoved) !== undefined
       ) {
-        const inverse = getReverseMoveChange(move.value)
-        if (inverse) undo.push({ kind: 'move', move: move.value, inverse })
+        undo.push({ kind: 'move', move: move.value })
         redo = []
         groupBarrier = true
       }
@@ -174,14 +172,17 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         transaction.changes.iterChangedRanges((from, to) => {
           if (to > from) deletedRanges.push({ from, to })
         })
-        const memoAdoptions = captureDeletedMemoAdoptions(
-          doc,
-          transaction.startState.doc.toString(),
-          deletedRanges,
-        ).map((snapshot) => ({
-          ...snapshot,
-          markerIndex: transaction.changes.mapPos(snapshot.markerIndex, -1),
-        }))
+        const memoAdoptions =
+          deletedRanges.length === 0
+            ? []
+            : mapMemoAdoptions(
+                captureDeletedMemoAdoptions(
+                  doc,
+                  () => transaction.startState.doc.toString(),
+                  deletedRanges,
+                ),
+                transaction.changes,
+              )
         const isolation = transaction.annotation(isolateHistory)
         const inverse = transaction.changes.invert(transaction.startState.doc)
         const next: TextHistoryEntry = {
@@ -205,7 +206,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
           undo[undo.length - 1] = {
             ...previous,
             inverse: next.inverse.compose(previous.inverse),
-            memoAdoptions: mappedSnapshots,
+            memoAdoptions: [...mappedSnapshots, ...next.memoAdoptions],
             userEvent: next.userEvent,
             time: next.time,
             isolateAfter: next.isolateAfter,
@@ -241,21 +242,17 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
   const updateAfterView = (update: ViewUpdate) => {
     for (const transaction of update.transactions) {
       const step = transaction.annotation(textHistoryStep)
-      if (step) {
-        const entry = step.entry
-        if (step.direction === 'undo') {
-          const snapshots = entry.memoAdoptions.map((snapshot) => ({
-            ...snapshot,
-            markerIndex: transaction.changes.mapPos(snapshot.markerIndex, -1),
-          }))
-          const insertedRanges: MemoTextRange[] = []
-          transaction.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
-            if (toB > fromB) insertedRanges.push({ from: fromB, to: toB })
-          })
-          restoreMemoAdoptions(doc, snapshots, insertedRanges)
-        }
-        continue
-      }
+      if (!step || step.direction !== 'undo') continue
+
+      const snapshots = mapMemoAdoptions(
+        step.entry.memoAdoptions,
+        transaction.changes,
+      )
+      const insertedRanges: MemoTextRange[] = []
+      transaction.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+        if (toB > fromB) insertedRanges.push({ from: fromB, to: toB })
+      })
+      restoreMemoAdoptions(doc, snapshots, insertedRanges)
     }
   }
 
@@ -292,17 +289,15 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
     const entry = stack.at(-1)
     if (!entry) return ok(false)
 
+    const dropAndFail = (message: string) => {
+      view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
+      return err(new InvalidBlockMoveError(message))
+    }
+
     if (entry.kind === 'text') {
-      if (entry.failure !== undefined) {
-        view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
-        return err(new InvalidBlockMoveError(entry.failure))
-      }
-      if (entry.inverse.length !== view.state.doc.length) {
-        view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
-        return err(
-          new InvalidBlockMoveError('The text history no longer matches'),
-        )
-      }
+      if (entry.failure !== undefined) return dropAndFail(entry.failure)
+      if (entry.inverse.length !== view.state.doc.length)
+        return dropAndFail('The text history no longer matches')
       view.dispatch({
         changes: entry.inverse,
         annotations: [
@@ -314,25 +309,15 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
       return ok(true)
     }
 
-    if (entry.failure !== undefined) {
-      view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
-      return err(new InvalidBlockMoveError(entry.failure))
-    }
+    if (entry.failure !== undefined) return dropAndFail(entry.failure)
 
-    if (resolveMoveBlockStart(doc, entry.move) === undefined) {
-      view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
-      return err(
-        new InvalidBlockMoveError('The moved block is no longer available'),
-      )
-    }
+    if (resolveMoveBlockStart(doc, entry.move) === undefined)
+      return dropAndFail('The moved block is no longer available')
 
     applyingLocalMove = true
     const result = reverseBlockMove(doc, entry.move, direction)
     applyingLocalMove = false
-    if (result.isErr()) {
-      view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
-      return err(result.error)
-    }
+    if (result.isErr()) return dropAndFail(result.error.message)
 
     const reversed = result.value
     const selection = view.state.selection.main

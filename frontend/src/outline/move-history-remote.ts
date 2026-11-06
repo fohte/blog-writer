@@ -1,6 +1,10 @@
 import { type ChangeSet, Text } from '@codemirror/state'
 
-import { mapMoveBlockHistoryRemote } from '#article/move-block'
+import {
+  getReverseMoveChange,
+  mapMoveBlockHistoryRemote,
+} from '#article/move-block'
+import { mapMemoAdoptions } from '#outline/move-history-mapping'
 import type { HistoryEntry } from '#outline/move-history-types'
 
 export function mapRemoteHistoryEntries(
@@ -37,10 +41,7 @@ export function mapRemoteHistoryEntries(
       currentMarkdown = inverse
         .apply(Text.of(currentMarkdown.split('\n')))
         .toString()
-      const memoAdoptions = entry.memoAdoptions.map((snapshot) => ({
-        ...snapshot,
-        markerIndex: currentChange.mapPos(snapshot.markerIndex, -1),
-      }))
+      const memoAdoptions = mapMemoAdoptions(entry.memoAdoptions, currentChange)
 
       if (inverse.empty) {
         mappedEntries.splice(index, 1)
@@ -52,7 +53,11 @@ export function mapRemoteHistoryEntries(
     }
 
     if (entry.failure !== undefined) return mappedEntries.slice(index)
-    if (entry.inverse.length !== currentChange.length) {
+    const inverseBeforeMapping = getReverseMoveChange(entry.move)
+    if (
+      !inverseBeforeMapping ||
+      inverseBeforeMapping.length !== currentChange.length
+    ) {
       mappedEntries[index] = {
         ...entry,
         failure: 'The move history no longer matches the document',
@@ -60,7 +65,6 @@ export function mapRemoteHistoryEntries(
       return mappedEntries.slice(index)
     }
 
-    const inverseBeforeMapping = entry.inverse
     const mapped = mapMoveBlockHistoryRemote(
       currentMarkdown,
       entry.move,
@@ -71,7 +75,8 @@ export function mapRemoteHistoryEntries(
       mappedEntries[index] = { ...entry, failure: mapped.error.message }
       return mappedEntries.slice(index)
     }
-    if (mapped.value.inverse.empty) {
+    const inverse = getReverseMoveChange(mapped.value.move)
+    if (!inverse || inverse.empty) {
       mappedEntries[index] = {
         ...entry,
         failure: 'The move history no longer matches the document',
@@ -81,7 +86,6 @@ export function mapRemoteHistoryEntries(
     mappedEntries[index] = {
       kind: 'move',
       move: mapped.value.move,
-      inverse: mapped.value.inverse,
     }
     currentChange = mapped.value.changeBeforeMove
     currentMarkdown = mapped.value.markdownBeforeMove

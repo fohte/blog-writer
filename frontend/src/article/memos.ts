@@ -139,20 +139,26 @@ export function listMemos(doc: Y.Doc): Memo[] {
     )
 }
 
+function flattenHeadings(headings: Heading[]): Heading[] {
+  return headings.flatMap((heading) => [
+    heading,
+    ...flattenHeadings(heading.children),
+  ])
+}
+
 export function captureDeletedMemoAdoptions(
   doc: Y.Doc,
-  previousMarkdown: string,
+  getPreviousMarkdown: () => string,
   deletedRanges: readonly MemoTextRange[],
 ): MemoAdoptionSnapshot[] {
+  if (deletedRanges.length === 0) return []
+
   const body = getBody(doc)
-  const deletedHeadings = deriveHeadingTree(previousMarkdown)
-    .flatMap((heading) => [heading, ...flattenHeadings(heading.children)])
-    .filter((heading) =>
-      deletedRanges.some(
-        (range) => range.from <= heading.from && heading.from < range.to,
-      ),
-    )
-  const snapshots: MemoAdoptionSnapshot[] = []
+  const adoptedMemos: {
+    id: string
+    adoptedTo: unknown
+    markerIndex: number
+  }[] = []
 
   for (const [id, memo] of getMemosMap(doc).entries()) {
     if (memo.get('dismissed') === true) continue
@@ -174,29 +180,37 @@ export function captureDeletedMemoAdoptions(
     if (!absolutePosition || absolutePosition.type !== body || !itemId) continue
     if (Y.getItem(doc.store, itemId).deleted) continue
 
-    const markerIndex = absolutePosition.index - 1
-    const heading = deletedHeadings.find(
-      (candidate) => candidate.from === markerIndex,
-    )
-    if (!heading) continue
-
-    snapshots.push({
+    adoptedMemos.push({
       id,
       adoptedTo,
-      markerIndex,
-      headingLevel: heading.level,
-      headingText: heading.text,
+      markerIndex: absolutePosition.index - 1,
     })
   }
 
-  return snapshots
-}
+  if (adoptedMemos.length === 0) return []
 
-function flattenHeadings(headings: Heading[]): Heading[] {
-  return headings.flatMap((heading) => [
-    heading,
-    ...flattenHeadings(heading.children),
-  ])
+  const deletedHeadings = flattenHeadings(
+    deriveHeadingTree(getPreviousMarkdown()),
+  ).filter((heading) =>
+    deletedRanges.some(
+      (range) => range.from <= heading.from && heading.from < range.to,
+    ),
+  )
+
+  return adoptedMemos.flatMap((memo) => {
+    const heading = deletedHeadings.find(
+      (candidate) => candidate.from === memo.markerIndex,
+    )
+    return heading
+      ? [
+          {
+            ...memo,
+            headingLevel: heading.level,
+            headingText: heading.text,
+          },
+        ]
+      : []
+  })
 }
 
 export function restoreMemoAdoptions(

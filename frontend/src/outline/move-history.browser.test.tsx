@@ -81,6 +81,23 @@ function step(editor: HistoryEditor, direction: 'undo' | 'redo'): boolean {
   )
 }
 
+function readMemoStates(doc: Y.Doc) {
+  return listMemos(doc).map(({ id, state }) => ({
+    id,
+    state:
+      state.kind === 'adopted'
+        ? {
+            kind: state.kind,
+            heading: {
+              from: state.heading.from,
+              level: state.heading.level,
+              text: state.heading.text,
+            },
+          }
+        : { kind: state.kind },
+  }))
+}
+
 describe('MoveHistory', () => {
   it('undoes and redoes a body replacement as one history entry', () => {
     const initial = 'previous imported text\n'
@@ -163,6 +180,35 @@ describe('MoveHistory', () => {
       extraUndo: { ok: true, value: false },
       redo: { ok: true, value: true },
       afterRedo: 'にほんfirst\n\ntwo\n',
+    })
+  })
+
+  it('groups adjacent ordinary typing into one history entry', () => {
+    const initial = 'first\n\nsecond\n'
+    const editor = createHistoryEditor(initial)
+    edit(editor, 0, 0, 'a', 'input.type', 10_000)
+    edit(editor, 1, 1, 'b', 'input.type', 10_100)
+    const afterTyping = editor.body.toJSON()
+    const undo = step(editor, 'undo')
+    const afterUndo = editor.body.toJSON()
+    const extraUndo = step(editor, 'undo')
+    const redo = step(editor, 'redo')
+
+    const readOutput = () => ({
+      afterTyping,
+      undo,
+      afterUndo,
+      extraUndo,
+      redo,
+      afterRedo: editor.body.toJSON(),
+    })
+    expect(readOutput()).toEqual({
+      afterTyping: 'abfirst\n\nsecond\n',
+      undo: true,
+      afterUndo: initial,
+      extraUndo: false,
+      redo: true,
+      afterRedo: 'abfirst\n\nsecond\n',
     })
   })
 
@@ -323,35 +369,9 @@ describe('MoveHistory', () => {
     addMemo(editor.doc, { id: 'memo-cedar', text: 'Keep this title', order: 0 })
     setMemoAdoptedTo(editor.doc, 'memo-cedar', 0)
     edit(editor, 0, 1, '', 'delete.selection')
-    const afterDelete = listMemos(editor.doc).map(({ id, state }) => ({
-      id,
-      state:
-        state.kind === 'adopted'
-          ? {
-              kind: state.kind,
-              heading: {
-                from: state.heading.from,
-                level: state.heading.level,
-                text: state.heading.text,
-              },
-            }
-          : { kind: state.kind },
-    }))
+    const afterDelete = readMemoStates(editor.doc)
     const undo = editor.history.undo(editor.view)
-    const afterUndo = listMemos(editor.doc).map(({ id, state }) => ({
-      id,
-      state:
-        state.kind === 'adopted'
-          ? {
-              kind: state.kind,
-              heading: {
-                from: state.heading.from,
-                level: state.heading.level,
-                text: state.heading.text,
-              },
-            }
-          : { kind: state.kind },
-    }))
+    const afterUndo = readMemoStates(editor.doc)
 
     const readOutput = () => ({
       afterDelete,
@@ -372,6 +392,43 @@ describe('MoveHistory', () => {
       ],
     }
     expect(readOutput()).toEqual(expected)
+  })
+
+  it('keeps a memo adopted when grouped edits delete and restore its heading', () => {
+    const initial = '#  Cedar\n\nA note remains.\n'
+    const editor = createHistoryEditor(initial)
+    addMemo(editor.doc, { id: 'memo-cedar', text: 'Keep this title', order: 0 })
+    setMemoAdoptedTo(editor.doc, 'memo-cedar', 0)
+    edit(editor, 1, 2, '', 'delete.selection', 10_000)
+    const afterFirstDelete = editor.body.toJSON()
+    edit(editor, 0, 1, '', 'delete.selection', 10_100)
+    const afterSecondDelete = editor.body.toJSON()
+    const undo = editor.history.undo(editor.view)
+    const afterUndo = editor.body.toJSON()
+    const afterUndoMemoStates = readMemoStates(editor.doc)
+
+    const readOutput = () => ({
+      afterFirstDelete,
+      afterSecondDelete,
+      undo: undo.isOk() && undo.value,
+      afterUndo,
+      afterUndoMemoStates,
+    })
+    expect(readOutput()).toEqual({
+      afterFirstDelete: '# Cedar\n\nA note remains.\n',
+      afterSecondDelete: ' Cedar\n\nA note remains.\n',
+      undo: true,
+      afterUndo: initial,
+      afterUndoMemoStates: [
+        {
+          id: 'memo-cedar',
+          state: {
+            kind: 'adopted',
+            heading: { from: 0, level: 1, text: 'Cedar' },
+          },
+        },
+      ],
+    })
   })
 
   it('undoes and redoes a replacement around a later move', () => {

@@ -22,7 +22,7 @@ export type MoveSeparator = {
   text: string
 }
 
-export type MoveHistory = {
+export type MoveRecord = {
   insertedSelection: string
   mapPosition: (position: number, assoc: number) => number | undefined
   inverse: ChangeSet
@@ -30,12 +30,11 @@ export type MoveHistory = {
   separators: MoveSeparator[]
 }
 
-export type MappedMoveHistory = {
+type MappedMoveRecord = {
   from: number
   to: number
   seam: number
-  history: MoveHistory
-  inverse: ChangeSet
+  history: MoveRecord
   changeBeforeMove: ChangeSet
   markdownBeforeMove: string
 }
@@ -97,7 +96,7 @@ function moveContentReplacements(
 
 function findInsertedContent(
   inverse: ChangeSet,
-  history: MoveHistory,
+  history: MoveRecord,
   mappedContent: string,
   oldContentLength: number,
 ): { from: number; length: number } | undefined {
@@ -153,7 +152,7 @@ function changesTouchSeparator(
   from: number,
   to: number,
   move: MoveBlockResult,
-  history: MoveHistory,
+  history: MoveRecord,
 ): boolean {
   return history.separators.some(({ side, text }) => {
     const separatorFrom = side === 'prefix' ? move.from - text.length : move.to
@@ -182,7 +181,7 @@ function applyChangesToString(
 function reverseMovePlan(
   markdown: string,
   move: MoveBlockResult,
-  history: MoveHistory,
+  history: MoveRecord,
 ): Result<
   {
     plannedMove: ReturnType<typeof planBlockMove>
@@ -263,10 +262,10 @@ function reverseMovePlan(
 export function mapMoveHistoryRemote(
   markdown: string,
   move: MoveBlockResult,
-  history: MoveHistory,
+  history: MoveRecord,
   change: ChangeSet,
   inverse: ChangeSet,
-): Result<MappedMoveHistory, InvalidBlockMoveError> {
+): Result<MappedMoveRecord, InvalidBlockMoveError> {
   if (
     inverse.length !== change.length ||
     markdown.length !== change.newLength
@@ -376,7 +375,7 @@ export function mapMoveHistoryRemote(
   }
   const changeBeforeMove = ChangeSet.of(mappedChanges, inverse.newLength)
 
-  const mappedHistory: MoveHistory = {
+  const mappedHistory: MoveRecord = {
     ...history,
     separators: [...history.separators],
     ...(history.source === undefined ? {} : { source: { ...history.source } }),
@@ -444,7 +443,6 @@ export function mapMoveHistoryRemote(
   return ok({
     ...mappedMove,
     history: mappedHistory,
-    inverse: updatedInverse,
     changeBeforeMove,
     markdownBeforeMove,
   })

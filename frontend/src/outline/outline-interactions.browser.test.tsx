@@ -647,7 +647,9 @@ describe('outline interactions', () => {
       root.render(createElement(ArticleOutline, { doc, history, view }))
     })
     const menuCursor = markdownText.indexOf('Third section.') + 3
-    view.dispatch({ selection: EditorSelection.cursor(menuCursor) })
+    act(() => {
+      view.dispatch({ selection: EditorSelection.cursor(menuCursor) })
+    })
     const betaHandle = outlineHost.querySelector<HTMLButtonElement>(
       'button[aria-label="Move Beta"]',
     )
@@ -769,7 +771,9 @@ describe('outline interactions', () => {
       root.render(createElement(ArticleOutline, { doc, history, view }))
     })
     const cursor = markdownText.indexOf('First section.') + 4
-    view.dispatch({ selection: EditorSelection.cursor(cursor) })
+    act(() => {
+      view.dispatch({ selection: EditorSelection.cursor(cursor) })
+    })
     const betaHandle = outlineHost.querySelector<HTMLButtonElement>(
       'button[aria-label="Move Beta"]',
     )
