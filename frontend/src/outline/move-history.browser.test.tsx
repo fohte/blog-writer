@@ -1,5 +1,5 @@
-import { EditorState, Transaction } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { EditorSelection, EditorState, Transaction } from '@codemirror/state'
+import { EditorView, type ViewUpdate } from '@codemirror/view'
 import { afterEach, describe, expect, it } from 'vitest'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
@@ -10,6 +10,7 @@ import {
   listMemos,
   setBody,
   setMemoAdoptedTo,
+  topLevelBlocks,
 } from '#article/index'
 import { replaceBody } from '#editor/replace-body'
 import { createMoveHistory } from '#outline/index'
@@ -29,7 +30,10 @@ afterEach(() => {
   cleanups.length = 0
 })
 
-function createHistoryEditor(markdown: string): HistoryEditor {
+function createHistoryEditor(
+  markdown: string,
+  onUpdate?: (update: ViewUpdate) => void,
+): HistoryEditor {
   const doc = new Y.Doc()
   setBody(doc, markdown)
   const body = getBody(doc)
@@ -43,6 +47,7 @@ function createHistoryEditor(markdown: string): HistoryEditor {
       extensions: [
         history.extension,
         yCollab(body, null, { undoManager: false }),
+        ...(onUpdate ? [EditorView.updateListener.of(onUpdate)] : []),
       ],
     }),
   })
@@ -79,6 +84,12 @@ function step(editor: HistoryEditor, direction: 'undo' | 'redo'): boolean {
     (changed) => changed,
     () => false,
   )
+}
+
+function readSelection(selection: EditorSelection) {
+  return {
+    ranges: selection.ranges.map(({ anchor, head }) => ({ anchor, head })),
+  }
 }
 
 function readMemoStates(doc: Y.Doc) {
@@ -209,6 +220,208 @@ describe('MoveHistory', () => {
       extraUndo: false,
       redo: true,
       afterRedo: 'abfirst\n\nsecond\n',
+    })
+  })
+
+  it('restores the text selection on undo and redo', () => {
+    const initial = 'Opening target closing\n'
+    const editor = createHistoryEditor(initial)
+    const beforeFrom = initial.indexOf('target')
+    editor.view.dispatch({
+      selection: EditorSelection.range(
+        beforeFrom,
+        beforeFrom + 'target'.length,
+      ),
+    })
+    const selectionBefore = readSelection(editor.view.state.selection)
+    edit(editor, 0, 0, 'Added ', 'input.type', 10_000)
+    const selectionAfter = readSelection(editor.view.state.selection)
+    const afterEdit = editor.body.toJSON()
+    const undo = step(editor, 'undo')
+    const afterUndo = editor.body.toJSON()
+    const selectionAfterUndo = readSelection(editor.view.state.selection)
+    const redo = step(editor, 'redo')
+    const selectionAfterRedo = readSelection(editor.view.state.selection)
+
+    const readOutput = () => ({
+      afterEdit,
+      undo,
+      afterUndo,
+      selectionBefore,
+      selectionAfterUndo,
+      redo,
+      selectionAfter,
+      selectionAfterRedo,
+      afterRedo: editor.body.toJSON(),
+    })
+    expect(readOutput()).toEqual({
+      afterEdit: 'Added Opening target closing\n',
+      undo: true,
+      afterUndo: initial,
+      selectionBefore: { ranges: [{ anchor: 8, head: 14 }] },
+      selectionAfterUndo: { ranges: [{ anchor: 8, head: 14 }] },
+      redo: true,
+      selectionAfter: { ranges: [{ anchor: 14, head: 20 }] },
+      selectionAfterRedo: { ranges: [{ anchor: 14, head: 20 }] },
+      afterRedo: 'Added Opening target closing\n',
+    })
+  })
+
+  it('scrolls restored text selections into view on undo and redo', async () => {
+    const initial = `${Array.from(
+      { length: 80 },
+      (_, index) => `Paragraph ${String(index)}.`,
+    ).join('\n')}\n`
+    const editor = createHistoryEditor(initial)
+    editor.view.scrollDOM.style.height = '80px'
+    editor.view.scrollDOM.style.overflow = 'auto'
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve()
+      })
+    })
+    const beforePosition = initial.indexOf('Paragraph 70') + 5
+    editor.view.dispatch({ selection: EditorSelection.cursor(beforePosition) })
+    const beforeSelection = readSelection(editor.view.state.selection)
+    edit(editor, beforePosition, beforePosition, 'Added ', 'input.type', 10_000)
+    const afterSelection = readSelection(editor.view.state.selection)
+
+    editor.view.dispatch({ selection: EditorSelection.cursor(0) })
+    editor.view.scrollDOM.scrollTop = 0
+    const undo = step(editor, 'undo')
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve()
+      })
+    })
+    const selectionAfterUndo = readSelection(editor.view.state.selection)
+    const scrolledAfterUndo = editor.view.scrollDOM.scrollTop > 0
+    const afterUndo = editor.body.toJSON()
+
+    editor.view.dispatch({ selection: EditorSelection.cursor(0) })
+    editor.view.scrollDOM.scrollTop = 0
+    const redo = step(editor, 'redo')
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve()
+      })
+    })
+    const selectionAfterRedo = readSelection(editor.view.state.selection)
+    const scrolledAfterRedo = editor.view.scrollDOM.scrollTop > 0
+    const afterRedo = editor.body.toJSON()
+
+    const readOutput = () => ({
+      undo,
+      beforeSelection,
+      selectionAfterUndo,
+      scrolledAfterUndo,
+      afterUndo,
+      redo,
+      afterSelection,
+      selectionAfterRedo,
+      scrolledAfterRedo,
+      afterRedo,
+    })
+    expect(readOutput()).toEqual({
+      undo: true,
+      beforeSelection: {
+        ranges: [{ anchor: beforePosition, head: beforePosition }],
+      },
+      selectionAfterUndo: {
+        ranges: [{ anchor: beforePosition, head: beforePosition }],
+      },
+      scrolledAfterUndo: true,
+      afterUndo: initial,
+      redo: true,
+      afterSelection: {
+        ranges: [{ anchor: beforePosition, head: beforePosition }],
+      },
+      selectionAfterRedo: {
+        ranges: [{ anchor: beforePosition, head: beforePosition }],
+      },
+      scrolledAfterRedo: true,
+      afterRedo: `${initial.slice(0, beforePosition)}Added ${initial.slice(beforePosition)}`,
+    })
+  })
+
+  it('keeps at most one hundred history entries', () => {
+    const initial = 'Opening paragraph.\n'
+    const editor = createHistoryEditor(initial)
+    for (let index = 0; index < 105; index += 1) {
+      edit(editor, 0, 0, 'x', 'input.type', (index + 1) * 1_000)
+    }
+    let undoCount = 0
+    for (let index = 0; index < 105; index += 1) {
+      if (!step(editor, 'undo')) break
+      undoCount += 1
+    }
+    const afterUndo = editor.body.toJSON()
+    const extraUndo = step(editor, 'undo')
+    let redoCount = 0
+    for (let index = 0; index < 105; index += 1) {
+      if (!step(editor, 'redo')) break
+      redoCount += 1
+    }
+
+    const readOutput = () => ({
+      undoCount,
+      afterUndo,
+      extraUndo,
+      redoCount,
+      afterRedo: editor.body.toJSON(),
+    })
+    expect(readOutput()).toEqual({
+      undoCount: 100,
+      afterUndo: `xxxxx${initial}`,
+      extraUndo: false,
+      redoCount: 100,
+      afterRedo: `${'x'.repeat(105)}${initial}`,
+    })
+  })
+
+  it('undoes text before an indented block without applying stale ranges', () => {
+    const initial = '# A\n\nkeep\n\nfirst\n\n    code line\n\nlast\n'
+    const editor = createHistoryEditor(initial)
+    const codeStart = initial.indexOf('code line')
+    edit(editor, codeStart, codeStart, 'NEW', 'input.type', 1_000)
+    const afterTyping = editor.body.toJSON()
+    const move = editor.history.move(
+      {
+        from: afterTyping.indexOf('first'),
+        destination: afterTyping.indexOf('last'),
+      },
+      editor.view,
+    )
+    const afterMove = editor.body.toJSON()
+    const undoMove = editor.history.undo(editor.view)
+    const afterUndoMove = editor.body.toJSON()
+    const undoTyping = editor.history.undo(editor.view)
+
+    const readOutput = () => ({
+      afterTyping,
+      moveSucceeded: move.isOk(),
+      afterMove,
+      undoMove: undoMove.match(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error: error.message }),
+      ),
+      afterUndoMove,
+      undoTyping: undoTyping.match(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error: error.message }),
+      ),
+      finalText: editor.body.toJSON(),
+      editor: editor.view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      afterTyping: '# A\n\nkeep\n\nfirst\n\n    NEWcode line\n\nlast\n',
+      moveSucceeded: true,
+      afterMove: '# A\n\nkeep\n\n    NEWcode line\n\nfirst\n\nlast\n',
+      undoMove: { ok: true, value: true },
+      afterUndoMove: '# A\n\nkeep\n\nfirst\n\n    NEWcode line\n\nlast\n',
+      undoTyping: { ok: true, value: true },
+      finalText: initial,
+      editor: initial,
     })
   })
 
@@ -431,6 +644,150 @@ describe('MoveHistory', () => {
     })
   })
 
+  it('restores memo adoption when a deleted range contains multiple headings', () => {
+    const initial = '# A\n\nFirst.\n\n# B\n\nSecond.\n\n# C\n\nThird.\n'
+    const editor = createHistoryEditor(initial)
+    addMemo(editor.doc, { id: 'memo-b', text: 'A note', order: 0 })
+    setMemoAdoptedTo(editor.doc, 'memo-b', initial.indexOf('# B'))
+    edit(editor, 0, initial.indexOf('# C'), '', 'delete.selection')
+    const afterDelete = editor.body.toJSON()
+    const memoAfterDelete = readMemoStates(editor.doc)
+    const undo = editor.history.undo(editor.view)
+    const afterUndo = editor.body.toJSON()
+    const memoAfterUndo = readMemoStates(editor.doc)
+
+    const readOutput = () => ({
+      afterDelete,
+      memoAfterDelete,
+      undo: undo.match(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error: error.message }),
+      ),
+      afterUndo,
+      memoAfterUndo,
+    })
+    expect(readOutput()).toEqual({
+      afterDelete: '# C\n\nThird.\n',
+      memoAfterDelete: [{ id: 'memo-b', state: { kind: 'unorganized' } }],
+      undo: { ok: true, value: true },
+      afterUndo: initial,
+      memoAfterUndo: [
+        {
+          id: 'memo-b',
+          state: {
+            kind: 'adopted',
+            heading: { from: initial.indexOf('# B'), level: 1, text: 'B' },
+          },
+        },
+      ],
+    })
+  })
+
+  it('keeps memo adoption across deleting and restoring a heading repeatedly', () => {
+    const initial = '# Cedar\n\nA note remains.\n'
+    const editor = createHistoryEditor(initial)
+    addMemo(editor.doc, { id: 'memo-cedar', text: 'A note', order: 0 })
+    setMemoAdoptedTo(editor.doc, 'memo-cedar', 0)
+    edit(editor, 0, 1, '', 'delete.selection')
+    const afterDelete = editor.body.toJSON()
+    const undoResults = [
+      editor.history.undo(editor.view).match(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error: error.message }),
+      ),
+      editor.history.redo(editor.view).match(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error: error.message }),
+      ),
+      editor.history.undo(editor.view).match(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error: error.message }),
+      ),
+    ]
+
+    const readOutput = () => ({
+      afterDelete,
+      undoResults,
+      finalText: editor.body.toJSON(),
+      memo: readMemoStates(editor.doc),
+    })
+    expect(readOutput()).toEqual({
+      afterDelete: ' Cedar\n\nA note remains.\n',
+      undoResults: [
+        { ok: true, value: true },
+        { ok: true, value: true },
+        { ok: true, value: true },
+      ],
+      finalText: initial,
+      memo: [
+        {
+          id: 'memo-cedar',
+          state: {
+            kind: 'adopted',
+            heading: { from: 0, level: 1, text: 'Cedar' },
+          },
+        },
+      ],
+    })
+  })
+
+  it('keeps a memo adopted to a typed heading through undo and redo', () => {
+    const initial = 'Opening paragraph.\n'
+    const editor = createHistoryEditor(initial)
+    addMemo(editor.doc, { id: 'memo-opening', text: 'A note', order: 0 })
+    edit(editor, 0, 0, '# Opening\n\n', 'input.type', 10_000)
+    const afterTyping = editor.body.toJSON()
+    setMemoAdoptedTo(editor.doc, 'memo-opening', 0)
+    const afterAdoption = readMemoStates(editor.doc)
+    const undo = editor.history.undo(editor.view)
+    const afterUndo = editor.body.toJSON()
+    const memoAfterUndo = readMemoStates(editor.doc)
+    const redo = editor.history.redo(editor.view)
+
+    const readOutput = () => ({
+      afterTyping,
+      afterAdoption,
+      undo: undo.match(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error: error.message }),
+      ),
+      afterUndo,
+      memoAfterUndo,
+      redo: redo.match(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error: error.message }),
+      ),
+      afterRedo: editor.body.toJSON(),
+      memoAfterRedo: readMemoStates(editor.doc),
+    })
+    expect(readOutput()).toEqual({
+      afterTyping: '# Opening\n\nOpening paragraph.\n',
+      afterAdoption: [
+        {
+          id: 'memo-opening',
+          state: {
+            kind: 'adopted',
+            heading: { from: 0, level: 1, text: 'Opening' },
+          },
+        },
+      ],
+      undo: { ok: true, value: true },
+      afterUndo: initial,
+      memoAfterUndo: [{ id: 'memo-opening', state: { kind: 'unorganized' } }],
+      redo: { ok: true, value: true },
+      afterRedo: '# Opening\n\nOpening paragraph.\n',
+      memoAfterRedo: [
+        {
+          id: 'memo-opening',
+          state: {
+            kind: 'adopted',
+            heading: { from: 0, level: 1, text: 'Opening' },
+          },
+        },
+      ],
+    })
+  })
+
   it('undoes and redoes a replacement around a later move', () => {
     const initial = '# Cedar\n\nbefore target after\n\n# Flint\n\nsecond\n'
     const editor = createHistoryEditor(initial)
@@ -586,6 +943,10 @@ describe('MoveHistory', () => {
       (value) => value,
       () => false,
     )
+    const redo = editor.history.redo(editor.view).match(
+      (value) => value,
+      () => false,
+    )
 
     const readOutput = () => ({
       afterEdit,
@@ -595,6 +956,7 @@ describe('MoveHistory', () => {
       failedUndo,
       afterFailedUndo,
       olderUndo,
+      redo,
       finalText: editor.body.toJSON(),
     })
     expect(readOutput()).toEqual({
@@ -605,7 +967,125 @@ describe('MoveHistory', () => {
       failedUndo: 'A remote change overlaps a moved block boundary',
       afterFailedUndo: 'second\n\nfirst typed\nremote ',
       olderUndo: false,
+      redo: false,
       finalText: 'second\n\nfirst typed\nremote ',
+    })
+  })
+
+  it('drops history when a remote edit changes a moved separator', () => {
+    const initial = 'First paragraph.\n\nSecond paragraph.\n'
+    const editor = createHistoryEditor(initial)
+    edit(editor, 0, 0, 'Local ', 'input.type', 10_000)
+    const afterEdit = editor.body.toJSON()
+    const move = editor.history.move(
+      { from: afterEdit.indexOf('Second paragraph'), destination: 0 },
+      editor.view,
+    )
+    const afterMove = editor.body.toJSON()
+    const separatorPosition = move.isOk() ? move.value.to : -1
+    editor.doc.transact(() => {
+      editor.body.delete(separatorPosition, 1)
+    }, 'remote')
+    const afterRemoteDelete = editor.body.toJSON()
+    const failedUndo = editor.history.undo(editor.view).match(
+      () => null,
+      (error) => error.message,
+    )
+
+    const readOutput = () => ({
+      moveSucceeded: move.isOk(),
+      afterEdit,
+      afterMove,
+      separatorPosition,
+      afterRemoteDelete,
+      failedUndo,
+      afterFailedUndo: editor.body.toJSON(),
+      olderUndo: step(editor, 'undo'),
+      redo: step(editor, 'redo'),
+    })
+    expect(readOutput()).toEqual({
+      moveSucceeded: true,
+      afterEdit: 'Local First paragraph.\n\nSecond paragraph.\n',
+      afterMove: 'Second paragraph.\n\nLocal First paragraph.\n',
+      separatorPosition: 18,
+      afterRemoteDelete: 'Second paragraph.\nLocal First paragraph.\n',
+      failedUndo: 'A remote change overlaps a moved separator',
+      afterFailedUndo: 'Second paragraph.\nLocal First paragraph.\n',
+      olderUndo: false,
+      redo: false,
+    })
+  })
+
+  it('clears both stacks after a move can no longer be reversed', () => {
+    const initial = 'first\n\nsecond\n'
+    const editor = createHistoryEditor(initial)
+    const firstEnd = initial.indexOf('first') + 'first'.length
+    edit(editor, firstEnd, firstEnd, ' typed', 'input.type', 10_000)
+    const afterEdit = editor.body.toJSON()
+    const move = editor.history.move(
+      { from: afterEdit.indexOf('second'), destination: 0 },
+      editor.view,
+    )
+    const afterMove = editor.body.toJSON()
+    const afterMoveEnd = editor.view.state.doc.length
+    edit(editor, afterMoveEnd, afterMoveEnd, ' later', 'input.type', 20_000)
+    const afterLaterEdit = editor.body.toJSON()
+    const undoLaterEdit = editor.history.undo(editor.view)
+    const afterUndoLaterEdit = editor.body.toJSON()
+    const secondFrom = afterMove.indexOf('second')
+    editor.view.dispatch({
+      changes: {
+        from: secondFrom,
+        to: secondFrom + 'second'.length,
+        insert: 'Sxyznd',
+      },
+      annotations: Transaction.addToHistory.of(false),
+    })
+    const beforeFailedUndo = editor.body.toJSON()
+    const failedUndo = editor.history.undo(editor.view).match(
+      () => null,
+      (error) => error.message,
+    )
+    const afterFailedUndo = editor.body.toJSON()
+    const olderUndo = editor.history.undo(editor.view).match(
+      (value) => value,
+      () => false,
+    )
+    const redo = editor.history.redo(editor.view).match(
+      (value) => value,
+      () => false,
+    )
+
+    const readOutput = () => ({
+      afterEdit,
+      moveSucceeded: move.isOk(),
+      afterMove,
+      afterLaterEdit,
+      undoLaterEdit: undoLaterEdit.isOk() && undoLaterEdit.value,
+      afterUndoLaterEdit,
+      beforeFailedUndo,
+      failedUndo,
+      afterFailedUndo,
+      olderUndo,
+      redo,
+      finalText: editor.body.toJSON(),
+      editor: editor.view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      afterEdit: 'first typed\n\nsecond\n',
+      moveSucceeded: true,
+      afterMove: 'second\n\nfirst typed\n',
+      afterLaterEdit: 'second\n\nfirst typed\n later',
+      undoLaterEdit: true,
+      afterUndoLaterEdit: 'second\n\nfirst typed\n',
+      beforeFailedUndo: 'Sxyznd\n\nfirst typed\n',
+      failedUndo:
+        'The block can no longer be restored to its previous position',
+      afterFailedUndo: 'Sxyznd\n\nfirst typed\n',
+      olderUndo: false,
+      redo: false,
+      finalText: 'Sxyznd\n\nfirst typed\n',
+      editor: 'Sxyznd\n\nfirst typed\n',
     })
   })
 
@@ -1220,6 +1700,568 @@ describe('MoveHistory', () => {
         undoRestored: true,
         redoRestored: true,
         redoCountMatchesUndo: true,
+      })),
+    )
+  })
+
+  it('keeps CodeMirror and Yjs aligned for seeded emoji moves and remote edits', () => {
+    const initial =
+      '# A\n\naaa aaa\n\n## A1\n\na1 a1\n\n# B\n\nbbb 😀 bbb\n\npara two\n\n# C\n\nccc\n'
+    const seeds = [3386, 3668]
+    const actual = seeds.map((seed) => {
+      let randomState = seed * 9_973
+      const random = (length: number) => {
+        randomState = (randomState * 1_664_525 + 1_013_904_223) >>> 0
+        return (randomState >>> 8) % length
+      }
+      const isSafeBoundary = (text: string, position: number) => {
+        const before = text.charCodeAt(position - 1)
+        const after = text.charCodeAt(position)
+        return !(
+          before >= 0xd800 &&
+          before <= 0xdbff &&
+          after >= 0xdc00 &&
+          after <= 0xdfff
+        )
+      }
+      const splitBoundaries: { event: string; from: number; to: number }[] = []
+      const editor = createHistoryEditor(initial, (update) => {
+        for (const transaction of update.transactions) {
+          const event = transaction.annotation(Transaction.userEvent)
+          if (event !== 'undo' && event !== 'redo') continue
+          const before = transaction.startState.doc.toString()
+          transaction.changes.iterChangedRanges((from, to) => {
+            if (!isSafeBoundary(before, from) || !isSafeBoundary(before, to)) {
+              splitBoundaries.push({ event, from, to })
+            }
+          })
+        }
+      })
+      const peer = new Y.Doc()
+      Y.applyUpdate(peer, Y.encodeStateAsUpdate(editor.doc))
+      const peerBody = peer.getText('body')
+      const sync = () => {
+        Y.applyUpdate(
+          editor.doc,
+          Y.encodeStateAsUpdate(peer, Y.encodeStateVector(editor.doc)),
+        )
+        Y.applyUpdate(
+          peer,
+          Y.encodeStateAsUpdate(editor.doc, Y.encodeStateVector(peer)),
+        )
+      }
+      const characters = ['x', 'yy', '\n', '\n\n', '# H\n', '😀', ' ', '## ']
+      let remoteCount = 0
+      const remote = () => {
+        const text = peerBody.toJSON()
+        const position = random(text.length + 1)
+        if (!isSafeBoundary(text, position)) return
+        const character = 'QWERTYUIOPLKJHGFDSAZXCVBNM'[remoteCount % 26] ?? 'R'
+        peer.transact(() => {
+          peerBody.insert(position, character)
+        })
+        remoteCount += 1
+        sync()
+      }
+      const local = (operation: number) => {
+        const text = editor.body.toJSON()
+        const kind = random(10)
+        if (kind < 3) {
+          const position = random(text.length + 1)
+          if (!isSafeBoundary(text, position)) return
+          const value = characters[random(characters.length)]
+          if (value === undefined) return
+          edit(
+            editor,
+            position,
+            position,
+            value,
+            value.length === 0 ? 'delete.selection' : 'input.type',
+            operation * 1_000 + 1_000,
+          )
+          return
+        }
+        if (kind < 5 && text.length > 0) {
+          const from = random(text.length)
+          const to = Math.min(from + 1 + random(12), text.length)
+          if (!isSafeBoundary(text, from) || !isSafeBoundary(text, to)) return
+          edit(
+            editor,
+            from,
+            to,
+            '',
+            'delete.selection',
+            operation * 1_000 + 1_000,
+          )
+          return
+        }
+        if (kind < 6 && text.length > 0) {
+          const from = random(text.length)
+          const to = Math.min(from + 1 + random(6), text.length)
+          if (!isSafeBoundary(text, from) || !isSafeBoundary(text, to)) return
+          const value = characters[random(characters.length)]
+          if (value === undefined || text.slice(from, to) === value) return
+          edit(
+            editor,
+            from,
+            to,
+            value,
+            'input.replace',
+            operation * 1_000 + 1_000,
+          )
+          return
+        }
+        const blocks = topLevelBlocks(text)
+        if (blocks.length < 2) return
+        const source = blocks[random(blocks.length)]
+        const target = blocks[random(blocks.length)]
+        if (!source || !target) return
+        const destination = random(4) === 0 ? text.length : target.from
+        editor.history.move({ from: source.from, destination }, editor.view)
+      }
+
+      for (let operation = 0; operation < 12; operation += 1) {
+        if (random(3) === 0) remote()
+        else local(operation)
+      }
+
+      const errors: { direction: string; error: string }[] = []
+      const mismatches: { direction: string; body: string; editor: string }[] =
+        []
+      for (const direction of ['undo', 'redo'] as const) {
+        for (let count = 0; count < 80; count += 1) {
+          const result = editor.history[direction](editor.view)
+          if (result.isErr()) {
+            errors.push({ direction, error: result.error.message })
+            continue
+          }
+          if (!result.value) break
+          if (editor.view.state.doc.toString() !== editor.body.toJSON()) {
+            mismatches.push({
+              direction,
+              body: editor.body.toJSON(),
+              editor: editor.view.state.doc.toString(),
+            })
+            break
+          }
+        }
+      }
+      sync()
+      const output = {
+        seed,
+        errors,
+        mismatches,
+        splitBoundaries,
+        converged: peerBody.toJSON() === editor.body.toJSON(),
+      }
+      editor.view.destroy()
+      editor.history.destroy()
+      editor.doc.destroy()
+      editor.host.remove()
+      peer.destroy()
+      return output
+    })
+
+    expect(actual).toEqual(
+      seeds.map((seed) => ({
+        seed,
+        errors: [],
+        mismatches: [],
+        splitBoundaries: [],
+        converged: true,
+      })),
+    )
+  })
+
+  it('maps remote edits at multiple history stages without losing their text', () => {
+    const initial =
+      '# A\n\nalpha 😀 alpha\n\n# B\n\nbeta paragraph\n\n    indented code\n\n# C\n\nthird paragraph\n'
+    const seeds = Array.from({ length: 12 }, (_, index) => index + 1)
+    const actual = seeds.map((seed) => {
+      let randomState = seed
+      const random = (length: number) => {
+        randomState = (randomState * 1_664_525 + 1_013_904_223) >>> 0
+        return (randomState >>> 8) % length
+      }
+      const editor = createHistoryEditor(initial)
+      const peer = new Y.Doc()
+      Y.applyUpdate(peer, Y.encodeStateAsUpdate(editor.doc))
+      const peerBody = peer.getText('body')
+      const sync = () => {
+        Y.applyUpdate(
+          editor.doc,
+          Y.encodeStateAsUpdate(peer, Y.encodeStateVector(editor.doc)),
+        )
+        Y.applyUpdate(
+          peer,
+          Y.encodeStateAsUpdate(editor.doc, Y.encodeStateVector(peer)),
+        )
+      }
+      const remoteTokens: string[] = []
+      const foundTokens = (text: string) =>
+        remoteTokens.filter((token) => text.indexOf(token) >= 0)
+      const remoteInsert = (position: number, label: string) => {
+        const token = `R${String(seed)}${label}`
+        remoteTokens.push(token)
+        peer.transact(() => {
+          peerBody.insert(position, token)
+        })
+        sync()
+        return token
+      }
+
+      const alphaEnd = initial.indexOf('alpha') + 'alpha'.length
+      edit(editor, alphaEnd, alphaEnd, ' local', 'input.type', 10_000)
+      const afterEdit = editor.body.toJSON()
+      const move = editor.history.move(
+        {
+          from: afterEdit.indexOf('# B'),
+          destination: afterEdit.indexOf('# A'),
+        },
+        editor.view,
+      )
+      const afterMove = editor.body.toJSON()
+      const firstRemotePosition =
+        initial.indexOf('alpha') + random('alpha'.length + 1)
+      const firstToken = remoteInsert(firstRemotePosition, 'a')
+      const afterFirstRemote = editor.body.toJSON()
+      const undoMove = editor.history.undo(editor.view)
+      const afterUndo = editor.body.toJSON()
+      sync()
+      const tokensAfterUndoSync = foundTokens(editor.body.toJSON())
+      const peerTokensAfterUndoSync = foundTokens(peerBody.toJSON())
+      const matchesAfterUndoSync = peerBody.toJSON() === editor.body.toJSON()
+      const secondRemotePosition =
+        afterUndo.indexOf('local') + random('local'.length + 1)
+      const secondToken = remoteInsert(secondRemotePosition, 'b')
+      const afterSecondRemote = editor.body.toJSON()
+      const redoMove = editor.history.redo(editor.view)
+      const afterRedo = editor.body.toJSON()
+      sync()
+      const seamPosition = afterRedo.indexOf('# C')
+      const seamToken = remoteInsert(seamPosition, 'c')
+      const beforeFailedUndo = editor.body.toJSON()
+      const failedUndo = editor.history.undo(editor.view).match(
+        () => null,
+        (error) => error.message,
+      )
+      const afterFailedUndo = editor.body.toJSON()
+      const nextUndo = editor.history.undo(editor.view).match(
+        (value) => value,
+        () => false,
+      )
+      const nextRedo = editor.history.redo(editor.view).match(
+        (value) => value,
+        () => false,
+      )
+      const output = {
+        seed,
+        afterEdit,
+        moveSucceeded: move.isOk(),
+        afterMove,
+        firstToken,
+        tokensAfterFirstRemote: foundTokens(afterFirstRemote),
+        undoMove: undoMove.match(
+          (value) => ({ ok: true, value }),
+          (error) => ({ ok: false, error: error.message }),
+        ),
+        tokensAfterUndo: foundTokens(afterUndo),
+        tokensAfterUndoSync,
+        peerTokensAfterUndoSync,
+        matchesAfterUndoSync,
+        secondToken,
+        tokensAfterSecondRemote: foundTokens(afterSecondRemote),
+        redoMove: redoMove.match(
+          (value) => ({ ok: true, value }),
+          (error) => ({ ok: false, error: error.message }),
+        ),
+        tokensAfterRedo: foundTokens(afterRedo),
+        seamToken,
+        foundTokensBeforeFailedUndo: foundTokens(beforeFailedUndo),
+        failedUndo,
+        foundTokensAfterFailedUndo: foundTokens(afterFailedUndo),
+        stateUnchangedByFailedUndo: afterFailedUndo === beforeFailedUndo,
+        nextUndo,
+        nextRedo,
+        peerMatches: peerBody.toJSON() === editor.body.toJSON(),
+        editorMatches:
+          editor.view.state.doc.toString() === editor.body.toJSON(),
+      }
+      peer.destroy()
+      editor.view.destroy()
+      editor.history.destroy()
+      editor.doc.destroy()
+      editor.host.remove()
+      return output
+    })
+
+    expect(actual).toEqual(
+      seeds.map((seed) => ({
+        seed,
+        afterEdit:
+          '# A\n\nalpha local 😀 alpha\n\n# B\n\nbeta paragraph\n\n    indented code\n\n# C\n\nthird paragraph\n',
+        moveSucceeded: true,
+        afterMove:
+          '# B\n\nbeta paragraph\n\n    indented code\n\n# A\n\nalpha local 😀 alpha\n\n# C\n\nthird paragraph\n',
+        firstToken: `R${String(seed)}a`,
+        tokensAfterFirstRemote: [`R${String(seed)}a`],
+        undoMove: { ok: true, value: true },
+        tokensAfterUndo: [`R${String(seed)}a`],
+        tokensAfterUndoSync: [`R${String(seed)}a`],
+        peerTokensAfterUndoSync: [`R${String(seed)}a`],
+        matchesAfterUndoSync: true,
+        secondToken: `R${String(seed)}b`,
+        tokensAfterSecondRemote: [`R${String(seed)}a`, `R${String(seed)}b`],
+        redoMove: { ok: true, value: true },
+        tokensAfterRedo: [`R${String(seed)}a`, `R${String(seed)}b`],
+        seamToken: `R${String(seed)}c`,
+        foundTokensBeforeFailedUndo: [
+          `R${String(seed)}a`,
+          `R${String(seed)}b`,
+          `R${String(seed)}c`,
+        ],
+        failedUndo: 'A remote change overlaps a moved block boundary',
+        foundTokensAfterFailedUndo: [
+          `R${String(seed)}a`,
+          `R${String(seed)}b`,
+          `R${String(seed)}c`,
+        ],
+        stateUnchangedByFailedUndo: true,
+        nextUndo: false,
+        nextRedo: false,
+        peerMatches: true,
+        editorMatches: true,
+      })),
+    )
+  })
+
+  it('restores seeded paragraph edits and moves exactly through undo and redo', () => {
+    const initial =
+      '# A\n\nalpha 😀 alpha\n\n## A1\n\nchild paragraph\n\n# B\n\nbeta paragraph\n\n    indented code\n\n# C\n\nlast paragraph\n'
+    const seeds = Array.from({ length: 24 }, (_, index) => index + 1)
+    const operationCount = 40
+    const actual = seeds.map((seed) => {
+      let randomState = seed
+      const random = (length: number) => {
+        randomState = (randomState * 1_664_525 + 1_013_904_223) >>> 0
+        return (randomState >>> 8) % length
+      }
+      const safeBoundary = (text: string, position: number) => {
+        const before = text.charCodeAt(position - 1)
+        const after = text.charCodeAt(position)
+        return !(
+          before >= 0xd800 &&
+          before <= 0xdbff &&
+          after >= 0xdc00 &&
+          after <= 0xdfff
+        )
+      }
+      const editor = createHistoryEditor(initial)
+      const insertions = ['x', 'yy', '\n', '\n\n', '# H\n\n', '😀', ' ']
+      const undoStates = [initial]
+      const redoStates: string[] = []
+      const errors: { operation: number; message: string }[] = []
+      const mismatches: {
+        operation: number
+        expected: string
+        body: string
+        editor: string
+      }[] = []
+      let expectedCurrent = initial
+      let expectedLatest = initial
+
+      const recordEdit = (before: string) => {
+        const after = editor.body.toJSON()
+        if (after === before) return
+        undoStates.push(expectedCurrent)
+        expectedCurrent = after
+        expectedLatest = after
+        redoStates.length = 0
+      }
+
+      for (let operation = 0; operation < operationCount; operation += 1) {
+        const before = editor.body.toJSON()
+        const choice = random(8)
+        if (choice < 3) {
+          const from = random(before.length + 1)
+          const value = insertions[random(insertions.length)]
+          if (value !== undefined && safeBoundary(before, from)) {
+            edit(
+              editor,
+              from,
+              from,
+              value,
+              'input.type',
+              (operation + 1) * 1_000,
+            )
+            recordEdit(before)
+          }
+        } else if (choice < 5 && before.length > 0) {
+          const from = random(before.length)
+          const to = Math.min(from + 1 + random(14), before.length)
+          if (safeBoundary(before, from) && safeBoundary(before, to)) {
+            edit(
+              editor,
+              from,
+              to,
+              '',
+              'delete.selection',
+              (operation + 1) * 1_000,
+            )
+            recordEdit(before)
+          }
+        } else if (choice === 5) {
+          const from = random(before.length + 1)
+          if (safeBoundary(before, from)) {
+            edit(
+              editor,
+              from,
+              from,
+              '\n\n',
+              'input.type',
+              (operation + 1) * 1_000,
+            )
+            recordEdit(before)
+          }
+        } else if (choice === 6) {
+          const blocks = topLevelBlocks(before)
+          const paragraphs = blocks.filter(
+            (block) =>
+              !before.slice(block.from, block.contentTo).startsWith('#'),
+          )
+          const source = paragraphs[random(paragraphs.length)]
+          const target = paragraphs[random(paragraphs.length)]
+          if (source && target && source.from !== target.from) {
+            const move = editor.history.move(
+              { from: source.from, destination: target.from },
+              editor.view,
+            )
+            const after = editor.body.toJSON()
+            if (move.isOk() && after !== before) {
+              undoStates.push(expectedCurrent)
+              expectedCurrent = after
+              expectedLatest = after
+              redoStates.length = 0
+            }
+          }
+        } else if (random(2) === 0) {
+          const result = editor.history.undo(editor.view)
+          if (undoStates.length > 1) {
+            const expected = undoStates.pop()
+            redoStates.push(expectedCurrent)
+            if (result.isErr())
+              errors.push({ operation, message: result.error.message })
+            else if (!result.value)
+              errors.push({ operation, message: 'undo returned false' })
+            else if (expected !== undefined) expectedCurrent = expected
+          } else if (result.isErr() || result.value) {
+            errors.push({
+              operation,
+              message: 'undo found an unexpected action',
+            })
+          }
+        } else {
+          const result = editor.history.redo(editor.view)
+          if (redoStates.length > 0) {
+            const expected = redoStates.pop()
+            undoStates.push(expectedCurrent)
+            if (result.isErr())
+              errors.push({ operation, message: result.error.message })
+            else if (!result.value)
+              errors.push({ operation, message: 'redo returned false' })
+            else if (expected !== undefined) expectedCurrent = expected
+          } else if (result.isErr() || result.value) {
+            errors.push({
+              operation,
+              message: 'redo found an unexpected action',
+            })
+          }
+        }
+
+        const body = editor.body.toJSON()
+        const editorText = editor.view.state.doc.toString()
+        if (body !== expectedCurrent || editorText !== expectedCurrent) {
+          mismatches.push({
+            operation,
+            expected: expectedCurrent,
+            body,
+            editor: editorText,
+          })
+        }
+      }
+
+      for (let count = 0; count < operationCount; count += 1) {
+        if (undoStates.length <= 1) break
+        const expected = undoStates.pop()
+        redoStates.push(expectedCurrent)
+        const result = editor.history.undo(editor.view)
+        if (result.isErr())
+          errors.push({
+            operation: operationCount,
+            message: result.error.message,
+          })
+        else if (!result.value)
+          errors.push({
+            operation: operationCount,
+            message: 'undo returned false',
+          })
+        else if (expected !== undefined) expectedCurrent = expected
+        if (editor.body.toJSON() !== expectedCurrent) {
+          mismatches.push({
+            operation: operationCount,
+            expected: expectedCurrent,
+            body: editor.body.toJSON(),
+            editor: editor.view.state.doc.toString(),
+          })
+        }
+      }
+      const afterUndo = editor.body.toJSON()
+      for (let count = 0; count < operationCount; count += 1) {
+        if (redoStates.length === 0) break
+        const expected = redoStates.pop()
+        undoStates.push(expectedCurrent)
+        const result = editor.history.redo(editor.view)
+        if (result.isErr())
+          errors.push({
+            operation: operationCount + 1,
+            message: result.error.message,
+          })
+        else if (!result.value)
+          errors.push({
+            operation: operationCount + 1,
+            message: 'redo returned false',
+          })
+        else if (expected !== undefined) expectedCurrent = expected
+        if (editor.body.toJSON() !== expectedCurrent) {
+          mismatches.push({
+            operation: operationCount + 1,
+            expected: expectedCurrent,
+            body: editor.body.toJSON(),
+            editor: editor.view.state.doc.toString(),
+          })
+        }
+      }
+      const output = {
+        seed,
+        errors,
+        mismatches,
+        undoRestoredStart: afterUndo === initial,
+        redoRestoredLatest: editor.body.toJSON() === expectedLatest,
+      }
+      editor.view.destroy()
+      editor.history.destroy()
+      editor.doc.destroy()
+      editor.host.remove()
+      return output
+    })
+
+    expect(actual).toEqual(
+      seeds.map((seed) => ({
+        seed,
+        errors: [],
+        mismatches: [],
+        undoRestoredStart: true,
+        redoRestoredLatest: true,
       })),
     )
   })

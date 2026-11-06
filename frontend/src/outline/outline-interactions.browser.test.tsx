@@ -1046,4 +1046,78 @@ describe('outline interactions', () => {
       userEvents: ['move', 'undo', 'redo', 'undo', 'redo'],
     })
   })
+
+  it('undoes, redoes, then undoes an Alt plus Up paragraph move', async () => {
+    const initial =
+      '# Alpha\n\nFirst paragraph.\n\n# Beta\n\nSecond paragraph.\n\nThird paragraph.\n'
+    const doc = new Y.Doc()
+    setBody(doc, initial)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const viewRef: { current: EditorView | null } = { current: null }
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      history.destroy()
+      doc.destroy()
+      host.remove()
+    })
+
+    act(() => {
+      root.render(
+        createElement(MarkdownEditor, {
+          extensions: [createOutlineEditorExtension(history)],
+          history,
+          onViewChange: (view: EditorView | null) => {
+            viewRef.current = view
+          },
+          text: body,
+        }),
+      )
+    })
+
+    const view = viewRef.current
+    if (view === null) throw new Error('The markdown editor did not mount')
+    view.dispatch({
+      selection: EditorSelection.cursor(initial.indexOf('Third paragraph') + 2),
+    })
+    view.focus()
+    await act(async () => {
+      await userEvent.keyboard('{Alt>}{ArrowUp}{/Alt}')
+    })
+    const afterMove = body.toJSON()
+    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+    })
+    const afterUndo = body.toJSON()
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
+    })
+    const afterRedo = body.toJSON()
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+    })
+
+    const readOutput = () => ({
+      afterMove,
+      afterUndo,
+      afterRedo,
+      afterSecondUndo: body.toJSON(),
+      editor: view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      afterMove:
+        '# Alpha\n\nFirst paragraph.\n\n# Beta\n\nThird paragraph.\n\nSecond paragraph.\n',
+      afterUndo: initial,
+      afterRedo:
+        '# Alpha\n\nFirst paragraph.\n\n# Beta\n\nThird paragraph.\n\nSecond paragraph.\n',
+      afterSecondUndo: initial,
+      editor: initial,
+    })
+  })
 })

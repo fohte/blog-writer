@@ -1,4 +1,4 @@
-import { type ChangeSet, Text } from '@codemirror/state'
+import type { ChangeSet } from '@codemirror/state'
 
 import {
   getReverseMoveChange,
@@ -10,11 +10,9 @@ import type { HistoryEntry } from '#outline/move-history-types'
 export function mapRemoteHistoryEntries(
   entries: HistoryEntry[],
   change: ChangeSet,
-  markdown: string,
 ): HistoryEntry[] {
   const mappedEntries = [...entries]
   let currentChange: ChangeSet = change
-  let currentMarkdown = markdown
 
   for (let index = mappedEntries.length - 1; index >= 0; index -= 1) {
     const entry = mappedEntries[index]
@@ -31,22 +29,25 @@ export function mapRemoteHistoryEntries(
       const inverseBeforeMapping = entry.inverse
       const inverse = inverseBeforeMapping.map(currentChange)
       const changeBeforeEntry = currentChange.map(inverseBeforeMapping, true)
-      if (inverse.length !== currentMarkdown.length) {
+      if (inverse.length !== currentChange.newLength) {
         mappedEntries[index] = {
           ...entry,
           failure: 'The text history no longer matches the document',
         }
         return mappedEntries.slice(index)
       }
-      currentMarkdown = inverse
-        .apply(Text.of(currentMarkdown.split('\n')))
-        .toString()
       const memoAdoptions = mapMemoAdoptions(entry.memoAdoptions, currentChange)
 
       if (inverse.empty) {
         mappedEntries.splice(index, 1)
       } else {
-        mappedEntries[index] = { ...entry, inverse, memoAdoptions }
+        mappedEntries[index] = {
+          ...entry,
+          inverse,
+          memoAdoptions,
+          selectionBefore: entry.selectionBefore.map(changeBeforeEntry),
+          selectionAfter: entry.selectionAfter.map(currentChange),
+        }
       }
       currentChange = changeBeforeEntry
       continue
@@ -66,7 +67,6 @@ export function mapRemoteHistoryEntries(
     }
 
     const mapped = mapMoveBlockHistoryRemote(
-      currentMarkdown,
       entry.move,
       currentChange,
       inverseBeforeMapping,
@@ -86,9 +86,9 @@ export function mapRemoteHistoryEntries(
     mappedEntries[index] = {
       kind: 'move',
       move: mapped.value.move,
+      remoteMapped: true,
     }
     currentChange = mapped.value.changeBeforeMove
-    currentMarkdown = mapped.value.markdownBeforeMove
   }
 
   return mappedEntries

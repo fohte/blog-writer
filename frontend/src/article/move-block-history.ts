@@ -1,21 +1,14 @@
-import { ChangeSet, Text } from '@codemirror/state'
+import { ChangeSet } from '@codemirror/state'
 import { err, ok, Result } from 'neverthrow'
 
 import { InvalidBlockMoveError } from '#article/errors'
 import type { MoveBlockResult } from '#article/move-block'
-import type { MoveSource } from '#article/move-block-plan'
+import type { MoveSource, TextReplacement } from '#article/move-block-plan'
 import {
   mapWithinRange,
   planBlockMove,
-  sectionReplacements,
   transformedText,
-  validateMove,
 } from '#article/move-block-plan'
-import {
-  collectHeadings,
-  findMoveBlockRange,
-  validatePlannedMoveStructure,
-} from '#article/move-block-structure'
 
 export type MoveSeparator = {
   side: 'prefix' | 'suffix'
@@ -24,6 +17,7 @@ export type MoveSeparator = {
 
 export type MoveRecord = {
   insertedSelection: string
+  contentReplacements: TextReplacement[]
   mapPosition: (position: number, assoc: number) => number | undefined
   inverse: ChangeSet
   source?: MoveSource
@@ -36,7 +30,6 @@ type MappedMoveRecord = {
   seam: number
   history: MoveRecord
   changeBeforeMove: ChangeSet
-  markdownBeforeMove: string
 }
 
 export function changeSetForMove(
@@ -64,34 +57,6 @@ export function changeSetForMove(
         ].toSorted((left, right) => left.from - right.from)
 
   return ChangeSet.of(changes, markdown.length)
-}
-
-function moveContentReplacements(
-  content: string,
-  move: MoveBlockResult,
-): { replacements: ReturnType<typeof sectionReplacements>; length: number } {
-  if (move.originalHeadingLevel === undefined) {
-    return { replacements: [], length: content.length }
-  }
-
-  const headings = collectHeadings(content)
-  const currentHeadingLevel = headings[0]?.level
-  if (currentHeadingLevel === undefined) {
-    return { replacements: [], length: content.length }
-  }
-  const range = {
-    from: 0,
-    to: content.length,
-    headingLevel: currentHeadingLevel,
-  }
-  const replacements = sectionReplacements(
-    content,
-    range,
-    move.originalHeadingLevel,
-    headings,
-  )
-  const transformed = transformedText(content, range, replacements)
-  return { replacements, length: transformed.length }
 }
 
 function findInsertedContent(
@@ -163,6 +128,21 @@ function changesTouchSeparator(
   })
 }
 
+function changesTouchContentReplacement(
+  from: number,
+  to: number,
+  move: MoveBlockResult,
+  history: MoveRecord,
+): boolean {
+  return history.contentReplacements.some((replacement) => {
+    const replacementFrom = move.from + replacement.from
+    const replacementTo = move.from + replacement.to
+    return from === to
+      ? from >= replacementFrom && from <= replacementTo
+      : from < replacementTo && to > replacementFrom
+  })
+}
+
 function applyChangesToString(
   value: string,
   changes: readonly { from: number; to: number; insert: string }[],
@@ -178,98 +158,13 @@ function applyChangesToString(
     )
 }
 
-function reverseMovePlan(
-  markdown: string,
-  move: MoveBlockResult,
-  history: MoveRecord,
-): Result<
-  {
-    plannedMove: ReturnType<typeof planBlockMove>
-    range: { from: number; to: number; headingLevel?: number }
-  },
-  InvalidBlockMoveError
-> {
-  const headings = collectHeadings(markdown)
-  const validation = validateMove(
-    markdown,
-    {
-      from: move.from,
-      destination: move.seam,
-      ...(move.originalHeadingLevel === undefined
-        ? {}
-        : { headingLevel: move.originalHeadingLevel }),
-    },
-    headings,
-  )
-  if (validation.isErr()) return err(validation.error)
-  const { range, targetLevel } = validation.value
-  if (markdown.slice(range.from, range.to) !== history.insertedSelection) {
-    return err(new InvalidBlockMoveError('The moved block has changed'))
-  }
-
-  const replacements = sectionReplacements(
-    markdown,
-    range,
-    targetLevel,
-    headings,
-  )
-  const movedText = transformedText(markdown, range, replacements)
-  const removeRanges = history.separators.map(({ side, text }) => {
-    const to = side === 'prefix' ? range.from : range.to
-    return { from: to - text.length, to, text }
-  })
-  if (
-    removeRanges.some(
-      ({ from, to, text }) =>
-        from < 0 ||
-        to < from ||
-        to > markdown.length ||
-        markdown.slice(from, to) !== text,
-    )
-  ) {
-    return err(new InvalidBlockMoveError('A moved separator has changed'))
-  }
-
-  const removeFrom = Math.min(
-    range.from,
-    ...removeRanges.map((separator) => separator.from),
-  )
-  const removeTo = Math.max(
-    range.to,
-    ...removeRanges.map((separator) => separator.to),
-  )
-  const plannedMove = planBlockMove({
-    markdown,
-    removeFrom,
-    removeTo,
-    destination: move.seam,
-    movedText,
-    ...(history.source === undefined ? {} : { replacement: history.source }),
-  })
-  const structureError = validatePlannedMoveStructure({
-    originalMarkdown: markdown,
-    originalRange: range,
-    plannedMarkdown: plannedMove.plannedMarkdown,
-    movedRange: {
-      from: plannedMove.insertedFrom,
-      to: plannedMove.insertedTo,
-    },
-    isSection: range.headingLevel !== undefined,
-  })
-  return structureError ? err(structureError) : ok({ plannedMove, range })
-}
-
 export function mapMoveHistoryRemote(
-  markdown: string,
   move: MoveBlockResult,
   history: MoveRecord,
   change: ChangeSet,
   inverse: ChangeSet,
 ): Result<MappedMoveRecord, InvalidBlockMoveError> {
-  if (
-    inverse.length !== change.length ||
-    markdown.length !== change.newLength
-  ) {
+  if (inverse.length !== change.length) {
     return err(
       new InvalidBlockMoveError(
         'The move history no longer matches the document',
@@ -279,15 +174,15 @@ export function mapMoveHistoryRemote(
 
   const movedLength = move.to - move.from
   const oldContent = history.insertedSelection.slice(0, movedLength)
-  const contentMapping = moveContentReplacements(oldContent, move)
+  const mappedContent = transformedText(
+    oldContent,
+    { from: 0, to: oldContent.length },
+    history.contentReplacements,
+  )
   const sourceInsertion = findInsertedContent(
     inverse,
     history,
-    transformedText(
-      oldContent,
-      { from: 0, to: oldContent.length },
-      contentMapping.replacements,
-    ),
+    mappedContent,
     oldContent.length,
   )
   if (!sourceInsertion)
@@ -295,8 +190,8 @@ export function mapMoveHistoryRemote(
 
   const mapContentPosition = (position: number): number | undefined => {
     if (position === move.from) return 0
-    if (position === move.to) return contentMapping.length
-    const relativeReplacements = contentMapping.replacements.map(
+    if (position === move.to) return mappedContent.length
+    const relativeReplacements = history.contentReplacements.map(
       (replacement) => ({
         ...replacement,
         from: replacement.from + move.from,
@@ -311,6 +206,7 @@ export function mapMoveHistoryRemote(
   }
 
   const mappedChanges: { from: number; to: number; insert: string }[] = []
+  const insideChanges: { from: number; to: number; insert: string }[] = []
   let mappingError: InvalidBlockMoveError | undefined
   change.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
     if (mappingError) return
@@ -326,6 +222,12 @@ export function mapMoveHistoryRemote(
       toA <= move.to &&
       (fromA < toA || (fromA > move.from && fromA < move.to))
     if (isInsideMove) {
+      if (changesTouchContentReplacement(fromA, toA, move, history)) {
+        mappingError = new InvalidBlockMoveError(
+          'A remote change overlaps a moved heading marker',
+        )
+        return
+      }
       const from = mapContentPosition(fromA)
       const to = mapContentPosition(toA)
       if (from === undefined || to === undefined) {
@@ -337,6 +239,11 @@ export function mapMoveHistoryRemote(
       mappedChanges.push({
         from: sourceInsertion.from + from,
         to: sourceInsertion.from + to,
+        insert: inserted.toString(),
+      })
+      insideChanges.push({
+        from: fromA - move.from,
+        to: toA - move.from,
         insert: inserted.toString(),
       })
       return
@@ -374,11 +281,17 @@ export function mapMoveHistoryRemote(
     )
   }
   const changeBeforeMove = ChangeSet.of(mappedChanges, inverse.newLength)
+  const contentChange = ChangeSet.of(insideChanges, movedLength)
 
   const mappedHistory: MoveRecord = {
     ...history,
     separators: [...history.separators],
     ...(history.source === undefined ? {} : { source: { ...history.source } }),
+    contentReplacements: history.contentReplacements.map((replacement) => ({
+      ...replacement,
+      from: contentChange.mapPos(replacement.from, -1),
+      to: contentChange.mapPos(replacement.to, 1),
+    })),
   }
   if (mappedHistory.source) {
     const sourceFrom = sourceInsertion.from
@@ -399,39 +312,21 @@ export function mapMoveHistoryRemote(
     }
   }
 
+  mappedHistory.insertedSelection =
+    applyChangesToString(oldContent, insideChanges) +
+    history.insertedSelection.slice(movedLength)
+
   const mappedMove = {
     from: change.mapPos(move.from, -1),
     to: change.mapPos(move.to, 1),
     seam: change.mapPos(move.seam, 1),
   }
-  const currentRange = findMoveBlockRange(markdown, mappedMove.from)
-  if (!currentRange || currentRange.from !== mappedMove.from) {
-    return err(
-      new InvalidBlockMoveError('The moved block is no longer available'),
-    )
-  }
-  mappedHistory.insertedSelection = markdown.slice(
-    currentRange.from,
-    currentRange.to,
-  )
-  const mappedMoveResult: MoveBlockResult = { ...move, ...mappedMove }
-  const reversePlan = reverseMovePlan(markdown, mappedMoveResult, mappedHistory)
-  if (reversePlan.isErr()) return err(reversePlan.error)
-  const updatedInverse = changeSetForMove(
-    markdown,
-    reversePlan.value.plannedMove,
-  )
-  if (updatedInverse.newLength !== changeBeforeMove.newLength) {
-    return err(
-      new InvalidBlockMoveError(
-        'The move history no longer matches the document',
-      ),
-    )
-  }
-  const markdownBeforeMove = updatedInverse
-    .apply(Text.of(markdown.split('\n')))
-    .toString()
-  if (markdownBeforeMove.length !== changeBeforeMove.newLength) {
+  if (
+    mappedMove.from < 0 ||
+    mappedMove.to <= mappedMove.from ||
+    mappedMove.seam < 0 ||
+    mappedMove.seam > change.newLength
+  ) {
     return err(
       new InvalidBlockMoveError(
         'The move history no longer matches the document',
@@ -439,11 +334,52 @@ export function mapMoveHistoryRemote(
     )
   }
 
-  mappedHistory.inverse = updatedInverse
+  const source = history.source
+  const sourceText = source?.text
+  let sourceReplacementIndex: number | undefined
+  const inverseChanges: { from: number; to: number; insert: string }[] = []
+  history.inverse.iterChanges((fromA, toA, fromB, toB, inserted) => {
+    let text = inserted.toString()
+    if (
+      sourceReplacementIndex === undefined &&
+      sourceText !== undefined &&
+      mappedHistory.source !== undefined &&
+      fromB <= sourceInsertion.from &&
+      sourceInsertion.from + sourceText.length <= toB
+    ) {
+      const offset = sourceInsertion.from - fromB
+      if (text.slice(offset, offset + sourceText.length) === sourceText) {
+        text =
+          text.slice(0, offset) +
+          mappedHistory.source.text +
+          text.slice(offset + sourceText.length)
+        sourceReplacementIndex = inverseChanges.length
+      }
+    }
+    inverseChanges.push({
+      from: change.mapPos(fromA, fromA === toA ? 1 : -1),
+      to: change.mapPos(toA, 1),
+      insert: text,
+    })
+  })
+  if (sourceReplacementIndex === undefined) {
+    return err(new InvalidBlockMoveError('The move source cannot be mapped'))
+  }
+
+  mappedHistory.inverse = ChangeSet.of(inverseChanges, change.newLength)
+  if (
+    mappedHistory.inverse.newLength !== changeBeforeMove.newLength ||
+    mappedHistory.inverse.length !== change.newLength
+  ) {
+    return err(
+      new InvalidBlockMoveError(
+        'The move history no longer matches the document',
+      ),
+    )
+  }
   return ok({
     ...mappedMove,
     history: mappedHistory,
     changeBeforeMove,
-    markdownBeforeMove,
   })
 }

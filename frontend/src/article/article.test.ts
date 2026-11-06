@@ -48,16 +48,19 @@ describe('article model', () => {
     setBody(doc, afterRemote)
 
     const mapped = mapMoveBlockHistoryRemote(
-      afterRemote,
       move,
       remoteChange,
       getReverseMoveChange(move) ?? ChangeSet.empty(afterMove.length),
-    )._unsafeUnwrap()
+    ).match(
+      (value) => value,
+      (error) => {
+        throw new Error(error.message)
+      },
+    )
     const undo = reverseBlockMove(doc, mapped.move, 'undo')._unsafeUnwrap()
 
     const readOutput = () => ({
       afterRemote,
-      markdownBeforeMove: mapped.markdownBeforeMove,
       changeBeforeMove: mapped.changeBeforeMove
         .apply(Text.of(markdown.split('\n')))
         .toString(),
@@ -67,8 +70,6 @@ describe('article model', () => {
     const expected = {
       afterRemote:
         'Second paragraph.\n\nThird paragraph.\n\nFirst remote paragraph.\n',
-      markdownBeforeMove:
-        'First remote paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n',
       changeBeforeMove:
         'First remote paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n',
       afterUndo:
@@ -799,12 +800,8 @@ C
       { from: 0, insert: intro },
       afterMove.length,
     )
-    const afterRemote = remoteChange
-      .apply(Text.of(afterMove.split('\n')))
-      .toString()
     doc.getText('body').insert(0, intro)
     const mappedMove = mapMoveBlockHistoryRemote(
-      afterRemote,
       move,
       remoteChange,
       getReverseMoveChange(move) ?? ChangeSet.empty(afterMove.length),

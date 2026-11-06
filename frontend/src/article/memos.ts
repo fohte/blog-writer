@@ -22,6 +22,7 @@ export type MemoAdoptionSnapshot = {
   id: string
   adoptedTo: unknown
   markerIndex: number
+  markerOffset?: number
   headingLevel: number
   headingText: string
 }
@@ -198,13 +199,17 @@ export function captureDeletedMemoAdoptions(
   )
 
   return adoptedMemos.flatMap((memo) => {
+    const deletedRange = deletedRanges.find(
+      (range) => range.from <= memo.markerIndex && memo.markerIndex < range.to,
+    )
     const heading = deletedHeadings.find(
       (candidate) => candidate.from === memo.markerIndex,
     )
-    return heading
+    return heading && deletedRange
       ? [
           {
             ...memo,
+            markerOffset: memo.markerIndex - deletedRange.from,
             headingLevel: heading.level,
             headingText: heading.text,
           },
@@ -223,14 +228,16 @@ export function restoreMemoAdoptions(
   const body = getBody(doc)
   const headings = flattenHeadings(deriveHeadingTree(body.toJSON()))
   for (const snapshot of snapshots) {
-    if (
-      !insertedRanges.some(
-        (range) =>
-          range.from <= snapshot.markerIndex && snapshot.markerIndex < range.to,
-      )
-    ) {
-      continue
-    }
+    const markerOffset = snapshot.markerOffset ?? 0
+    const insertion = insertedRanges.find(
+      (range) =>
+        range.from === snapshot.markerIndex &&
+        range.from + markerOffset < range.to,
+    )
+    if (!insertion) continue
+    const markerIndex = insertion.from + markerOffset
+
+    if (markerIndex < insertion.from || markerIndex >= insertion.to) continue
 
     const memo = getMemoMap(doc, snapshot.id)
     if (
@@ -244,7 +251,7 @@ export function restoreMemoAdoptions(
 
     const heading = headings.find(
       (candidate) =>
-        candidate.from === snapshot.markerIndex &&
+        candidate.from === markerIndex &&
         candidate.level === snapshot.headingLevel &&
         candidate.text === snapshot.headingText,
     )
@@ -252,7 +259,7 @@ export function restoreMemoAdoptions(
 
     const relativePosition = Y.createRelativePositionFromTypeIndex(
       body,
-      snapshot.markerIndex + 1,
+      markerIndex + 1,
       -1,
     )
     memo.set('adoptedTo', Y.relativePositionToJSON(relativePosition))

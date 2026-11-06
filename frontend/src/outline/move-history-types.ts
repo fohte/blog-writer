@@ -1,4 +1,4 @@
-import type { ChangeSet, Extension } from '@codemirror/state'
+import type { ChangeSet, EditorSelection, Extension } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import type { Result } from 'neverthrow'
 
@@ -10,6 +10,8 @@ export type TextHistoryEntry = {
   kind: 'text'
   inverse: ChangeSet
   memoAdoptions: MemoAdoptionSnapshot[]
+  selectionBefore: EditorSelection
+  selectionAfter: EditorSelection
   userEvent: string | undefined
   time: number
   isolateBefore: boolean
@@ -20,6 +22,7 @@ export type TextHistoryEntry = {
 type MoveHistoryEntry = {
   kind: 'move'
   move: MoveBlockResult
+  remoteMapped?: true
   failure?: string
 }
 
@@ -34,6 +37,7 @@ export type HistoryStateValue = {
 export type TextHistoryStep = {
   direction: 'undo' | 'redo'
   entry: TextHistoryEntry
+  memoAdoptions: MemoAdoptionSnapshot[]
 }
 
 export type MoveHistoryStep = {

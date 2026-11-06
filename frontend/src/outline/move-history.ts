@@ -27,6 +27,7 @@ import type { MemoTextRange } from '#article/memos'
 import { mapMemoAdoptions } from '#outline/move-history-mapping'
 import { mapRemoteHistoryEntries } from '#outline/move-history-remote'
 import type {
+  HistoryEntry,
   HistoryStateValue,
   MoveHistory,
   MoveHistoryStep,
@@ -40,9 +41,17 @@ const applyMoveHistoryStep = StateEffect.define<MoveHistoryStep>()
 const dropHistoryEntry = StateEffect.define<{
   direction: 'undo' | 'redo'
 }>()
+const clearHistory = StateEffect.define()
 
 const newGroupDelay = 500
+const maxHistoryDepth = 100
 const joinableUserEvent = /^(input\.type|delete)($|\.)/u
+
+function pushHistoryEntry(stack: HistoryEntry[], entry: HistoryEntry): void {
+  stack.push(entry)
+  if (stack.length > maxHistoryDepth)
+    stack.splice(0, stack.length - maxHistoryDepth)
+}
 
 function changeRangesAreAdjacent(
   previous: ChangeSet,
@@ -59,6 +68,14 @@ function changeRangesAreAdjacent(
       adjacent = true
   })
   return adjacent
+}
+
+function deletedRangesIn(changes: ChangeSet): MemoTextRange[] {
+  const ranges: MemoTextRange[] = []
+  changes.iterChangedRanges((from, to) => {
+    if (to > from) ranges.push({ from, to })
+  })
+  return ranges
 }
 
 function isHistoryBoundary(
@@ -99,6 +116,10 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
   const historyField = StateField.define<HistoryStateValue>({
     create: () => ({ undo: [], redo: [], groupBarrier: false }),
     update(current, transaction) {
+      if (transaction.effects.some((effect) => effect.is(clearHistory))) {
+        return { undo: [], redo: [], groupBarrier: true }
+      }
+
       const step = transaction.annotation(textHistoryStep)
       if (step) {
         const undo = [...current.undo]
@@ -107,9 +128,12 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         const to = step.direction === 'undo' ? redo : undo
         const entry = from.pop()
         if (entry?.kind !== 'text') return current
-        to.push({
+        pushHistoryEntry(to, {
           ...entry,
           inverse: transaction.changes.invert(transaction.startState.doc),
+          memoAdoptions: step.memoAdoptions,
+          selectionBefore: entry.selectionAfter,
+          selectionAfter: entry.selectionBefore,
         })
         return { undo, redo, groupBarrier: true }
       }
@@ -130,7 +154,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         const to = direction === 'undo' ? redo : undo
         const entry = from.pop()
         if (entry?.kind !== 'move') return current
-        to.push({ kind: 'move', move })
+        pushHistoryEntry(to, { kind: 'move', move })
         groupBarrier = true
       }
 
@@ -148,7 +172,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         move?.is(recordMove) === true &&
         transaction.annotation(blockMoved) !== undefined
       ) {
-        undo.push({ kind: 'move', move: move.value })
+        pushHistoryEntry(undo, { kind: 'move', move: move.value })
         redo = []
         groupBarrier = true
       }
@@ -157,10 +181,9 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         if (transaction.annotation(ySyncAnnotation) !== undefined) {
           if (applyingLocalMove) return { undo, redo, groupBarrier: true }
           const remoteChange = transaction.changes
-          const remoteMarkdown = transaction.newDoc.toString()
           return {
-            undo: mapRemoteHistoryEntries(undo, remoteChange, remoteMarkdown),
-            redo: mapRemoteHistoryEntries(redo, remoteChange, remoteMarkdown),
+            undo: mapRemoteHistoryEntries(undo, remoteChange),
+            redo: mapRemoteHistoryEntries(redo, remoteChange),
             groupBarrier: true,
           }
         }
@@ -168,10 +191,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
           return { undo, redo, groupBarrier: true }
         }
 
-        const deletedRanges: MemoTextRange[] = []
-        transaction.changes.iterChangedRanges((from, to) => {
-          if (to > from) deletedRanges.push({ from, to })
-        })
+        const deletedRanges = deletedRangesIn(transaction.changes)
         const memoAdoptions =
           deletedRanges.length === 0
             ? []
@@ -189,6 +209,8 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
           kind: 'text',
           inverse,
           memoAdoptions,
+          selectionBefore: transaction.startState.selection,
+          selectionAfter: transaction.newSelection,
           userEvent: transaction.annotation(Transaction.userEvent),
           time: transaction.annotation(Transaction.time) ?? Date.now(),
           isolateBefore: isHistoryBoundary(isolation, 'before'),
@@ -199,20 +221,21 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
           previous?.kind === 'text' &&
           canJoinTextEntries(previous, next, groupBarrier)
         ) {
-          const mappedSnapshots = previous.memoAdoptions.map((snapshot) => ({
-            ...snapshot,
-            markerIndex: transaction.changes.mapPos(snapshot.markerIndex, -1),
-          }))
+          const mappedSnapshots = mapMemoAdoptions(
+            previous.memoAdoptions,
+            transaction.changes,
+          )
           undo[undo.length - 1] = {
             ...previous,
             inverse: next.inverse.compose(previous.inverse),
             memoAdoptions: [...mappedSnapshots, ...next.memoAdoptions],
+            selectionAfter: next.selectionAfter,
             userEvent: next.userEvent,
             time: next.time,
             isolateAfter: next.isolateAfter,
           }
         } else {
-          undo.push(next)
+          pushHistoryEntry(undo, next)
         }
         return { undo, redo: [], groupBarrier: false }
       }
@@ -242,7 +265,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
   const updateAfterView = (update: ViewUpdate) => {
     for (const transaction of update.transactions) {
       const step = transaction.annotation(textHistoryStep)
-      if (!step || step.direction !== 'undo') continue
+      if (!step) continue
 
       const snapshots = mapMemoAdoptions(
         step.entry.memoAdoptions,
@@ -300,24 +323,47 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         return dropAndFail('The text history no longer matches')
       view.dispatch({
         changes: entry.inverse,
+        selection: entry.selectionBefore,
         annotations: [
-          textHistoryStep.of({ direction, entry }),
+          textHistoryStep.of({
+            direction,
+            entry,
+            memoAdoptions: mapMemoAdoptions(
+              captureDeletedMemoAdoptions(
+                doc,
+                () => view.state.doc.toString(),
+                deletedRangesIn(entry.inverse),
+              ),
+              entry.inverse,
+            ),
+          }),
           Transaction.addToHistory.of(false),
           Transaction.userEvent.of(direction),
         ],
+        effects: [EditorView.scrollIntoView(entry.selectionBefore.main.head)],
       })
       return ok(true)
     }
 
-    if (entry.failure !== undefined) return dropAndFail(entry.failure)
+    const discardMoveAndFail = (message: string) => {
+      view.dispatch({ effects: clearHistory.of(null) })
+      return err(new InvalidBlockMoveError(message))
+    }
+
+    if (entry.failure !== undefined) return discardMoveAndFail(entry.failure)
 
     if (resolveMoveBlockStart(doc, entry.move) === undefined)
-      return dropAndFail('The moved block is no longer available')
+      return discardMoveAndFail('The moved block is no longer available')
 
     applyingLocalMove = true
-    const result = reverseBlockMove(doc, entry.move, direction)
+    const result = reverseBlockMove(doc, entry.move, direction, {
+      skipValidation: entry.remoteMapped !== true,
+    })
     applyingLocalMove = false
-    if (result.isErr()) return dropAndFail(result.error.message)
+    if (result.isErr())
+      return discardMoveAndFail(
+        'The block can no longer be restored to its previous position',
+      )
 
     const reversed = result.value
     const selection = view.state.selection.main

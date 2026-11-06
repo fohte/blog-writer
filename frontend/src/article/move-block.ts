@@ -16,7 +16,11 @@ import {
   type MoveRecord,
   type MoveSeparator,
 } from '#article/move-block-history'
-import type { MoveInsertion, MoveSource } from '#article/move-block-plan'
+import type {
+  MoveInsertion,
+  MoveSource,
+  TextReplacement,
+} from '#article/move-block-plan'
 import {
   mapWithinRange,
   planBlockMove,
@@ -71,6 +75,7 @@ type ApplyMoveOptions = {
   expectedSelection?: string
   replacement?: MoveSource
   removeRanges?: { from: number; to: number; text: string }[]
+  skipValidation?: boolean
 }
 const updatersByDoc = new WeakMap<Y.Doc, Set<BlockMoveUpdater>>()
 const historyByMove = new WeakMap<MoveBlockResult, MoveRecord>()
@@ -79,10 +84,12 @@ function rememberMove(input: {
   move: MoveBlockResult
   insertion: MoveInsertion
   inverse: ChangeSet
-  source?: MoveSource
+  source: MoveSource
+  contentReplacements: TextReplacement[]
   mapPosition: (position: number, assoc: number) => number | undefined
 }): void {
-  const { move, insertion, inverse, source, mapPosition } = input
+  const { move, insertion, inverse, source, contentReplacements, mapPosition } =
+    input
   const prefix = insertion.text.slice(0, insertion.prefixLength)
   const suffix = insertion.text.slice(
     insertion.prefixLength + insertion.contentLength,
@@ -96,10 +103,28 @@ function rememberMove(input: {
   }
   historyByMove.set(move, {
     insertedSelection: insertion.text.slice(insertion.prefixLength),
+    contentReplacements,
     mapPosition,
     inverse,
-    ...(source === undefined ? {} : { source }),
+    source,
     separators,
+  })
+}
+
+function reverseContentReplacements(
+  rangeFrom: number,
+  replacements: TextReplacement[],
+): TextReplacement[] {
+  let offset = 0
+  return replacements.map((replacement) => {
+    const from = replacement.from - rangeFrom + offset
+    const to = from + replacement.text.length
+    offset += replacement.text.length - (replacement.to - replacement.from)
+    return {
+      from,
+      to,
+      text: '#'.repeat(replacement.to - replacement.from),
+    }
   })
 }
 
@@ -129,9 +154,18 @@ function applyMoveBlock(
   const body = getBody(doc)
   const markdown = body.toJSON()
   const headings = collectHeadings(markdown)
-  const validation = validateMove(markdown, input, headings)
-  if (validation.isErr()) return err(validation.error)
-  const { range, targetLevel } = validation.value
+  const skipValidation = options.skipValidation === true
+  const validation = skipValidation
+    ? undefined
+    : validateMove(markdown, input, headings)
+  if (validation?.isErr() === true) return err(validation.error)
+  const validated = validation?.isOk() === true ? validation.value : undefined
+  const range = validated
+    ? validated.range
+    : findMoveBlockRange(markdown, input.from, headings)
+  if (!range)
+    return err(new InvalidBlockMoveError('No Markdown block at position'))
+  const targetLevel = validated ? validated.targetLevel : input.headingLevel
   if (
     options.expectedSelection !== undefined &&
     markdown.slice(range.from, range.to) !== options.expectedSelection
@@ -190,13 +224,15 @@ function applyMoveBlock(
   )
   const newFrom = insertedFrom
   const newTo = newFrom + insertion.contentLength
-  const structureError = validatePlannedMoveStructure({
-    originalMarkdown: markdown,
-    originalRange: { from: range.from, to: range.to },
-    plannedMarkdown,
-    movedRange: { from: insertedFrom, to: insertedTo },
-    isSection: range.headingLevel !== undefined,
-  })
+  const structureError = skipValidation
+    ? undefined
+    : validatePlannedMoveStructure({
+        originalMarkdown: markdown,
+        originalRange: { from: range.from, to: range.to },
+        plannedMarkdown,
+        movedRange: { from: insertedFrom, to: insertedTo },
+        isSection: range.headingLevel !== undefined,
+      })
   if (structureError) return err(structureError)
   const mapping: MovePositionMapping = {
     from: range.from,
@@ -254,15 +290,12 @@ function applyMoveBlock(
     insertion,
     inverse,
     mapPosition: mapDocumentPosition,
-    ...(options.replacement === undefined
-      ? {
-          source: {
-            text: sourceText,
-            prefix: sourcePrefix + plannedMove.sourcePrefix,
-            ...(sourceSuffix.length === 0 ? {} : { suffix: sourceSuffix }),
-          },
-        }
-      : {}),
+    source: {
+      text: sourceText,
+      prefix: sourcePrefix + plannedMove.sourcePrefix,
+      ...(sourceSuffix.length === 0 ? {} : { suffix: sourceSuffix }),
+    },
+    contentReplacements: reverseContentReplacements(range.from, replacements),
   })
   return ok(move)
 }
@@ -300,7 +333,6 @@ export function getReverseMoveChange(
 }
 
 export function mapMoveBlockHistoryRemote(
-  markdown: string,
   move: MoveBlockResult,
   change: ChangeSet,
   inverse: ChangeSet,
@@ -308,7 +340,6 @@ export function mapMoveBlockHistoryRemote(
   {
     move: MoveBlockResult
     changeBeforeMove: ChangeSet
-    markdownBeforeMove: string
   },
   InvalidBlockMoveError
 > {
@@ -316,7 +347,7 @@ export function mapMoveBlockHistoryRemote(
   if (!history)
     return err(new InvalidBlockMoveError('The move cannot be reversed'))
 
-  const mapped = mapMoveHistoryRemote(markdown, move, history, change, inverse)
+  const mapped = mapMoveHistoryRemote(move, history, change, inverse)
   if (mapped.isErr()) return err(mapped.error)
 
   const { history: mappedHistory, ...mappedMove } = mapped.value
@@ -338,7 +369,6 @@ export function mapMoveBlockHistoryRemote(
   return ok({
     move: updatedMove,
     changeBeforeMove: mappedMove.changeBeforeMove,
-    markdownBeforeMove: mappedMove.markdownBeforeMove,
   })
 }
 
@@ -346,6 +376,7 @@ export function reverseBlockMove(
   doc: Y.Doc,
   move: MoveBlockResult,
   userEvent: 'undo' | 'redo' = 'undo',
+  options: { skipValidation?: boolean } = {},
 ): Result<MoveBlockResult, InvalidBlockMoveError> {
   const history = historyByMove.get(move)
   if (!history)
@@ -380,6 +411,9 @@ export function reverseBlockMove(
       expectedSelection: history.insertedSelection,
       ...(history.source === undefined ? {} : { replacement: history.source }),
       removeRanges: separators,
+      ...(options.skipValidation === undefined
+        ? {}
+        : { skipValidation: options.skipValidation }),
     },
   )
 }
