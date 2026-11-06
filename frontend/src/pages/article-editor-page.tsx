@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import * as Y from 'yjs'
 
 import {
+  type ArticleEditorIntegrationProps,
   ArticleEditorView,
-  type ArticleEditorViewProps,
 } from '#components/article-editor-view'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
@@ -11,16 +11,7 @@ type ArticleEditorPageProps = {
   article: Article
   client: SyncClientApi
   onBack: () => void
-} & Pick<
-  ArticleEditorViewProps,
-  | 'bodyAccessory'
-  | 'editorExtensions'
-  | 'headerActions'
-  | 'onViewChange'
-  | 'outlineAccessory'
-  | 'premiseAccessory'
-  | 'sourcesPanel'
->
+} & ArticleEditorIntegrationProps
 
 export function ArticleEditorPage({
   article,

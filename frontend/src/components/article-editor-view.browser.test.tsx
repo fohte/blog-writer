@@ -1,19 +1,79 @@
 import { ok, okAsync } from 'neverthrow'
-import { act, useState } from 'react'
+import { act, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import { getBody, setBody } from '#article/index'
+import type { ArticleEditorIntegrationProps } from '#components/article-editor-view'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 import { ArticleWorkspace } from '#pages/article-workspace'
 
 let host: HTMLDivElement | undefined
 let root: Root | undefined
 let doc: Y.Doc | undefined
-let editorExtensionCalls = 0
-let viewChanges: boolean[] = []
+
+type EditorIntegrations = Pick<
+  ArticleEditorIntegrationProps,
+  'editorExtensions' | 'onViewChange'
+>
+
+function renderWorkspace(
+  article: Article,
+  articleDoc: Y.Doc,
+  { editorExtensions, onViewChange }: EditorIntegrations = {},
+) {
+  host = document.createElement('div')
+  document.body.append(host)
+  root = createRoot(host)
+
+  function ArticleWorkspaceHarness() {
+    const [articles, setArticles] = useState([article])
+    const articlesRef = useRef(articles)
+    const [client] = useState<SyncClientApi>(() => ({
+      start: () => okAsync(undefined),
+      openDocument: () => ok(articleDoc),
+      createArticle: () => ok(article),
+      updateArticleTitle: (id, title) => {
+        setArticles((currentArticles) => {
+          const nextArticles = currentArticles.map((currentArticle) =>
+            currentArticle.id === id
+              ? { ...currentArticle, title }
+              : currentArticle,
+          )
+          articlesRef.current = nextArticles
+          return nextArticles
+        })
+        return ok(undefined)
+      },
+      listArticles: () => articlesRef.current,
+      getStatus: () => 'synced',
+      getError: () => undefined,
+      requiresAuthentication: () => false,
+      subscribe: () => () => {},
+      destroy: () => {},
+    }))
+
+    return (
+      <ArticleWorkspace
+        articles={articles}
+        client={client}
+        onCreateArticle={() => undefined}
+        onOpenSettings={() => {}}
+        ready
+        requiresAuthentication={false}
+        statuses={{ [article.id]: 'synced' }}
+        editorExtensions={editorExtensions}
+        onViewChange={onViewChange}
+      />
+    )
+  }
+
+  act(() => {
+    root?.render(<ArticleWorkspaceHarness />)
+  })
+}
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -26,8 +86,6 @@ afterEach(() => {
   host = undefined
   doc?.destroy()
   doc = undefined
-  editorExtensionCalls = 0
-  viewChanges = []
   vi.unstubAllGlobals()
 })
 
@@ -44,73 +102,15 @@ describe('article editor screen', () => {
     const initialBody =
       '# First section\n\nFirst paragraph.\n\n# Second section\n\nSecond paragraph.\n'
     setBody(articleDoc, initialBody)
-    editorExtensionCalls = 0
-    viewChanges = []
-    function ArticleWorkspaceHarness() {
-      const [articles, setArticles] = useState([article])
-      const [client] = useState<SyncClientApi>(() => ({
-        start: () => okAsync(undefined),
-        openDocument: () => ok(articleDoc),
-        createArticle: () => ok(article),
-        updateArticleTitle: (id, title) => {
-          setArticles((currentArticles) =>
-            currentArticles.map((currentArticle) =>
-              currentArticle.id === id
-                ? { ...currentArticle, title }
-                : currentArticle,
-            ),
-          )
-          return ok(undefined)
-        },
-        listArticles: () => [article],
-        getStatus: () => 'synced',
-        getError: () => undefined,
-        requiresAuthentication: () => false,
-        subscribe: () => () => {},
-        destroy: () => {},
-      }))
-
-      return (
-        <ArticleWorkspace
-          articles={articles}
-          client={client}
-          onCreateArticle={() => undefined}
-          onOpenSettings={() => {}}
-          ready
-          requiresAuthentication={false}
-          statuses={{ [article.id]: 'synced' }}
-          editorExtensions={() => {
-            editorExtensionCalls += 1
-            return []
-          }}
-          onViewChange={(view) => {
-            viewChanges.push(view !== null)
-          }}
-        />
-      )
-    }
-    host = document.createElement('div')
-    document.body.append(host)
-    root = createRoot(host)
-
-    act(() => {
-      root?.render(<ArticleWorkspaceHarness />)
-    })
+    renderWorkspace(article, articleDoc)
 
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
-    const editor = host.querySelector<HTMLElement>('.cm-content')
-    const firstLine = host.querySelector<HTMLElement>('.cm-line')
+    const editor = host?.querySelector<HTMLElement>('.cm-content')
+    const firstLine = host?.querySelector<HTMLElement>('.cm-line')
     if (!editor || !firstLine)
       throw new Error('The article editor did not open')
-
-    const renamedTitle = 'A more useful article'
-    await act(async () => {
-      const titleInput = page.getByRole('textbox', { name: 'Article title' })
-      await userEvent.clear(titleInput)
-      await userEvent.type(titleInput, renamedTitle)
-    })
 
     await act(async () => {
       await userEvent.click(firstLine)
@@ -139,20 +139,93 @@ describe('article editor screen', () => {
     const readScreenOutput = () => ({
       bodyAfterMove,
       bodyAfterUndo,
-      editorExtensionCalls,
       listTitle: host?.querySelector('[role="listitem"] button span')
         ?.textContent,
       editorCount: host?.querySelectorAll('.cm-content').length,
-      viewChanges,
     })
     expect(readScreenOutput()).toEqual({
       bodyAfterMove:
         '# Second section\n\nSecond paragraph.\n\n# Updated First section\n\nFirst paragraph.\n',
       bodyAfterUndo: editedBody,
-      editorExtensionCalls: 1,
+      listTitle: article.title,
+      editorCount: 0,
+    })
+  })
+
+  it('saves a changed title and shows it in the article list', async () => {
+    const article: Article = {
+      id: 'article-b',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    renderWorkspace(article, articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const renamedTitle = 'A more useful article'
+    await act(async () => {
+      const titleInput = page.getByRole('textbox', { name: 'Article title' })
+      await userEvent.clear(titleInput)
+      await userEvent.type(titleInput, renamedTitle)
+      await userEvent.click(
+        page.getByRole('button', { name: 'Back to articles' }),
+      )
+    })
+
+    const readScreenOutput = () => ({
+      listTitle: host?.querySelector('[role="listitem"] button span')
+        ?.textContent,
+      editorCount: host?.querySelectorAll('.cm-content').length,
+    })
+    expect(readScreenOutput()).toEqual({
       listTitle: renamedTitle,
       editorCount: 0,
+    })
+  })
+
+  it('creates extensions once and reports editor mount and unmount', async () => {
+    const article: Article = {
+      id: 'article-c',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    let editorExtensionCalls = 0
+    const viewChanges: boolean[] = []
+    renderWorkspace(article, articleDoc, {
+      editorExtensions: () => {
+        editorExtensionCalls += 1
+        return []
+      },
+      onViewChange: (view) => {
+        viewChanges.push(view !== null)
+      },
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Back to articles' }),
+      )
+    })
+
+    const readIntegrationOutput = () => ({
+      editorExtensionCalls,
+      viewChanges,
+      editorCount: host?.querySelectorAll('.cm-content').length,
+    })
+    expect(readIntegrationOutput()).toEqual({
+      editorExtensionCalls: 1,
       viewChanges: [true, false],
+      editorCount: 0,
     })
   })
 })

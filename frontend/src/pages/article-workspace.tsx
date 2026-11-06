@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import type { ArticleEditorViewProps } from '#components/article-editor-view'
+import type { ArticleEditorIntegrationProps } from '#components/article-editor-view'
 import { ArticleListView } from '#components/article-list-view'
 import type { Article, SyncClientApi, SyncState } from '#lib/sync-client'
 import { ArticleEditorPage } from '#pages/article-editor-page'
@@ -14,16 +14,7 @@ export type ArticleWorkspaceProps = {
   requiresAuthentication: boolean
   onCreateArticle: () => Article | undefined
   onOpenSettings: () => void
-} & Pick<
-  ArticleEditorViewProps,
-  | 'bodyAccessory'
-  | 'editorExtensions'
-  | 'headerActions'
-  | 'onViewChange'
-  | 'outlineAccessory'
-  | 'premiseAccessory'
-  | 'sourcesPanel'
->
+} & ArticleEditorIntegrationProps
 
 export function ArticleWorkspace({
   articles,

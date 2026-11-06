@@ -52,6 +52,7 @@ export interface ArticleEditorViewProps {
   status?: { kind: 'loading' } | { kind: 'error'; message: string } | undefined
   layout?: ArticleEditorLayout
   initialMobilePanel?: ArticleEditorPanel
+  /** Keeps extension instances stable by calling the factory once per article document. */
   editorExtensions?:
     ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
   bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
@@ -63,6 +64,17 @@ export interface ArticleEditorViewProps {
   onTitleChange: (title: string) => void
   onBack: () => void
 }
+
+export type ArticleEditorIntegrationProps = Pick<
+  ArticleEditorViewProps,
+  | 'bodyAccessory'
+  | 'editorExtensions'
+  | 'headerActions'
+  | 'onViewChange'
+  | 'outlineAccessory'
+  | 'premiseAccessory'
+  | 'sourcesPanel'
+>
 
 const premiseFields: Array<{ field: PremiseField; label: string }> = [
   { field: 'audience', label: 'Reader' },
@@ -120,18 +132,17 @@ export function ArticleEditorView({
   const body = doc ? getBody(doc) : undefined
   const [view, setView] = useState<EditorView | null>(null)
   const editorRef = useRef<MarkdownEditorHandle>(null)
-  const editorExtensionsRef = useRef(editorExtensions)
-  editorExtensionsRef.current = editorExtensions
+  const [editorExtensionsFactory] = useState(() => editorExtensions)
   const extensions = useMemo(
     () =>
       doc && history
         ? [
             moveConflictExtension(doc),
             createOutlineEditorExtension(history),
-            ...(editorExtensionsRef.current?.({ doc, history }) ?? []),
+            ...(editorExtensionsFactory?.({ doc, history }) ?? []),
           ]
         : [],
-    [doc, history],
+    [doc, editorExtensionsFactory, history],
   )
 
   useEffect(() => {
@@ -176,17 +187,19 @@ export function ArticleEditorView({
   const renderPanel = (panel: ArticleEditorPanel) => {
     if (panel === 'memo') return doc ? <MemoPanel doc={doc} /> : null
     if (panel === 'outline') {
-      if (!context) return null
+      if (!context || (!view && !outlineAccessory)) return null
+      const outline = view ? (
+        <ArticleOutline
+          doc={context.doc}
+          history={context.history}
+          view={view}
+        />
+      ) : null
+      if (!outlineAccessory) return outline
       return (
         <div className="flex flex-col gap-4">
-          {outlineAccessory?.(context)}
-          {view ? (
-            <ArticleOutline
-              doc={context.doc}
-              history={context.history}
-              view={view}
-            />
-          ) : null}
+          {outlineAccessory(context)}
+          {outline}
         </div>
       )
     }
