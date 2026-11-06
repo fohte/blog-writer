@@ -145,6 +145,14 @@ function readEditorEvidenceOutput(doc: Y.Doc, host: HTMLElement) {
   }
 }
 
+function readEvidenceUndoRedoOutput(
+  afterMove: ReturnType<typeof readEditorEvidenceOutput>,
+  afterUndo: ReturnType<typeof readEditorEvidenceOutput>,
+  afterRedo: ReturnType<typeof readEditorEvidenceOutput>,
+) {
+  return { afterMove, afterUndo, afterRedo }
+}
+
 describe('MarkdownEditor', () => {
   it.each([
     {
@@ -1076,6 +1084,111 @@ describe('MarkdownEditor', () => {
         },
       ],
       markers: 1,
+    })
+  })
+
+  it('restores a hidden evidence range on undo and hides it again on redo', async () => {
+    const markdown =
+      '# Alpha\n\nFirst sentence.\n\n# Beta\n\nSecond sentence.\n'
+    const movedMarkdown =
+      '# Beta\n\nSecond sentence.\n\n# Alpha\n\nFirst sentence.\n'
+    const claim = 'First sentence.\n\n# Beta\n\nSecond sentence.'
+    const from = markdown.indexOf('First sentence.')
+    const to = markdown.indexOf('Second sentence.') + 'Second sentence.'.length
+    const { content, doc, history, host } = mountMarkdownEditor(
+      markdown,
+      [],
+      undefined,
+      {
+        prepareDoc: (doc) => {
+          addSource(doc, {
+            id: 'source-example',
+            kind: 'url',
+            title: 'Example source',
+            url: 'https://example.invalid/report',
+            fileName: null,
+            checkedAt: '2026-02-01T00:00:00.000Z',
+          })._unsafeUnwrap()
+          addEvidence(doc, {
+            id: 'evidence-example',
+            from,
+            to,
+            claim,
+            sourceId: 'source-example',
+            quote: 'A quoted sentence.',
+            verdict: 'supported',
+            checkedAt: '2026-02-01T00:00:00.000Z',
+          })._unsafeUnwrap()
+        },
+      },
+    )
+    const view = content ? EditorView.findFromDOM(content) : null
+    if (!view) throw new Error('CodeMirror view was not rendered')
+    const dispatchHistoryShortcut = (key: 'z' | 'y') => {
+      content?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key,
+          bubbles: true,
+          [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
+        }),
+      )
+    }
+    act(() => {
+      history
+        .move({ from: 0, destination: markdown.length }, view)
+        ._unsafeUnwrap()
+    })
+    const afterMove = readEditorEvidenceOutput(doc, host)
+    act(() => {
+      dispatchHistoryShortcut('z')
+    })
+    await vi.waitFor(() => {
+      if (
+        readBody(doc) !== markdown ||
+        host.querySelectorAll('.cm-evidence-marker').length !== 1
+      )
+        throw new Error('Undo did not restore the hidden evidence')
+    })
+    const afterUndo = readEditorEvidenceOutput(doc, host)
+    act(() => {
+      dispatchHistoryShortcut('y')
+    })
+    await vi.waitFor(() => {
+      if (
+        readBody(doc) !== movedMarkdown ||
+        host.querySelectorAll('.cm-evidence-marker').length !== 0
+      )
+        throw new Error('Redo did not hide the evidence again')
+    })
+
+    expect(
+      readEvidenceUndoRedoOutput(
+        afterMove,
+        afterUndo,
+        readEditorEvidenceOutput(doc, host),
+      ),
+    ).toEqual({
+      afterMove: {
+        body: movedMarkdown,
+        evidence: [],
+        markers: 0,
+      },
+      afterUndo: {
+        body: markdown,
+        evidence: [
+          {
+            id: 'evidence-example',
+            currentClaim: claim,
+            edited: false,
+          },
+        ],
+        markers: 1,
+      },
+      afterRedo: {
+        body: movedMarkdown,
+        evidence: [],
+        markers: 0,
+      },
     })
   })
 })
