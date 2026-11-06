@@ -49,7 +49,7 @@ export function findHeadingSection(
   from: number,
 ): { from: number; to: number; headingLevel: number } | undefined {
   const index = headings.findIndex(
-    (heading) => heading.from <= from && from < heading.to,
+    (heading) => heading.from <= from && from <= heading.to,
   )
   if (index === -1) return undefined
 

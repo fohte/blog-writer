@@ -27,6 +27,7 @@ import {
 import type { MemoTextRange } from '#article/memos'
 import { mapMemoAdoptions } from '#outline/move-history-mapping'
 import { mapRemoteHistoryEntries } from '#outline/move-history-remote'
+import { moveEntryForReverseStep } from '#outline/move-history-transitions'
 import type {
   HistoryEntry,
   HistoryStateValue,
@@ -155,13 +156,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         const to = direction === 'undo' ? redo : undo
         const entry = from.pop()
         if (entry?.kind !== 'move') return current
-        pushHistoryEntry(to, {
-          kind: 'move',
-          move,
-          ...(entry.requiresValidation === true
-            ? { requiresValidation: true }
-            : {}),
-        })
+        pushHistoryEntry(to, moveEntryForReverseStep(entry, move))
         groupBarrier = true
       }
 
@@ -274,12 +269,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
       )
       const moveHistoryStep =
         moveStep?.is(applyMoveHistoryStep) === true ? moveStep.value : undefined
-      const beforeState =
-        step?.direction === 'undo'
-          ? step.beforeState
-          : moveHistoryStep?.direction === 'undo'
-            ? moveHistoryStep.beforeState
-            : undefined
+      const beforeState = step?.beforeState ?? moveHistoryStep?.beforeState
       if (beforeState !== undefined) {
         recordMoveConflictRestoration(
           doc,
@@ -378,6 +368,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
     if (resolveMoveBlockStart(doc, entry.move) === undefined)
       return discardMoveAndFail('The moved block is no longer available')
 
+    const selection = view.state.selection.main
     const beforeState = Y.decodeStateVector(Y.encodeStateVector(doc))
     applyingLocalMove = true
     const result = reverseBlockMove(doc, entry.move, direction, {
@@ -390,7 +381,6 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
       )
 
     const reversed = result.value
-    const selection = view.state.selection.main
     const mappedAnchor = mapMoveBlockPosition(reversed, selection.anchor)
     const mappedHead = mapMoveBlockPosition(reversed, selection.head)
     view.dispatch({

@@ -17,6 +17,7 @@ export type MoveSeparator = {
 
 export type MoveRecord = {
   insertedSelection: string
+  headingLevel?: number
   contentReplacements: TextReplacement[]
   mapPosition: (position: number, assoc: number) => number | undefined
   inverse: ChangeSet

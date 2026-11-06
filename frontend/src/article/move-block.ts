@@ -19,6 +19,7 @@ import {
 import type {
   MoveInsertion,
   MoveSource,
+  Range,
   TextReplacement,
 } from '#article/move-block-plan'
 import {
@@ -78,6 +79,7 @@ export type MoveBlockResult = BlockMoved & {
 }
 
 type ApplyMoveOptions = {
+  range?: Range
   expectedSelection?: string
   replacement?: MoveSource
   removeRanges?: { from: number; to: number; text: string }[]
@@ -91,11 +93,19 @@ function rememberMove(input: {
   insertion: MoveInsertion
   inverse: ChangeSet
   source: MoveSource
+  headingLevel?: number
   contentReplacements: TextReplacement[]
   mapPosition: (position: number, assoc: number) => number | undefined
 }): void {
-  const { move, insertion, inverse, source, contentReplacements, mapPosition } =
-    input
+  const {
+    move,
+    insertion,
+    inverse,
+    source,
+    headingLevel,
+    contentReplacements,
+    mapPosition,
+  } = input
   const prefix = insertion.text.slice(0, insertion.prefixLength)
   const suffix = insertion.text.slice(
     insertion.prefixLength + insertion.contentLength,
@@ -109,6 +119,7 @@ function rememberMove(input: {
   }
   historyByMove.set(move, {
     insertedSelection: insertion.text.slice(insertion.prefixLength),
+    ...(headingLevel === undefined ? {} : { headingLevel }),
     contentReplacements,
     mapPosition,
     inverse,
@@ -169,7 +180,7 @@ function applyMoveBlock(
   const validated = validation?.isOk() === true ? validation.value : undefined
   const range = validated
     ? validated.range
-    : findMoveBlockRange(markdown, input.from, headings)
+    : (options.range ?? findMoveBlockRange(markdown, input.from, headings))
   if (!range)
     return err(new InvalidBlockMoveError('No Markdown block at position'))
   const targetLevel = validated ? validated.targetLevel : input.headingLevel
@@ -318,6 +329,9 @@ function applyMoveBlock(
     insertion,
     inverse,
     mapPosition: mapDocumentPosition,
+    ...(range.headingLevel === undefined
+      ? {}
+      : { headingLevel: targetLevel ?? range.headingLevel }),
     source: {
       text: sourceText,
       prefix: sourcePrefix + plannedMove.sourcePrefix,
@@ -415,7 +429,16 @@ export function reverseBlockMove(
   const destination = move.seam
 
   const markdown = body.toJSON()
-  const range = findMoveBlockRange(markdown, from)
+  const range =
+    options.validate === false
+      ? {
+          from,
+          to: from + history.insertedSelection.length,
+          ...(history.headingLevel === undefined
+            ? {}
+            : { headingLevel: history.headingLevel }),
+        }
+      : findMoveBlockRange(markdown, from)
   if (!range)
     return err(
       new InvalidBlockMoveError('The moved block is no longer available'),
@@ -436,6 +459,7 @@ export function reverseBlockMove(
       userEvent,
     },
     {
+      ...(options.validate === false ? { range } : {}),
       expectedSelection: history.insertedSelection,
       ...(history.source === undefined ? {} : { replacement: history.source }),
       removeRanges: separators,

@@ -999,8 +999,9 @@ describe('outline interactions', () => {
 
     const view = viewRef.current
     if (view === null) throw new Error('The markdown editor did not mount')
+    const headingLineEnd = initial.indexOf('# Beta') + '# Beta'.length
     view.dispatch({
-      selection: EditorSelection.cursor(initial.indexOf('# Beta')),
+      selection: EditorSelection.cursor(headingLineEnd),
     })
     view.focus()
     await act(async () => {
