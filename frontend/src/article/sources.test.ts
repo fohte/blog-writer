@@ -31,7 +31,6 @@ function readStoredSourceOutput(
 }
 
 function readSourceDeletionOutput(
-  mergedSource: ReturnType<typeof listSources>[number] | undefined,
   removed: boolean,
   sources: ReturnType<typeof listSources>,
   findings: ReturnType<typeof listFindings>,
@@ -39,12 +38,18 @@ function readSourceDeletionOutput(
   transactionCount: number,
 ) {
   return {
-    mergedSource,
     removed,
     sources,
     findings,
     evidenceIds,
     transactionCount,
+  }
+}
+
+function readConcurrentSourceMergeOutput(first: Y.Doc, second: Y.Doc) {
+  return {
+    first: listSources(first),
+    second: listSources(second),
   }
 }
 
@@ -135,7 +140,7 @@ describe('article sources', () => {
     doc.destroy()
   })
 
-  it('deletes a source, its findings, and its evidence in one transaction', () => {
+  it('merges concurrent updates to separate source fields', () => {
     const first = new Y.Doc({ guid: 'article-a' })
     const second = new Y.Doc({ guid: 'article-a' })
     addSource(first, {
@@ -151,6 +156,47 @@ describe('article sources', () => {
     updateSource(second, 'source-a', { summary: '資料の要約です。' })
     Y.applyUpdate(first, Y.encodeStateAsUpdate(second))
     Y.applyUpdate(second, Y.encodeStateAsUpdate(first))
+
+    expect(readConcurrentSourceMergeOutput(first, second)).toEqual({
+      first: [
+        {
+          id: 'source-a',
+          kind: 'file',
+          title: '更新された概要',
+          url: null,
+          fileName: 'overview.pdf',
+          checkedAt: null,
+          status: 'ready',
+          summary: '資料の要約です。',
+        },
+      ],
+      second: [
+        {
+          id: 'source-a',
+          kind: 'file',
+          title: '更新された概要',
+          url: null,
+          fileName: 'overview.pdf',
+          checkedAt: null,
+          status: 'ready',
+          summary: '資料の要約です。',
+        },
+      ],
+    })
+    first.destroy()
+    second.destroy()
+  })
+
+  it('deletes a source, its findings, and its evidence in one transaction', () => {
+    const first = new Y.Doc()
+    addSource(first, {
+      id: 'source-a',
+      kind: 'file',
+      title: '概要',
+      url: null,
+      fileName: 'overview.pdf',
+      checkedAt: null,
+    })
     setFindings(first, 'source-a', [
       {
         id: 'finding-a',
@@ -169,7 +215,6 @@ describe('article sources', () => {
       verdict: 'supported',
       checkedAt: '2026-02-01T00:00:00.000Z',
     })._unsafeUnwrap()
-    const mergedSource = listSources(first)[0]
     let transactionCount = 0
     first.on('afterTransaction', () => {
       transactionCount += 1
@@ -181,7 +226,6 @@ describe('article sources', () => {
 
     expect(
       readSourceDeletionOutput(
-        mergedSource,
         removed,
         listSources(first),
         listFindings(first),
@@ -189,16 +233,6 @@ describe('article sources', () => {
         transactionCount,
       ),
     ).toEqual({
-      mergedSource: {
-        id: 'source-a',
-        kind: 'file',
-        title: '更新された概要',
-        url: null,
-        fileName: 'overview.pdf',
-        checkedAt: null,
-        status: 'ready',
-        summary: '資料の要約です。',
-      },
       removed: true,
       sources: [],
       findings: [],
@@ -206,7 +240,6 @@ describe('article sources', () => {
       transactionCount: 1,
     })
     first.destroy()
-    second.destroy()
   })
 
   it('preserves the original source when an ID is already present', () => {

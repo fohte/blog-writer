@@ -142,10 +142,14 @@ function readBoundaryMoveOutput(doc: Y.Doc) {
 function readPartialEvidenceOutput(
   doc: Y.Doc,
   visible: ReturnType<typeof listEvidence>,
+  visibleAfterFields: ReturnType<typeof listEvidence>,
 ) {
   return {
     visible,
     storedEvidenceIds: [...doc.getMap('evidence').keys()],
+    visibleAfterFields: visibleAfterFields.map(
+      ({ currentClaim, edited, id }) => ({ currentClaim, edited, id }),
+    ),
   }
 }
 
@@ -491,10 +495,26 @@ describe('article evidence', () => {
     doc.getMap('evidence').set('evidence-partial', data)
     const visible = listEvidence(doc)
     pruneEvidence(doc)
+    doc.transact(() => {
+      data.set(
+        'to',
+        Y.relativePositionToJSON(
+          Y.createRelativePositionFromTypeIndex(getBody(doc), claim.length, -1),
+        ),
+      )
+      data.set('verdict', 'supported')
+    })
 
-    expect(readPartialEvidenceOutput(doc, visible)).toEqual({
+    expect(readPartialEvidenceOutput(doc, visible, listEvidence(doc))).toEqual({
       visible: [],
       storedEvidenceIds: ['evidence-partial'],
+      visibleAfterFields: [
+        {
+          currentClaim: claim,
+          edited: false,
+          id: 'evidence-partial',
+        },
+      ],
     })
     doc.destroy()
   })
