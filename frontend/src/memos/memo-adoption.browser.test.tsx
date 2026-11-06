@@ -207,15 +207,24 @@ async function chooseEndInsertion() {
   })
 }
 
-async function undoAndRedo() {
+async function undo() {
   const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
   await act(async () => {
     await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
   })
-  const afterUndo = readOutput()
+}
+
+async function redo() {
+  const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
   await act(async () => {
     await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
   })
+}
+
+async function undoAndRedo() {
+  await undo()
+  const afterUndo = readOutput()
+  await redo()
   return afterUndo
 }
 
@@ -255,14 +264,9 @@ describe('memo adoption', () => {
       await userEvent.dragAndDrop(dragHandle, gap)
     })
     const afterInsert = readOutput()
-    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
-    await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
-    })
+    await undo()
     const afterUndo = readOutput()
-    await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
-    })
+    await redo()
 
     expect(readUndoOutput(afterInsert, afterUndo)).toEqual({
       afterInsert: {
@@ -498,22 +502,13 @@ describe('memo adoption', () => {
       if (result.isErr()) throw result.error
     })
     const afterMoveOutput = readOutput()
-    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
-    await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
-    })
+    await undo()
     const afterUndoMove = readOutput()
-    await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
-    })
+    await undo()
     const afterUndoInsert = readOutput()
-    await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
-    })
+    await redo()
     const afterRedoInsert = readOutput()
-    await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
-    })
+    await redo()
     expect(
       readHistoryOutput(
         {
@@ -710,6 +705,93 @@ describe('memo adoption', () => {
     remote.destroy()
   })
 
+  it('preserves a remote adoption target through insertion undo and redo', async () => {
+    const initial = '# Target\n\nbody'
+    mount(initial, 'memo')
+    await chooseEndInsertion()
+    const afterInsert = readOutput()
+    const remote = new Y.Doc()
+    Y.applyUpdate(remote, Y.encodeStateAsUpdate(currentEditor().doc))
+    const adoption = setMemoAdoptedTo(
+      remote,
+      'memo-a',
+      initial.indexOf('# Target'),
+    )
+    if (adoption.isErr()) throw adoption.error
+    act(() => {
+      Y.applyUpdate(
+        currentEditor().doc,
+        Y.encodeStateAsUpdate(remote, Y.encodeStateVector(currentEditor().doc)),
+      )
+    })
+    const afterRemoteAdoption = readOutput()
+    await undo()
+    const afterUndo = readOutput()
+    await redo()
+
+    expect(
+      readHistoryOutput({ afterInsert, afterRemoteAdoption, afterUndo }),
+    ).toEqual({
+      afterInsert: {
+        body: '# Target\n\nbody\n\n# memo\n\n',
+        editor: '# Target\n\nbody\n\n# memo\n\n',
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 16, level: 1, text: 'memo' },
+            },
+          },
+        ],
+        renderedStates: ['採用済み: memo'],
+      },
+      afterRemoteAdoption: {
+        body: '# Target\n\nbody\n\n# memo\n\n',
+        editor: '# Target\n\nbody\n\n# memo\n\n',
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 0, level: 1, text: 'Target' },
+            },
+          },
+        ],
+        renderedStates: ['採用済み: Target'],
+      },
+      afterUndo: {
+        body: initial,
+        editor: initial,
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 0, level: 1, text: 'Target' },
+            },
+          },
+        ],
+        renderedStates: ['採用済み: Target'],
+      },
+      afterRedo: {
+        body: '# Target\n\nbody\n\n# memo\n\n',
+        editor: '# Target\n\nbody\n\n# memo\n\n',
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 0, level: 1, text: 'Target' },
+            },
+          },
+        ],
+        renderedStates: ['採用済み: Target'],
+      },
+    })
+    remote.destroy()
+  })
+
   it('isolates a new heading from an immediately preceding text edit', async () => {
     mount('# First', 'Add a summary')
     const view = viewRef.current
@@ -726,14 +808,9 @@ describe('memo adoption', () => {
       if (result.isErr()) throw result.error
     })
     const afterInsert = readOutput()
-    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
-    await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
-    })
+    await undo()
     const afterUndoInsert = readOutput()
-    await act(async () => {
-      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
-    })
+    await undo()
     expect(
       readHistoryOutput({ afterInsert, afterUndoInsert }, 'afterUndoTyping'),
     ).toEqual({
