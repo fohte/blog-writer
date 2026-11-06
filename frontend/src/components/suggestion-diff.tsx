@@ -33,8 +33,8 @@ function renderChanges(
           className="suggestion-diff-removed"
           key={`removed-${String(index)}`}
           style={{
-            backgroundColor:
-              'color-mix(in srgb, var(--color-tint-red) 30%, transparent)',
+            backgroundColor: 'var(--color-tint-red)',
+            color: 'var(--color-tint-red-foreground)',
             textDecoration: 'line-through',
           }}
         >
@@ -48,8 +48,8 @@ function renderChanges(
           className="suggestion-diff-added"
           key={`added-${String(index)}`}
           style={{
-            backgroundColor:
-              'color-mix(in srgb, var(--color-tint-green) 30%, transparent)',
+            backgroundColor: 'var(--color-tint-green)',
+            color: 'var(--color-tint-green-foreground)',
             textDecoration: 'none',
           }}
         >
@@ -97,7 +97,7 @@ export function SuggestionDiff({
       style={{
         display: inline ? 'inline' : undefined,
         borderInlineStart: focused
-          ? '2px solid var(--color-tint-green)'
+          ? '3px solid var(--color-tint-green-foreground)'
           : '2px solid transparent',
         paddingInlineStart: '0.5rem',
       }}
