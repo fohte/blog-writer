@@ -180,6 +180,23 @@ export const DesktopLongOutline: Story = {
   args: { longOutline: true },
 }
 
+export const TabletLongOutline: Story = {
+  name: 'the tablet layout places a long outline above the article body.',
+  args: { layout: 'responsive', longOutline: true },
+  globals: { viewport: { value: 'tablet' } },
+  parameters: {
+    viewport: {
+      defaultViewport: 'tablet',
+      viewports: {
+        tablet: {
+          name: 'Tablet',
+          styles: { width: '900px', height: '800px' },
+        },
+      },
+    },
+  },
+}
+
 export const MobileArticle: Story = {
   name: 'the mobile layout opens on the article tab without injected controls.',
   args: { layout: 'mobile', initialMobilePanel: 'body' },

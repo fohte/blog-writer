@@ -414,8 +414,12 @@ Details.`,
       articleDoc,
       Array.from(
         { length: 30 },
-        (_, index) => `## Section ${String(index + 1)}\n\nDetails.`,
-      ).join(`\n\n`),
+        (_, index) => `## Section ${String(index + 1)}
+
+Details.`,
+      ).join(`
+
+`),
     )
     renderWorkspace(article, articleDoc)
 
