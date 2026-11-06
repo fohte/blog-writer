@@ -146,31 +146,27 @@ function readOutlineErrorOutput() {
   }
 }
 
-function readUndoFailureOutput(
-  moveAccepted: boolean,
-  afterMove: ReturnType<typeof readOutput>,
-  afterRemoteEdit: ReturnType<typeof readOutput>,
-  afterUndo: ReturnType<typeof readOutlineErrorOutput>,
-) {
-  return { moveAccepted, afterMove, afterRemoteEdit, afterUndo }
-}
+type HistoryFailureState =
+  | {
+      operation: 'undo'
+      moveAccepted: boolean
+      afterMove: ReturnType<typeof readOutput>
+      afterRemoteEdit: ReturnType<typeof readOutput>
+    }
+  | {
+      operation: 'redo'
+      moveAccepted: boolean
+      afterMove: ReturnType<typeof readOutput>
+      afterUndo: ReturnType<typeof readOutput>
+      afterRemoteEdit: ReturnType<typeof readOutput>
+    }
 
-function readRedoFailureOutput(
-  moveAccepted: boolean,
-  afterMove: ReturnType<typeof readOutput>,
-  afterUndo: ReturnType<typeof readOutput>,
-  afterRemoteEdit: ReturnType<typeof readOutput>,
-  afterRedo: ReturnType<typeof readOutlineErrorOutput>,
-) {
-  return { moveAccepted, afterMove, afterUndo, afterRemoteEdit, afterRedo }
+function readHistoryFailureOutput(state: HistoryFailureState) {
+  return { ...state, failure: readOutlineErrorOutput() }
 }
 
 function readOutputWithSelection(output: ReturnType<typeof readOutput>) {
   return { output, selection: viewRef.current?.state.selection.main.head }
-}
-
-function readOutputWithAdoptionMenu() {
-  return { output: readOutput(), menuOpen: adoptionMenuIsOpen() }
 }
 
 type AdoptionMenuScrollState = {
@@ -180,11 +176,15 @@ type AdoptionMenuScrollState = {
   scrolled: boolean
 }
 
-function readEndInsertionScrollOutput(
-  beforeScroll: AdoptionMenuScrollState,
-  afterScroll: AdoptionMenuScrollState,
-) {
-  return { beforeScroll, afterScroll, result: readOutputWithAdoptionMenu() }
+function readOutputWithAdoptionMenu(scrollState?: {
+  beforeScroll: AdoptionMenuScrollState
+  afterScroll: AdoptionMenuScrollState
+}) {
+  return {
+    ...scrollState,
+    output: readOutput(),
+    menuOpen: adoptionMenuIsOpen(),
+  }
 }
 
 function readDismissedUndoOutput(adoptionBeforeUndo: string | undefined) {
@@ -730,14 +730,9 @@ describe('memo adoption', () => {
     mount(initial, 'Add a summary')
     await chooseEndInsertion()
     const afterInsert = readOutput()
-    const remote = new Y.Doc()
-    Y.applyUpdate(remote, Y.encodeStateAsUpdate(currentEditor().doc))
-    getBody(remote).insert(getBody(remote).length, '\nRemote edit')
+    const body = getBody(currentEditor().doc)
     act(() => {
-      Y.applyUpdate(
-        currentEditor().doc,
-        Y.encodeStateAsUpdate(remote, Y.encodeStateVector(currentEditor().doc)),
-      )
+      applyRemoteInsertion(currentEditor().doc, body.length, '\nRemote edit')
     })
     const afterRemoteEdit = readOutput()
     const afterUndo = await undoAndRedo()
@@ -793,7 +788,6 @@ describe('memo adoption', () => {
         renderedStates: ['採用済み: Add a summary'],
       },
     })
-    remote.destroy()
   })
 
   it('preserves a remote adoption target through insertion undo and redo', async () => {
@@ -935,7 +929,12 @@ describe('memo adoption', () => {
   })
 
   it('shows an undo-specific message after a remote edit blocks move undo', async () => {
-    mount('# First\n\nbody', 'Add a summary')
+    mount(
+      `# First
+
+body`,
+      'Add a summary',
+    )
     await chooseEndInsertion()
     const { doc, history } = currentEditor()
     let moveAccepted = false
@@ -946,24 +945,40 @@ describe('memo adoption', () => {
     })
     const afterMove = readOutput()
     act(() => {
-      applyRemoteInsertion(doc, 0, 'R\n\n')
+      applyRemoteInsertion(
+        doc,
+        0,
+        `R
+
+`,
+      )
     })
     const afterRemoteEdit = readOutput()
     await pressUndo(currentView())
-    const afterUndo = readOutlineErrorOutput()
 
     expect(
-      readUndoFailureOutput(
+      readHistoryFailureOutput({
+        operation: 'undo',
         moveAccepted,
         afterMove,
         afterRemoteEdit,
-        afterUndo,
-      ),
+      }),
     ).toEqual({
+      operation: 'undo',
       moveAccepted: true,
       afterMove: {
-        body: '# Add a summary\n\n# First\n\nbody\n',
-        editor: '# Add a summary\n\n# First\n\nbody\n',
+        body: `# Add a summary
+
+# First
+
+body
+`,
+        editor: `# Add a summary
+
+# First
+
+body
+`,
         memos: [
           {
             id: 'memo-a',
@@ -976,8 +991,22 @@ describe('memo adoption', () => {
         renderedStates: ['採用済み: Add a summary'],
       },
       afterRemoteEdit: {
-        body: 'R\n\n# Add a summary\n\n# First\n\nbody\n',
-        editor: 'R\n\n# Add a summary\n\n# First\n\nbody\n',
+        body: `R
+
+# Add a summary
+
+# First
+
+body
+`,
+        editor: `R
+
+# Add a summary
+
+# First
+
+body
+`,
         memos: [
           {
             id: 'memo-a',
@@ -989,10 +1018,24 @@ describe('memo adoption', () => {
         ],
         renderedStates: ['採用済み: Add a summary'],
       },
-      afterUndo: {
+      failure: {
         output: {
-          body: 'R\n\n# Add a summary\n\n# First\n\nbody\n',
-          editor: 'R\n\n# Add a summary\n\n# First\n\nbody\n',
+          body: `R
+
+# Add a summary
+
+# First
+
+body
+`,
+          editor: `R
+
+# Add a summary
+
+# First
+
+body
+`,
           memos: [
             {
               id: 'memo-a',
@@ -1010,7 +1053,10 @@ describe('memo adoption', () => {
   })
 
   it('shows a redo-specific message after a remote edit blocks move redo', async () => {
-    const initial = '# First\n\n# Second\n'
+    const initial = `# First
+
+# Second
+`
     mount(initial, 'Add a summary')
     const { doc, history } = currentEditor()
     let moveAccepted = false
@@ -1026,25 +1072,37 @@ describe('memo adoption', () => {
     await pressUndo(currentView())
     const afterUndo = readOutput()
     act(() => {
-      applyRemoteInsertion(doc, 0, 'R\n\n')
+      applyRemoteInsertion(
+        doc,
+        0,
+        `R
+
+`,
+      )
     })
     const afterRemoteEdit = readOutput()
     await pressRedo(currentView())
-    const afterRedo = readOutlineErrorOutput()
 
     expect(
-      readRedoFailureOutput(
+      readHistoryFailureOutput({
+        operation: 'redo',
         moveAccepted,
         afterMove,
         afterUndo,
         afterRemoteEdit,
-        afterRedo,
-      ),
+      }),
     ).toEqual({
+      operation: 'redo',
       moveAccepted: true,
       afterMove: {
-        body: '# Second\n\n# First\n',
-        editor: '# Second\n\n# First\n',
+        body: `# Second
+
+# First
+`,
+        editor: `# Second
+
+# First
+`,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
         renderedStates: ['未整理'],
       },
@@ -1055,15 +1113,35 @@ describe('memo adoption', () => {
         renderedStates: ['未整理'],
       },
       afterRemoteEdit: {
-        body: 'R\n\n# First\n\n# Second\n',
-        editor: 'R\n\n# First\n\n# Second\n',
+        body: `R
+
+# First
+
+# Second
+`,
+        editor: `R
+
+# First
+
+# Second
+`,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
         renderedStates: ['未整理'],
       },
-      afterRedo: {
+      failure: {
         output: {
-          body: 'R\n\n# First\n\n# Second\n',
-          editor: 'R\n\n# First\n\n# Second\n',
+          body: `R
+
+# First
+
+# Second
+`,
+          editor: `R
+
+# First
+
+# Second
+`,
           memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
           renderedStates: ['未整理'],
         },
@@ -1243,7 +1321,13 @@ describe('memo adoption', () => {
   })
 
   it('scrolls to the end insertion action after three headings', async () => {
-    const initial = '# First\n\n# Second\n\n# Third\n\nbody'
+    const initial = `# First
+
+# Second
+
+# Third
+
+body`
     mount(initial, 'Add a summary')
     const chooseTarget = findButton('採用先を選ぶ')
     if (!chooseTarget) throw new Error('The memo target menu is missing')
@@ -1280,7 +1364,7 @@ describe('memo adoption', () => {
       await userEvent.click(insertAtEnd)
     })
 
-    expect(readEndInsertionScrollOutput(beforeScroll, afterScroll)).toEqual({
+    expect(readOutputWithAdoptionMenu({ beforeScroll, afterScroll })).toEqual({
       beforeScroll: {
         hasScrollClasses: true,
         scrollable: true,
@@ -1293,24 +1377,41 @@ describe('memo adoption', () => {
         actionVisible: true,
         scrolled: true,
       },
-      result: {
-        output: {
-          body: '# First\n\n# Second\n\n# Third\n\nbody\n\n# Add a summary\n\n',
-          editor:
-            '# First\n\n# Second\n\n# Third\n\nbody\n\n# Add a summary\n\n',
-          memos: [
-            {
-              id: 'memo-a',
-              state: {
-                kind: 'adopted',
-                heading: { from: 34, level: 1, text: 'Add a summary' },
-              },
+      output: {
+        body: `# First
+
+# Second
+
+# Third
+
+body
+
+# Add a summary
+
+`,
+        editor: `# First
+
+# Second
+
+# Third
+
+body
+
+# Add a summary
+
+`,
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 34, level: 1, text: 'Add a summary' },
             },
-          ],
-          renderedStates: ['採用済み: Add a summary'],
-        },
-        menuOpen: false,
+          },
+        ],
+        renderedStates: ['採用済み: Add a summary'],
       },
+      menuOpen: false,
     })
   })
 

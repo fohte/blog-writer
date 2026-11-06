@@ -22,10 +22,13 @@ export interface ArticleOutlineProps {
   activeFrom?: number
 }
 
-const BLOCK_MOVE_ERROR_MESSAGE = 'この位置には移動できません。'
-const HISTORY_ERROR_MESSAGES = {
-  undo: '元に戻せませんでした。',
-  redo: 'やり直せませんでした。',
+const HISTORY_FAILURE_PRESENTATION = {
+  move: {
+    label: 'Block move failed',
+    message: 'この位置には移動できません。',
+  },
+  undo: { label: 'History undo failed', message: '元に戻せませんでした。' },
+  redo: { label: 'History redo failed', message: 'やり直せませんでした。' },
 }
 
 function activeHeadingFrom(
@@ -94,17 +97,9 @@ export function ArticleOutline({
           return
         }
 
-        console.warn(
-          failure.operation === 'move'
-            ? 'Block move failed'
-            : `History ${failure.operation} failed`,
-          failure.error,
-        )
-        setError(
-          failure.operation === 'move'
-            ? BLOCK_MOVE_ERROR_MESSAGE
-            : HISTORY_ERROR_MESSAGES[failure.operation],
-        )
+        const presentation = HISTORY_FAILURE_PRESENTATION[failure.operation]
+        console.warn(presentation.label, failure.error)
+        setError(presentation.message)
       }),
     [history],
   )
