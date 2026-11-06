@@ -1,12 +1,14 @@
 import { indentUnit } from '@codemirror/language'
-import { EditorState } from '@codemirror/state'
+import { EditorState, Transaction } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
 import { getBody, setBody } from '#article/body'
+import { MarkdownEditor } from '#editor/index'
 import { createSuggestionLayer } from '#editor/suggestion-layer'
 import { undoManagerFacet } from '#editor/undo-manager-facet'
 
@@ -222,6 +224,74 @@ describe('suggestion layer', () => {
     expect(readOutput()).toEqual({
       afterAccept: initialText.replace('selected sentence', 'revised sentence'),
       afterUndo: initialText,
+    })
+  })
+
+  it('keeps prior typing when one undo reverses an accepted suggestion in MarkdownEditor', () => {
+    const doc = new Y.Doc()
+    setBody(doc, initialText)
+    const body = getBody(doc)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const layer = createSuggestionLayer()
+    const root = createRoot(host)
+    act(() => {
+      root.render(<MarkdownEditor extensions={[layer.extension]} text={body} />)
+    })
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      doc.destroy()
+      host.remove()
+    })
+    const content = host.querySelector<HTMLElement>('.cm-content')
+    const view = content ? EditorView.findFromDOM(content) : null
+    if (!view) throw new Error('The Markdown editor did not mount')
+    const from = initialText.indexOf('selected')
+
+    let suggestionResult: ReturnType<typeof layer.setSuggestions> | undefined
+    act(() => {
+      suggestionResult = layer.setSuggestions([
+        {
+          id: 'suggestion-a',
+          from,
+          to: from + 'selected sentence'.length,
+          replacement: 'revised sentence',
+        },
+      ])
+    })
+    if (!suggestionResult) throw new Error('Could not set suggestion')
+    if (suggestionResult.isErr()) throw new Error('Could not set suggestion')
+
+    act(() => {
+      view.dispatch({
+        changes: { from: 0, insert: 'new ' },
+        annotations: Transaction.userEvent.of('input.type'),
+      })
+    })
+    const afterTyping = body.toJSON()
+    act(() => {
+      layer.accept('suggestion-a')
+    })
+    const afterAccept = body.toJSON()
+    const undoManager = view.state.facet(undoManagerFacet)
+    let didUndo = false
+    act(() => {
+      didUndo = Boolean(undoManager?.undo())
+    })
+
+    const readOutput = () => ({
+      afterAccept,
+      afterTyping,
+      afterUndo: body.toJSON(),
+      didUndo,
+    })
+    expect(readOutput()).toEqual({
+      afterAccept: `new ${initialText.replace('selected sentence', 'revised sentence')}`,
+      afterTyping: `new ${initialText}`,
+      afterUndo: `new ${initialText}`,
+      didUndo: true,
     })
   })
 

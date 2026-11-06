@@ -1,5 +1,6 @@
 import { indentMore } from '@codemirror/commands'
 import {
+  type ChangeSet,
   type EditorState,
   type Extension,
   Prec,
@@ -62,6 +63,24 @@ function changedRangeTouchesSuggestion(
   }
   if (from === to) return changedFrom <= from && changedTo >= from
   return changedFrom < to && changedTo > from
+}
+
+function mapRange(
+  range: SuggestionPosition,
+  changes: ChangeSet,
+  changedRanges: readonly [number, number][],
+): SuggestionPosition | null {
+  if (
+    changedRanges.some(([from, to]) =>
+      changedRangeTouchesSuggestion(range.from, range.to, from, to),
+    )
+  ) {
+    return null
+  }
+  return {
+    from: changes.mapPos(range.from, 1),
+    to: changes.mapPos(range.to, 1),
+  }
 }
 
 function isRangeValid(from: number, to: number, docLength: number): boolean {
@@ -130,8 +149,6 @@ class SuggestionDiffWidget extends WidgetType {
     return (
       other instanceof SuggestionDiffWidget &&
       other.suggestion?.id === this.suggestion?.id &&
-      other.suggestion?.from === this.suggestion?.from &&
-      other.suggestion?.to === this.suggestion?.to &&
       other.suggestion?.replacement === this.suggestion?.replacement &&
       other.original === this.original &&
       other.focused === this.focused
@@ -198,12 +215,20 @@ export class SuggestionLayerController {
       update: (value, transaction) => {
         let suggestions = value.suggestions
         let inFlight = value.inFlight
+        let hasEffects = false
 
         for (const effect of transaction.effects) {
-          if (effect.is(replaceSuggestions)) suggestions = effect.value
-          if (effect.is(replaceInFlight)) inFlight = effect.value
+          if (effect.is(replaceSuggestions)) {
+            suggestions = effect.value
+            hasEffects = true
+          }
+          if (effect.is(replaceInFlight)) {
+            inFlight = effect.value
+            hasEffects = true
+          }
           if (effect.is(removeSuggestion)) {
             suggestions = suggestions.filter(({ id }) => id !== effect.value)
+            hasEffects = true
           }
         }
 
@@ -213,52 +238,36 @@ export class SuggestionLayerController {
             changedRanges.push([fromA, toA])
           })
           suggestions = suggestions.flatMap((suggestion) => {
-            if (
-              changedRanges.some(([from, to]) =>
-                changedRangeTouchesSuggestion(
-                  suggestion.from,
-                  suggestion.to,
-                  from,
-                  to,
-                ),
-              )
-            ) {
-              return []
-            }
-            return [
-              {
-                ...suggestion,
-                from: transaction.changes.mapPos(suggestion.from, 1),
-                to: transaction.changes.mapPos(suggestion.to, 1),
-              },
-            ]
+            const range = mapRange(
+              suggestion,
+              transaction.changes,
+              changedRanges,
+            )
+            return range ? [{ ...suggestion, ...range }] : []
           })
 
           if (inFlight) {
-            const currentInFlight = inFlight
-            inFlight = changedRanges.some(([from, to]) =>
-              changedRangeTouchesSuggestion(
-                currentInFlight.from,
-                currentInFlight.to,
-                from,
-                to,
-              ),
-            )
-              ? null
-              : {
-                  from: transaction.changes.mapPos(currentInFlight.from, 1),
-                  to: transaction.changes.mapPos(currentInFlight.to, 1),
-                }
+            inFlight = mapRange(inFlight, transaction.changes, changedRanges)
           }
+        }
+
+        const focusedId = focusForSelection(
+          suggestions,
+          transaction.newSelection.main.head,
+        )
+        if (
+          !hasEffects &&
+          focusedId === value.focusedId &&
+          (!transaction.docChanged ||
+            (value.suggestions.length === 0 && value.inFlight === null))
+        ) {
+          return value
         }
 
         return {
           suggestions,
           inFlight,
-          focusedId: focusForSelection(
-            suggestions,
-            transaction.newSelection.main.head,
-          ),
+          focusedId,
         }
       },
       provide: (field) => {
@@ -341,9 +350,7 @@ export class SuggestionLayerController {
 
   accept(id: string): void {
     const view = this.view
-    const suggestion = view?.state
-      .field(this.stateField, false)
-      ?.suggestions.find((candidate) => candidate.id === id)
+    const suggestion = this.findSuggestion(id)
     if (!view || !suggestion) return
 
     view.state.facet(undoManagerFacet)?.stopCapturing()
@@ -362,9 +369,7 @@ export class SuggestionLayerController {
 
   reject(id: string): void {
     const view = this.view
-    const suggestion = view?.state
-      .field(this.stateField, false)
-      ?.suggestions.find((candidate) => candidate.id === id)
+    const suggestion = this.findSuggestion(id)
     if (!view || !suggestion) return
     view.dispatch({ effects: removeSuggestion.of(id) })
     this.options.onResolve?.(suggestion, 'reject')
@@ -372,7 +377,7 @@ export class SuggestionLayerController {
 
   private handleTab(view: EditorView): boolean {
     const state = view.state.field(this.stateField, false)
-    const focused = state?.suggestions.find(({ id }) => id === state.focusedId)
+    const focused = this.focusedSuggestion()
     if (focused) {
       this.accept(focused.id)
       return true
@@ -406,12 +411,23 @@ export class SuggestionLayerController {
       this.options.onCancelInFlight?.()
       return true
     }
-    const focused = state?.suggestions.find(({ id }) => id === state.focusedId)
+    const focused = this.focusedSuggestion()
     if (focused) {
       this.reject(focused.id)
       return true
     }
     return false
+  }
+
+  private findSuggestion(id: string): TextSuggestion | undefined {
+    return this.view?.state
+      .field(this.stateField, false)
+      ?.suggestions.find((suggestion) => suggestion.id === id)
+  }
+
+  private focusedSuggestion(): TextSuggestion | undefined {
+    const state = this.view?.state.field(this.stateField, false)
+    return state?.suggestions.find(({ id }) => id === state.focusedId)
   }
 }
 
