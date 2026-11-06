@@ -4,8 +4,11 @@ export {
   InvalidBlockMoveError,
   InvalidHeadingError,
   InvalidMemoError,
+  InvalidSourceError,
   MemoAlreadyExistsError,
   MemoNotFoundError,
+  SourceAlreadyExistsError,
+  SourceNotFoundError,
 } from '#article/errors'
 export { deriveHeadingTree } from '#article/headings'
 export {
@@ -41,11 +44,31 @@ export {
   findMoveBlockRange,
   topLevelBlocks,
 } from '#article/move-block-structure'
+export type { MoveConflict } from '#article/move-conflicts'
+export {
+  getMoveConflicts,
+  recordMoveConflictRestoration,
+  resolveMoveConflict,
+} from '#article/move-conflicts'
 export { getPremise, setPremise } from '#article/premise'
+export type { AddFindingInput, AddSourceInput } from '#article/sources'
+export {
+  addSource,
+  deleteSource,
+  listFindings,
+  listSources,
+  observeSources,
+  setFindings,
+  updateSource,
+} from '#article/sources'
 export type {
+  Finding,
   Heading,
   Memo,
   MemoState,
   Premise,
   PremiseField,
+  Source,
+  SourceKind,
+  SourceStatus,
 } from '#article/types'

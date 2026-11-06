@@ -1,0 +1,570 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as Y from 'yjs'
+
+import {
+  getMoveConflicts,
+  moveBlock,
+  readBody,
+  resolveMoveConflict,
+  setBody,
+} from '#article/index'
+import {
+  captureMoveSource,
+  createMoveRecord,
+  getMoveRecords,
+} from '#article/move-conflict-records'
+import { observeMoveConflicts } from '#article/move-conflicts'
+import {
+  initialBody,
+  moveSection,
+  prepareConflict,
+  pull,
+  replica,
+  settle,
+} from '#article/move-conflicts.test-support.test'
+
+const activeReplicas: Array<ReturnType<typeof replica>> = []
+const activeObservers: Array<() => void> = []
+
+function readBodiesAndConflicts(documents: Y.Doc[]) {
+  return {
+    bodies: documents.map(readBody),
+    conflicts: documents.map(getMoveConflicts),
+  }
+}
+
+function makeReplica(clientId: number): ReturnType<typeof replica> {
+  const result = replica(clientId)
+  activeReplicas.push(result)
+  return result
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+  for (const stop of activeObservers.splice(0)) stop()
+  for (const { stop } of activeReplicas.splice(0)) stop()
+})
+
+describe('move conflict review regressions', () => {
+  it('replicates a keep decision and purges it with its move record', () => {
+    vi.useFakeTimers({ now: new Date('2026-01-01T00:00:00.000Z') })
+    const replicas = prepareConflict()
+    activeReplicas.push(replicas.A, replicas.B)
+    pull(replicas.B.doc, replicas.A.doc)
+
+    const conflict = getMoveConflicts(replicas.B.doc)[0]
+    if (!conflict) throw new Error('Expected a move conflict')
+    const record = replicas.B.doc
+      .getArray<{ copy: [number, number] }>('moves')
+      .get(0)
+    const decisionKey = `${record.copy[0].toString()}:${record.copy[1].toString()}/${conflict.id}`
+    resolveMoveConflict(replicas.B.doc, conflict.id, 'keep')._unsafeUnwrap()
+    pull(replicas.A.doc, replicas.B.doc)
+    pull(replicas.B.doc, replicas.A.doc)
+
+    const beforeExpiry = {
+      decisions: replicas.A.doc.getMap('move-decisions').size,
+      decisionKeyExists: replicas.A.doc
+        .getMap('move-decisions')
+        .has(decisionKey),
+      conflicts: [
+        getMoveConflicts(replicas.A.doc),
+        getMoveConflicts(replicas.B.doc),
+      ],
+      records: [
+        replicas.A.doc.getArray('moves').length,
+        replicas.B.doc.getArray('moves').length,
+      ],
+    }
+
+    vi.setSystemTime(new Date('2026-02-02T00:00:00.000Z'))
+    getMoveConflicts(replicas.B.doc)
+    pull(replicas.A.doc, replicas.B.doc)
+
+    const readOutput = () => ({
+      decisionKey,
+      beforeExpiry,
+      afterExpiry: {
+        decisions: [
+          replicas.A.doc.getMap('move-decisions').size,
+          replicas.B.doc.getMap('move-decisions').size,
+        ],
+        conflicts: [
+          getMoveConflicts(replicas.A.doc),
+          getMoveConflicts(replicas.B.doc),
+        ],
+        records: [
+          replicas.A.doc.getArray('moves').length,
+          replicas.B.doc.getArray('moves').length,
+        ],
+      },
+    })
+
+    expect(readOutput()).toEqual({
+      decisionKey,
+      beforeExpiry: {
+        decisions: 1,
+        decisionKeyExists: true,
+        conflicts: [[], []],
+        records: [1, 1],
+      },
+      afterExpiry: {
+        decisions: [0, 0],
+        conflicts: [[], []],
+        records: [0, 0],
+      },
+    })
+  })
+
+  it('notifies another replica when a keep decision arrives', () => {
+    const replicas = prepareConflict()
+    activeReplicas.push(replicas.A, replicas.B)
+    settle(replicas)
+
+    const notifications: string[][] = []
+    activeObservers.push(
+      observeMoveConflicts(replicas.A.doc, () => {
+        notifications.push(getMoveConflicts(replicas.A.doc).map(({ id }) => id))
+      }),
+    )
+    const conflict = getMoveConflicts(replicas.B.doc)[0]
+    if (!conflict) throw new Error('Expected a move conflict')
+    resolveMoveConflict(replicas.B.doc, conflict.id, 'keep')._unsafeUnwrap()
+    settle(replicas)
+
+    const readOutput = () => ({
+      notifications,
+      conflicts: [
+        getMoveConflicts(replicas.A.doc),
+        getMoveConflicts(replicas.B.doc),
+      ],
+    })
+    expect(readOutput()).toEqual({
+      notifications: [[]],
+      conflicts: [[], []],
+    })
+  })
+
+  it('keeps a changed conflict range dismissed after its first character is replaced', () => {
+    const replicas = prepareConflict()
+    activeReplicas.push(replicas.A, replicas.B)
+    settle(replicas)
+
+    const conflict = getMoveConflicts(replicas.B.doc)[0]
+    if (!conflict) throw new Error('Expected a move conflict')
+    resolveMoveConflict(replicas.B.doc, conflict.id, 'keep')._unsafeUnwrap()
+    settle(replicas)
+
+    const body = replicas.B.doc.getText('body')
+    body.delete(conflict.from, 1)
+    body.insert(conflict.from, 'q')
+    settle(replicas)
+
+    const readOutput = () => ({
+      bodies: [readBody(replicas.A.doc), readBody(replicas.B.doc)],
+      conflicts: [
+        getMoveConflicts(replicas.A.doc),
+        getMoveConflicts(replicas.B.doc),
+      ],
+      decisions: [
+        replicas.A.doc.getMap('move-decisions').size,
+        replicas.B.doc.getMap('move-decisions').size,
+      ],
+    })
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\nqy## Vista\nz9\n\n## Fjord\nmaple ma\n',
+        '## Cedar\na1\nqy## Vista\nz9\n\n## Fjord\nmaple ma\n',
+      ],
+      conflicts: [[], []],
+      decisions: [1, 1],
+    })
+  })
+
+  it('notifies adjacent text typed after a kept conflict was received', () => {
+    const A = makeReplica(123)
+    const B = makeReplica(124)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+
+    const body = B.doc.getText('body')
+    const insertion = body.toJSON().indexOf('maple') + 'maple'.length
+    body.insert(insertion, 'xy')
+    moveSection(A.doc, 'end')
+    pull(A.doc, B.doc)
+
+    const conflict = getMoveConflicts(A.doc)[0]
+    if (!conflict) throw new Error('Expected a move conflict')
+    resolveMoveConflict(A.doc, conflict.id, 'keep')._unsafeUnwrap()
+    body.insert(insertion + 2, 'zz')
+    settle({ A, B })
+
+    const readOutput = () => ({
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflicts: [A, B].map(({ doc }) =>
+        getMoveConflicts(doc).map(({ text }) => text),
+      ),
+    })
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\nxyzz## Vista\nz9\n\n## Fjord\nmaple maple\n',
+        '## Cedar\na1\nxyzz## Vista\nz9\n\n## Fjord\nmaple maple\n',
+      ],
+      conflicts: [['zz'], ['zz']],
+    })
+  })
+
+  it('preserves both sides when received text is edited in the middle', () => {
+    const A = makeReplica(125)
+    const B = makeReplica(126)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+
+    const body = B.doc.getText('body')
+    const insertion = body.toJSON().indexOf('maple') + 'maple'.length
+    body.insert(insertion, 'xy')
+    moveSection(A.doc, 'end')
+    pull(B.doc, A.doc)
+    const conflict = getMoveConflicts(B.doc)[0]
+    if (!conflict) throw new Error('Expected a move conflict')
+    body.insert(conflict.from + 1, 'z')
+    settle({ A, B })
+
+    const readOutput = () => ({
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflicts: [A, B].map(({ doc }) =>
+        getMoveConflicts(doc).map(({ text }) => text),
+      ),
+    })
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\nxzy## Vista\nz9\n\n## Fjord\nmaple maple\n',
+        '## Cedar\na1\nxzy## Vista\nz9\n\n## Fjord\nmaple maple\n',
+      ],
+      conflicts: [
+        ['x', 'y'],
+        ['x', 'y'],
+      ],
+    })
+  })
+
+  it('keeps neighbouring conflicts independent when they share an anchor', () => {
+    const A = makeReplica(121)
+    const B = makeReplica(122)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+
+    const body = B.doc.getText('body')
+    const source = body.toJSON().indexOf('maple maple')
+    body.insert(source + 1, 'x')
+    body.insert(source + 3, 'z')
+    moveSection(A.doc, 'end')
+    settle({ A, B })
+    const conflictsBeforeResolution = [
+      getMoveConflicts(A.doc),
+      getMoveConflicts(B.doc),
+    ]
+    const firstConflict = conflictsBeforeResolution[1]?.[0]
+    if (!firstConflict) throw new Error('Expected a move conflict')
+    resolveMoveConflict(B.doc, firstConflict.id, 'keep')._unsafeUnwrap()
+    settle({ A, B })
+
+    const readOutput = () => ({
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflictsBeforeResolution,
+      conflictsAfterResolution: [
+        getMoveConflicts(A.doc),
+        getMoveConflicts(B.doc),
+      ],
+      decisions: [
+        A.doc.getMap('move-decisions').size,
+        B.doc.getMap('move-decisions').size,
+      ],
+    })
+
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\nxz## Vista\nz9\n\n## Fjord\nmaple maple\n',
+        '## Cedar\na1\nxz## Vista\nz9\n\n## Fjord\nmaple maple\n',
+      ],
+      conflictsBeforeResolution: [
+        [
+          { id: '122:0', from: 12, to: 13, text: 'x', target: 37 },
+          { id: '122:1', from: 13, to: 14, text: 'z', target: 38 },
+        ],
+        [
+          { id: '122:0', from: 12, to: 13, text: 'x', target: 37 },
+          { id: '122:1', from: 13, to: 14, text: 'z', target: 38 },
+        ],
+      ],
+      conflictsAfterResolution: [
+        [{ id: '122:1', from: 13, to: 14, text: 'z', target: 38 }],
+        [{ id: '122:1', from: 13, to: 14, text: 'z', target: 38 }],
+      ],
+      decisions: [1, 1],
+    })
+  })
+
+  it('keeps text received after the move update when the source was not yet known', () => {
+    const A = makeReplica(71)
+    const B = makeReplica(72)
+    const C = makeReplica(73)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+    pull(C.doc, A.doc)
+    const baseStateVector = Y.encodeStateVector(B.doc)
+
+    const cText = C.doc.getText('body')
+    cText.insert(cText.toJSON().indexOf('maple') + 5, 'NEW')
+    const lateInsert = Y.encodeStateAsUpdate(C.doc, baseStateVector)
+    pull(A.doc, C.doc)
+
+    let moveUpdate: Uint8Array | undefined
+    const captureMove = (update: Uint8Array) => {
+      moveUpdate = update
+    }
+    A.doc.on('update', captureMove)
+    moveSection(A.doc, 'end')
+    A.doc.off('update', captureMove)
+    if (!moveUpdate) throw new Error('Expected a move update')
+
+    Y.applyUpdate(B.doc, moveUpdate, 'move')
+    Y.applyUpdate(B.doc, lateInsert, 'late-insert')
+    Y.applyUpdate(C.doc, moveUpdate, 'move')
+    for (let round = 0; round < 3; round += 1) {
+      pull(A.doc, B.doc)
+      pull(B.doc, A.doc)
+      pull(A.doc, C.doc)
+      pull(C.doc, A.doc)
+      pull(B.doc, C.doc)
+      pull(C.doc, B.doc)
+    }
+
+    expect(readBodiesAndConflicts([A.doc, B.doc, C.doc])).toEqual({
+      bodies: [
+        '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmapleNEW maple\n',
+        '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmapleNEW maple\n',
+        '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmapleNEW maple\n',
+      ],
+      conflicts: [[], [], []],
+    })
+  })
+
+  it('rechecks a source deletion received after an existing move record', () => {
+    const A = new Y.Doc()
+    const B = new Y.Doc()
+    const C = new Y.Doc()
+    const D = new Y.Doc()
+    A.clientID = 74
+    B.clientID = 75
+    C.clientID = 76
+    D.clientID = 77
+    setBody(A, initialBody)
+    pull(B, A)
+    pull(C, A)
+    pull(D, A)
+
+    const source = initialBody.indexOf('## Fjord\n')
+    const destination = initialBody.indexOf('## Vista\n')
+    const copyText = initialBody.slice(source, destination)
+    const cBody = C.getText('body')
+    const sourceRuns = captureMoveSource(cBody, source, destination)
+    const stateVector = Object.fromEntries(
+      Y.decodeStateVector(Y.encodeStateVector(C)),
+    )
+    const copyFrom = cBody.length
+    C.transact(() => {
+      cBody.insert(copyFrom, copyText)
+      const record = createMoveRecord({
+        text: cBody,
+        copyFrom,
+        src: sourceRuns,
+        sv: stateVector,
+        offsets: Array.from({ length: copyText.length }, (_, index) => index),
+      })
+      if (record) getMoveRecords(C).push([record])
+    }, 'move-copy')
+    pull(A, C)
+    pull(B, C)
+
+    activeObservers.push(observeMoveConflicts(A), observeMoveConflicts(B))
+    const dBody = D.getText('body')
+    dBody.delete(dBody.toJSON().lastIndexOf('ple'), 3)
+    pull(A, D)
+    pull(B, D)
+    for (let round = 0; round < 3; round += 1) {
+      pull(A, B)
+      pull(B, A)
+      pull(A, C)
+      pull(C, A)
+      pull(A, D)
+      pull(D, A)
+    }
+
+    const readOutput = () => ({
+      bodies: [readBody(A), readBody(B), readBody(C), readBody(D)],
+      conflicts: [
+        getMoveConflicts(A),
+        getMoveConflicts(B),
+        getMoveConflicts(C),
+        getMoveConflicts(D),
+      ],
+    })
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\n## Fjord\nmaple ma\n## Vista\nz9\n## Fjord\nmaple ma\n',
+        '## Cedar\na1\n## Fjord\nmaple ma\n## Vista\nz9\n## Fjord\nmaple ma\n',
+        '## Cedar\na1\n## Fjord\nmaple ma\n## Vista\nz9\n## Fjord\nmaple ma\n',
+        '## Cedar\na1\n## Fjord\nmaple ma\n## Vista\nz9\n## Fjord\nmaple ma\n',
+      ],
+      conflicts: [[], [], [], []],
+    })
+  })
+
+  it('does not map a removed heading marker onto a surviving marker', () => {
+    const A = makeReplica(81)
+    const B = makeReplica(82)
+    const body = '### Summit\nbody\n\n## Valley\nend\n'
+    setBody(A.doc, body)
+    pull(B.doc, A.doc)
+    B.doc.getText('body').delete(2, 1)
+
+    moveBlock(A.doc, {
+      from: 0,
+      destination: body.length,
+      headingLevel: 2,
+    })._unsafeUnwrap()
+    pull(B.doc, A.doc)
+    pull(A.doc, B.doc)
+
+    expect(readBodiesAndConflicts([A.doc, B.doc])).toEqual({
+      bodies: [
+        '## Valley\nend\n\n## Summit\nbody\n',
+        '## Valley\nend\n\n## Summit\nbody\n',
+      ],
+      conflicts: [[], []],
+    })
+  })
+
+  it('preserves a newline in text moved from an offline section', () => {
+    vi.useFakeTimers({ now: new Date('2026-01-01T00:00:00.000Z') })
+    const A = makeReplica(83)
+    const B = makeReplica(84)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+    const insertedText = B.doc.getText('body')
+    insertedText.insert(insertedText.toJSON().indexOf('maple') + 6, 'ipsum\n')
+
+    moveSection(A.doc, 'end')
+    settle({ A, B })
+    for (let pass = 0; pass < 10; pass += 1) {
+      const conflict = getMoveConflicts(A.doc)[0]
+      if (!conflict) break
+      resolveMoveConflict(A.doc, conflict.id, 'move')._unsafeUnwrap()
+    }
+    settle({ A, B })
+
+    const beforeExpiry = {
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflicts: [getMoveConflicts(A.doc), getMoveConflicts(B.doc)],
+      relocations: [
+        A.doc.getMap('move-conflict-relocations').size,
+        B.doc.getMap('move-conflict-relocations').size,
+      ],
+    }
+
+    vi.setSystemTime(new Date('2026-02-02T00:00:00.000Z'))
+    getMoveConflicts(A.doc)
+    pull(B.doc, A.doc)
+    getMoveConflicts(B.doc)
+    pull(A.doc, B.doc)
+
+    const readOutput = () => ({
+      beforeExpiry,
+      afterExpiry: {
+        records: [
+          A.doc.getArray('moves').length,
+          B.doc.getArray('moves').length,
+        ],
+        relocations: [
+          A.doc.getMap('move-conflict-relocations').size,
+          B.doc.getMap('move-conflict-relocations').size,
+        ],
+      },
+    })
+
+    expect(readOutput()).toEqual({
+      beforeExpiry: {
+        bodies: [
+          '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmaple ipsum\nmaple\n',
+          '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmaple ipsum\nmaple\n',
+        ],
+        conflicts: [[], []],
+        relocations: [6, 6],
+      },
+      afterExpiry: { records: [0, 0], relocations: [0, 0] },
+    })
+  })
+
+  it('keeps both copies when two move records refer to the same source characters', () => {
+    const A = makeReplica(91)
+    const B = makeReplica(92)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+
+    moveSection(A.doc, 'end')
+    moveSection(B.doc, 'top')
+    pull(A.doc, B.doc)
+    pull(B.doc, A.doc)
+
+    const readOutput = () => ({
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflicts: [getMoveConflicts(A.doc), getMoveConflicts(B.doc)],
+      records: [A.doc.getArray('moves').length, B.doc.getArray('moves').length],
+    })
+
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Fjord\nmaple maple\n\n## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmaple maple\n',
+        '## Fjord\nmaple maple\n\n## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmaple maple\n',
+      ],
+      conflicts: [[], []],
+      records: [2, 2],
+    })
+  })
+
+  it('skips repair when an expired move record arrives late', () => {
+    vi.useFakeTimers({ now: new Date('2026-01-01T00:00:00.000Z') })
+    const A = makeReplica(101)
+    const B = makeReplica(102)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+    const bText = B.doc.getText('body')
+    bText.delete(bText.toJSON().lastIndexOf('ple'), 3)
+    moveSection(A.doc, 'end')
+
+    vi.setSystemTime(new Date('2026-02-02T00:00:00.000Z'))
+    pull(B.doc, A.doc)
+    pull(A.doc, B.doc)
+
+    const readOutput = () => ({
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflicts: [getMoveConflicts(A.doc), getMoveConflicts(B.doc)],
+      acknowledgements: [
+        A.doc.getMap('move-acks').size,
+        B.doc.getMap('move-acks').size,
+      ],
+      records: [A.doc.getArray('moves').length, B.doc.getArray('moves').length],
+    })
+
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmaple maple\n',
+        '## Cedar\na1\n## Vista\nz9\n\n## Fjord\nmaple maple\n',
+      ],
+      conflicts: [[], []],
+      acknowledgements: [0, 0],
+      records: [0, 0],
+    })
+  })
+})

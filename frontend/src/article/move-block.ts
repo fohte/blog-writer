@@ -33,6 +33,12 @@ import {
   findMoveBlockRange,
   validatePlannedMoveStructure,
 } from '#article/move-block-structure'
+import {
+  captureMoveSource,
+  cleanupMoveRecords,
+  createMoveRecord,
+  getMoveRecords,
+} from '#article/move-conflict-records'
 
 export type BlockMoved = {
   from: number
@@ -151,6 +157,7 @@ function applyMoveBlock(
   input: MoveBlockInput,
   options: ApplyMoveOptions = {},
 ): Result<MoveBlockResult, InvalidBlockMoveError> {
+  cleanupMoveRecords(doc)
   const body = getBody(doc)
   const markdown = body.toJSON()
   const headings = collectHeadings(markdown)
@@ -180,6 +187,10 @@ function applyMoveBlock(
   )
   const movedText = transformedText(markdown, range, replacements)
   const sourceText = markdown.slice(range.from, range.to)
+  const moveSource = captureMoveSource(body, range.from, range.to)
+  const moveStateVector = Object.fromEntries(
+    Y.decodeStateVector(Y.encodeStateVector(doc)),
+  )
   const removeRanges = options.removeRanges ?? []
   if (
     removeRanges.some(
@@ -266,6 +277,23 @@ function applyMoveBlock(
       .filter((finishMove) => finishMove !== undefined)
     body.delete(deletionFrom, removedLength)
     body.insert(insertionIndex, insertion.text)
+    const offsets = Array.from(
+      { length: range.to - range.from },
+      (_, index) => {
+        const mapped = mapWithinRange(range.from + index, range, replacements)
+        return mapped === undefined
+          ? null
+          : Math.max(0, Math.min(insertion.contentLength - 1, mapped))
+      },
+    )
+    const moveRecord = createMoveRecord({
+      text: body,
+      copyFrom: insertedFrom,
+      src: moveSource,
+      sv: moveStateVector,
+      offsets,
+    })
+    if (moveRecord) getMoveRecords(doc).push([moveRecord])
     finishMemoAnchorMove()
     for (const finishMove of finishUpdaterMoves) finishMove()
   }, origin)
