@@ -1,4 +1,4 @@
-import { EditorState, Transaction } from '@codemirror/state'
+import { ChangeSet, EditorState, Text, Transaction } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
@@ -10,7 +10,9 @@ import {
   getBody,
   getMemoState,
   getPremise,
+  getReverseMoveChange,
   listMemos,
+  mapMoveBlockHistoryRemote,
   moveBlock,
   observeMemos,
   readBody,
@@ -24,6 +26,88 @@ import {
 } from '#article/index'
 
 describe('article model', () => {
+  it('maps a remote edit inside a moved block back to its source before undo', () => {
+    const doc = new Y.Doc()
+    const markdown =
+      'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n'
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: 0,
+      destination: markdown.length,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const remotePosition =
+      afterMove.indexOf('First paragraph') + 'First '.length
+    const remoteChange = ChangeSet.of(
+      { from: remotePosition, insert: 'remote ' },
+      afterMove.length,
+    )
+    const afterRemote = remoteChange
+      .apply(Text.of(afterMove.split('\n')))
+      .toString()
+    setBody(doc, afterRemote)
+
+    const mapped = mapMoveBlockHistoryRemote(
+      move,
+      remoteChange,
+      getReverseMoveChange(move) ?? ChangeSet.empty(afterMove.length),
+    ).match(
+      (value) => value,
+      (error) => {
+        throw new Error(error.message)
+      },
+    )
+    const undo = reverseBlockMove(doc, mapped.move, 'undo')._unsafeUnwrap()
+
+    const readOutput = () => ({
+      afterRemote,
+      changeBeforeMove: mapped.changeBeforeMove
+        .apply(Text.of(markdown.split('\n')))
+        .toString(),
+      afterUndo: readBody(doc),
+      undoEvent: undo.annotations[1].value,
+    })
+    const expected = {
+      afterRemote:
+        'Second paragraph.\n\nThird paragraph.\n\nFirst remote paragraph.\n',
+      changeBeforeMove:
+        'First remote paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n',
+      afterUndo:
+        'First remote paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n',
+      undoEvent: 'undo',
+    }
+    expect(readOutput()).toEqual(expected)
+  })
+
+  it('restores the separator after a repeated heading move undo and redo', () => {
+    const doc = new Y.Doc()
+    const markdown = '# Alpha\n\nFirst.\n\n# Beta\n\nSecond.\n'
+    setBody(doc, markdown)
+    const move = moveBlock(doc, {
+      from: markdown.indexOf('# Beta'),
+      destination: 0,
+    })._unsafeUnwrap()
+    const afterMove = readBody(doc)
+    const undo = reverseBlockMove(doc, move, 'undo')._unsafeUnwrap()
+    const afterUndo = readBody(doc)
+    const redo = reverseBlockMove(doc, undo, 'redo')._unsafeUnwrap()
+    const afterRedo = readBody(doc)
+    reverseBlockMove(doc, redo, 'undo')._unsafeUnwrap()
+
+    const readOutput = () => ({
+      afterMove,
+      afterUndo,
+      afterRedo,
+      afterSecondUndo: readBody(doc),
+    })
+    expect(readOutput()).toEqual({
+      afterMove: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
+      afterUndo: markdown,
+      afterRedo: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
+      afterSecondUndo: markdown,
+    })
+  })
+
   it('moves a heading section and reanchors memo and registered markers in one transaction', () => {
     const doc = new Y.Doc()
     const markdown = `# Alpha
@@ -702,22 +786,32 @@ C
     })
   })
 
-  it('resolves the moved section and seam after text is inserted before them', () => {
+  it('maps a remote insertion before a moved block and its source seam', () => {
     const doc = new Y.Doc()
-    const markdown = `# First
-
-# Second
-`
+    const markdown = 'Intro block.\n\nFirst block.\n\nSecond block.\n'
     setBody(doc, markdown)
     const move = moveBlock(doc, {
-      from: markdown.indexOf('# First'),
+      from: markdown.indexOf('First block.'),
       destination: markdown.length,
     })._unsafeUnwrap()
-    const intro = `# Intro
-
-`
+    const intro = 'New intro.\n\n'
+    const afterMove = readBody(doc)
+    const remoteChange = ChangeSet.of(
+      { from: 0, insert: intro },
+      afterMove.length,
+    )
     doc.getText('body').insert(0, intro)
-    const undo = reverseBlockMove(doc, move)._unsafeUnwrap()
+    const mappedMove = mapMoveBlockHistoryRemote(
+      move,
+      remoteChange,
+      getReverseMoveChange(move) ?? ChangeSet.empty(afterMove.length),
+    ).match(
+      (value) => value,
+      (error) => {
+        throw new Error(error.message)
+      },
+    )
+    const undo = reverseBlockMove(doc, mappedMove.move)._unsafeUnwrap()
 
     expect(
       Object.fromEntries([
@@ -725,12 +819,7 @@ C
         ['userEvent', undo.annotations[1].value],
       ]),
     ).toEqual({
-      body: `# Intro
-
-# First
-
-# Second
-`,
+      body: 'New intro.\n\nIntro block.\n\nFirst block.\n\nSecond block.\n',
       userEvent: 'undo',
     })
   })

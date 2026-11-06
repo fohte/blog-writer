@@ -12,6 +12,7 @@
         "src/lib/utils.ts!",
         "src/article/index.ts!",
         "src/editor/index.ts!",
+        "src/outline/index.ts!",
         "src/memos/memo-panel.tsx!",
         "src/research/source-panel.tsx!",
         "service-worker.js!"

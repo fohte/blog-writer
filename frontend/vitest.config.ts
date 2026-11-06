@@ -16,6 +16,7 @@ export default mergeConfig(
     test: {
       exclude: [
         'src/article/move-conflicts.test-support.test.ts',
+        'src/outline/move-history.test-support.test.ts',
         'src/editor/__tests__/markdown-editor-setup.test.tsx',
       ],
       projects: [
@@ -28,6 +29,7 @@ export default mergeConfig(
               '**/dist/**',
               '**/*.browser.test.tsx',
               'src/article/move-conflicts.test-support.test.ts',
+              'src/outline/move-history.test-support.test.ts',
               'src/editor/__tests__/markdown-editor-setup.test.tsx',
             ],
           },

@@ -49,7 +49,7 @@ export function findHeadingSection(
   from: number,
 ): { from: number; to: number; headingLevel: number } | undefined {
   const index = headings.findIndex(
-    (heading) => heading.from <= from && from < heading.to,
+    (heading) => heading.from <= from && from <= heading.to,
   )
   if (index === -1) return undefined
 
@@ -64,6 +64,19 @@ export function findHeadingSection(
     to: nextHeading?.from ?? markdown.length,
     headingLevel: heading.level,
   }
+}
+
+export function findMoveBlockRange(
+  markdown: string,
+  position: number,
+  headings = collectHeadings(markdown),
+  blocks = topLevelBlocks(markdown),
+): { from: number; to: number; headingLevel?: number } | undefined {
+  const section = findHeadingSection(markdown, headings, position)
+  if (section) return section
+
+  const block = blocks.find(({ from, to }) => from <= position && position < to)
+  return block ? { from: block.from, to: block.to } : undefined
 }
 
 type TextRange = { from: number; to: number }

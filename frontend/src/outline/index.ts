@@ -1,0 +1,5 @@
+export type { ArticleOutlineProps } from '#outline/article-outline'
+export { ArticleOutline } from '#outline/article-outline'
+export { createOutlineEditorExtension } from '#outline/editor-extension'
+export type { MoveHistory } from '#outline/move-history'
+export { createMoveHistory } from '#outline/move-history'
