@@ -291,10 +291,18 @@ export function ArticleEditorView({
   const desktopPanelProps = isMobile
     ? {}
     : { hidden: false, inert: false, style: { display: 'block' } }
+  const layoutClasses = {
+    pagePadding: isMobile ? 'px-4' : 'px-4 sm:px-6',
+    premiseColumns: isMobile ? '' : 'sm:grid-cols-3',
+    workspaceColumns: isMobile ? '' : 'lg:grid-cols-3',
+    sidebar: isMobile ? '' : 'lg:self-start lg:overflow-y-auto lg:col-span-1',
+    panelSpacing: isMobile ? 'pt-4' : 'pt-4 lg:pt-0',
+    bodyColumns: isMobile ? '' : 'lg:col-span-2',
+  }
 
   return (
     <main
-      className={`mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-6 ${isMobile ? '' : 'sm:px-6'}`}
+      className={`mx-auto flex min-h-screen max-w-7xl flex-col gap-6 py-6 ${layoutClasses.pagePadding}`}
     >
       <header className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
@@ -324,7 +332,7 @@ export function ArticleEditorView({
               aria-label="Article premise"
               className="flex flex-col gap-3"
             >
-              <div className={`grid gap-3 ${isMobile ? '' : 'sm:grid-cols-3'}`}>
+              <div className={`grid gap-3 ${layoutClasses.premiseColumns}`}>
                 {premiseFields.map(({ field, label }) => (
                   <label
                     className="flex flex-col gap-2 text-sm font-medium"
@@ -386,10 +394,10 @@ export function ArticleEditorView({
             </TabsList>
           </div>
           <div
-            className={`grid min-w-0 gap-6 ${isMobile ? '' : 'lg:grid-cols-3'}`}
+            className={`grid min-w-0 gap-6 ${layoutClasses.workspaceColumns}`}
           >
             <aside
-              className={`flex min-w-0 flex-col gap-6 ${isMobile ? '' : 'lg:self-start lg:overflow-y-auto lg:col-span-1'}`}
+              className={`flex min-w-0 flex-col gap-6 ${layoutClasses.sidebar}`}
               style={{
                 maxHeight: isMobile ? undefined : 'calc(100vh - 3rem)',
               }}
@@ -402,7 +410,7 @@ export function ArticleEditorView({
                     keepMounted
                     value={value}
                   >
-                    <div className={isMobile ? 'pt-4' : 'pt-4 lg:pt-0'}>
+                    <div className={layoutClasses.panelSpacing}>
                       {renderPanel(value)}
                     </div>
                   </TabsPanel>
@@ -411,10 +419,10 @@ export function ArticleEditorView({
             </aside>
             <section
               aria-label="Article body"
-              className={`min-w-0 ${isMobile ? '' : 'lg:col-span-2'}`}
+              className={`min-w-0 ${layoutClasses.bodyColumns}`}
             >
               <TabsPanel {...desktopPanelProps} keepMounted value="body">
-                <div className={isMobile ? 'pt-4' : 'pt-4 lg:pt-0'}>
+                <div className={layoutClasses.panelSpacing}>
                   {renderPanel('body')}
                 </div>
               </TabsPanel>

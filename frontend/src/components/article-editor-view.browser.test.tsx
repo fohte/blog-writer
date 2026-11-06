@@ -256,7 +256,13 @@ describe('article editor screen', () => {
     }
     const articleDoc = new Y.Doc()
     doc = articleDoc
-    setBody(articleDoc, '# First section\n\nFirst paragraph.\n')
+    setBody(
+      articleDoc,
+      `# First section
+
+First paragraph.
+`,
+    )
     let currentView: EditorView | null = null
     renderWorkspace(article, articleDoc, {
       onViewChange: (view) => {
@@ -364,8 +370,12 @@ describe('article editor screen', () => {
       articleDoc,
       Array.from(
         { length: 30 },
-        (_, index) => `## Section ${String(index + 1)}\n\nDetails.\n`,
-      ).join('\n'),
+        (_, index) => `## Section ${String(index + 1)}
+
+Details.`,
+      ).join(`
+
+`),
     )
     renderWorkspace(article, articleDoc)
 
@@ -400,7 +410,13 @@ describe('article editor screen', () => {
     }
     const articleDoc = new Y.Doc()
     doc = articleDoc
-    setBody(articleDoc, '# First section\n\nFirst paragraph.\n')
+    setBody(
+      articleDoc,
+      `# First section
+
+First paragraph.
+`,
+    )
     renderWorkspace(article, articleDoc)
 
     await act(async () => {
@@ -692,7 +708,8 @@ describe('article editor screen', () => {
     }
     const articleDoc = new Y.Doc()
     doc = articleDoc
-    const initialBody = '# Starting point\n'
+    const initialBody = `# Starting point
+`
     setBody(articleDoc, initialBody)
     let attemptInvalidMove: (() => string) | undefined
     renderWorkspace(article, articleDoc, {
@@ -869,8 +886,16 @@ describe('article editor screen', () => {
     const secondDoc = new Y.Doc()
     doc = firstDoc
     additionalDocs = [secondDoc]
-    setBody(firstDoc, '# First article body\n')
-    setBody(secondDoc, '# Second article body\n')
+    setBody(
+      firstDoc,
+      `# First article body
+`,
+    )
+    setBody(
+      secondDoc,
+      `# Second article body
+`,
+    )
     const documents = new Map([
       [firstArticle.id, firstDoc],
       [secondArticle.id, secondDoc],
@@ -927,7 +952,8 @@ describe('article editor screen', () => {
       await Promise.resolve()
     })
 
-    const staleResult = staleReplaceBody?.('# Stale replacement\n')
+    const staleResult = staleReplaceBody?.(`# Stale replacement
+`)
     const readStaleArticleOutput = () => ({
       staleResult: staleResult?.match(
         () => 'ready',
@@ -938,8 +964,10 @@ describe('article editor screen', () => {
     })
     expect(readStaleArticleOutput()).toEqual({
       staleResult: 'EditorNotReadyError',
-      firstBody: '# First article body\n',
-      secondBody: '# Second article body\n',
+      firstBody: `# First article body
+`,
+      secondBody: `# Second article body
+`,
     })
   })
 })
