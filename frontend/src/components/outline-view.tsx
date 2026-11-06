@@ -163,6 +163,7 @@ function OutlineRow({
         const destination = self.data['destination']
         const childOf = self.data['childOf']
         if (from === undefined || typeof destination !== 'number') return
+        if (from === heading.from) return
         onMove({
           from,
           destination,
@@ -210,7 +211,7 @@ function OutlineRow({
             aria-expanded={menuOpen}
             aria-haspopup="menu"
             aria-label={`Move ${heading.text || 'heading'}`}
-            className="cursor-grab touch-none select-none rounded p-1 text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
+            className="cursor-grab touch-none select-none rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
             onClick={(event) => {
               event.stopPropagation()
               setMenuOpen((isOpen) => !isOpen)
@@ -219,12 +220,16 @@ function OutlineRow({
               event.stopPropagation()
             }}
             ref={handleRef}
+            style={{ height: '44px', minWidth: '44px', width: '44px' }}
             type="button"
           >
             ⠿
           </button>
           <PopoverContent
             className="flex min-w-36 flex-col gap-1 p-1"
+            onClick={(event) => {
+              event.stopPropagation()
+            }}
             role="menu"
           >
             <Button

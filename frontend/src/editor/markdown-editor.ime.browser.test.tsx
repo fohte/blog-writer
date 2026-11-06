@@ -153,6 +153,12 @@ describe('MarkdownEditor IME', () => {
 
       try {
         content.focus()
+        content.dispatchEvent(
+          new CompositionEvent('compositionstart', {
+            bubbles: true,
+            data: '',
+          }),
+        )
         await cdp().send('Input.imeSetComposition', {
           text: '日本語',
           selectionStart: 3,
@@ -167,18 +173,24 @@ describe('MarkdownEditor IME', () => {
           type: 'keyDown',
           key: 'ArrowDown',
           code: 'ArrowDown',
-          modifiers: 4,
+          modifiers: 1,
           windowsVirtualKeyCode: 40,
         })
         await cdp().send('Input.dispatchKeyEvent', {
           type: 'keyUp',
           key: 'ArrowDown',
           code: 'ArrowDown',
-          modifiers: 4,
+          modifiers: 1,
           windowsVirtualKeyCode: 40,
         })
         const afterShortcut = body.toJSON()
         await cdp().send('Input.insertText', { text: '日本語' })
+        content.dispatchEvent(
+          new CompositionEvent('compositionend', {
+            bubbles: true,
+            data: '日本語',
+          }),
+        )
         await nextFrame()
         const afterComposition = body.toJSON()
 

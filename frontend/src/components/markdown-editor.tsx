@@ -6,7 +6,7 @@ import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
-import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
+import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
 import { markdownDecorations } from '#editor/markdown-decorations'
@@ -24,7 +24,7 @@ export interface MarkdownEditorProps {
   initialSelection?: { anchor: number; head?: number }
   ariaLabel?: string
   className?: string
-  history?: MoveHistory
+  history: MoveHistory
   onViewChange?: (view: EditorView | null) => void
 }
 
@@ -55,7 +55,6 @@ export const MarkdownEditor = forwardRef<
 ) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
-  const undoManagerRef = useRef<Y.UndoManager | null>(null)
   const extensionsCompartment = useRef(new Compartment()).current
   const initialSelectionAtMount = useRef(initialSelection).current
   const onViewChangeRef = useRef(onViewChange)
@@ -69,8 +68,7 @@ export const MarkdownEditor = forwardRef<
     () => ({
       replaceBody(value) {
         const view = viewRef.current
-        const undoManager = undoManagerRef.current
-        if (view && undoManager) replaceBody(view, undoManager, value)
+        if (view) replaceBody(view, value)
       },
     }),
     [],
@@ -80,23 +78,6 @@ export const MarkdownEditor = forwardRef<
     const host = hostRef.current
     if (!host) return
 
-    const undoManager = history?.undoManager ?? new Y.UndoManager(text)
-    const historyKeymap = history
-      ? [
-          {
-            key: 'Mod-z',
-            run: runHistoryStep(history, 'undo'),
-          },
-          {
-            key: 'Mod-Shift-z',
-            run: runHistoryStep(history, 'redo'),
-          },
-          {
-            key: 'Mod-y',
-            run: runHistoryStep(history, 'redo'),
-          },
-        ]
-      : yUndoManagerKeymap
     const view = new EditorView({
       parent: host,
       state: EditorState.create({
@@ -110,29 +91,41 @@ export const MarkdownEditor = forwardRef<
           markdownDecorations,
           editorTheme,
           EditorView.lineWrapping,
-          keymap.of([...historyKeymap, ...defaultKeymap]),
+          history.extension,
+          keymap.of([
+            {
+              key: 'Mod-z',
+              run: runHistoryStep(history, 'undo'),
+            },
+            {
+              key: 'Mod-Shift-z',
+              run: runHistoryStep(history, 'redo'),
+            },
+            {
+              key: 'Mod-y',
+              run: runHistoryStep(history, 'redo'),
+            },
+            ...defaultKeymap,
+          ]),
           EditorView.contentAttributes.of({
             'aria-label': ariaLabel,
             'aria-multiline': 'true',
             role: 'textbox',
             spellcheck: 'false',
           }),
-          yCollab(text, null, { undoManager }),
+          yCollab(text, null, { undoManager: false }),
           extensionsCompartment.of(extensions),
         ],
       }),
     })
 
     viewRef.current = view
-    undoManagerRef.current = undoManager
     onViewChangeRef.current?.(view)
 
     return () => {
       view.destroy()
-      if (!history) undoManager.destroy()
       onViewChangeRef.current?.(null)
       viewRef.current = null
-      undoManagerRef.current = null
     }
   }, [ariaLabel, extensionsCompartment, history, text])
 

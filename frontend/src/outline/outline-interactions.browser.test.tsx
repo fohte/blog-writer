@@ -130,7 +130,7 @@ describe('outline interactions', () => {
     let moveAccepted = true
     act(() => {
       moveAccepted = history
-        .move({ from: 0, destination: 0, childOf: 0 })
+        .move({ from: 0, destination: 0, childOf: 0 }, view)
         .isOk()
     })
     const errorAfterMove =
@@ -310,7 +310,7 @@ describe('outline interactions', () => {
         doc: markdownText,
         extensions: [
           markdown({ extensions: GFM }),
-          yCollab(body, null, { undoManager: history.undoManager }),
+          yCollab(body, null, { undoManager: false }),
           createOutlineEditorExtension(history),
         ],
       }),
@@ -396,6 +396,158 @@ describe('outline interactions', () => {
     expect(readOutput()).toEqual({
       body: 'one\n\nthree\n\nfour\n\ntwo\n',
       cursor: 'one\n\nthree\n\nfour\n\ntwo\n'.indexOf('two') + 1,
+    })
+  })
+
+  it('undoes two sentence splits around an Alt plus Down move', async () => {
+    const initial = 'First sentence. Second sentence.\n\nThird paragraph.\n'
+    const doc = new Y.Doc()
+    setBody(doc, initial)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const viewRef: { current: EditorView | null } = { current: null }
+    act(() => {
+      root.render(
+        createElement(MarkdownEditor, {
+          extensions: [createOutlineEditorExtension(history)],
+          history,
+          initialSelection: { anchor: initial.indexOf('Second sentence') - 1 },
+          onViewChange: (view: EditorView | null) => {
+            viewRef.current = view
+          },
+          text: body,
+        }),
+      )
+    })
+    const view = viewRef.current
+    if (view === null) throw new Error('The markdown editor did not mount')
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      history.destroy()
+      doc.destroy()
+      host.remove()
+    })
+
+    view.focus()
+    await act(async () => {
+      await userEvent.keyboard('{Enter}')
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 550)
+      })
+      await userEvent.keyboard('{Enter}')
+      await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}')
+    })
+    const afterMove = body.toJSON()
+    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    const undoResults: string[] = []
+    await act(async () => {
+      for (let count = 0; count < 3; count += 1) {
+        await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+        undoResults.push(body.toJSON())
+      }
+    })
+
+    const readOutput = () => ({
+      afterMove,
+      undoResults,
+      body: body.toJSON(),
+      editor: view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      afterMove: 'First sentence.\n\nThird paragraph.\n\nSecond sentence.\n',
+      undoResults: [
+        'First sentence.\n\nSecond sentence.\n\nThird paragraph.\n',
+        'First sentence.\nSecond sentence.\n\nThird paragraph.\n',
+        initial,
+      ],
+      body: initial,
+      editor: initial,
+    })
+  })
+
+  it('undoes deletion and movement of adjacent paragraphs newest first', async () => {
+    const initial = 'abc\n\nfirst para\n'
+    const doc = new Y.Doc()
+    setBody(doc, initial)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const viewRef: { current: EditorView | null } = { current: null }
+    act(() => {
+      root.render(
+        createElement(MarkdownEditor, {
+          extensions: [createOutlineEditorExtension(history)],
+          history,
+          onViewChange: (view: EditorView | null) => {
+            viewRef.current = view
+          },
+          text: body,
+        }),
+      )
+    })
+    const view = viewRef.current
+    if (view === null) throw new Error('The markdown editor did not mount')
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      history.destroy()
+      doc.destroy()
+      host.remove()
+    })
+
+    view.dispatch({ selection: EditorSelection.range(0, 2) })
+    view.focus()
+    await act(async () => {
+      await userEvent.keyboard('{Backspace}')
+    })
+    const afterPrefixDeletion = body.toJSON()
+    view.dispatch({
+      selection: EditorSelection.cursor(
+        afterPrefixDeletion.indexOf('first para') + 1,
+      ),
+    })
+    await act(async () => {
+      await userEvent.keyboard('{Alt>}{ArrowUp}{/Alt}')
+    })
+    const afterMove = body.toJSON()
+    const cIndex = afterMove.indexOf('c')
+    view.dispatch({ selection: EditorSelection.range(cIndex, cIndex + 1) })
+    await act(async () => {
+      await userEvent.keyboard('{Backspace}')
+    })
+    const afterFinalDeletion = body.toJSON()
+    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    const undoResults: string[] = []
+    await act(async () => {
+      for (let count = 0; count < 3; count += 1) {
+        await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+        undoResults.push(body.toJSON())
+      }
+    })
+
+    const readOutput = () => ({
+      afterPrefixDeletion,
+      afterMove,
+      afterFinalDeletion,
+      undoResults,
+      body: body.toJSON(),
+      editor: view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      afterPrefixDeletion: 'c\n\nfirst para\n',
+      afterMove: 'first para\n\nc\n',
+      afterFinalDeletion: 'first para\n\n\n',
+      undoResults: ['first para\n\nc\n', 'c\n\nfirst para\n', initial],
+      body: initial,
+      editor: initial,
     })
   })
 
@@ -494,14 +646,18 @@ describe('outline interactions', () => {
     act(() => {
       root.render(createElement(ArticleOutline, { doc, history, view }))
     })
+    const menuCursor = markdownText.indexOf('Third section.') + 3
+    view.dispatch({ selection: EditorSelection.cursor(menuCursor) })
     const betaHandle = outlineHost.querySelector<HTMLButtonElement>(
       'button[aria-label="Move Beta"]',
     )
     if (!betaHandle) throw new Error('The Beta move button is missing')
+    const handleHeight = betaHandle.getBoundingClientRect().height
     await act(async () => {
       await userEvent.click(betaHandle)
     })
     const clickOpensMenu = document.body.querySelector('[role="menu"]') !== null
+    const cursorAfterMenuOpen = view.state.selection.main.head
     const moveUp = [
       ...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
     ].find((item) => item.textContent === 'Move up')
@@ -510,6 +666,7 @@ describe('outline interactions', () => {
       await userEvent.click(moveUp)
     })
     const afterMoveUp = body.toJSON()
+    const cursorAfterMoveUp = view.state.selection.main.head
 
     const betaHandleAfterMoveUp = outlineHost.querySelector<HTMLButtonElement>(
       'button[aria-label="Move Beta"]',
@@ -558,7 +715,10 @@ describe('outline interactions', () => {
 
     const readOutput = () => ({
       clickOpensMenu,
+      handleHeight,
+      cursorAfterMenuOpen,
       afterMoveUp,
+      cursorAfterMoveUp,
       afterMoveDown,
       afterMakeChild,
       enterOpensMenu: document.body.querySelector('[role="menu"]') !== null,
@@ -566,13 +726,134 @@ describe('outline interactions', () => {
     })
     expect(readOutput()).toEqual({
       clickOpensMenu: true,
+      handleHeight: 44,
+      cursorAfterMenuOpen: menuCursor,
       afterMoveUp:
         '# Beta\n\nSecond section.\n\n# Alpha\n\nFirst section.\n\n# Gamma\n\nThird section.\n',
+      cursorAfterMoveUp: menuCursor,
       afterMoveDown: markdownText,
       afterMakeChild:
         '# Alpha\n\nFirst section.\n\n## Beta\n\nSecond section.\n\n# Gamma\n\nThird section.\n',
       enterOpensMenu: true,
       body: '# Alpha\n\nFirst section.\n\n## Beta\n\nSecond section.\n\n# Gamma\n\nThird section.\n',
+    })
+  })
+
+  it('keeps the editor cursor and move error when an H6 menu action is rejected', async () => {
+    const markdownText =
+      '###### Alpha\n\nFirst section.\n\n###### Beta\n\nSecond section.\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const editorHost = document.createElement('div')
+    const outlineHost = document.createElement('div')
+    document.body.append(editorHost, outlineHost)
+    const view = new EditorView({
+      parent: editorHost,
+      state: EditorState.create({ doc: markdownText }),
+    })
+    const root = createRoot(outlineHost)
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      view.destroy()
+      history.destroy()
+      doc.destroy()
+      editorHost.remove()
+      outlineHost.remove()
+    })
+
+    act(() => {
+      root.render(createElement(ArticleOutline, { doc, history, view }))
+    })
+    const cursor = markdownText.indexOf('First section.') + 4
+    view.dispatch({ selection: EditorSelection.cursor(cursor) })
+    const betaHandle = outlineHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="Move Beta"]',
+    )
+    if (!betaHandle) throw new Error('The Beta move button is missing')
+    await act(async () => {
+      await userEvent.click(betaHandle)
+    })
+    const menuOpened = document.body.querySelector('[role="menu"]') !== null
+    const cursorAfterOpen = view.state.selection.main.head
+    const makeChild = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((item) => item.textContent === 'Make child')
+    if (!makeChild) throw new Error('The make child menu item is missing')
+    await act(async () => {
+      await userEvent.click(makeChild)
+    })
+    const readOutput = () => ({
+      menuOpened,
+      cursorAfterOpen,
+      cursorAfterRejectedMove: view.state.selection.main.head,
+      body: body.toJSON(),
+      error: outlineHost.querySelector('[role="alert"]')?.textContent,
+    })
+    expect(readOutput()).toEqual({
+      menuOpened: true,
+      cursorAfterOpen: cursor,
+      cursorAfterRejectedMove: cursor,
+      body: markdownText,
+      error: 'Heading levels must be between 1 and 6',
+    })
+  })
+
+  it('ignores an outline drop onto its own heading', () => {
+    const markdownText =
+      '# Alpha\n\nFirst section.\n\n# Beta\n\nSecond section.\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const moveSpy = vi.spyOn(history, 'move')
+    const editorHost = document.createElement('div')
+    const outlineHost = document.createElement('div')
+    document.body.append(editorHost, outlineHost)
+    const view = new EditorView({
+      parent: editorHost,
+      state: EditorState.create({ doc: markdownText }),
+    })
+    const root = createRoot(outlineHost)
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      view.destroy()
+      history.destroy()
+      doc.destroy()
+      editorHost.remove()
+      outlineHost.remove()
+    })
+
+    act(() => {
+      root.render(createElement(ArticleOutline, { doc, history, view }))
+    })
+    const alphaHandle = outlineHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="Move Alpha"]',
+    )
+    const alphaOption = outlineHost.querySelector<HTMLElement>(
+      '[aria-label="Alpha"]',
+    )
+    const alphaRow = alphaOption?.parentElement
+    if (!alphaHandle || !alphaRow)
+      throw new Error('The Alpha row or move handle is missing')
+    act(() => {
+      dispatchDrag(alphaHandle, alphaRow)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      error: outlineHost.querySelector('[role="alert"]')?.textContent,
+      moveCalls: moveSpy.mock.calls.map(([input]) => input),
+    })
+    expect(readOutput()).toEqual({
+      body: markdownText,
+      error: undefined,
+      moveCalls: [],
     })
   })
 
@@ -608,7 +889,7 @@ describe('outline interactions', () => {
           doc: markdownText,
           extensions: [
             markdown({ extensions: GFM }),
-            yCollab(body, null, { undoManager: history.undoManager }),
+            yCollab(body, null, { undoManager: false }),
           ],
         }),
       })
@@ -670,7 +951,7 @@ describe('outline interactions', () => {
     },
   )
 
-  it('uses the shared history for keyboard moves, undo, and redo', async () => {
+  it('undoes, redoes, then undoes an Alt plus Up section move', async () => {
     const initial = '# Alpha\n\nFirst.\n\n# Beta\n\nSecond.\n'
     const doc = new Y.Doc()
     setBody(doc, initial)
@@ -714,16 +995,15 @@ describe('outline interactions', () => {
 
     const view = viewRef.current
     if (view === null) throw new Error('The markdown editor did not mount')
-    const moveSucceeded = history
-      .move(
-        {
-          from: initial.indexOf('# Beta'),
-          destination: 0,
-        },
-        view,
-      )
-      .isOk()
+    view.dispatch({
+      selection: EditorSelection.cursor(initial.indexOf('# Beta')),
+    })
+    view.focus()
+    await act(async () => {
+      await userEvent.keyboard('{Alt>}{ArrowUp}{/Alt}')
+    })
     const afterMove = body.toJSON()
+    const moveSucceeded = afterMove !== initial
     const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
     await act(async () => {
       await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
@@ -736,6 +1016,7 @@ describe('outline interactions', () => {
     await act(async () => {
       await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
     })
+    const afterSecondUndo = body.toJSON()
     await act(async () => {
       await userEvent.keyboard(`{${modifier}>}y{/${modifier}}`)
     })
@@ -745,6 +1026,7 @@ describe('outline interactions', () => {
       afterMove,
       afterUndo,
       afterShiftRedo,
+      afterSecondUndo,
       body: body.toJSON(),
       editor: view.state.doc.toString(),
       userEvents,
@@ -754,6 +1036,7 @@ describe('outline interactions', () => {
       afterMove: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
       afterUndo: initial,
       afterShiftRedo: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
+      afterSecondUndo: initial,
       body: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
       editor: '# Beta\n\nSecond.\n\n# Alpha\n\nFirst.\n',
       userEvents: ['move', 'undo', 'redo', 'undo', 'redo'],

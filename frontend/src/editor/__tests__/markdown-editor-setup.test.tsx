@@ -6,6 +6,7 @@ import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
 import { MarkdownEditor, type MarkdownEditorHandle } from '#editor/index'
+import { createMoveHistory } from '#outline/index'
 
 interface MountedMarkdownEditor {
   body: Y.Text
@@ -39,10 +40,16 @@ export function mountMarkdownEditor(
   const body = getBody(doc)
   body.insert(0, value)
   const editor = createRef<MarkdownEditorHandle>()
+  const history = createMoveHistory(doc)
 
   act(() => {
     root.render(
-      <MarkdownEditor extensions={extensions} ref={editor} text={body} />,
+      <MarkdownEditor
+        extensions={extensions}
+        history={history}
+        ref={editor}
+        text={body}
+      />,
     )
   })
 
@@ -50,6 +57,7 @@ export function mountMarkdownEditor(
     act(() => {
       root.unmount()
     })
+    history.destroy()
     doc.destroy()
     host.remove()
   })
@@ -63,7 +71,12 @@ export function mountMarkdownEditor(
     updateExtensions: (extensions) => {
       act(() => {
         root.render(
-          <MarkdownEditor extensions={extensions} ref={editor} text={body} />,
+          <MarkdownEditor
+            extensions={extensions}
+            history={history}
+            ref={editor}
+            text={body}
+          />,
         )
       })
     },

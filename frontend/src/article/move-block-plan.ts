@@ -13,7 +13,7 @@ import type { Heading } from '#article/types'
 export type Range = { from: number; to: number; headingLevel?: number }
 export type TextReplacement = { from: number; to: number; text: string }
 export type ValidatedMove = { range: Range; targetLevel?: number }
-export type MoveSource = { text: string; prefix: string }
+export type MoveSource = { text: string; prefix: string; suffix?: string }
 export type MoveInsertion = {
   text: string
   prefixLength: number
@@ -368,7 +368,8 @@ export function planBlockMove(input: {
     replacement === undefined
       ? getInsertionText(sourceSeparator.text, insertionIndex, movedText)
       : {
-          text: replacement.prefix + replacement.text,
+          text:
+            replacement.prefix + replacement.text + (replacement.suffix ?? ''),
           prefixLength: replacement.prefix.length,
           contentLength: replacement.text.length,
         }

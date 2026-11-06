@@ -1,10 +1,21 @@
-import { Annotation, Transaction } from '@codemirror/state'
+import {
+  Annotation,
+  type ChangeSet,
+  Text,
+  Transaction,
+} from '@codemirror/state'
 import { err, ok, Result } from 'neverthrow'
 import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
 import { InvalidBlockMoveError } from '#article/errors'
 import { prepareMemoAnchorMove } from '#article/memos'
+import {
+  changeSetForMove,
+  mapMoveHistoryRemote,
+  type MoveHistory,
+  type MoveSeparator,
+} from '#article/move-block-history'
 import type { MoveInsertion, MoveSource } from '#article/move-block-plan'
 import {
   mapWithinRange,
@@ -56,64 +67,22 @@ export type MoveBlockResult = BlockMoved & {
   originalHeadingLevel?: number
 }
 
-type MoveSeparator = {
-  side: 'prefix' | 'suffix'
-  text: string
-}
-type MoveHistory = {
-  movedFrom: Y.RelativePosition
-  seam: Y.RelativePosition
-  insertedSelection: string
-  mapPosition: (position: number, assoc: number) => number | undefined
-  source?: MoveSource
-  separators: MoveSeparator[]
-}
 type ApplyMoveOptions = {
   expectedSelection?: string
   replacement?: MoveSource
   removeRanges?: { from: number; to: number; text: string }[]
 }
-type HistoryPositionSnapshot = { position: number; assoc: number } | undefined
-type MoveHistorySnapshot = {
-  history: MoveHistory
-  movedFrom: HistoryPositionSnapshot
-  seam: HistoryPositionSnapshot
-}
-
 const updatersByDoc = new WeakMap<Y.Doc, Set<BlockMoveUpdater>>()
 const historyByMove = new WeakMap<MoveBlockResult, MoveHistory>()
 
-function resolvePosition(
-  doc: Y.Doc,
-  body: Y.Text,
-  relativePosition: Y.RelativePosition,
-): number | undefined {
-  const absolutePosition = Y.createAbsolutePositionFromRelativePosition(
-    relativePosition,
-    doc,
-  )
-  return absolutePosition?.type === body ? absolutePosition.index : undefined
-}
-
-function relativePositionAt(
-  body: Y.Text,
-  index: number,
-  assoc: number,
-): Y.RelativePosition {
-  const position = Y.createRelativePositionFromTypeIndex(body, index, assoc)
-  return position.item === null
-    ? Y.createRelativePositionFromTypeIndex(body, index, -assoc)
-    : position
-}
-
 function rememberMove(input: {
-  body: Y.Text
   move: MoveBlockResult
   insertion: MoveInsertion
+  inverse: ChangeSet
   source?: MoveSource
   mapPosition: (position: number, assoc: number) => number | undefined
 }): void {
-  const { body, move, insertion, source, mapPosition } = input
+  const { move, insertion, inverse, source, mapPosition } = input
   const prefix = insertion.text.slice(0, insertion.prefixLength)
   const suffix = insertion.text.slice(
     insertion.prefixLength + insertion.contentLength,
@@ -126,10 +95,9 @@ function rememberMove(input: {
     separators.push({ side: 'suffix', text: suffix })
   }
   historyByMove.set(move, {
-    movedFrom: relativePositionAt(body, move.from, 1),
-    seam: relativePositionAt(body, move.seam, 1),
     insertedSelection: insertion.text.slice(insertion.prefixLength),
     mapPosition,
+    inverse,
     ...(source === undefined ? {} : { source }),
     separators,
   })
@@ -217,6 +185,9 @@ function applyMoveBlock(
     insertedFrom,
     insertedTo,
   } = plannedMove
+  const inverse = changeSetForMove(markdown, plannedMove).invert(
+    Text.of(markdown.split('\n')),
+  )
   const newFrom = insertedFrom
   const newTo = newFrom + insertion.contentLength
   const structureError = validatePlannedMoveStructure({
@@ -270,16 +241,25 @@ function applyMoveBlock(
       ? {}
       : { originalHeadingLevel: range.headingLevel }),
   }
+  const sourcePrefix = removeRanges
+    .filter((separator) => separator.to === range.from)
+    .map((separator) => separator.text)
+    .join('')
+  const sourceSuffix = removeRanges
+    .filter((separator) => separator.from === range.to)
+    .map((separator) => separator.text)
+    .join('')
   rememberMove({
-    body,
     move,
     insertion,
+    inverse,
     mapPosition: mapDocumentPosition,
     ...(options.replacement === undefined
       ? {
           source: {
             text: sourceText,
-            prefix: plannedMove.sourcePrefix,
+            prefix: sourcePrefix + plannedMove.sourcePrefix,
+            ...(sourceSuffix.length === 0 ? {} : { suffix: sourceSuffix }),
           },
         }
       : {}),
@@ -299,8 +279,10 @@ export function resolveMoveBlockStart(
   move: MoveBlockResult,
 ): number | undefined {
   const history = historyByMove.get(move)
-  if (!history) return undefined
-  return resolvePosition(doc, getBody(doc), history.movedFrom)
+  const body = getBody(doc)
+  return history && move.from >= 0 && move.from < body.length
+    ? move.from
+    : undefined
 }
 
 export function mapMoveBlockPosition(
@@ -311,67 +293,55 @@ export function mapMoveBlockPosition(
   return historyByMove.get(move)?.mapPosition(position, assoc)
 }
 
-export function captureMoveBlockHistoryRebaser(
-  doc: Y.Doc,
-  moves: MoveBlockResult[],
-): (
-  mapRelativePosition: (position: Y.RelativePosition) => Y.RelativePosition,
-  mapAbsolutePosition: (position: number, assoc: number) => number | undefined,
-) => void {
-  const body = getBody(doc)
-  const snapshot = (position: Y.RelativePosition) => {
-    const absolute = resolvePosition(doc, body, position)
-    return absolute === undefined
-      ? undefined
-      : { position: absolute, assoc: position.assoc }
+export function getReverseMoveChange(
+  move: MoveBlockResult,
+): ChangeSet | undefined {
+  return historyByMove.get(move)?.inverse
+}
+
+export function mapMoveBlockHistoryRemote(
+  markdown: string,
+  move: MoveBlockResult,
+  change: ChangeSet,
+  inverse: ChangeSet,
+): Result<
+  {
+    move: MoveBlockResult
+    inverse: ChangeSet
+    changeBeforeMove: ChangeSet
+    markdownBeforeMove: string
+  },
+  InvalidBlockMoveError
+> {
+  const history = historyByMove.get(move)
+  if (!history)
+    return err(new InvalidBlockMoveError('The move cannot be reversed'))
+
+  const mapped = mapMoveHistoryRemote(markdown, move, history, change, inverse)
+  if (mapped.isErr()) return err(mapped.error)
+
+  const { history: mappedHistory, ...mappedMove } = mapped.value
+  const updatedMove: MoveBlockResult = {
+    ...move,
+    from: mappedMove.from,
+    to: mappedMove.to,
+    seam: mappedMove.seam,
+    annotations: [
+      blockMoved.of({
+        from: mappedMove.from,
+        to: mappedMove.to,
+        seam: mappedMove.seam,
+      }),
+      move.annotations[1],
+    ],
   }
-  const histories = moves.flatMap((move): MoveHistorySnapshot[] => {
-    const history = historyByMove.get(move)
-    return history
-      ? [
-          {
-            history,
-            movedFrom: snapshot(history.movedFrom),
-            seam: snapshot(history.seam),
-          },
-        ]
-      : []
+  historyByMove.set(updatedMove, mappedHistory)
+  return ok({
+    move: updatedMove,
+    inverse: mappedMove.inverse,
+    changeBeforeMove: mappedMove.changeBeforeMove,
+    markdownBeforeMove: mappedMove.markdownBeforeMove,
   })
-
-  const rebase = (
-    position: Y.RelativePosition,
-    savedPosition: HistoryPositionSnapshot,
-    mapRelativePosition: (position: Y.RelativePosition) => Y.RelativePosition,
-    mapAbsolutePosition: (
-      position: number,
-      assoc: number,
-    ) => number | undefined,
-  ) => {
-    if (savedPosition === undefined) return mapRelativePosition(position)
-    const mappedAbsolute = mapAbsolutePosition(
-      savedPosition.position,
-      savedPosition.assoc,
-    )
-    if (mappedAbsolute === undefined) return mapRelativePosition(position)
-    return relativePositionAt(body, mappedAbsolute, savedPosition.assoc)
-  }
-
-  return (mapRelativePosition, mapAbsolutePosition) => {
-    for (const saved of histories) {
-      saved.history.movedFrom = rebase(
-        saved.history.movedFrom,
-        saved.movedFrom,
-        mapRelativePosition,
-        mapAbsolutePosition,
-      )
-      saved.history.seam = rebase(
-        saved.history.seam,
-        saved.seam,
-        mapRelativePosition,
-        mapAbsolutePosition,
-      )
-    }
-  }
 }
 
 export function reverseBlockMove(
@@ -384,12 +354,8 @@ export function reverseBlockMove(
     return err(new InvalidBlockMoveError('The move cannot be reversed'))
 
   const body = getBody(doc)
-  const from = resolvePosition(doc, body, history.movedFrom)
-  const destination = resolvePosition(doc, body, history.seam)
-  if (from === undefined || destination === undefined)
-    return err(
-      new InvalidBlockMoveError('The moved block is no longer available'),
-    )
+  const from = move.from
+  const destination = move.seam
 
   const markdown = body.toJSON()
   const range = findMoveBlockRange(markdown, from)

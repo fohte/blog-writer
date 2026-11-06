@@ -10,11 +10,13 @@ export {
 export { deriveHeadingTree } from '#article/headings'
 export {
   addMemo,
+  captureDeletedMemoAdoptions,
   dismissMemo,
   getMemoState,
   listMemos,
   observeMemos,
   restoreMemo,
+  restoreMemoAdoptions,
   setMemoAdoptedTo,
   updateMemoOrder,
 } from '#article/memos'
@@ -27,7 +29,8 @@ export type {
 } from '#article/move-block'
 export {
   blockMoved,
-  captureMoveBlockHistoryRebaser,
+  getReverseMoveChange,
+  mapMoveBlockHistoryRemote,
   mapMoveBlockPosition,
   moveBlock,
   registerBlockMoveUpdater,

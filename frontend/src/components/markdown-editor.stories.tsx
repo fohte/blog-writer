@@ -48,14 +48,16 @@ function MarkdownEditorPreview({
   const { body, doc, history, extensions } = useMemo(() => {
     const doc = new Y.Doc()
     getBody(doc).insert(0, content)
-    const history = showMoveHandles ? createMoveHistory(doc) : undefined
-    const extensions = history ? [createOutlineEditorExtension(history)] : []
+    const history = createMoveHistory(doc)
+    const extensions = showMoveHandles
+      ? [createOutlineEditorExtension(history)]
+      : []
     return { body: getBody(doc), doc, history, extensions }
   }, [content, showMoveHandles])
 
   useEffect(() => {
     return () => {
-      history?.destroy()
+      history.destroy()
       doc.destroy()
     }
   }, [doc, history])
@@ -64,7 +66,7 @@ function MarkdownEditorPreview({
     <div style={{ height: '32rem' }}>
       <MarkdownEditor
         text={body}
-        {...(history ? { history } : {})}
+        history={history}
         extensions={extensions}
         {...(initialSelection ? { initialSelection } : {})}
       />

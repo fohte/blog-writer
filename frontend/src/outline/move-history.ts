@@ -1,90 +1,235 @@
-import { EditorSelection } from '@codemirror/state'
-import type { EditorView } from '@codemirror/view'
+import { isolateHistory } from '@codemirror/commands'
+import {
+  Annotation,
+  type ChangeSet,
+  EditorSelection,
+  StateEffect,
+  StateField,
+  Transaction,
+} from '@codemirror/state'
+import { EditorView, type ViewUpdate } from '@codemirror/view'
 import { err, ok, type Result } from 'neverthrow'
+import { ySyncAnnotation } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
 import { InvalidBlockMoveError } from '#article/errors'
 import {
-  captureMoveBlockHistoryRebaser,
-  findMoveBlockRange,
-  getBody,
+  blockMoved,
+  captureDeletedMemoAdoptions,
+  getReverseMoveChange,
   mapMoveBlockPosition,
   moveBlock,
-  type MoveBlockInput,
   type MoveBlockResult,
-  readBody,
   resolveMoveBlockStart,
+  restoreMemoAdoptions,
   reverseBlockMove,
 } from '#article/index'
-import { captureDeletedUndoItems } from '#outline/deleted-undo-items'
-import { remapUndoItemIds } from '#outline/undo-id-mapping'
-import {
-  captureVisibleSegments,
-  type IdMapping,
-} from '#outline/undo-id-segments'
+import type { MemoTextRange } from '#article/memos'
+import { mapRemoteHistoryEntries } from '#outline/move-history-remote'
+import type {
+  HistoryStateValue,
+  MoveHistory,
+  MoveHistoryStep,
+  TextHistoryEntry,
+  TextHistoryStep,
+} from '#outline/move-history-types'
 
-type HistoryAction = { kind: 'text' } | { kind: 'move'; move: MoveBlockResult }
+const textHistoryStep = Annotation.define<TextHistoryStep>()
+const recordMove = StateEffect.define<MoveBlockResult>()
+const applyMoveHistoryStep = StateEffect.define<MoveHistoryStep>()
+const dropHistoryEntry = StateEffect.define<{
+  direction: 'undo' | 'redo'
+}>()
 
-function rebaseRelativePosition(
-  position: Y.RelativePosition,
-  mappings: IdMapping[],
-): Y.RelativePosition {
-  const item = position.item
-  if (!item) return position
-  const mapping = mappings.find(
-    (candidate) =>
-      candidate.fromClient === item.client &&
-      candidate.fromClock <= item.clock &&
-      item.clock < candidate.fromClock + candidate.length,
+const newGroupDelay = 500
+const joinableUserEvent = /^(input\.type|delete)($|\.)/u
+
+function changeRangesAreAdjacent(
+  previous: ChangeSet,
+  next: ChangeSet,
+): boolean {
+  const previousRanges: MemoTextRange[] = []
+  previous.iterChangedRanges((from, to) => {
+    previousRanges.push({ from, to })
+  })
+
+  let adjacent = false
+  next.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+    if (previousRanges.some((range) => toB >= range.from && fromB <= range.to))
+      adjacent = true
+  })
+  return adjacent
+}
+
+function isHistoryBoundary(
+  value: string | undefined,
+  side: 'before' | 'after',
+) {
+  return value === 'full' || value === side
+}
+
+function canJoinTextEntries(
+  previous: TextHistoryEntry | undefined,
+  next: TextHistoryEntry,
+  groupBarrier: boolean,
+): previous is TextHistoryEntry {
+  return Boolean(
+    previous &&
+    !groupBarrier &&
+    !previous.isolateAfter &&
+    !next.isolateBefore &&
+    (next.userEvent === undefined ||
+      joinableUserEvent.test(next.userEvent) ||
+      next.userEvent === 'input.type.compose') &&
+    (next.userEvent === 'input.type.compose' ||
+      (next.time - previous.time < newGroupDelay &&
+        changeRangesAreAdjacent(previous.inverse, next.inverse))),
   )
-  if (!mapping) return position
-  return {
-    type: position.type,
-    tname: position.tname,
-    item: {
-      client: mapping.toClient,
-      clock: mapping.toClock + item.clock - mapping.fromClock,
-    },
-    assoc: position.assoc,
-  }
 }
 
-function moveActions(actions: HistoryAction[]): MoveBlockResult[] {
-  return actions.flatMap((action) =>
-    action.kind === 'move' ? [action.move] : [],
-  )
-}
-
-export interface MoveHistory {
-  undoManager: Y.UndoManager
-  onError(
-    listener: (error: InvalidBlockMoveError | undefined) => void,
-  ): () => void
-  move(
-    input: MoveBlockInput,
-    view?: EditorView,
-  ): Result<MoveBlockResult, InvalidBlockMoveError>
-  undo(view?: EditorView): Result<boolean, InvalidBlockMoveError>
-  redo(view?: EditorView): Result<boolean, InvalidBlockMoveError>
-  destroy(): void
-}
+export type { MoveHistory }
 
 export function createMoveHistory(doc: Y.Doc): MoveHistory {
-  const body = getBody(doc)
-  const undoManager = new Y.UndoManager(body)
-  const undoActions: HistoryAction[] = []
-  const redoActions: HistoryAction[] = []
   const errorListeners = new Set<
     (error: InvalidBlockMoveError | undefined) => void
   >()
   let currentError: InvalidBlockMoveError | undefined
-  let applyingHistory = false
+  let applyingLocalMove = false
+
+  const historyField = StateField.define<HistoryStateValue>({
+    create: () => ({ undo: [], redo: [], groupBarrier: false }),
+    update(current, transaction) {
+      const step = transaction.annotation(textHistoryStep)
+      if (step) {
+        const undo = [...current.undo]
+        const redo = [...current.redo]
+        const from = step.direction === 'undo' ? undo : redo
+        const to = step.direction === 'undo' ? redo : undo
+        const entry = from.pop()
+        if (entry?.kind !== 'text') return current
+        to.push({
+          ...entry,
+          inverse: transaction.changes.invert(transaction.startState.doc),
+        })
+        return { undo, redo, groupBarrier: true }
+      }
+
+      const undo = [...current.undo]
+      let redo = [...current.redo]
+      let groupBarrier = current.groupBarrier
+
+      const moveStep = transaction.effects.find((effect) =>
+        effect.is(applyMoveHistoryStep),
+      )
+      if (
+        moveStep?.is(applyMoveHistoryStep) === true &&
+        transaction.annotation(blockMoved) !== undefined
+      ) {
+        const { direction, move } = moveStep.value
+        const from = direction === 'undo' ? undo : redo
+        const to = direction === 'undo' ? redo : undo
+        const entry = from.pop()
+        if (entry?.kind !== 'move') return current
+        const inverse = getReverseMoveChange(move)
+        if (inverse) to.push({ kind: 'move', move, inverse })
+        groupBarrier = true
+      }
+
+      const dropped = transaction.effects.find((effect) =>
+        effect.is(dropHistoryEntry),
+      )
+      if (dropped?.is(dropHistoryEntry) === true) {
+        const stack = dropped.value.direction === 'undo' ? undo : redo
+        stack.pop()
+        groupBarrier = true
+      }
+
+      const move = transaction.effects.find((effect) => effect.is(recordMove))
+      if (
+        move?.is(recordMove) === true &&
+        transaction.annotation(blockMoved) !== undefined
+      ) {
+        const inverse = getReverseMoveChange(move.value)
+        if (inverse) undo.push({ kind: 'move', move: move.value, inverse })
+        redo = []
+        groupBarrier = true
+      }
+
+      if (transaction.docChanged) {
+        if (transaction.annotation(ySyncAnnotation) !== undefined) {
+          if (applyingLocalMove) return { undo, redo, groupBarrier: true }
+          const remoteChange = transaction.changes
+          const remoteMarkdown = transaction.newDoc.toString()
+          return {
+            undo: mapRemoteHistoryEntries(undo, remoteChange, remoteMarkdown),
+            redo: mapRemoteHistoryEntries(redo, remoteChange, remoteMarkdown),
+            groupBarrier: true,
+          }
+        }
+        if (transaction.annotation(Transaction.addToHistory) === false) {
+          return { undo, redo, groupBarrier: true }
+        }
+
+        const deletedRanges: MemoTextRange[] = []
+        transaction.changes.iterChangedRanges((from, to) => {
+          if (to > from) deletedRanges.push({ from, to })
+        })
+        const memoAdoptions = captureDeletedMemoAdoptions(
+          doc,
+          transaction.startState.doc.toString(),
+          deletedRanges,
+        ).map((snapshot) => ({
+          ...snapshot,
+          markerIndex: transaction.changes.mapPos(snapshot.markerIndex, -1),
+        }))
+        const isolation = transaction.annotation(isolateHistory)
+        const inverse = transaction.changes.invert(transaction.startState.doc)
+        const next: TextHistoryEntry = {
+          kind: 'text',
+          inverse,
+          memoAdoptions,
+          userEvent: transaction.annotation(Transaction.userEvent),
+          time: transaction.annotation(Transaction.time) ?? Date.now(),
+          isolateBefore: isHistoryBoundary(isolation, 'before'),
+          isolateAfter: isHistoryBoundary(isolation, 'after'),
+        }
+        const previous = undo.at(-1)
+        if (
+          previous?.kind === 'text' &&
+          canJoinTextEntries(previous, next, groupBarrier)
+        ) {
+          const mappedSnapshots = previous.memoAdoptions.map((snapshot) => ({
+            ...snapshot,
+            markerIndex: transaction.changes.mapPos(snapshot.markerIndex, -1),
+          }))
+          undo[undo.length - 1] = {
+            ...previous,
+            inverse: next.inverse.compose(previous.inverse),
+            memoAdoptions: mappedSnapshots,
+            userEvent: next.userEvent,
+            time: next.time,
+            isolateAfter: next.isolateAfter,
+          }
+        } else {
+          undo.push(next)
+        }
+        return { undo, redo: [], groupBarrier: false }
+      }
+
+      if (transaction.selection !== undefined) groupBarrier = true
+      return { undo, redo, groupBarrier }
+    },
+  })
+
+  const clearError = () => {
+    currentError = undefined
+    for (const listener of errorListeners) listener(undefined)
+  }
 
   const report = <T>(result: Result<T, InvalidBlockMoveError>) =>
     result
       .map((value) => {
-        currentError = undefined
-        for (const listener of errorListeners) listener(undefined)
+        clearError()
         return value
       })
       .mapErr((error) => {
@@ -93,157 +238,133 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         return error
       })
 
-  undoManager.on('stack-item-added', ({ type }) => {
-    if (applyingHistory || type !== 'undo') return
-    redoActions.length = 0
-    undoActions.push({ kind: 'text' })
-  })
-  undoManager.on('stack-cleared', ({ undoStackCleared, redoStackCleared }) => {
-    if (applyingHistory) return
-    if (undoStackCleared) undoActions.length = 0
-    if (redoStackCleared) redoActions.length = 0
-  })
+  const updateAfterView = (update: ViewUpdate) => {
+    for (const transaction of update.transactions) {
+      const step = transaction.annotation(textHistoryStep)
+      if (step) {
+        const entry = step.entry
+        if (step.direction === 'undo') {
+          const snapshots = entry.memoAdoptions.map((snapshot) => ({
+            ...snapshot,
+            markerIndex: transaction.changes.mapPos(snapshot.markerIndex, -1),
+          }))
+          const insertedRanges: MemoTextRange[] = []
+          transaction.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+            if (toB > fromB) insertedRanges.push({ from: fromB, to: toB })
+          })
+          restoreMemoAdoptions(doc, snapshots, insertedRanges)
+        }
+        continue
+      }
+    }
+  }
 
   const applyMove = (
-    from: number,
     operation: () => Result<MoveBlockResult, InvalidBlockMoveError>,
-    view?: EditorView,
+    view: EditorView,
   ): Result<MoveBlockResult, InvalidBlockMoveError> => {
-    const previousText = readBody(doc)
-    const range = findMoveBlockRange(previousText, from)
-    if (!range)
-      return err(new InvalidBlockMoveError('No Markdown block at position'))
-    const oldSegments = captureVisibleSegments(body, range.from, range.to)
-    const sourceText = previousText.slice(range.from, range.to)
-    const selection = view?.state.selection.main
-    const rebasePendingMoves = captureMoveBlockHistoryRebaser(doc, [
-      ...moveActions(undoActions),
-      ...moveActions(redoActions),
-    ])
-    const deletedItems = captureDeletedUndoItems(
-      doc,
-      body,
-      range.from,
-      range.to,
-      [...undoManager.undoStack, ...undoManager.redoStack],
-    )
-
-    undoManager.stopCapturing()
+    const selection = view.state.selection.main
+    applyingLocalMove = true
     const result = operation()
+    applyingLocalMove = false
     if (result.isErr()) return err(result.error)
 
     const move = result.value
-    const nextText = readBody(doc).slice(move.from, move.to)
-    const mappings = remapUndoItemIds({
-      doc,
-      body,
-      oldSegments,
-      deletedItems,
-      undoStack: undoManager.undoStack,
-      redoStack: undoManager.redoStack,
-      newFrom: move.from,
-      newTo: move.to,
-      previousText: sourceText,
-      nextText,
+    const mappedAnchor = mapMoveBlockPosition(move, selection.anchor)
+    const mappedHead = mapMoveBlockPosition(move, selection.head)
+    view.dispatch({
+      ...(mappedAnchor === undefined || mappedHead === undefined
+        ? {}
+        : { selection: EditorSelection.range(mappedAnchor, mappedHead) }),
+      annotations: move.annotations,
+      effects: [recordMove.of(move)],
     })
-    rebasePendingMoves(
-      (position) => rebaseRelativePosition(position, mappings),
-      (position, assoc) => mapMoveBlockPosition(move, position, assoc),
-    )
-    undoManager.stopCapturing()
-    const mappedAnchor =
-      selection === undefined
-        ? undefined
-        : mapMoveBlockPosition(move, selection.anchor)
-    const mappedHead =
-      selection === undefined
-        ? undefined
-        : mapMoveBlockPosition(move, selection.head)
-    if (view) {
-      view.dispatch({
-        ...(mappedAnchor === undefined || mappedHead === undefined
-          ? {}
-          : { selection: EditorSelection.range(mappedAnchor, mappedHead) }),
-        annotations: move.annotations,
-      })
-      view.focus()
-    }
+    view.focus()
     return ok(move)
   }
 
-  const move = (input: MoveBlockInput, view?: EditorView) =>
-    applyMove(input.from, () => moveBlock(doc, input), view).map((result) => {
-      undoManager.clear(false, true)
-      redoActions.length = 0
-      undoActions.push({ kind: 'move', move: result })
-      return result
-    })
-
   const stepHistory = (
-    fromStack: HistoryAction[],
-    toStack: HistoryAction[],
-    applyTextAction: () => ReturnType<Y.UndoManager['undo']>,
-    userEvent: 'undo' | 'redo',
-    view?: EditorView,
+    direction: 'undo' | 'redo',
+    view: EditorView,
   ): Result<boolean, InvalidBlockMoveError> => {
-    const action = fromStack.pop()
-    if (!action) return ok(false)
+    const state = view.state.field(historyField)
+    const stack = direction === 'undo' ? state.undo : state.redo
+    const entry = stack.at(-1)
+    if (!entry) return ok(false)
 
-    if (action.kind === 'text') {
-      applyingHistory = true
-      const result = applyTextAction()
-      applyingHistory = false
-      if (result === null) {
-        return ok(false)
+    if (entry.kind === 'text') {
+      if (entry.failure !== undefined) {
+        view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
+        return err(new InvalidBlockMoveError(entry.failure))
       }
-      toStack.push(action)
+      if (entry.inverse.length !== view.state.doc.length) {
+        view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
+        return err(
+          new InvalidBlockMoveError('The text history no longer matches'),
+        )
+      }
+      view.dispatch({
+        changes: entry.inverse,
+        annotations: [
+          textHistoryStep.of({ direction, entry }),
+          Transaction.addToHistory.of(false),
+          Transaction.userEvent.of(direction),
+        ],
+      })
       return ok(true)
     }
 
-    const from = resolveMoveBlockStart(doc, action.move)
-    if (from === undefined)
+    if (entry.failure !== undefined) {
+      view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
+      return err(new InvalidBlockMoveError(entry.failure))
+    }
+
+    if (resolveMoveBlockStart(doc, entry.move) === undefined) {
+      view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
       return err(
         new InvalidBlockMoveError('The moved block is no longer available'),
       )
-    const result = applyMove(
-      from,
-      () => reverseBlockMove(doc, action.move, userEvent),
-      view,
-    )
-    if (result.isErr()) return err(result.error)
-    toStack.push({ kind: 'move', move: result.value })
+    }
+
+    applyingLocalMove = true
+    const result = reverseBlockMove(doc, entry.move, direction)
+    applyingLocalMove = false
+    if (result.isErr()) {
+      view.dispatch({ effects: dropHistoryEntry.of({ direction }) })
+      return err(result.error)
+    }
+
+    const reversed = result.value
+    const selection = view.state.selection.main
+    const mappedAnchor = mapMoveBlockPosition(reversed, selection.anchor)
+    const mappedHead = mapMoveBlockPosition(reversed, selection.head)
+    view.dispatch({
+      ...(mappedAnchor === undefined || mappedHead === undefined
+        ? {}
+        : { selection: EditorSelection.range(mappedAnchor, mappedHead) }),
+      annotations: reversed.annotations,
+      effects: [applyMoveHistoryStep.of({ direction, move: reversed })],
+    })
+    view.focus()
     return ok(true)
   }
 
-  const undo = (view?: EditorView) =>
-    report(
-      stepHistory(
-        undoActions,
-        redoActions,
-        () => undoManager.undo(),
-        'undo',
-        view,
-      ),
-    )
-
-  const redo = (view?: EditorView) =>
-    report(
-      stepHistory(
-        redoActions,
-        undoActions,
-        () => undoManager.redo(),
-        'redo',
-        view,
-      ),
-    )
+  const extension = [
+    historyField,
+    EditorView.updateListener.of(updateAfterView),
+  ] as const
 
   return {
-    undoManager,
+    extension,
     move(input, view) {
-      return report(move(input, view))
+      return report(applyMove(() => moveBlock(doc, input), view))
     },
-    undo,
-    redo,
+    undo(view) {
+      return report(stepHistory('undo', view))
+    },
+    redo(view) {
+      return report(stepHistory('redo', view))
+    },
     onError(listener) {
       errorListeners.add(listener)
       listener(currentError)
@@ -253,7 +374,6 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
     },
     destroy() {
       errorListeners.clear()
-      undoManager.destroy()
     },
   }
 }

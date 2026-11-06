@@ -61,15 +61,32 @@ function createDecorations(view: EditorView, history: MoveHistory) {
   )
 }
 
-function createDragPlugin(history: MoveHistory) {
+function createDragPlugin(
+  history: MoveHistory,
+  composingViews: WeakSet<EditorView>,
+) {
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
       private readonly cleanupDropTarget: () => void
-      private composing = false
+      private readonly preventCompositionShortcut = (event: KeyboardEvent) => {
+        // Capture these before CodeMirror skips keymaps during composition.
+        if (
+          composingViews.has(this.view) &&
+          event.altKey &&
+          (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+        ) {
+          event.preventDefault()
+        }
+      }
 
       constructor(readonly view: EditorView) {
         this.decorations = createDecorations(view, history)
+        view.contentDOM.addEventListener(
+          'keydown',
+          this.preventCompositionShortcut,
+          true,
+        )
         this.cleanupDropTarget = dropTargetForElements({
           element: view.dom,
           canDrop: ({ source, input }) =>
@@ -107,7 +124,7 @@ function createDragPlugin(history: MoveHistory) {
       }
 
       update(update: ViewUpdate) {
-        if (this.composing) {
+        if (composingViews.has(this.view)) {
           if (update.docChanged)
             this.decorations = this.decorations.map(update.changes)
           return
@@ -126,11 +143,11 @@ function createDragPlugin(history: MoveHistory) {
       }
 
       startComposition() {
-        this.composing = true
+        composingViews.add(this.view)
       }
 
       endComposition() {
-        this.composing = false
+        composingViews.delete(this.view)
         requestAnimationFrame(() => {
           if (this.view.dom.isConnected) {
             this.view.dispatch({ effects: refreshBlockHandles.of(null) })
@@ -139,6 +156,11 @@ function createDragPlugin(history: MoveHistory) {
       }
 
       destroy() {
+        this.view.contentDOM.removeEventListener(
+          'keydown',
+          this.preventCompositionShortcut,
+          true,
+        )
         this.cleanupDropTarget()
       }
     },
@@ -159,9 +181,13 @@ function createDragPlugin(history: MoveHistory) {
   ]
 }
 
-function moveAdjacent(history: MoveHistory, direction: 'up' | 'down') {
+function moveAdjacent(
+  history: MoveHistory,
+  composingViews: WeakSet<EditorView>,
+  direction: 'up' | 'down',
+) {
   return (view: EditorView) => {
-    if (view.composing) return true
+    if (view.composing || composingViews.has(view)) return true
     const input = adjacentMove(
       view.state,
       view.state.selection.main.head,
@@ -178,20 +204,21 @@ function moveAdjacent(history: MoveHistory, direction: 'up' | 'down') {
 }
 
 export function createOutlineEditorExtension(history: MoveHistory): Extension {
+  const composingViews = new WeakSet<EditorView>()
   return [
     Prec.highest(
       keymap.of([
         {
           key: 'Alt-ArrowUp',
-          run: moveAdjacent(history, 'up'),
+          run: moveAdjacent(history, composingViews, 'up'),
         },
         {
           key: 'Alt-ArrowDown',
-          run: moveAdjacent(history, 'down'),
+          run: moveAdjacent(history, composingViews, 'down'),
         },
       ]),
     ),
-    createDragPlugin(history),
+    createDragPlugin(history, composingViews),
     EditorView.baseTheme({
       '.cm-line': {
         position: 'relative',

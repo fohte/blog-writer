@@ -18,6 +18,16 @@ type AddMemoInput = {
   order: number
 }
 
+export type MemoAdoptionSnapshot = {
+  id: string
+  adoptedTo: unknown
+  markerIndex: number
+  headingLevel: number
+  headingText: string
+}
+
+export type MemoTextRange = { from: number; to: number }
+
 function getMemosMap(doc: Y.Doc): Y.Map<MemoData> {
   return doc.getMap('memos')
 }
@@ -127,6 +137,112 @@ export function listMemos(doc: Y.Doc): Memo[] {
         left.order - right.order ||
         (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
     )
+}
+
+export function captureDeletedMemoAdoptions(
+  doc: Y.Doc,
+  previousMarkdown: string,
+  deletedRanges: readonly MemoTextRange[],
+): MemoAdoptionSnapshot[] {
+  const body = getBody(doc)
+  const deletedHeadings = deriveHeadingTree(previousMarkdown)
+    .flatMap((heading) => [heading, ...flattenHeadings(heading.children)])
+    .filter((heading) =>
+      deletedRanges.some(
+        (range) => range.from <= heading.from && heading.from < range.to,
+      ),
+    )
+  const snapshots: MemoAdoptionSnapshot[] = []
+
+  for (const [id, memo] of getMemosMap(doc).entries()) {
+    if (memo.get('dismissed') === true) continue
+    const adoptedTo = memo.get('adoptedTo')
+    if (
+      adoptedTo === null ||
+      adoptedTo === undefined ||
+      typeof adoptedTo !== 'object'
+    ) {
+      continue
+    }
+
+    const relativePosition = Y.createRelativePositionFromJSON(adoptedTo)
+    const absolutePosition = Y.createAbsolutePositionFromRelativePosition(
+      relativePosition,
+      doc,
+    )
+    const itemId = relativePosition.item
+    if (!absolutePosition || absolutePosition.type !== body || !itemId) continue
+    if (Y.getItem(doc.store, itemId).deleted) continue
+
+    const markerIndex = absolutePosition.index - 1
+    const heading = deletedHeadings.find(
+      (candidate) => candidate.from === markerIndex,
+    )
+    if (!heading) continue
+
+    snapshots.push({
+      id,
+      adoptedTo,
+      markerIndex,
+      headingLevel: heading.level,
+      headingText: heading.text,
+    })
+  }
+
+  return snapshots
+}
+
+function flattenHeadings(headings: Heading[]): Heading[] {
+  return headings.flatMap((heading) => [
+    heading,
+    ...flattenHeadings(heading.children),
+  ])
+}
+
+export function restoreMemoAdoptions(
+  doc: Y.Doc,
+  snapshots: readonly MemoAdoptionSnapshot[],
+  insertedRanges: readonly MemoTextRange[],
+): void {
+  if (snapshots.length === 0 || insertedRanges.length === 0) return
+
+  const body = getBody(doc)
+  const headings = flattenHeadings(deriveHeadingTree(body.toJSON()))
+  for (const snapshot of snapshots) {
+    if (
+      !insertedRanges.some(
+        (range) =>
+          range.from <= snapshot.markerIndex && snapshot.markerIndex < range.to,
+      )
+    ) {
+      continue
+    }
+
+    const memo = getMemoMap(doc, snapshot.id)
+    if (
+      !memo ||
+      memo.get('dismissed') === true ||
+      JSON.stringify(memo.get('adoptedTo')) !==
+        JSON.stringify(snapshot.adoptedTo)
+    ) {
+      continue
+    }
+
+    const heading = headings.find(
+      (candidate) =>
+        candidate.from === snapshot.markerIndex &&
+        candidate.level === snapshot.headingLevel &&
+        candidate.text === snapshot.headingText,
+    )
+    if (!heading) continue
+
+    const relativePosition = Y.createRelativePositionFromTypeIndex(
+      body,
+      snapshot.markerIndex + 1,
+      -1,
+    )
+    memo.set('adoptedTo', Y.relativePositionToJSON(relativePosition))
+  }
 }
 
 export function addMemo(
