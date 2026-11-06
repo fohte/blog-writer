@@ -31,6 +31,7 @@ use super::{
 use crate::config::{LlmConfig, OpenAiCompatibleConfig, ProviderName};
 
 mod claim_evidence;
+mod proposal_body_request;
 mod research_key_points;
 mod write_from_key_points;
 #[derive(Debug, Deserialize, JsonSchema, PartialEq, Serialize)]

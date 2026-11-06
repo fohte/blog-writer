@@ -271,6 +271,23 @@ export class SuggestionLayerController {
           },
         }
       }),
+      EditorView.updateListener.of((update) => {
+        const previousInFlight = update.startState.field(
+          this.stateField,
+          false,
+        )?.inFlight
+        const nextInFlight = update.state.field(
+          this.stateField,
+          false,
+        )?.inFlight
+        if (
+          update.docChanged &&
+          previousInFlight != null &&
+          nextInFlight === null
+        ) {
+          this.options.onCancelInFlight?.()
+        }
+      }),
       Prec.highest(
         keymap.of([
           { key: 'Tab', run: (view) => this.handleTab(view) },

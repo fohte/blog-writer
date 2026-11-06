@@ -196,6 +196,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/proposals/body-request': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['propose_body_request']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/research/claim-evidence': {
     parameters: {
       query?: never
@@ -297,10 +313,39 @@ export interface components {
     }
     /** @enum {string} */
     ArticleFileSyncStatus: 'unset' | 'synced' | 'external_changed'
+    ArticlePremise: {
+      audience: string
+      claim: string
+      purpose: string
+    }
     ArticlePremiseRequest: {
       audience: string
       purpose: string
       thesis: string
+    }
+    BodyRequest: {
+      headings: string[]
+      instruction: string
+      premise: components['schemas']['ArticlePremise']
+      section: string
+      target: string
+    }
+    BodyRequestError: {
+      message: string
+    }
+    BodyRequestEvent:
+      | {
+          data: components['schemas']['BodyRequestResult']
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['BodyRequestError']
+          /** @enum {string} */
+          event: 'error'
+        }
+    BodyRequestResult: {
+      replacement: string
     }
     ClaimEvidenceQuote: {
       source_id: string
@@ -1327,6 +1372,39 @@ export interface operations {
         }
         content: {
           'application/json': components['schemas']['OgpResponse']
+        }
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  propose_body_request: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['BodyRequest']
+      }
+    }
+    responses: {
+      /** @description Proposed replacement text */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': components['schemas']['BodyRequestEvent']
         }
       }
       /** @description Invalid request body */

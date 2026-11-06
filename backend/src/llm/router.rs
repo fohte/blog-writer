@@ -14,4 +14,5 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(research_key_points::router())
         .merge(super::research_job::router())
         .merge(crate::write_from_key_points::router())
+        .merge(crate::proposal_body_request::router())
 }

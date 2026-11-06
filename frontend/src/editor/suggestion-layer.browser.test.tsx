@@ -747,7 +747,10 @@ describe('suggestion layer', () => {
   })
 
   it('ignores an in-flight result after an edit inside its range', () => {
-    const { body, host, layer, view } = createEditor()
+    const cancellations: string[] = []
+    const { body, host, layer, view } = createEditor(initialText, (event) => {
+      cancellations.push(event)
+    })
     const from = initialText.indexOf('selected')
     let inFlightResult: ReturnType<typeof layer.setInFlight> | undefined
     act(() => {
@@ -771,11 +774,13 @@ describe('suggestion layer', () => {
 
     const readOutput = () => ({
       body: body.toJSON(),
+      cancellations,
       suggestion:
         host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
     })
     expect(readOutput()).toEqual({
       body: initialText.replace('selected sentence', 'sexlected sentence'),
+      cancellations: ['cancel'],
       suggestion: null,
     })
   })
