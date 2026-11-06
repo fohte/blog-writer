@@ -8,6 +8,13 @@ import { SCREENSHOT_VIEWPORT } from './.storybook/screenshot-viewport'
 import viteConfig from './vite.config'
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
+const storybookProject = createStorybookProject({
+  name: 'storybook-screenshot-frontend',
+  rootDir: dirname,
+  viewport: SCREENSHOT_VIEWPORT,
+  screenshotsSubdir: 'desktop',
+  setupFiles: ['./.storybook/vitest.setup.screenshot.ts'],
+})
 
 // A separate config file rather than a project entry in vitest.config.ts:
 // the `storybook` project (check runs) and this one both point at
@@ -15,13 +22,14 @@ const dirname = path.dirname(fileURLToPath(import.meta.url))
 // process causes Storybook's dev-server cache to collide.
 export default mergeConfig(
   viteConfig,
-  defineConfig(
-    createStorybookProject({
-      name: 'storybook-screenshot-frontend',
-      rootDir: dirname,
-      viewport: SCREENSHOT_VIEWPORT,
-      screenshotsSubdir: 'desktop',
-      setupFiles: ['./.storybook/vitest.setup.screenshot.ts'],
-    }),
-  ),
+  defineConfig({
+    ...storybookProject,
+    test: {
+      ...storybookProject.test,
+      browser: {
+        ...storybookProject.test.browser,
+        api: { allowWrite: true, allowExec: true },
+      },
+    },
+  }),
 )

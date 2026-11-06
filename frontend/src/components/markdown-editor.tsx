@@ -12,6 +12,7 @@ import * as Y from 'yjs'
 import { markdownDecorations } from '#editor/markdown-decorations'
 import { replaceBody } from '#editor/replace-body'
 import { editorTheme, markdownHighlightStyle } from '#editor/theme'
+import { undoManagerFacet } from '#editor/undo-manager-facet'
 
 export interface MarkdownEditorHandle {
   replaceBody(value: string): void
@@ -84,6 +85,7 @@ export const MarkdownEditor = forwardRef<
             spellcheck: 'false',
           }),
           yCollab(text, null, { undoManager }),
+          undoManagerFacet.of(undoManager),
           extensionsCompartment.of(extensions),
         ],
       }),
