@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
 import { blockMoved } from '#article/index'
+import { saveLlmSettings } from '#lib/llm-settings'
 import { createMoveHistory } from '#outline/index'
 import { transitionProposalEditorExtensions } from '#proposals/index'
 
@@ -117,6 +118,42 @@ beforeEach(() => {
 })
 
 describe('transition proposal extension', () => {
+  it('routes local requests through the configured bridge URL', async () => {
+    const settings = saveLlmSettings(() => window.localStorage, {
+      route: 'local',
+      bridgeUrl: 'https://proposal-bridge.invalid/root/',
+    })
+    if (settings.isErr()) throw settings.error
+
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        new Response('data: {"event":"result","data":{"suggestions":[]}}\n\n', {
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const view = createEditor()
+
+    await act(async () => {
+      view.dispatch({
+        changes: { from: 0, to: beforeMove.length, insert: afterMove },
+        annotations: [
+          blockMoved.of(movedRange),
+          Transaction.userEvent.of('move'),
+        ],
+      })
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(fetchMock.mock.calls.map(([url]) => getRequestUrl(url))).toEqual([
+      'https://proposal-bridge.invalid/root/api/proposals/transition',
+    ])
+  })
+
   it('sends article context and the three editor-selected seam ranges after a local move', async () => {
     const firstSeam = {
       from: afterMove.indexOf('Section A ends here.'),
@@ -473,7 +510,18 @@ describe('transition proposal extension', () => {
     const readOutput = () => ({
       body: view.state.doc.toString(),
       alerts: alertSpy.mock.calls,
+      suggestionWidgets: view.dom.querySelectorAll(
+        '.cm-suggestion-widget [aria-label="提案差分"]',
+      ).length,
+      generatingWidgets: view.dom.querySelectorAll(
+        '.cm-suggestion-widget [role="status"]',
+      ).length,
     })
-    expect(readOutput()).toEqual({ body: afterMove, alerts: [] })
+    expect(readOutput()).toEqual({
+      body: afterMove,
+      alerts: [],
+      suggestionWidgets: 0,
+      generatingWidgets: 0,
+    })
   })
 })

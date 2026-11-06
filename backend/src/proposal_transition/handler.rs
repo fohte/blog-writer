@@ -133,38 +133,7 @@ pub(crate) async fn propose_transition(
     .map_err(|error| invalid_target(error.to_string()))?;
 
     let mut prompt = context.prompt;
-    prompt.push('\n');
-    prompt.push_str("継ぎ目ごとの文章調整");
-    prompt.push('\n');
-    prompt.push_str(
-        "各継ぎ目について、前後の文脈と記事の前提を読み、つながりを直す必要がある場合だけ前後 1 文を含む置換文を返してください。",
-    );
-    prompt.push('\n');
-    prompt.push_str("replacements は継ぎ目一覧と同じ順で返し、変更不要なら null にしてください。");
-    prompt.push('\n');
-    prompt.push_str("各置換は前後の文だけを before と after に返してください。前置きや理由は書かず、置換後の文だけを返してください。");
-    prompt.push('\n');
-    prompt.push_str("継ぎ目一覧");
-    prompt.push('\n');
-    for seam in &request.seams {
-        prompt.push('\n');
-        prompt.push('[');
-        prompt.push_str(&seam.id);
-        prompt.push(']');
-        prompt.push('\n');
-        prompt.push_str("前後の文の間にある保持対象 Markdown:");
-        prompt.push('\n');
-        prompt.push_str(&seam.middle);
-        prompt.push('\n');
-        prompt.push_str("置換対象の前の文:");
-        prompt.push('\n');
-        prompt.push_str(&seam.before_sentence);
-        prompt.push('\n');
-        prompt.push_str("置換対象の後の文:");
-        prompt.push('\n');
-        prompt.push_str(&seam.after_sentence);
-        prompt.push('\n');
-    }
+    append_transition_prompt(&mut prompt, &request.seams);
 
     let seams = request.seams;
 
@@ -202,6 +171,34 @@ pub(crate) async fn propose_transition(
             Ok(TransitionResponse { suggestions })
         },
     ))
+}
+
+fn append_transition_prompt(prompt: &mut String, seams: &[TransitionSeam]) {
+    prompt.push('\n');
+    for instruction in [
+        "継ぎ目ごとの文章調整",
+        "各継ぎ目について、前後の文脈と記事の前提を読み、つながりを直す必要がある場合だけ前後 1 文を含む置換文を返してください。",
+        "replacements は継ぎ目一覧と同じ順で返し、変更不要なら null にしてください。",
+        "各置換は前後の文だけを before と after に返してください。前置きや理由は書かず、置換後の文だけを返してください。",
+        "継ぎ目一覧",
+    ] {
+        append_prompt_line(prompt, instruction);
+    }
+    for seam in seams {
+        prompt.push('\n');
+        append_prompt_line(prompt, &format!("[{}]", seam.id));
+        append_prompt_line(prompt, "前後の文の間にある保持対象 Markdown:");
+        append_prompt_line(prompt, &seam.middle);
+        append_prompt_line(prompt, "置換対象の前の文:");
+        append_prompt_line(prompt, &seam.before_sentence);
+        append_prompt_line(prompt, "置換対象の後の文:");
+        append_prompt_line(prompt, &seam.after_sentence);
+    }
+}
+
+fn append_prompt_line(prompt: &mut String, line: &str) {
+    prompt.push_str(line);
+    prompt.push('\n');
 }
 
 fn invalid_target(message: String) -> AppError {

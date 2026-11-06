@@ -4,7 +4,7 @@ import {
   EditorView,
   ViewPlugin as CodeMirrorViewPlugin,
 } from '@codemirror/view'
-import type { ReactNode } from 'react'
+import type { FC } from 'react'
 import type * as Y from 'yjs'
 
 import type { BlockMoved } from '#article/index'
@@ -49,7 +49,6 @@ type PendingSeam = {
 }
 
 type Runtime = {
-  history: MoveHistory
   layer: ReturnType<typeof createSuggestionLayer>
   pending: PendingSeam[]
   abortController: AbortController | null
@@ -59,12 +58,42 @@ type Runtime = {
 
 const runtimes = new WeakMap<Y.Doc, Runtime>()
 
-function makeRuntime({ doc, history }: ArticleContext): Runtime {
+function clearLayer(runtime: Runtime): void {
+  runtime.layer.setInFlight(null).match(
+    () => undefined,
+    () => undefined,
+  )
+  runtime.layer.setSuggestions([]).match(
+    () => undefined,
+    () => undefined,
+  )
+}
+
+function setInFlight(
+  runtime: Runtime,
+  position: SuggestionPosition | null,
+): void {
+  runtime.layer.setInFlight(position).match(
+    () => undefined,
+    () => undefined,
+  )
+}
+
+function setSuggestions(
+  runtime: Runtime,
+  suggestions: readonly TextSuggestion[],
+): void {
+  runtime.layer.setSuggestions(suggestions).match(
+    () => undefined,
+    () => undefined,
+  )
+}
+
+function makeRuntime({ doc }: ArticleContext): Runtime {
   const existing = runtimes.get(doc)
   if (existing) return existing
 
   const runtime: Runtime = {
-    history,
     layer: createSuggestionLayer({
       onCancelInFlight: () => {
         runtime.abortController?.abort()
@@ -286,14 +315,7 @@ function startProposal(
   runtime.abortController?.abort()
   runtime.abortController = null
   runtime.pending = []
-  runtime.layer.setInFlight(null).match(
-    () => undefined,
-    () => undefined,
-  )
-  runtime.layer.setSuggestions([]).match(
-    () => undefined,
-    () => undefined,
-  )
+  clearLayer(runtime)
 
   const seams = seamsAtMove(markdown, marker)
   if (seams.length === 0) return
@@ -326,10 +348,7 @@ function startProposal(
   }))
   const firstSeam = seams[0]
   if (!firstSeam) return
-  runtime.layer.setInFlight({ from: firstSeam.from, to: firstSeam.to }).match(
-    () => undefined,
-    () => undefined,
-  )
+  setInFlight(runtime, { from: firstSeam.from, to: firstSeam.to })
 
   const abortController = new AbortController()
   runtime.abortController = abortController
@@ -369,23 +388,15 @@ function startProposal(
         )
       runtime.abortController = null
       runtime.pending = []
-      runtime.layer.setInFlight(null).match(
-        () => undefined,
-        () => undefined,
-      )
-      runtime.layer.setSuggestions(proposals).match(
-        () => undefined,
-        () => undefined,
-      )
+      setInFlight(runtime, null)
+      setSuggestions(runtime, proposals)
     },
     () => {
       if (runtime.abortController !== abortController) return
       runtime.abortController = null
       runtime.pending = []
-      runtime.layer.setInFlight(null).match(
-        () => undefined,
-        () => undefined,
-      )
+      // A later move retries silently without changing the article.
+      setInFlight(runtime, null)
     },
   )
 }
@@ -396,12 +407,7 @@ export function transitionProposalEditorExtensions(
   return makeRuntime(context).extensions
 }
 
-export function TransitionProposalAccessory(
-  _context: AccessoryContext,
-): ReactNode {
-  const { doc, history, view } = _context
-  const runtime = runtimes.get(doc)
-  if (!runtime || runtime.history !== history || runtime.view !== view)
-    return null
+// The CodeMirror suggestion layer renders every proposal and its in-flight state.
+export const TransitionProposalAccessory: FC<AccessoryContext> = () => {
   return null
 }

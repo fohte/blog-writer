@@ -7,6 +7,7 @@ use std::{
 
 use axum::{Router, body::Body, http::Request};
 use indoc::indoc;
+use rstest::rstest;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -114,13 +115,47 @@ async fn post_request(
     let status = response.status().as_u16();
     let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
     let body = String::from_utf8(body.to_vec())?;
-    let event = body
+    let event_data = body
         .lines()
         .find_map(|line| line.strip_prefix("data: "))
-        .map(serde_json::from_str::<Value>)
-        .transpose()?
-        .unwrap_or(Value::Null);
+        .unwrap_or(&body);
+    let event = serde_json::from_str::<Value>(event_data)?;
     Ok((status, event))
+}
+
+#[rstest]
+#[case::missing_before_block("before_block_id")]
+#[case::missing_after_block("after_block_id")]
+#[test_attr(tokio::test)]
+async fn rejects_seams_that_reference_missing_blocks(
+    #[case] target_field: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let prompt = Arc::new(Mutex::new(None));
+    let state = LlmState::with_provider(
+        FixedProvider {
+            output: json!({"replacements": []}),
+            prompt: prompt.clone(),
+        },
+        ProviderName::ClaudeCode,
+        Duration::from_secs(1),
+    );
+    let mut request = transition_request();
+    request["seams"][0][target_field] = json!("missing-block");
+
+    let actual = post_request(request, state).await?;
+    let provider_prompt = prompt.lock().expect("prompt lock").clone();
+
+    assert_eq!(
+        (actual, provider_prompt),
+        (
+            (
+                400,
+                json!({"error": "Target block `missing-block` does not exist"}),
+            ),
+            None
+        )
+    );
+    Ok(())
 }
 
 #[tokio::test]
