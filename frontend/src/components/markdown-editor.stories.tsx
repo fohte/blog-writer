@@ -11,6 +11,7 @@ import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
 
 interface StoryArgs {
   content: string
+  className?: string
   initialSelection?: { anchor: number; head?: number }
   evidenceVerdict?: EvidenceVerdict
   evidenceEdited?: boolean
@@ -47,6 +48,7 @@ const otherSyntaxContent = [
 
 function MarkdownEditorPreview({
   content,
+  className,
   initialSelection,
   evidenceVerdict,
   evidenceEdited,
@@ -98,6 +100,7 @@ function MarkdownEditorPreview({
         text={body}
         history={history}
         extensions={extensions}
+        {...(className === undefined ? {} : { className })}
         {...(initialSelection ? { initialSelection } : {})}
       />
     </div>
@@ -117,6 +120,14 @@ export const MarkdownBody: Story = {
   args: {
     content: defaultContent,
     initialSelection: { anchor: defaultContent.length },
+  },
+}
+
+export const CallerProvidedHeight: Story = {
+  name: 'the editor uses a height supplied by its caller.',
+  args: {
+    content: 'The editor takes its height from the class name.',
+    className: 'h-60',
   },
 }
 
