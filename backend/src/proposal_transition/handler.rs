@@ -147,6 +147,11 @@ pub(crate) async fn propose_transition(
         prompt,
         move |generated| {
             let suggestions = if generated.replacements.len() != seams.len() {
+                tracing::warn!(
+                    expected_seams = seams.len(),
+                    actual_replacements = generated.replacements.len(),
+                    "Discarding transition response with mismatched replacement count"
+                );
                 vec![]
             } else {
                 seams
