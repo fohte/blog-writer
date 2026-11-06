@@ -112,37 +112,20 @@ function createEditor(content = beforeMove): EditorView {
   return view
 }
 
-function moveSection(
+function moveBlock(
   view: EditorView,
-  heading: string,
-  destinationHeading: string,
+  source: string,
+  destination: string,
 ): void {
   const markdown = view.state.doc.toString()
   const result = activeHistory?.move(
     {
-      from: markdown.indexOf(heading),
-      destination: markdown.indexOf(destinationHeading),
+      from: markdown.indexOf(source),
+      destination: markdown.indexOf(destination),
     },
     view,
   )
-  if (!result) throw new Error('Could not move the section')
-  if (result.isErr()) throw result.error
-}
-
-function moveParagraph(
-  view: EditorView,
-  paragraph: string,
-  destinationParagraph: string,
-): void {
-  const markdown = view.state.doc.toString()
-  const result = activeHistory?.move(
-    {
-      from: markdown.indexOf(paragraph),
-      destination: markdown.indexOf(destinationParagraph),
-    },
-    view,
-  )
-  if (!result) throw new Error('Could not move the paragraph')
+  if (!result) throw new Error('Could not move the block')
   if (result.isErr()) throw result.error
 }
 
@@ -412,7 +395,7 @@ describe('transition proposal extension', () => {
     const view = createEditor(content)
 
     await act(async () => {
-      moveParagraph(view, second, fourth)
+      moveBlock(view, second, fourth)
       await vi.waitFor(() => {
         expect(fetchMock).toHaveBeenCalledTimes(1)
       })
@@ -637,7 +620,7 @@ describe('transition proposal extension', () => {
     const view = createEditor()
 
     await act(async () => {
-      moveSection(view, '# Section C', '# Section B')
+      moveBlock(view, '# Section C', '# Section B')
       await vi.waitFor(() => {
         expect(fetchMock).toHaveBeenCalledTimes(1)
       })
@@ -682,13 +665,13 @@ describe('transition proposal extension', () => {
     const view = createEditor()
 
     await act(async () => {
-      moveSection(view, '# Section C', '# Section B')
+      moveBlock(view, '# Section C', '# Section B')
       await vi.waitFor(() => {
         expect(fetchMock).toHaveBeenCalledTimes(1)
       })
     })
     await act(async () => {
-      moveSection(view, '# Section B', '# Section A')
+      moveBlock(view, '# Section B', '# Section A')
       await vi.waitFor(() => {
         expect(fetchMock).toHaveBeenCalledTimes(2)
       })
