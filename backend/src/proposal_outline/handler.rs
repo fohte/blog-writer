@@ -147,11 +147,11 @@ fn record_rejection(
 fn to_suggestion(
     operation: OperationKind,
     replacement: String,
-    block: &OutlineProposalArticleBlockRequest,
     block_index: usize,
     blocks: &[OutlineProposalArticleBlockRequest],
     body_length: usize,
 ) -> Result<OutlineSuggestion, RejectionReason> {
+    let block = &blocks[block_index];
     if block.from > block.to || block.to > body_length {
         return Err(RejectionReason::OutOfBounds);
     }
@@ -240,14 +240,9 @@ fn to_suggestions(
             record_rejection(&mut rejection_counts, RejectionReason::MissingBlock);
             continue;
         };
-        let Some(block) = blocks.get(*block_index) else {
-            record_rejection(&mut rejection_counts, RejectionReason::MissingBlock);
-            continue;
-        };
         let suggestion = match to_suggestion(
             operation.operation,
             operation.replacement,
-            block,
             *block_index,
             blocks,
             body_length,

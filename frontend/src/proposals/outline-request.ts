@@ -9,6 +9,10 @@ export type OutlineProposalRequest =
   components['schemas']['OutlineProposalRequest']
 export type OutlineProposalResponse =
   components['schemas']['OutlineProposalResponse']
+type ProposalBlockRange = Pick<
+  OutlineProposalRequest['blocks'][number],
+  'deletion_from' | 'from' | 'kind' | 'to'
+>
 
 export function requestUrl(settings: LlmSettings): string {
   if (settings.route === 'server') return '/api/proposals/outline'
@@ -71,6 +75,30 @@ function deletionFrom(
   // Keep the previous block's line ending while removing the empty line before
   // a tail heading.
   return previous.contentTo + firstLineEnding.index + firstLineEnding[0].length
+}
+
+export function suggestionTargetRange(
+  suggestion: OutlineProposalResponse['suggestions'][number],
+  blocks: readonly ProposalBlockRange[],
+  blockIndex: number,
+  bodyLength: number,
+): { from: number; to: number } | null {
+  const block = blocks[blockIndex]
+  if (!block) return null
+
+  if (suggestion.replacement === '') {
+    if (block.kind !== 'heading') return null
+    return {
+      from: block.deletion_from ?? block.from,
+      to: blocks[blockIndex + 1]?.from ?? bodyLength,
+    }
+  }
+  if (suggestion.from === suggestion.to) {
+    return block.kind === 'paragraph'
+      ? { from: block.from, to: block.from }
+      : null
+  }
+  return block.kind === 'heading' ? { from: block.from, to: block.to } : null
 }
 
 export function isOutlineProposalResponse(

@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { MoveBlockInput } from '#article/index'
 import type { Heading } from '#article/types'
+import { stopButtonClickPropagation } from '#components/outline-view/stop-button-click-propagation'
 import { SuggestionDiff } from '#components/suggestion-diff'
 import type {
   OutlineProposalState,
@@ -249,14 +250,7 @@ function OutlineRow({
       >
         <span
           className="min-w-0 flex-1 truncate"
-          onClick={(event) => {
-            if (
-              event.target instanceof Element &&
-              event.target.closest('button') !== null
-            ) {
-              event.stopPropagation()
-            }
-          }}
+          onClick={stopButtonClickPropagation}
           style={{ paddingInlineStart: `${String(depth)}rem` }}
         >
           {proposal ? (

@@ -14,6 +14,7 @@ import {
   OutlineProposalAccessory,
 } from '#editor/index'
 import { createMoveHistory } from '#outline/index'
+import { suggestionTargetRange } from '#proposals/outline-request'
 
 const cleanups: (() => void)[] = []
 
@@ -75,10 +76,14 @@ function headingDeletionRange(body: string): { from: number; to: number } {
   ) {
     throw new Error('The outline request has no deletable heading')
   }
-  return {
-    from: heading.deletion_from ?? heading.from,
-    to: blocks[headingIndex + 1]?.from ?? request['body_length'],
-  }
+  const range = suggestionTargetRange(
+    { from: heading.from, to: heading.to, replacement: '' },
+    blocks,
+    headingIndex,
+    request['body_length'],
+  )
+  if (!range) throw new Error('The outline request has no deletable heading')
+  return range
 }
 
 function firstHeadingRange(body: string): { from: number; to: number } {
@@ -169,7 +174,7 @@ function readAcceptanceOutput(input: {
   }
 }
 
-function readHeadingDeletionOutput(input: {
+function undoAndReadHeadingDeletion(input: {
   history: ReturnType<typeof createMoveHistory>
   ranges: { from: number; to: number }[]
   view: EditorView
@@ -582,7 +587,7 @@ describe('outline proposal integration', () => {
       await act(async () => {
         await userEvent.click(acceptButton)
       })
-      expect(readHeadingDeletionOutput({ history, ranges, view })).toEqual({
+      expect(undoAndReadHeadingDeletion({ history, ranges, view })).toEqual({
         bodyAfterDelete: expectedBody,
         undo: 'undone',
         bodyAfterUndo: markdown.replace(heading, `${heading}!`),
