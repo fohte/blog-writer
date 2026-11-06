@@ -105,29 +105,27 @@ class SuggestionDiffWidget extends WidgetType {
   override eq(other: WidgetType): boolean {
     return (
       other instanceof SuggestionDiffWidget &&
-      other.suggestion?.id === this.suggestion?.id &&
+      this.sameContent(other) &&
       other.position.from === this.position.from &&
-      other.position.to === this.position.to &&
+      other.position.to === this.position.to
+    )
+  }
+
+  override updateDOM(dom: HTMLElement, _view: EditorView, from: this): boolean {
+    if (!this.sameContent(from)) return false
+    dom.dataset['suggestionFrom'] = String(this.position.from)
+    dom.dataset['suggestionTo'] = String(this.position.to)
+    return true
+  }
+
+  private sameContent(other: SuggestionDiffWidget): boolean {
+    return (
+      other.suggestion?.id === this.suggestion?.id &&
       other.suggestion?.replacement === this.suggestion?.replacement &&
       other.original === this.original &&
       other.focused === this.focused &&
       other.block === this.block
     )
-  }
-
-  override updateDOM(dom: HTMLElement, _view: EditorView, from: this): boolean {
-    if (
-      from.suggestion?.id !== this.suggestion?.id ||
-      from.suggestion?.replacement !== this.suggestion?.replacement ||
-      from.original !== this.original ||
-      from.focused !== this.focused ||
-      from.block !== this.block
-    ) {
-      return false
-    }
-    dom.dataset['suggestionFrom'] = String(this.position.from)
-    dom.dataset['suggestionTo'] = String(this.position.to)
-    return true
   }
 
   override toDOM(): HTMLElement {
