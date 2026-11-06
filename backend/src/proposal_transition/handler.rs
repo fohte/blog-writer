@@ -199,6 +199,7 @@ fn append_transition_prompt(prompt: &mut String, seams: &[TransitionSeam]) {
         "各継ぎ目について、前後の文脈と記事の前提を読み、つながりを直す必要がある場合だけ前後 1 文を含む置換文を返してください。",
         "replacements は継ぎ目一覧と同じ順で返し、変更不要なら null にしてください。",
         "各置換は前後の文だけを before と after に返してください。前置きや理由は書かず、置換後の文だけを返してください。",
+        "before と after はそれぞれ 1 行で返し、改行を含めないでください。",
         "継ぎ目一覧",
     ] {
         append_prompt_line(prompt, instruction);

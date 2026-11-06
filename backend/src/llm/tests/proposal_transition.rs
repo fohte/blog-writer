@@ -233,6 +233,7 @@ async fn returns_only_changed_known_seams_with_their_editor_ranges()
                 各継ぎ目について、前後の文脈と記事の前提を読み、つながりを直す必要がある場合だけ前後 1 文を含む置換文を返してください。
                 replacements は継ぎ目一覧と同じ順で返し、変更不要なら null にしてください。
                 各置換は前後の文だけを before と after に返してください。前置きや理由は書かず、置換後の文だけを返してください。
+                before と after はそれぞれ 1 行で返し、改行を含めないでください。
                 継ぎ目一覧
 
                 [seam-a]
@@ -266,6 +267,58 @@ async fn returns_only_changed_known_seams_with_their_editor_ranges()
                 保たれる架空の文です。
             "}.to_owned())
         )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn preserves_headings_inside_seam_middle() -> Result<(), Box<dyn std::error::Error>> {
+    let state = LlmState::with_provider(
+        FixedProvider {
+            output: json!({
+                "replacements": [
+                    {
+                        "before": "変化した架空の前文です。",
+                        "after": "続く架空の後文です。"
+                    },
+                    null,
+                    null
+                ]
+            }),
+            prompt: Arc::new(Mutex::new(None)),
+        },
+        ProviderName::ClaudeCode,
+        Duration::from_secs(1),
+    );
+    let mut request = transition_request();
+    let paragraph_break = std::iter::repeat_n('\n', 2).collect::<String>();
+    request["seams"][0]["middle"] = json!(format!(
+        "{paragraph_break}## 架空の次の見出し{paragraph_break}"
+    ));
+
+    let actual = post_request(request, state).await?;
+
+    assert_eq!(
+        actual,
+        (
+            200,
+            json!({
+                "event": "result",
+                "data": {
+                    "suggestions": [{
+                        "seam_id": "seam-a",
+                        "from": 12,
+                        "to": 44,
+                        "replacement": indoc! {"
+                            変化した架空の前文です。
+
+                            ## 架空の次の見出し
+
+                            続く架空の後文です。"}
+                    }]
+                }
+            })
+        ),
     );
     Ok(())
 }
