@@ -156,6 +156,7 @@ export const OtherMarkdownSyntax: Story = {
 }
 
 const evidenceContent = 'A research sentence.'
+const editedEvidenceContent = 'A revised research sentence.'
 
 export const SupportedEvidenceMarker: Story = {
   name: 'the sentence ends with a green supported marker.',
@@ -170,7 +171,7 @@ export const NeedsReviewEvidenceMarker: Story = {
 export const EditedEvidenceMarker: Story = {
   name: 'the sentence ends with a yellow marker after it changes.',
   args: {
-    content: evidenceContent,
+    content: editedEvidenceContent,
     evidenceVerdict: 'supported',
     evidenceEdited: true,
   },
