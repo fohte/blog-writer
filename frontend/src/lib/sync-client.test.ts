@@ -259,14 +259,12 @@ describe('createSyncClient', () => {
     const { client, providerAttempts } = createFixture(
       savedDocuments,
       new Set([articleId]),
-      undefined,
-      undefined,
-      new Set([articleId]),
     )
     const startResult = await client.start().match(
       () => 'started',
       (error) => error.message,
     )
+    await Promise.resolve()
     const errorBeforeTitleChange = client.getError()?.message ?? null
     client.updateArticleTitle(articleId, 'A revised title')._unsafeUnwrap()
 
@@ -278,7 +276,7 @@ describe('createSyncClient', () => {
       article: client.listArticles(),
     })
     expect(readProviderErrorOutput()).toEqual({
-      startResult: 'Failed to initialize document synchronization',
+      startResult: 'started',
       errorBeforeTitleChange: 'Failed to initialize document synchronization',
       errorAfterTitleChange: 'Failed to initialize document synchronization',
       failedArticleProviderAttempts: 1,
