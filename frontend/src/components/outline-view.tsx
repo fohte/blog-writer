@@ -5,15 +5,24 @@ import {
 import { Button } from '@fohte/ui/button'
 import { List, ListItem } from '@fohte/ui/list'
 import { Popover, PopoverContent } from '@fohte/ui/popover'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 
 import type { MoveBlockInput } from '#article/index'
 import type { Heading } from '#article/types'
+import { OutlineMemoDropGap } from '#components/outline-memo-drop-gap'
+import { memoIdFrom } from '#outline/memo-drag'
 
-type OutlineDropTarget = {
-  from: number
-  placement: 'before' | 'after' | 'child'
-}
+type OutlineDropTarget =
+  | { kind: 'move'; from: number; placement: 'before' | 'after' | 'child' }
+  | { kind: 'memo-heading'; from: number }
+  | { kind: 'memo-gap'; beforeFrom?: number }
 
 export interface OutlineViewProps {
   headings: Heading[]
@@ -22,6 +31,8 @@ export interface OutlineViewProps {
   openMenuFrom?: number
   dropTarget?: OutlineDropTarget
   error?: string
+  onAdoptMemo?: ((memoId: string, markerIndex: number) => void) | undefined
+  onInsertMemo?: (memoId: string, beforeFrom?: number) => void
   onSelect: (from: number) => void
   onMove: (input: MoveBlockInput) => void
 }
@@ -68,7 +79,7 @@ function siblingHeading(
   return undefined
 }
 
-function sourceFrom(source: { data: Record<string, unknown> }) {
+function blockFrom(source: { data: Record<string, unknown> }) {
   return source.data['kind'] === 'block' &&
     typeof source.data['from'] === 'number'
     ? source.data['from']
@@ -82,9 +93,11 @@ function OutlineRow({
   allHeadings,
   active,
   dropTarget,
+  onMemoDropTargetChange,
   openMenu,
   onSelect,
   onMove,
+  onAdoptMemo,
 }: {
   heading: Heading
   depth: number
@@ -92,13 +105,16 @@ function OutlineRow({
   allHeadings: FlatHeading[]
   active: boolean
   dropTarget: OutlineDropTarget | undefined
+  onMemoDropTargetChange: (target: OutlineDropTarget | undefined) => void
   openMenu: boolean
   onSelect: () => void
   onMove: (input: MoveBlockInput) => void
+  onAdoptMemo?: ((memoId: string, markerIndex: number) => void) | undefined
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<HTMLButtonElement>(null)
-  const [localDrop, setLocalDrop] = useState<OutlineDropTarget>()
+  const [localDrop, setLocalDrop] =
+    useState<Extract<OutlineDropTarget, { kind: 'move' }>>()
   const [menuOpen, setMenuOpen] = useState(openMenu)
   const previousHeading = siblingHeading(allHeadings, heading.from, 'previous')
   const nextHeading = siblingHeading(allHeadings, heading.from, 'next')
@@ -119,8 +135,13 @@ function OutlineRow({
     })
     const cleanupDropTarget = dropTargetForElements({
       element: row,
-      canDrop: ({ source }) => sourceFrom(source) !== undefined,
-      getData: ({ input, element }) => {
+      canDrop: ({ source }) =>
+        (memoIdFrom(source) !== undefined && onAdoptMemo !== undefined) ||
+        blockFrom(source) !== undefined,
+      getData: ({ input, element, source }) => {
+        if (memoIdFrom(source) !== undefined) {
+          return { kind: 'memo-heading-target', from: heading.from }
+        }
         const bounds = element.getBoundingClientRect()
         const ratio = (input.clientY - bounds.top) / bounds.height
         const placement =
@@ -135,31 +156,61 @@ function OutlineRow({
         }
       },
       onDragEnter: ({ self }) => {
+        if (
+          self.data['kind'] === 'memo-heading-target' &&
+          typeof self.data['from'] === 'number'
+        ) {
+          onMemoDropTargetChange({
+            kind: 'memo-heading',
+            from: self.data['from'],
+          })
+          return
+        }
         const placement = self.data['placement']
         if (
           placement === 'before' ||
           placement === 'after' ||
           placement === 'child'
         ) {
-          setLocalDrop({ from: heading.from, placement })
+          setLocalDrop({ kind: 'move', from: heading.from, placement })
         }
       },
       onDrag: ({ self }) => {
+        if (
+          self.data['kind'] === 'memo-heading-target' &&
+          typeof self.data['from'] === 'number'
+        ) {
+          onMemoDropTargetChange({
+            kind: 'memo-heading',
+            from: self.data['from'],
+          })
+          return
+        }
         const placement = self.data['placement']
         if (
           placement === 'before' ||
           placement === 'after' ||
           placement === 'child'
         ) {
-          setLocalDrop({ from: heading.from, placement })
+          setLocalDrop({ kind: 'move', from: heading.from, placement })
         }
       },
       onDragLeave: () => {
         setLocalDrop(undefined)
+        onMemoDropTargetChange(undefined)
       },
       onDrop: ({ self, source }) => {
         setLocalDrop(undefined)
-        const from = sourceFrom(source)
+        onMemoDropTargetChange(undefined)
+        const memoId = memoIdFrom(source)
+        if (
+          memoId !== undefined &&
+          self.data['kind'] === 'memo-heading-target'
+        ) {
+          onAdoptMemo?.(memoId, heading.from)
+          return
+        }
+        const from = blockFrom(source)
         const destination = self.data['destination']
         const childOf = self.data['childOf']
         if (from === undefined || typeof destination !== 'number') return
@@ -176,10 +227,19 @@ function OutlineRow({
       cleanupDropTarget()
       cleanupDraggable()
     }
-  }, [allHeadings, bodyLength, heading.from, onMove])
+  }, [
+    allHeadings,
+    bodyLength,
+    heading.from,
+    onAdoptMemo,
+    onMemoDropTargetChange,
+    onMove,
+  ])
 
-  const target = dropTarget ?? localDrop
+  const target = dropTarget?.kind === 'move' ? dropTarget : localDrop
   const isTarget = target?.from === heading.from
+  const isMemoTarget =
+    dropTarget?.kind === 'memo-heading' && dropTarget.from === heading.from
   return (
     <div
       className={`relative ${
@@ -187,11 +247,12 @@ function OutlineRow({
           ? 'border-t-2 border-primary'
           : isTarget && target.placement === 'after'
             ? 'border-b-2 border-primary'
-            : isTarget
+            : isTarget || isMemoTarget
               ? 'rounded bg-accent/50'
               : ''
       }`}
       data-drop-placement={isTarget ? target.placement : undefined}
+      data-memo-drop-target={isMemoTarget ? 'heading' : undefined}
       ref={rowRef}
     >
       <ListItem
@@ -302,10 +363,26 @@ export function OutlineView({
   openMenuFrom,
   dropTarget,
   error,
+  onAdoptMemo,
+  onInsertMemo,
   onSelect,
   onMove,
 }: OutlineViewProps) {
   const flattened = useMemo(() => flattenHeadings(headings), [headings])
+  const [localMemoDropTarget, setLocalMemoDropTarget] =
+    useState<OutlineDropTarget>()
+  const memoDropTarget =
+    dropTarget?.kind === 'memo-heading' || dropTarget?.kind === 'memo-gap'
+      ? dropTarget
+      : localMemoDropTarget
+  const handleMemoGapDragChange = useCallback(
+    (target: { beforeFrom?: number } | undefined) => {
+      setLocalMemoDropTarget(
+        target === undefined ? undefined : { kind: 'memo-gap', ...target },
+      )
+    },
+    [],
+  )
 
   return (
     <section
@@ -317,25 +394,57 @@ export function OutlineView({
         <p role="alert">{error}</p>
       ) : null}
       {flattened.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No headings yet.</p>
+        <>
+          <p className="text-sm text-muted-foreground">No headings yet.</p>
+          <OutlineMemoDropGap
+            active={
+              memoDropTarget?.kind === 'memo-gap' &&
+              memoDropTarget.beforeFrom === undefined
+            }
+            onDragChange={handleMemoGapDragChange}
+            onInsertMemo={onInsertMemo}
+          />
+        </>
       ) : (
         <List aria-label="Headings" role="listbox">
           {flattened.map(({ heading, depth }) => (
-            <OutlineRow
-              active={heading.from === activeFrom}
-              allHeadings={flattened}
-              bodyLength={bodyLength}
-              depth={depth}
-              dropTarget={dropTarget}
-              heading={heading}
-              key={heading.from}
-              openMenu={heading.from === openMenuFrom}
-              onMove={onMove}
-              onSelect={() => {
-                onSelect(heading.from)
-              }}
-            />
+            <Fragment key={heading.from}>
+              <OutlineMemoDropGap
+                active={
+                  memoDropTarget?.kind === 'memo-gap' &&
+                  memoDropTarget.beforeFrom === heading.from
+                }
+                beforeFrom={heading.from}
+                onDragChange={handleMemoGapDragChange}
+                onInsertMemo={onInsertMemo}
+              />
+              <OutlineRow
+                active={heading.from === activeFrom}
+                allHeadings={flattened}
+                bodyLength={bodyLength}
+                depth={depth}
+                dropTarget={
+                  dropTarget?.kind === 'move' ? dropTarget : memoDropTarget
+                }
+                heading={heading}
+                onAdoptMemo={onAdoptMemo}
+                onMemoDropTargetChange={setLocalMemoDropTarget}
+                onMove={onMove}
+                onSelect={() => {
+                  onSelect(heading.from)
+                }}
+                openMenu={heading.from === openMenuFrom}
+              />
+            </Fragment>
           ))}
+          <OutlineMemoDropGap
+            active={
+              memoDropTarget?.kind === 'memo-gap' &&
+              memoDropTarget.beforeFrom === undefined
+            }
+            onDragChange={handleMemoGapDragChange}
+            onInsertMemo={onInsertMemo}
+          />
         </List>
       )}
     </section>

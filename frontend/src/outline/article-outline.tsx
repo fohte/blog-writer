@@ -7,6 +7,7 @@ import type { MoveBlockInput } from '#article/index'
 import { deriveHeadingTree, getBody, readBody } from '#article/index'
 import type { Heading } from '#article/types'
 import { OutlineView } from '#components/outline-view'
+import { adoptMemoToHeading, insertMemoAsHeading } from '#memos/adoption'
 import type { MoveHistory } from '#outline/move-history'
 
 export interface ArticleOutlineProps {
@@ -107,6 +108,32 @@ export function ArticleOutline({
     },
     [history, view],
   )
+  const handleAdoptMemo = useCallback(
+    (memoId: string, markerIndex: number) => {
+      adoptMemoToHeading(doc, memoId, markerIndex).match(
+        () => {
+          setError(undefined)
+        },
+        (adoptionError) => {
+          setError(adoptionError.message)
+        },
+      )
+    },
+    [doc],
+  )
+  const handleInsertMemo = useCallback(
+    (memoId: string, beforeFrom?: number) => {
+      insertMemoAsHeading(doc, view, memoId, beforeFrom).match(
+        () => {
+          setError(undefined)
+        },
+        (adoptionError) => {
+          setError(adoptionError.message)
+        },
+      )
+    },
+    [doc, view],
+  )
   const selectedHeadingFrom = activeFrom ?? selectedFrom
 
   return (
@@ -118,6 +145,8 @@ export function ArticleOutline({
         : { activeFrom: selectedHeadingFrom })}
       {...(error === undefined ? {} : { error })}
       onMove={handleMove}
+      onAdoptMemo={handleAdoptMemo}
+      onInsertMemo={handleInsertMemo}
       onSelect={(from) => {
         setError(undefined)
         view.focus()

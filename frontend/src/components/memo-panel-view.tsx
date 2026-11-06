@@ -1,19 +1,28 @@
+import { draggable } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
 import { Button } from '@fohte/ui/button'
 import { List } from '@fohte/ui/list'
 import { Panel } from '@fohte/ui/panel'
 import { Textarea } from '@fohte/ui/textarea'
+import { useEffect, useRef } from 'react'
 
-import type { Memo } from '#article/index'
+import type { Heading, Memo } from '#article/index'
+import { MemoAdoptionMenu } from '#components/memo-adoption-menu'
 
 type MemoPanelViewProps = {
   memos: Memo[]
+  headings: Heading[]
   draft: string
   error?: string | undefined
+  openAdoptionMenuId?: string | undefined
   onDraftChange: (draft: string) => void
   onAddMemo: () => void
   onMoveMemo: (id: string, direction: 'up' | 'down') => void
   onDismissMemo: (id: string) => void
   onRestoreMemo: (id: string) => void
+  onAdoptToHeading: (memoId: string, markerIndex: number) => void
+  onInsertAsHeading?:
+    ((memoId: string, beforeFrom?: number) => void) | undefined
+  onOpenAdoptionMenuChange: (memoId: string | undefined) => void
 }
 
 function getMemoStateLabel(memo: Memo): string {
@@ -29,14 +38,44 @@ function getMemoStateLabel(memo: Memo): string {
 
 export function MemoPanelView({
   memos,
+  headings,
   draft,
   error,
+  openAdoptionMenuId,
   onDraftChange,
   onAddMemo,
   onMoveMemo,
   onDismissMemo,
   onRestoreMemo,
+  onAdoptToHeading,
+  onInsertAsHeading,
+  onOpenAdoptionMenuChange,
 }: MemoPanelViewProps) {
+  const dragHandleRefs = useRef(new Map<string, HTMLButtonElement>())
+
+  useEffect(() => {
+    const cleanup = memos.flatMap((memo) => {
+      if (memo.state.kind === 'dismissed') return []
+      const handle = dragHandleRefs.current.get(memo.id)
+      if (!handle) return []
+
+      return [
+        draggable({
+          element: handle,
+          getInitialData: () => ({
+            kind: 'memo',
+            memoId: memo.id,
+            text: memo.text,
+          }),
+        }),
+      ]
+    })
+
+    return () => {
+      for (const cleanupDraggable of cleanup) cleanupDraggable()
+    }
+  }, [memos])
+
   return (
     <section
       aria-labelledby="memo-panel-heading"
@@ -79,10 +118,26 @@ export function MemoPanelView({
             {memos.map((memo, index) => (
               <div
                 className="flex flex-col gap-3 border-b border-border py-4 last:border-b-0"
+                data-memo-id={memo.id}
                 key={memo.id}
                 role="listitem"
               >
                 <div className="flex flex-col gap-2">
+                  {memo.state.kind === 'dismissed' ? null : (
+                    <button
+                      aria-label={`メモ「${memo.text}」をドラッグ`}
+                      className="h-11 w-11 cursor-grab touch-none select-none rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
+                      ref={(element) => {
+                        if (element)
+                          dragHandleRefs.current.set(memo.id, element)
+                        else dragHandleRefs.current.delete(memo.id)
+                      }}
+                      style={{ touchAction: 'none' }}
+                      type="button"
+                    >
+                      ⠿
+                    </button>
+                  )}
                   <p className="whitespace-pre-wrap">{memo.text}</p>
                   <p className="text-sm text-muted-foreground">
                     {getMemoStateLabel(memo)}
@@ -111,6 +166,18 @@ export function MemoPanelView({
                   >
                     下へ
                   </Button>
+                  {memo.state.kind === 'dismissed' ? null : (
+                    <MemoAdoptionMenu
+                      headings={headings}
+                      memo={memo}
+                      onAdoptToHeading={onAdoptToHeading}
+                      onInsertAsHeading={onInsertAsHeading}
+                      onOpenChange={(open) => {
+                        onOpenAdoptionMenuChange(open ? memo.id : undefined)
+                      }}
+                      open={openAdoptionMenuId === memo.id}
+                    />
+                  )}
                   {memo.state.kind !== 'dismissed' ? (
                     <Button
                       onClick={() => {
