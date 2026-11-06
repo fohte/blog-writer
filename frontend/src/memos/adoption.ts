@@ -8,6 +8,7 @@ import {
   deriveHeadingTree,
   flattenHeadingTree,
   getBody,
+  getMemoAdoptedTo,
   InvalidHeadingError,
   InvalidMemoError,
   listMemos,
@@ -15,7 +16,6 @@ import {
   setMemoAdoptedTo,
   topLevelBlocks,
 } from '#article/index'
-import { getMemoAdoptedTo } from '#article/memos'
 import { memoAdoptionHistoryEffect } from '#outline/move-history'
 import type { MemoAdoptionHistoryRecord } from '#outline/move-history-types'
 
@@ -26,7 +26,10 @@ export function memoAdoptionErrorMessage<T, E extends Error>(
 ): string | undefined {
   return operation().match(
     () => undefined,
-    () => ADOPTION_ERROR_MESSAGE,
+    (error) => {
+      console.warn('Memo adoption failed', error)
+      return ADOPTION_ERROR_MESSAGE
+    },
   )
 }
 

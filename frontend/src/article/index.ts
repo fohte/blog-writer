@@ -20,6 +20,7 @@ export {
   addMemo,
   captureDeletedMemoAdoptions,
   dismissMemo,
+  getMemoAdoptedTo,
   getMemoState,
   listMemos,
   observeMemos,
