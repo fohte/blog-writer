@@ -454,7 +454,7 @@ describe('article editor screen', () => {
     })
   })
 
-  it('passes article context to integrations and reports unavailable editors', async () => {
+  it('passes article context and persists premise changes', async () => {
     const article: Article = {
       id: 'article-g',
       title: 'A useful article',
@@ -464,35 +464,26 @@ describe('article editor screen', () => {
     doc = articleDoc
     setBody(articleDoc, '# Starting point\n')
     let capturedArticleId: string | undefined
-    let liveReplacement: 'ok' | 'error' | undefined
-    let staleReplaceBody: ((value: string) => Result<void, Error>) | undefined
+    let extensionDoc: Y.Doc | undefined
+    let extensionHistory: unknown
+    let contextHistory: unknown
     renderWorkspace(article, articleDoc, {
+      editorExtensions: ({ doc: extensionDocument, history }) => {
+        extensionDoc = extensionDocument
+        extensionHistory = history
+        return []
+      },
       bodyAccessory: () => (
         <div data-testid="body-accessory">Draft request</div>
       ),
-      headerActions: ({ articleId, replaceBody }) => {
+      headerActions: ({ articleId, history }) => {
         capturedArticleId = articleId
-        staleReplaceBody = replaceBody
-        return (
-          <button
-            onClick={() => {
-              liveReplacement = replaceBody('# Exported body\n').match(
-                () => 'ok',
-                () => 'error',
-              )
-            }}
-            type="button"
-          >
-            Replace body
-          </button>
-        )
+        contextHistory = history
+        return null
       },
       outlineAccessory: () => <div>Outline accessory</div>,
       premiseAccessory: () => <div>Premise accessory</div>,
       sourcesPanel: <div>Source material</div>,
-      requiresAuthentication: true,
-      error: 'Sync needs attention.',
-      syncStatus: 'unsynced',
     })
 
     await act(async () => {
@@ -503,24 +494,111 @@ describe('article editor screen', () => {
       await userEvent.clear(reader)
       await userEvent.type(reader, 'Designers')
     })
-    await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: 'Replace body' }))
-    })
     const renderedIntegrations = {
+      articleId: capturedArticleId,
+      sameDocument: extensionDoc === articleDoc,
+      sameHistory: extensionHistory === contextHistory,
       bodyAccessory: host?.querySelector('[data-testid="body-accessory"]')
         ?.textContent,
-      relativeBodyPanel: getComputedStyle(
-        host?.querySelector('[data-testid="body-accessory"]')?.parentElement ??
-          document.body,
-      ).position,
+      relativeBodyContainer: host
+        ?.querySelector('[data-testid="body-accessory"]')
+        ?.parentElement?.classList.contains('relative'),
       outlineAccessory: host?.textContent.includes('Outline accessory'),
       premiseAccessory: host?.textContent.includes('Premise accessory'),
       sourceMaterial: host?.textContent.includes('Source material'),
+      savedPremise: articleDoc.getMap('premise').get('audience'),
+    }
+
+    const readInjectedOutput = () => ({
+      ...renderedIntegrations,
+    })
+    expect(readInjectedOutput()).toEqual({
+      articleId: article.id,
+      sameDocument: true,
+      sameHistory: true,
+      bodyAccessory: 'Draft request',
+      relativeBodyContainer: true,
+      outlineAccessory: true,
+      premiseAccessory: true,
+      sourceMaterial: true,
+      savedPremise: 'Designers',
+    })
+  })
+
+  it('shows sync errors, reauthentication, and the unsynced state', async () => {
+    const article: Article = {
+      id: 'article-i',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    renderWorkspace(article, articleDoc, {
+      requiresAuthentication: true,
+      error: 'Sync needs attention.',
+      syncStatus: 'unsynced',
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+
+    const readSyncOutput = () => ({
       syncError: host?.querySelector('[role="alert"]')?.textContent,
       reauthentication: host?.textContent.includes('Log in again'),
       syncState: host?.querySelector('[data-state="unsynced"]')?.textContent,
-      savedPremise: articleDoc.getMap('premise').get('audience'),
+    })
+    expect(readSyncOutput()).toEqual({
+      syncError: 'Sync needs attention.',
+      reauthentication: true,
+      syncState: '未同期',
+    })
+  })
+
+  it('replaces body only while the editor view is available', async () => {
+    const article: Article = {
+      id: 'article-j',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
     }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    let initialReplacementResult: string | undefined
+    let liveReplacement: string | undefined
+    let staleReplaceBody: ((value: string) => Result<void, Error>) | undefined
+    renderWorkspace(article, articleDoc, {
+      headerActions: ({ replaceBody }) => {
+        staleReplaceBody ??= replaceBody
+        if (initialReplacementResult === undefined) {
+          initialReplacementResult = replaceBody('# Too early\n').match(
+            () => 'ready',
+            (error) => error.name,
+          )
+        }
+        return (
+          <button
+            onClick={() => {
+              liveReplacement = replaceBody('# Exported body\n').match(
+                () => 'ready',
+                (error) => error.name,
+              )
+            }}
+            type="button"
+          >
+            Replace body
+          </button>
+        )
+      },
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'Replace body' }))
+    })
     await act(async () => {
       await userEvent.click(
         page.getByRole('button', { name: 'Back to articles' }),
@@ -532,25 +610,15 @@ describe('article editor screen', () => {
       (error) => error.name,
     )
 
-    const readInjectedOutput = () => ({
-      articleId: capturedArticleId,
-      ...renderedIntegrations,
+    const readReplaceBodyOutput = () => ({
+      initialReplacementResult,
       liveReplacement,
       staleReplacementResult,
       body: getBody(articleDoc).toJSON(),
     })
-    expect(readInjectedOutput()).toEqual({
-      articleId: article.id,
-      bodyAccessory: 'Draft request',
-      relativeBodyPanel: 'relative',
-      outlineAccessory: true,
-      premiseAccessory: true,
-      sourceMaterial: true,
-      syncError: 'Sync needs attention.',
-      reauthentication: true,
-      syncState: '未同期',
-      savedPremise: 'Designers',
-      liveReplacement: 'ok',
+    expect(readReplaceBodyOutput()).toEqual({
+      initialReplacementResult: 'EditorNotReadyError',
+      liveReplacement: 'ready',
       staleReplacementResult: 'EditorNotReadyError',
       body: '# Exported body\n',
     })

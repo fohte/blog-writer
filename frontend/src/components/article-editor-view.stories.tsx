@@ -17,6 +17,7 @@ type StoryArgs = {
   sources: boolean
   status: 'ready' | 'loading' | 'error'
   integrations: boolean
+  showSyncIssue: boolean
 }
 
 function ArticleEditorPreview({
@@ -25,6 +26,7 @@ function ArticleEditorPreview({
   sources,
   status,
   integrations,
+  showSyncIssue,
 }: StoryArgs) {
   const doc = useMemo(() => {
     if (status !== 'ready') return undefined
@@ -134,6 +136,10 @@ function ArticleEditorPreview({
         ) : undefined
       }
       title="A useful article"
+      syncStatus={showSyncIssue ? 'unsynced' : undefined}
+      syncError={showSyncIssue ? 'Synchronization needs attention.' : undefined}
+      requiresAuthentication={showSyncIssue}
+      onLoginAgain={showSyncIssue ? () => {} : undefined}
     />
   )
 }
@@ -147,6 +153,7 @@ const meta = {
     sources: false,
     status: 'ready',
     integrations: false,
+    showSyncIssue: false,
   },
 } satisfies Meta<StoryArgs>
 
@@ -160,6 +167,11 @@ export const Desktop: Story = {
 export const DesktopWithIntegrations: Story = {
   name: 'the desktop layout places injected controls near their related content.',
   args: { integrations: true, sources: true },
+}
+
+export const DesktopSyncIssue: Story = {
+  name: 'the desktop editor shows an unsynced article and reauthentication prompt.',
+  args: { showSyncIssue: true },
 }
 
 export const MobileArticle: Story = {

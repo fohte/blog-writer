@@ -299,7 +299,7 @@ describe('createSyncClient', () => {
     states.push(client.getStatus(created.id))
 
     expect(states).toEqual([
-      'saved',
+      'unsynced',
       'syncing',
       'synced',
       'unsynced',

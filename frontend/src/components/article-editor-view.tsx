@@ -100,6 +100,7 @@ const premiseFields: Array<{ field: PremiseField; label: string }> = [
 ]
 
 const emptyExtensions: Extension[] = []
+// Extension instances may hold article state and must survive StrictMode replays.
 const moveHistoriesByDocument = new WeakMap<Y.Doc, MoveHistory>()
 const extensionsByDocument = new WeakMap<Y.Doc, Extension[]>()
 
@@ -257,8 +258,8 @@ export function ArticleEditorView({
     }
     if (panel === 'sources') return sourcesPanel ?? null
     return doc && body && history ? (
-      <Panel className="relative min-h-96 overflow-auto rounded-lg p-4">
-        <div className="relative" style={{ position: 'relative' }}>
+      <Panel className="min-h-96 overflow-auto rounded-lg p-4">
+        <div className="relative">
           <MarkdownEditor
             ariaLabel="Article body"
             className="min-h-96"
@@ -287,6 +288,9 @@ export function ArticleEditorView({
   )
     ? mobilePanel
     : 'body'
+  const desktopPanelProps = isMobile
+    ? {}
+    : { inert: false, style: { display: 'block' } }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6">
@@ -382,10 +386,9 @@ export function ArticleEditorView({
               {(['outline', 'memo', 'sources'] as const).map((value) =>
                 availablePanels.some((panel) => panel.value === value) ? (
                   <TabsPanel
-                    inert={!isMobile ? false : undefined}
+                    {...desktopPanelProps}
                     key={value}
                     keepMounted
-                    style={!isMobile ? { display: 'block' } : undefined}
                     value={value}
                   >
                     <div className="pt-4 lg:pt-0">{renderPanel(value)}</div>
@@ -397,12 +400,7 @@ export function ArticleEditorView({
               aria-label="Article body"
               className="min-w-0 lg:col-span-2"
             >
-              <TabsPanel
-                inert={!isMobile ? false : undefined}
-                keepMounted
-                style={!isMobile ? { display: 'block' } : undefined}
-                value="body"
-              >
+              <TabsPanel {...desktopPanelProps} keepMounted value="body">
                 <div className="pt-4 lg:pt-0">{renderPanel('body')}</div>
               </TabsPanel>
             </section>

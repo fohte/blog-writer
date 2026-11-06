@@ -109,7 +109,7 @@ describe('sync document persistence', () => {
     })
     expect(readHydrationOutput()).toEqual({
       providerDocIdsBeforeLoad: [],
-      statusBeforeLoad: 'saved',
+      statusBeforeLoad: 'unsynced',
       bodyBeforeLoad: '## Cedar\na1\nxy## Vista\nz9\n\n## Fjord\nmaple ma\n',
       acknowledgementsBeforeLoad: 1,
       providerDocIdsAfterLoad: [articleId],
@@ -145,7 +145,7 @@ describe('sync document persistence', () => {
       providerDocIds,
     })
     expect(readLocalOnlyOutput()).toEqual({
-      status: 'saved',
+      status: 'unsynced',
       body: 'Local draft\n',
       providerDocIds: [],
     })

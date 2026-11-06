@@ -4,7 +4,7 @@ import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 
 import { observeMoveConflicts } from '#article/move-conflicts'
-import type { SyncClientOptions } from '#lib/sync-client'
+import type { SyncClientOptions, SyncState } from '#lib/sync-client'
 import { SyncClientError, toSyncClientError } from '#lib/sync-client-errors'
 
 const ARTICLE_INDEX_DOC_ID = 'article-index'
@@ -41,8 +41,6 @@ export type SyncDocument = {
     listener: (event: SyncDocumentEvent, error?: SyncClientError) => void,
   ) => () => void
 }
-
-type SyncState = 'saved' | 'unsynced' | 'syncing' | 'synced'
 
 const createWebsocketUrl = () => {
   const pageUrl =
@@ -154,7 +152,7 @@ const makeSyncDocument = (
   createProvider: () => WebsocketConnection,
   stopObservingMoveConflicts: () => void,
 ): SyncDocument => {
-  let status: SyncState = 'saved'
+  let status: SyncState = 'unsynced'
   let localReady = persistence.synced
   let provider: WebsocketConnection | undefined
   let connectionStatus: 'connected' | 'connecting' | 'disconnected' =
@@ -178,7 +176,7 @@ const makeSyncDocument = (
 
   const refreshStatus = () => {
     if (!localReady) {
-      setStatus('saved')
+      setStatus('unsynced')
       return
     }
     if (connectionStatus === 'connecting') {
