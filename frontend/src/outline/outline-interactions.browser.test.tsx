@@ -296,7 +296,7 @@ describe('outline interactions', () => {
     })
   })
 
-  it('moves a Markdown block with a real pointer drag from the body handle', async () => {
+  it('moves a Markdown block with a real pointer drag from the body handle', () => {
     const markdownText = 'First paragraph.\n\nSecond paragraph.\n'
     const doc = new Y.Doc()
     setBody(doc, markdownText)
@@ -333,8 +333,15 @@ describe('outline interactions', () => {
     ].find((line) => line.textContent.endsWith('Second paragraph.'))
     if (!secondParagraph)
       throw new Error('The second paragraph is missing from the editor')
-    await act(async () => {
-      await userEvent.dragAndDrop(firstHandle, secondParagraph)
+    const bounds = secondParagraph.getBoundingClientRect()
+    const lowerHalf = new DOMRect(
+      bounds.left,
+      bounds.top + bounds.height / 2,
+      bounds.width,
+      bounds.height / 2,
+    )
+    act(() => {
+      dispatchDrag(firstHandle, secondParagraph, lowerHalf)
     })
 
     const readOutput = () => ({
