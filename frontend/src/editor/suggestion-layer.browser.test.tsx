@@ -626,6 +626,116 @@ describe('suggestion layer', () => {
     })
   })
 
+  it('resolves an in-flight insertion after accepting a suggestion before it', () => {
+    const content = 'abcdefghijklmnop'
+    const { body, host, layer } = createEditor(content)
+    const suggestionResult = layer.setSuggestions([
+      {
+        id: 'suggestion-main',
+        from: 5,
+        to: 13,
+        replacement: 'XYZ',
+      },
+    ])
+    if (suggestionResult.isErr()) throw new Error('Could not set suggestion')
+
+    const inFlightResult = layer.setInFlight({ from: 13, to: 13 })
+    if (inFlightResult.isErr()) throw new Error('Could not set in-flight state')
+
+    act(() => {
+      layer.accept('suggestion-main')
+    })
+    const widgetCountAfterAccept = host.querySelectorAll(
+      '.cm-suggestion-widget',
+    ).length
+
+    let resolveResult: ReturnType<typeof layer.resolveInFlight> | undefined
+    act(() => {
+      resolveResult = layer.resolveInFlight('!')
+    })
+    if (!resolveResult)
+      throw new Error('Could not resolve in-flight suggestion')
+    const resolutionResult = resolveResult
+
+    const readOutput = () => ({
+      widgetCountAfterAccept,
+      resolveError: resolutionResult.match(
+        () => null,
+        (error) => error.type,
+      ),
+      body: body.toJSON(),
+      suggestionCount: host.querySelectorAll('.cm-suggestion-widget').length,
+      pendingCount: host.querySelectorAll('.suggestion-diff-generating').length,
+    })
+    expect(readOutput()).toEqual({
+      widgetCountAfterAccept: 1,
+      resolveError: null,
+      body: 'abcdeXYZnop',
+      suggestionCount: 1,
+      pendingCount: 0,
+    })
+  })
+
+  it('keeps a zero-length suggestion at an accepted suggestion end', () => {
+    const content = 'abcdefghijklmnop'
+    const { body, host, layer } = createEditor(content)
+    const result = layer.setSuggestions([
+      {
+        id: 'suggestion-main',
+        from: 5,
+        to: 13,
+        replacement: 'XYZ',
+      },
+      {
+        id: 'suggestion-end',
+        from: 13,
+        to: 13,
+        replacement: '!',
+      },
+    ])
+    if (result.isErr()) throw new Error('Could not set suggestions')
+
+    act(() => {
+      layer.accept('suggestion-main')
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      suggestionCount: host.querySelectorAll('.cm-suggestion-widget').length,
+    })
+    expect(readOutput()).toEqual({
+      body: 'abcdeXYZnop',
+      suggestionCount: 1,
+    })
+  })
+
+  it('keeps a zero-length suggestion when a replacement starts at its position', () => {
+    const content = 'abcdefghijklmnop'
+    const { body, host, layer, view } = createEditor(content)
+    const result = layer.setSuggestions([
+      {
+        id: 'suggestion-start',
+        from: 5,
+        to: 5,
+        replacement: '!',
+      },
+    ])
+    if (result.isErr()) throw new Error('Could not set suggestion')
+
+    act(() => {
+      view.dispatch({ changes: { from: 5, to: 9, insert: 'WXYZ' } })
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      suggestionCount: host.querySelectorAll('.cm-suggestion-widget').length,
+    })
+    expect(readOutput()).toEqual({
+      body: 'abcdeWXYZjklmnop',
+      suggestionCount: 1,
+    })
+  })
+
   it('ignores an in-flight result after an edit inside its range', () => {
     const { body, host, layer, view } = createEditor()
     const from = initialText.indexOf('selected')

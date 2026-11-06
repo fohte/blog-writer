@@ -53,7 +53,11 @@ function changedRangeTouchesSuggestion(
       ? changedFrom === from
       : changedFrom > from && changedFrom < to
   }
-  if (from === to) return changedFrom <= from && changedTo >= from
+  if (from === to) {
+    return changedFrom === changedTo
+      ? changedFrom === from
+      : changedFrom < from && changedTo > from
+  }
   return changedFrom < to && changedTo > from
 }
 
