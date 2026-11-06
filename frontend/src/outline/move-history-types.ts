@@ -52,6 +52,11 @@ export type TextHistoryStep = {
   beforeState: ReadonlyMap<number, number>
 }
 
+export type MoveHistoryFailure = {
+  operation: 'move' | 'undo' | 'redo'
+  error: InvalidBlockMoveError
+}
+
 export type MoveHistoryStep = {
   direction: 'undo' | 'redo'
   move: MoveBlockResult
@@ -61,7 +66,7 @@ export type MoveHistoryStep = {
 export interface MoveHistory {
   extension: Extension
   onError(
-    listener: (error: InvalidBlockMoveError | undefined) => void,
+    listener: (failure: MoveHistoryFailure | undefined) => void,
   ): () => void
   move(
     input: MoveBlockInput,

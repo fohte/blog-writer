@@ -34,6 +34,7 @@ import type {
   HistoryStateValue,
   MemoAdoptionHistoryRecord,
   MoveHistory,
+  MoveHistoryFailure,
   MoveHistoryStep,
   TextHistoryEntry,
   TextHistoryStep,
@@ -91,21 +92,15 @@ function deletedRangesIn(changes: ChangeSet): MemoTextRange[] {
 function memoAdoptionsForOppositeStep(
   step: TextHistoryStep,
   entry: TextHistoryEntry,
-  changes: ChangeSet,
 ) {
-  if (step.direction === 'undo') {
-    return step.memoAdoptions.map((snapshot) => {
-      const change = entry.memoAdoptionChanges.find(
-        ({ id }) => id === snapshot.id,
-      )
-      if (change === undefined) return snapshot
-      return { ...snapshot, adoptedTo: change.previousAdoptedTo }
-    })
-  }
-
-  const hasAdoptionChanges = entry.memoAdoptionChanges.length > 0
-  if (!hasAdoptionChanges) return step.memoAdoptions
-  return mapMemoAdoptions(entry.memoAdoptions, changes)
+  if (step.direction === 'redo') return step.memoAdoptions
+  return step.memoAdoptions.map((snapshot) => {
+    const change = entry.memoAdoptionChanges.find(
+      ({ id }) => id === snapshot.id,
+    )
+    if (change === undefined) return snapshot
+    return { ...snapshot, adoptedTo: change.previousAdoptedTo }
+  })
 }
 
 function isHistoryBoundary(
@@ -138,9 +133,9 @@ export type { MoveHistory }
 
 export function createMoveHistory(doc: Y.Doc): MoveHistory {
   const errorListeners = new Set<
-    (error: InvalidBlockMoveError | undefined) => void
+    (failure: MoveHistoryFailure | undefined) => void
   >()
-  let currentError: InvalidBlockMoveError | undefined
+  let currentError: MoveHistoryFailure | undefined
   let applyingLocalMove = false
 
   const historyField = StateField.define<HistoryStateValue>({
@@ -161,11 +156,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         pushHistoryEntry(to, {
           ...entry,
           inverse: transaction.changes.invert(transaction.startState.doc),
-          memoAdoptions: memoAdoptionsForOppositeStep(
-            step,
-            entry,
-            transaction.changes,
-          ),
+          memoAdoptions: memoAdoptionsForOppositeStep(step, entry),
           selectionBefore: entry.selectionAfter,
           selectionAfter: entry.selectionBefore,
         })
@@ -295,15 +286,18 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
     for (const listener of errorListeners) listener(undefined)
   }
 
-  const report = <T>(result: Result<T, InvalidBlockMoveError>) =>
+  const report = <T>(
+    result: Result<T, InvalidBlockMoveError>,
+    operation: MoveHistoryFailure['operation'],
+  ) =>
     result
       .map((value) => {
         clearError()
         return value
       })
       .mapErr((error) => {
-        currentError = error
-        for (const listener of errorListeners) listener(error)
+        currentError = { operation, error }
+        for (const listener of errorListeners) listener(currentError)
         return error
       })
 
@@ -458,13 +452,16 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
   return {
     extension,
     move(input, view) {
-      return report(applyMove(() => moveBlock(doc, input), view))
+      return report(
+        applyMove(() => moveBlock(doc, input), view),
+        'move',
+      )
     },
     undo(view) {
-      return report(stepHistory('undo', view))
+      return report(stepHistory('undo', view), 'undo')
     },
     redo(view) {
-      return report(stepHistory('redo', view))
+      return report(stepHistory('redo', view), 'redo')
     },
     onError(listener) {
       errorListeners.add(listener)

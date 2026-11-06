@@ -139,8 +139,12 @@ describe('memo adoption history', () => {
 
     const afterUndo = await undoAndRedo(mounted)
     const afterRedo = readOutput(mounted)
+    await pressUndo(mounted.view)
+    const afterRedoUndo = readOutput(mounted)
 
-    expect(readHistoryOutput({ afterInsert, afterUndo }, afterRedo)).toEqual({
+    expect(
+      readHistoryOutput({ afterInsert, afterUndo, afterRedoUndo }, afterRedo),
+    ).toEqual({
       afterInsert: {
         body: '# Start\n\n# M\n\n',
         editor: '# Start\n\n# M\n\n',
@@ -187,6 +191,14 @@ describe('memo adoption history', () => {
               heading: { from: 9, level: 1, text: 'M' },
             },
           },
+        ],
+      },
+      afterRedoUndo: {
+        body: initial,
+        editor: initial,
+        memos: [
+          { id: 'memo-m', state: { kind: 'unorganized' } },
+          { id: 'memo-n', state: { kind: 'unorganized' } },
         ],
       },
     })

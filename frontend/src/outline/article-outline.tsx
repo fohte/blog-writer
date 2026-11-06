@@ -23,6 +23,10 @@ export interface ArticleOutlineProps {
 }
 
 const BLOCK_MOVE_ERROR_MESSAGE = 'この位置には移動できません。'
+const HISTORY_ERROR_MESSAGES = {
+  undo: '元に戻せませんでした。',
+  redo: 'やり直せませんでした。',
+}
 
 function activeHeadingFrom(
   headings: Heading[],
@@ -84,21 +88,30 @@ export function ArticleOutline({
 
   useEffect(
     () =>
-      history.onError((moveError) => {
-        if (moveError === undefined) {
+      history.onError((failure) => {
+        if (failure === undefined) {
           setError(undefined)
           return
         }
 
-        console.warn('Block move failed', moveError)
-        setError(BLOCK_MOVE_ERROR_MESSAGE)
+        console.warn(
+          failure.operation === 'move'
+            ? 'Block move failed'
+            : `History ${failure.operation} failed`,
+          failure.error,
+        )
+        setError(
+          failure.operation === 'move'
+            ? BLOCK_MOVE_ERROR_MESSAGE
+            : HISTORY_ERROR_MESSAGES[failure.operation],
+        )
       }),
     [history],
   )
 
   const handleMove = useCallback(
     (input: MoveBlockInput) => {
-      if (input.childOf === undefined && input.headingLevel === undefined) {
+      if (input.childOf === undefined) {
         const sourceRange = findMoveBlockRange(markdown, input.from)
         if (
           sourceRange !== undefined &&

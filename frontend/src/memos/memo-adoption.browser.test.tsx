@@ -146,12 +146,45 @@ function readOutlineErrorOutput() {
   }
 }
 
+function readUndoFailureOutput(
+  moveAccepted: boolean,
+  afterMove: ReturnType<typeof readOutput>,
+  afterRemoteEdit: ReturnType<typeof readOutput>,
+  afterUndo: ReturnType<typeof readOutlineErrorOutput>,
+) {
+  return { moveAccepted, afterMove, afterRemoteEdit, afterUndo }
+}
+
+function readRedoFailureOutput(
+  moveAccepted: boolean,
+  afterMove: ReturnType<typeof readOutput>,
+  afterUndo: ReturnType<typeof readOutput>,
+  afterRemoteEdit: ReturnType<typeof readOutput>,
+  afterRedo: ReturnType<typeof readOutlineErrorOutput>,
+) {
+  return { moveAccepted, afterMove, afterUndo, afterRemoteEdit, afterRedo }
+}
+
 function readOutputWithSelection(output: ReturnType<typeof readOutput>) {
   return { output, selection: viewRef.current?.state.selection.main.head }
 }
 
 function readOutputWithAdoptionMenu() {
   return { output: readOutput(), menuOpen: adoptionMenuIsOpen() }
+}
+
+type AdoptionMenuScrollState = {
+  hasScrollClasses: boolean
+  scrollable: boolean
+  actionVisible: boolean
+  scrolled: boolean
+}
+
+function readEndInsertionScrollOutput(
+  beforeScroll: AdoptionMenuScrollState,
+  afterScroll: AdoptionMenuScrollState,
+) {
+  return { beforeScroll, afterScroll, result: readOutputWithAdoptionMenu() }
 }
 
 function readDismissedUndoOutput(adoptionBeforeUndo: string | undefined) {
@@ -162,6 +195,14 @@ function readDismissedUndoOutput(adoptionBeforeUndo: string | undefined) {
     ),
     output: readOutput(),
   }
+}
+
+function applyRemoteInsertion(doc: Y.Doc, index: number, text: string) {
+  const remote = new Y.Doc()
+  Y.applyUpdate(remote, Y.encodeStateAsUpdate(doc))
+  getBody(remote).insert(index, text)
+  Y.applyUpdate(doc, Y.encodeStateAsUpdate(remote, Y.encodeStateVector(doc)))
+  remote.destroy()
 }
 
 function readAdoptionControls() {
@@ -893,6 +934,144 @@ describe('memo adoption', () => {
     })
   })
 
+  it('shows an undo-specific message after a remote edit blocks move undo', async () => {
+    mount('# First\n\nbody', 'Add a summary')
+    await chooseEndInsertion()
+    const { doc, history } = currentEditor()
+    let moveAccepted = false
+    act(() => {
+      moveAccepted = history
+        .move({ from: 0, destination: getBody(doc).length }, currentView())
+        .isOk()
+    })
+    const afterMove = readOutput()
+    act(() => {
+      applyRemoteInsertion(doc, 0, 'R\n\n')
+    })
+    const afterRemoteEdit = readOutput()
+    await pressUndo(currentView())
+    const afterUndo = readOutlineErrorOutput()
+
+    expect(
+      readUndoFailureOutput(
+        moveAccepted,
+        afterMove,
+        afterRemoteEdit,
+        afterUndo,
+      ),
+    ).toEqual({
+      moveAccepted: true,
+      afterMove: {
+        body: '# Add a summary\n\n# First\n\nbody\n',
+        editor: '# Add a summary\n\n# First\n\nbody\n',
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 0, level: 1, text: 'Add a summary' },
+            },
+          },
+        ],
+        renderedStates: ['採用済み: Add a summary'],
+      },
+      afterRemoteEdit: {
+        body: 'R\n\n# Add a summary\n\n# First\n\nbody\n',
+        editor: 'R\n\n# Add a summary\n\n# First\n\nbody\n',
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 3, level: 1, text: 'Add a summary' },
+            },
+          },
+        ],
+        renderedStates: ['採用済み: Add a summary'],
+      },
+      afterUndo: {
+        output: {
+          body: 'R\n\n# Add a summary\n\n# First\n\nbody\n',
+          editor: 'R\n\n# Add a summary\n\n# First\n\nbody\n',
+          memos: [
+            {
+              id: 'memo-a',
+              state: {
+                kind: 'adopted',
+                heading: { from: 3, level: 1, text: 'Add a summary' },
+              },
+            },
+          ],
+          renderedStates: ['採用済み: Add a summary'],
+        },
+        alert: '元に戻せませんでした。',
+      },
+    })
+  })
+
+  it('shows a redo-specific message after a remote edit blocks move redo', async () => {
+    const initial = '# First\n\n# Second\n'
+    mount(initial, 'Add a summary')
+    const { doc, history } = currentEditor()
+    let moveAccepted = false
+    act(() => {
+      moveAccepted = history
+        .move(
+          { from: initial.indexOf('# Second'), destination: 0 },
+          currentView(),
+        )
+        .isOk()
+    })
+    const afterMove = readOutput()
+    await pressUndo(currentView())
+    const afterUndo = readOutput()
+    act(() => {
+      applyRemoteInsertion(doc, 0, 'R\n\n')
+    })
+    const afterRemoteEdit = readOutput()
+    await pressRedo(currentView())
+    const afterRedo = readOutlineErrorOutput()
+
+    expect(
+      readRedoFailureOutput(
+        moveAccepted,
+        afterMove,
+        afterUndo,
+        afterRemoteEdit,
+        afterRedo,
+      ),
+    ).toEqual({
+      moveAccepted: true,
+      afterMove: {
+        body: '# Second\n\n# First\n',
+        editor: '# Second\n\n# First\n',
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        renderedStates: ['未整理'],
+      },
+      afterUndo: {
+        body: initial,
+        editor: initial,
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        renderedStates: ['未整理'],
+      },
+      afterRemoteEdit: {
+        body: 'R\n\n# First\n\n# Second\n',
+        editor: 'R\n\n# First\n\n# Second\n',
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        renderedStates: ['未整理'],
+      },
+      afterRedo: {
+        output: {
+          body: 'R\n\n# First\n\n# Second\n',
+          editor: 'R\n\n# First\n\n# Second\n',
+          memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+          renderedStates: ['未整理'],
+        },
+        alert: 'やり直せませんでした。',
+      },
+    })
+  })
+
   it('undoes and redoes an insertion from the memo menu with one newline separator', async () => {
     const initial = '# First\n\nbody\n'
     mount(initial, 'Add a summary')
@@ -1044,19 +1223,94 @@ describe('memo adoption', () => {
       await userEvent.click(secondHeading)
     })
 
-    expect(readOutput()).toEqual({
-      body: initial,
-      editor: initial,
-      memos: [
-        {
-          id: 'memo-a',
-          state: {
-            kind: 'adopted',
-            heading: { from: 14, level: 1, text: 'Second' },
+    expect(readOutputWithAdoptionMenu()).toEqual({
+      output: {
+        body: initial,
+        editor: initial,
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 14, level: 1, text: 'Second' },
+            },
           },
+        ],
+        renderedStates: ['採用済み: Second'],
+      },
+      menuOpen: false,
+    })
+  })
+
+  it('scrolls to the end insertion action after three headings', async () => {
+    const initial = '# First\n\n# Second\n\n# Third\n\nbody'
+    mount(initial, 'Add a summary')
+    const chooseTarget = findButton('採用先を選ぶ')
+    if (!chooseTarget) throw new Error('The memo target menu is missing')
+    await act(async () => {
+      await userEvent.click(chooseTarget)
+    })
+    const insertAtEnd = findButton('末尾に追加')
+    if (!insertAtEnd)
+      throw new Error('The end insertion target is missing from the memo menu')
+    const menu = insertAtEnd.closest<HTMLElement>(
+      '[data-slot="popover-content"]',
+    )
+    if (!menu) throw new Error('The memo target menu is missing')
+    menu.style.maxHeight = '6rem'
+    menu.style.overflowY = 'auto'
+    const actionVisibility = () => {
+      const menuBounds = menu.getBoundingClientRect()
+      const actionBounds = insertAtEnd.getBoundingClientRect()
+      return {
+        hasScrollClasses:
+          menu.classList.contains('max-h-80') &&
+          menu.classList.contains('overflow-y-auto'),
+        scrollable: menu.scrollHeight > menu.clientHeight,
+        actionVisible:
+          actionBounds.top >= menuBounds.top &&
+          actionBounds.bottom <= menuBounds.bottom,
+        scrolled: menu.scrollTop > 0,
+      }
+    }
+    const beforeScroll = actionVisibility()
+    menu.scrollTop = menu.scrollHeight
+    const afterScroll = actionVisibility()
+    await act(async () => {
+      await userEvent.click(insertAtEnd)
+    })
+
+    expect(readEndInsertionScrollOutput(beforeScroll, afterScroll)).toEqual({
+      beforeScroll: {
+        hasScrollClasses: true,
+        scrollable: true,
+        actionVisible: false,
+        scrolled: false,
+      },
+      afterScroll: {
+        hasScrollClasses: true,
+        scrollable: true,
+        actionVisible: true,
+        scrolled: true,
+      },
+      result: {
+        output: {
+          body: '# First\n\n# Second\n\n# Third\n\nbody\n\n# Add a summary\n\n',
+          editor:
+            '# First\n\n# Second\n\n# Third\n\nbody\n\n# Add a summary\n\n',
+          memos: [
+            {
+              id: 'memo-a',
+              state: {
+                kind: 'adopted',
+                heading: { from: 34, level: 1, text: 'Add a summary' },
+              },
+            },
+          ],
+          renderedStates: ['採用済み: Add a summary'],
         },
-      ],
-      renderedStates: ['採用済み: Second'],
+        menuOpen: false,
+      },
     })
   })
 
