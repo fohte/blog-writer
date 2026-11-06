@@ -1,14 +1,26 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import type { ComponentProps } from 'react'
+import * as Y from 'yjs'
 
+import { setBody } from '#article/body'
 import { ArticleExportPopover } from '#components/article-export-popover'
 
+const doc = new Y.Doc()
+setBody(doc, 'A short article body.')
+
+type StoryArgs = Omit<ComponentProps<typeof ArticleExportPopover>, 'doc'>
+
+function ArticleExportPopoverStory(args: StoryArgs) {
+  return <ArticleExportPopover {...args} doc={doc} />
+}
+
 const meta = {
-  component: ArticleExportPopover,
+  component: ArticleExportPopoverStory,
   args: {
     articleId: 'sample-article',
-    body: 'A short article body.',
+    articleTitle: 'Sample article',
   },
-} satisfies Meta<typeof ArticleExportPopover>
+} satisfies Meta<typeof ArticleExportPopoverStory>
 
 export default meta
 type Story = StoryObj<typeof meta>
@@ -20,24 +32,24 @@ export const Closed: Story = {
 export const MarkdownSelected: Story = {
   name: 'the open options select Markdown',
   args: {
-    open: true,
-    format: 'markdown',
+    defaultOpen: true,
+    defaultFormat: 'markdown',
   },
 }
 
 export const MdxSelected: Story = {
   name: 'the open options select MDX',
   args: {
-    open: true,
-    format: 'mdx',
+    defaultOpen: true,
+    defaultFormat: 'mdx',
   },
 }
 
 export const ConversionError: Story = {
   name: 'the export options show a conversion error',
   args: {
-    open: true,
-    format: 'mdx',
-    error: 'The article could not be converted to MDX.',
+    defaultOpen: true,
+    defaultFormat: 'mdx',
+    initialError: 'MDX 形式に変換できませんでした。',
   },
 }

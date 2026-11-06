@@ -1,6 +1,6 @@
 import { okAsync, ResultAsync } from 'neverthrow'
-import { remark } from 'remark'
-import remarkMdx from 'remark-mdx'
+
+import { DEFAULT_ARTICLE_TITLE } from '#article/constants'
 
 export type ExportFormat = 'markdown' | 'mdx'
 
@@ -26,10 +26,20 @@ const voidHtmlElements = new Set([
   'track',
   'wbr',
 ])
+const phrasingParents = new Set([
+  'delete',
+  'emphasis',
+  'heading',
+  'link',
+  'linkReference',
+  'paragraph',
+  'strong',
+  'tableCell',
+])
 
 class ArticleExportError extends Error {
   constructor(cause: unknown) {
-    super('The article could not be converted to MDX.', { cause })
+    super('MDX 形式に変換できませんでした。', { cause })
     this.name = 'ArticleExportError'
   }
 }
@@ -49,20 +59,39 @@ function isExportNode(value: unknown): value is ExportNode {
   )
 }
 
-function rewriteComment(node: ExportNode): void {
-  if (node.type !== 'html' || node.value === undefined) return
-
-  const match = /^\s*<!--([\s\S]*?)-->\s*$/.exec(node.value)
-  if (!match) return
-
-  node.value = `{/*${(match[1] ?? '').replaceAll('*/', '*\\/')}*/}`
+function getOpeningTag(
+  value: string,
+): { name: string; selfClosing: boolean } | undefined {
+  const match = /^<([A-Za-z_$][\w$.-]*)(?:\s+[^<>]*)?\s*(\/?)>$/.exec(value)
+  const name = match?.[1]
+  if (name === undefined) return undefined
+  return { name, selfClosing: match?.[2] === '/' }
 }
 
-function rewriteParagraph(node: ExportNode): void {
-  if (node.type !== 'paragraph' || node.children === undefined) return
+function getClosingTagName(value: string): string | undefined {
+  return /^<\/([A-Za-z_$][\w$.-]*)\s*>$/.exec(value)?.[1]
+}
+
+function rewriteHtml(node: ExportNode): void {
+  if (node.type !== 'html' || node.value === undefined) return
+
+  node.value = node.value.replace(
+    /<!--[\s\S]*?-->|<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b([^<>]*?)\s*\/?>/gi,
+    (match, tagName: string | undefined, attributes: string | undefined) => {
+      if (tagName === undefined) {
+        const content = match.slice(4, -3).replaceAll('*/', '*\\/')
+        return `{/*${content}*/}`
+      }
+
+      return `<${tagName}${(attributes ?? '').trimEnd()} />`
+    },
+  )
+}
+
+function rewritePhrasing(node: ExportNode): void {
+  if (!phrasingParents.has(node.type) || node.children === undefined) return
 
   for (let index = 0; index < node.children.length; index += 1) {
-    const previous = node.children[index - 1]
     const current = node.children[index]
     if (
       !isExportNode(current) ||
@@ -72,51 +101,68 @@ function rewriteParagraph(node: ExportNode): void {
       continue
     }
 
-    const tag = /^<([A-Za-z][\w-]*)([^>]*)\s*\/?\s*>$/.exec(current.value)
-    const tagName = tag?.[1]
-    if (tagName === undefined) continue
-
-    if (voidHtmlElements.has(tagName.toLowerCase())) {
-      current.value = current.value.replace(/\s*\/?>$/, ' />')
+    const openingTag = getOpeningTag(current.value)
+    if (openingTag === undefined) {
+      const closingTagName = getClosingTagName(current.value)
+      if (
+        closingTagName !== undefined &&
+        !node.children.slice(0, index).some((candidate) => {
+          if (!isExportNode(candidate) || candidate.type !== 'html')
+            return false
+          const candidateTag = getOpeningTag(candidate.value ?? '')
+          return (
+            candidateTag?.name === closingTagName && !candidateTag.selfClosing
+          )
+        })
+      ) {
+        current.type = 'text'
+      }
       continue
     }
 
-    if (editorComponents.has(tagName)) continue
-    if (current.value.trimEnd().endsWith('/>')) continue
+    if (
+      voidHtmlElements.has(openingTag.name.toLowerCase()) ||
+      editorComponents.has(openingTag.name) ||
+      openingTag.selfClosing
+    ) {
+      continue
+    }
 
-    const previousText =
-      isExportNode(previous) && previous.type === 'text'
-        ? (previous.value ?? '')
-        : ''
-    const nextClose = node.children
+    const hasClosingTag = node.children
       .slice(index + 1)
       .some(
         (candidate) =>
           isExportNode(candidate) &&
           candidate.type === 'html' &&
-          candidate.value === `</${tagName}>`,
+          getClosingTagName(candidate.value ?? '') === openingTag.name,
       )
-    if (nextClose || !/[A-Za-z_$][\w$]*$/.test(previousText)) continue
-
-    current.type = 'text'
+    if (!hasClosingTag) current.type = 'text'
   }
 }
 
 function rewriteTree(node: ExportNode): void {
-  rewriteComment(node)
-  rewriteParagraph(node)
+  rewriteHtml(node)
+  rewritePhrasing(node)
   for (const child of node.children ?? []) {
     if (isExportNode(child)) rewriteTree(child)
   }
 }
 
-function convertMdx(body: string): string {
-  const tree = remark().parse(body)
+async function convertMdx(body: string): Promise<string> {
+  const [{ remark }, { default: remarkMdx }, { default: remarkGfm }] =
+    await Promise.all([
+      import('remark'),
+      import('remark-mdx'),
+      import('remark-gfm'),
+    ])
+  const tree = remark().use(remarkGfm).parse(body)
   rewriteTree(tree)
 
-  const processor = remark().use(remarkMdx).data('settings', {
+  const processor = remark().use(remarkMdx).use(remarkGfm).data('settings', {
+    bullet: '-',
     fences: true,
     resourceLink: true,
+    rule: '-',
   })
   return processor.stringify(tree)
 }
@@ -128,16 +174,25 @@ export function exportArticleBody(
   if (format === 'markdown') return okAsync(body)
 
   return ResultAsync.fromPromise(
-    Promise.resolve().then(() => convertMdx(body)),
+    convertMdx(body),
     (cause) => new ArticleExportError(cause),
   )
 }
 
 export function getArticleExportFilename(
+  articleTitle: string,
   articleId: string,
   format: ExportFormat,
 ): string {
-  return `${articleId}.${format === 'markdown' ? 'md' : 'mdx'}`
+  const safeTitle = articleTitle
+    .replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_')
+    .trim()
+    .replace(/[. ]+$/g, '')
+  const filenameBase =
+    articleTitle.trim() === DEFAULT_ARTICLE_TITLE || safeTitle.length === 0
+      ? articleId
+      : safeTitle
+  return `${filenameBase}.${format === 'markdown' ? 'md' : 'mdx'}`
 }
 
 export function downloadArticleFile(filename: string, contents: string): void {
@@ -148,5 +203,7 @@ export function downloadArticleFile(filename: string, contents: string): void {
   anchor.href = url
   anchor.download = filename
   anchor.click()
-  URL.revokeObjectURL(url)
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url)
+  }, 0)
 }

@@ -1,8 +1,10 @@
 import { Button } from '@fohte/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@fohte/ui/popover'
 import { SegmentedControl } from '@fohte/ui/segmented-control'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import type * as Y from 'yjs'
 
+import { readBody } from '#article/body'
 import {
   downloadArticleFile,
   exportArticleBody,
@@ -17,56 +19,64 @@ const formatOptions = [
 
 type ArticleExportPopoverProps = {
   articleId: string
-  body: string
-  open?: boolean | undefined
-  format?: ExportFormat | undefined
-  error?: string | undefined
+  articleTitle: string
+  doc: Y.Doc
+  defaultOpen?: boolean | undefined
+  defaultFormat?: ExportFormat | undefined
+  initialError?: string | undefined
 }
 
 export function ArticleExportPopover({
   articleId,
-  body,
-  open,
-  format,
-  error,
+  articleTitle,
+  doc,
+  defaultOpen = false,
+  defaultFormat = 'markdown',
+  initialError,
 }: ArticleExportPopoverProps) {
-  const [internalOpen, setInternalOpen] = useState(false)
-  const [internalFormat, setInternalFormat] = useState<ExportFormat>('markdown')
-  const [conversionError, setConversionError] = useState<string>()
-  const visibleError = error ?? conversionError
-  const isOpen = open ?? internalOpen
-  const selectedFormat = format ?? internalFormat
+  const [open, setOpen] = useState(defaultOpen)
+  const [format, setFormat] = useState(defaultFormat)
+  const [error, setError] = useState(initialError)
+  const conversionAttempt = useRef(0)
 
   function handleOpenChange(nextOpen: boolean) {
-    if (open === undefined) setInternalOpen(nextOpen)
+    setOpen(nextOpen)
+    if (!nextOpen) clearError()
   }
 
   function handleFormatChange(nextFormat: string) {
-    if (
-      format === undefined &&
-      (nextFormat === 'markdown' || nextFormat === 'mdx')
-    ) {
-      setInternalFormat(nextFormat)
+    if (nextFormat === 'markdown' || nextFormat === 'mdx') {
+      setFormat(nextFormat)
+      clearError()
     }
   }
 
+  function clearError() {
+    conversionAttempt.current += 1
+    setError(undefined)
+  }
+
   function handleDownload() {
-    setConversionError(undefined)
-    void exportArticleBody(body, selectedFormat).match(
+    conversionAttempt.current += 1
+    const attempt = conversionAttempt.current
+    setError(undefined)
+    void exportArticleBody(readBody(doc), format).match(
       (contents) => {
         downloadArticleFile(
-          getArticleExportFilename(articleId, selectedFormat),
+          getArticleExportFilename(articleTitle, articleId, format),
           contents,
         )
       },
       (exportError) => {
-        setConversionError(exportError.message)
+        if (attempt === conversionAttempt.current) {
+          setError(exportError.message)
+        }
       },
     )
   }
 
   return (
-    <Popover onOpenChange={handleOpenChange} open={isOpen}>
+    <Popover onOpenChange={handleOpenChange} open={open}>
       <PopoverTrigger render={<Button type="button" variant="outline" />}>
         書き出す
       </PopoverTrigger>
@@ -76,10 +86,10 @@ export function ArticleExportPopover({
           aria-label="書き出し形式"
           onValueChange={handleFormatChange}
           options={formatOptions}
-          value={selectedFormat}
+          value={format}
         />
-        {visibleError !== undefined && visibleError.length > 0 ? (
-          <p role="alert">{visibleError}</p>
+        {error !== undefined && error.length > 0 ? (
+          <p role="alert">{error}</p>
         ) : null}
         <Button onClick={handleDownload} type="button">
           ダウンロード

@@ -1,6 +1,5 @@
 import { useState } from 'react'
 
-import { readBody } from '#article/index'
 import type { ArticleEditorContext } from '#components/article-editor-view'
 import { ArticleExportPopover } from '#components/article-export-popover'
 import { LlmSettingsScreen } from '#components/llm-settings-screen'
@@ -35,7 +34,13 @@ export function App() {
       client={client}
       error={error}
       headerActions={({ articleId, doc }: ArticleEditorContext) => (
-        <ArticleExportPopover articleId={articleId} body={readBody(doc)} />
+        <ArticleExportPopover
+          articleId={articleId}
+          articleTitle={
+            articles.find((article) => article.id === articleId)?.title ?? ''
+          }
+          doc={doc}
+        />
       )}
       onCreateArticle={createArticle}
       onOpenSettings={() => {
