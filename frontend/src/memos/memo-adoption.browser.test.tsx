@@ -1,4 +1,4 @@
-import { Transaction } from '@codemirror/state'
+import { EditorState, Transaction } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { act, useMemo, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -10,6 +10,7 @@ import {
   addMemo,
   dismissMemo,
   getBody,
+  getMemoAdoptedTo,
   listMemos,
   setBody,
   setMemoAdoptedTo,
@@ -129,6 +130,34 @@ function readAdoptionFailureOutput() {
   }
 }
 
+function readOutlineErrorOutput() {
+  const { host } = currentEditor()
+  return {
+    output: readOutput(),
+    alert:
+      host.querySelector('[aria-label="Article outline"] [role="alert"]')
+        ?.textContent ?? null,
+  }
+}
+
+function readOutputWithSelection(output: ReturnType<typeof readOutput>) {
+  return { output, selection: viewRef.current?.state.selection.main.head }
+}
+
+function readOutputWithAdoptionMenu() {
+  return { output: readOutput(), menuOpen: adoptionMenuIsOpen() }
+}
+
+function readDismissedUndoOutput(adoptionBeforeUndo: string | undefined) {
+  return {
+    adoptionBeforeUndo,
+    adoptionAfterUndo: JSON.stringify(
+      getMemoAdoptedTo(currentEditor().doc, 'memo-a'),
+    ),
+    output: readOutput(),
+  }
+}
+
 function readAdoptionControls() {
   const { host } = currentEditor()
   return {
@@ -146,6 +175,11 @@ function findButton(label: string) {
   return [...document.body.querySelectorAll('button')].find(
     (button) => button.textContent.trim() === label,
   )
+}
+
+function adoptionMenuIsOpen() {
+  const trigger = findButton('採用先を選ぶ') ?? findButton('採用先を変更')
+  return trigger?.getAttribute('aria-expanded') === 'true'
 }
 
 function readUndoOutput(
@@ -191,6 +225,28 @@ async function dragMemoBefore(
     await userEvent.dragAndDrop(dragHandle, target)
   })
   return readOutput()
+}
+
+function dispatchDragWithInterruption(
+  source: HTMLElement,
+  target: HTMLElement,
+  interrupt: () => void,
+) {
+  const bounds = target.getBoundingClientRect()
+  const dataTransfer = new DataTransfer()
+  const eventOptions = {
+    bubbles: true,
+    cancelable: true,
+    clientX: bounds.left + bounds.width / 2,
+    clientY: bounds.top + bounds.height / 2,
+    dataTransfer,
+  }
+  source.dispatchEvent(new DragEvent('dragstart', eventOptions))
+  interrupt()
+  target.dispatchEvent(new DragEvent('dragenter', eventOptions))
+  target.dispatchEvent(new DragEvent('dragover', eventOptions))
+  target.dispatchEvent(new DragEvent('drop', eventOptions))
+  source.dispatchEvent(new DragEvent('dragend', eventOptions))
 }
 
 async function chooseEndInsertion() {
@@ -348,32 +404,34 @@ describe('memo adoption', () => {
   )
 
   it('uses the target heading level and replaces memo newlines', async () => {
-    const initial = '# Parent\n\n## Child\n\nbody'
-    const expected =
-      '# Parent\n\n## Write summary with details later\n\n## Child\n\nbody'
+    const initial = '## Child\n\n# Last'
+    const expected = '## Write summary with details later\n\n## Child\n\n# Last'
     const output = await dragMemoBefore(
       initial,
-      'Write summary\nwith details\r\nlater',
+      '  Write summary\nwith details\r\nlater  ',
       '## Child',
     )
 
-    expect(output).toEqual({
-      body: expected,
-      editor: expected,
-      memos: [
-        {
-          id: 'memo-a',
-          state: {
-            kind: 'adopted',
-            heading: {
-              from: 10,
-              level: 2,
-              text: 'Write summary with details later',
+    expect(readOutputWithSelection(output)).toEqual({
+      output: {
+        body: expected,
+        editor: expected,
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: {
+                from: 0,
+                level: 2,
+                text: 'Write summary with details later',
+              },
             },
           },
-        },
-      ],
-      renderedStates: ['採用済み: Write summary with details later'],
+        ],
+        renderedStates: ['採用済み: Write summary with details later'],
+      },
+      selection: 35,
     })
   })
 
@@ -1056,19 +1114,325 @@ describe('memo adoption', () => {
       await userEvent.click(insertAtEnd)
     })
 
+    expect(readOutputWithAdoptionMenu()).toEqual({
+      output: {
+        body: '# First\n\nbody\n\n# Add a summary\n\n',
+        editor: '# First\n\nbody\n\n# Add a summary\n\n',
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 15, level: 1, text: 'Add a summary' },
+            },
+          },
+        ],
+        renderedStates: ['採用済み: Add a summary'],
+      },
+      menuOpen: false,
+    })
+  })
+
+  it('uses level 2 when inserting the first heading into an article', async () => {
+    mount('body', 'memo')
+    const openMenu = findButton('採用先を選ぶ')
+    if (!openMenu) throw new Error('The memo target menu is missing')
+    await act(async () => {
+      await userEvent.click(openMenu)
+    })
+    const insertAtStart = findButton('先頭に追加')
+    if (!insertAtStart)
+      throw new Error('The first insertion target is missing from the menu')
+    await act(async () => {
+      await userEvent.click(insertAtStart)
+    })
+
     expect(readOutput()).toEqual({
-      body: '# First\n\nbody\n\n# Add a summary\n\n',
-      editor: '# First\n\nbody\n\n# Add a summary\n\n',
+      body: 'body\n\n## memo\n\n',
+      editor: 'body\n\n## memo\n\n',
       memos: [
         {
           id: 'memo-a',
           state: {
             kind: 'adopted',
-            heading: { from: 15, level: 1, text: 'Add a summary' },
+            heading: { from: 6, level: 2, text: 'memo' },
           },
         },
       ],
-      renderedStates: ['採用済み: Add a summary'],
+      renderedStates: ['採用済み: memo'],
+    })
+  })
+
+  it.each([
+    {
+      case: 'a trailing closing marker',
+      memoText: 'foo #',
+      expectedBody: '# First\n\n# foo #\n\n',
+      expectedHeadingText: 'foo',
+    },
+    {
+      case: 'a standalone marker',
+      memoText: '#',
+      expectedBody: '# First\n\n# #\n\n',
+      expectedHeadingText: '#',
+    },
+  ])(
+    'interprets $case in the inserted heading',
+    async ({ memoText, expectedBody, expectedHeadingText }) => {
+      mount('# First', memoText)
+      await chooseEndInsertion()
+
+      expect(readOutput()).toEqual({
+        body: expectedBody,
+        editor: expectedBody,
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 9, level: 1, text: expectedHeadingText },
+            },
+          },
+        ],
+        renderedStates: [`採用済み: ${expectedHeadingText}`],
+      })
+    },
+  )
+
+  it('refuses to insert a new heading into a CRLF article', async () => {
+    const initial = '# First\r\nbody'
+    mount(initial, 'Memo')
+    await chooseEndInsertion()
+
+    expect(readAdoptionFailureOutput()).toEqual({
+      output: {
+        body: initial,
+        editor: '# First\nbody',
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        renderedStates: ['未整理'],
+      },
+      alert: 'メモを更新できませんでした。',
+    })
+  })
+
+  it('adopts an existing heading in a CRLF article with an empty heading name', async () => {
+    const initial = '# First\r\nbody'
+    mount(initial, 'Memo')
+    const openMenu = findButton('採用先を選ぶ')
+    if (!openMenu) throw new Error('The memo target menu is missing')
+    await act(async () => {
+      await userEvent.click(openMenu)
+    })
+    const heading = findButton('無題の見出し')
+    if (!heading)
+      throw new Error('The existing heading is missing from the menu')
+    await act(async () => {
+      await userEvent.click(heading)
+    })
+
+    expect(readOutput()).toEqual({
+      body: initial,
+      editor: '# First\nbody',
+      memos: [
+        {
+          id: 'memo-a',
+          state: {
+            kind: 'adopted',
+            heading: { from: 0, level: 1, text: '' },
+          },
+        },
+      ],
+      renderedStates: ['採用済み: '],
+    })
+  })
+
+  it('rejects empty memo text before inserting a heading', () => {
+    mount('# First', ' \n  ')
+    const view = viewRef.current
+    if (!view) throw new Error('The editor view is not mounted')
+    const operation = insertMemoAsHeading(
+      currentEditor().doc,
+      view,
+      'memo-a',
+    ).match(
+      () => ({ ok: true as const }),
+      (error) => ({ ok: false as const, error: error.message }),
+    )
+
+    expect(readOperationOutput(operation)).toEqual({
+      operation: { ok: false, error: 'Memo text must not be empty' },
+      output: {
+        body: '# First',
+        editor: '# First',
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        renderedStates: ['未整理'],
+      },
+    })
+  })
+
+  it('rejects inserting a dismissed memo', () => {
+    mount('# First', 'memo')
+    act(() => {
+      const result = dismissMemo(currentEditor().doc, 'memo-a')
+      if (result.isErr()) throw result.error
+    })
+    const view = viewRef.current
+    if (!view) throw new Error('The editor view is not mounted')
+    const operation = insertMemoAsHeading(
+      currentEditor().doc,
+      view,
+      'memo-a',
+    ).match(
+      () => ({ ok: true as const }),
+      (error) => ({ ok: false as const, error: error.message }),
+    )
+
+    expect(readOperationOutput(operation)).toEqual({
+      operation: {
+        ok: false,
+        error: 'Dismissed memos cannot be adopted',
+      },
+      output: {
+        body: '# First',
+        editor: '# First',
+        memos: [{ id: 'memo-a', state: { kind: 'dismissed' } }],
+        renderedStates: ['見送り'],
+      },
+    })
+  })
+
+  it('rejects insertion when the editor does not match the article body', () => {
+    mount('# First', 'memo')
+    const staleView = new EditorView({
+      state: EditorState.create({ doc: '# Stale' }),
+    })
+    const operation = insertMemoAsHeading(
+      currentEditor().doc,
+      staleView,
+      'memo-a',
+    ).match(
+      () => ({ ok: true as const }),
+      (error) => ({ ok: false as const, error: error.message }),
+    )
+    staleView.destroy()
+
+    expect(readOperationOutput(operation)).toEqual({
+      operation: { ok: false, error: 'Editor content is out of date' },
+      output: {
+        body: '# First',
+        editor: '# First',
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        renderedStates: ['未整理'],
+      },
+    })
+  })
+
+  it('rejects an insertion target that is not a heading', () => {
+    mount('# First', 'memo')
+    const view = viewRef.current
+    if (!view) throw new Error('The editor view is not mounted')
+    const operation = insertMemoAsHeading(
+      currentEditor().doc,
+      view,
+      'memo-a',
+      999,
+    ).match(
+      () => ({ ok: true as const }),
+      (error) => ({ ok: false as const, error: error.message }),
+    )
+
+    expect(readOperationOutput(operation)).toEqual({
+      operation: {
+        ok: false,
+        error: 'No ATX heading marker at body index 999',
+      },
+      output: {
+        body: '# First',
+        editor: '# First',
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        renderedStates: ['未整理'],
+      },
+    })
+  })
+
+  it('preserves an adopted anchor when undo runs while a memo is dismissed', async () => {
+    const initial = '# First\n\nbody'
+    mount(initial, 'memo')
+    await chooseEndInsertion()
+    const adoptionBeforeUndo = JSON.stringify(
+      getMemoAdoptedTo(currentEditor().doc, 'memo-a'),
+    )
+    act(() => {
+      const result = dismissMemo(currentEditor().doc, 'memo-a')
+      if (result.isErr()) throw result.error
+    })
+    await undo()
+
+    expect(readDismissedUndoOutput(adoptionBeforeUndo)).toEqual({
+      adoptionBeforeUndo,
+      adoptionAfterUndo: adoptionBeforeUndo,
+      output: {
+        body: initial,
+        editor: initial,
+        memos: [{ id: 'memo-a', state: { kind: 'dismissed' } }],
+        renderedStates: ['見送り'],
+      },
+    })
+  })
+
+  it('shows a user-facing error when a gap cannot insert a memo', async () => {
+    const initial = '# First\n\nbody'
+    mount(initial, ' ')
+    const dragHandle = currentEditor().host.querySelector<HTMLButtonElement>(
+      '[aria-label^="メモ「"][aria-label$="」をドラッグ"]',
+    )
+    const gap = currentEditor().host.querySelector<HTMLElement>(
+      '[data-outline-gap="end"]',
+    )
+    if (!dragHandle || !gap)
+      throw new Error('The memo drag source or outline gap is missing')
+    await act(async () => {
+      await userEvent.dragAndDrop(dragHandle, gap)
+    })
+
+    expect(readOutlineErrorOutput()).toEqual({
+      output: {
+        body: initial,
+        editor: initial,
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        renderedStates: ['未整理'],
+      },
+      alert: 'メモを更新できませんでした。',
+    })
+  })
+
+  it('shows a user-facing error when a memo is dismissed during a heading drop', () => {
+    const initial = '# First\n\nbody'
+    mount(initial, 'memo')
+    const dragHandle = currentEditor().host.querySelector<HTMLButtonElement>(
+      '[aria-label="メモ「memo」をドラッグ"]',
+    )
+    const heading = currentEditor().host.querySelector<HTMLElement>(
+      '[aria-label="First"]',
+    )
+    if (!dragHandle || !heading)
+      throw new Error('The memo drag source or outline heading is missing')
+
+    act(() => {
+      dispatchDragWithInterruption(dragHandle, heading, () => {
+        const result = dismissMemo(currentEditor().doc, 'memo-a')
+        if (result.isErr()) throw result.error
+      })
+    })
+
+    expect(readOutlineErrorOutput()).toEqual({
+      output: {
+        body: initial,
+        editor: initial,
+        memos: [{ id: 'memo-a', state: { kind: 'dismissed' } }],
+        renderedStates: ['見送り'],
+      },
+      alert: 'メモを更新できませんでした。',
     })
   })
 
