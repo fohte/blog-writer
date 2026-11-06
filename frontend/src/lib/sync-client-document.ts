@@ -119,7 +119,7 @@ export const buildSyncDocument = (options: SyncClientOptions, docId: string) =>
         return err(documentResult.error)
       }
       const document = documentResult.value
-      if (persistenceResult.value.synced) {
+      if (docId === ARTICLE_INDEX_DOC_ID || persistenceResult.value.synced) {
         const providerResult = document.connectProvider()
         if (providerResult.isErr()) {
           document.destroy()
@@ -138,13 +138,6 @@ export const buildSyncDocument = (options: SyncClientOptions, docId: string) =>
       return ok(document)
     },
   )
-
-export const waitForLocalPersistence = (persistence: LocalPersistence) =>
-  persistence.synced
-    ? Promise.resolve()
-    : new Promise<void>((resolve) => {
-        persistence.on('synced', resolve)
-      })
 
 const makeSyncDocument = (
   doc: Y.Doc,

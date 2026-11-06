@@ -8,7 +8,6 @@ import {
   createWebsocketConnection,
   type LocalPersistence,
   type SyncDocument,
-  waitForLocalPersistence,
   type WebsocketConnection,
 } from '#lib/sync-client-document'
 import { SyncClientError, toSyncClientError } from '#lib/sync-client-errors'
@@ -92,7 +91,7 @@ class SyncClient implements SyncClientApi {
       this.emitChange()
       if (!this.started || this.destroyed) return
       const result = this.openIndexedArticles()
-      this.syncError = result.isErr() ? result.error : undefined
+      if (result.isErr()) this.syncError = result.error
       this.emitChange()
     })
   }
@@ -108,13 +107,13 @@ class SyncClient implements SyncClientApi {
 
   start() {
     return ResultAsync.fromPromise(
-      waitForLocalPersistence(this.index.persistence),
+      Promise.resolve(),
       toSyncClientError,
     ).andThen(() => {
       if (this.destroyed) return err(this.destroyedError())
       this.started = true
       const result = this.openIndexedArticles()
-      this.syncError = result.isErr() ? result.error : undefined
+      if (result.isErr()) this.syncError = result.error
       this.emitChange()
       return result
     })

@@ -229,6 +229,38 @@ describe('createSyncClient', () => {
     client.destroy()
   })
 
+  it('keeps a provider creation error visible after an article title changes', async () => {
+    const articleId = 'article-provider-unavailable'
+    const { client, setArticleId } = createFixture(
+      new Map(),
+      new Set([articleId]),
+    )
+    setArticleId(articleId)
+    await client.start()
+    const article = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
+    const errorBeforeTitleChange = client.getError()?.message ?? null
+    client.updateArticleTitle(article.id, 'A revised title')._unsafeUnwrap()
+
+    const readProviderErrorOutput = () => ({
+      errorBeforeTitleChange,
+      errorAfterTitleChange: client.getError()?.message ?? null,
+      article: client.listArticles(),
+    })
+    expect(readProviderErrorOutput()).toEqual({
+      errorBeforeTitleChange: 'Failed to initialize document synchronization',
+      errorAfterTitleChange: 'Failed to initialize document synchronization',
+      article: [
+        {
+          id: articleId,
+          createdAt: 1_800_000_000_000,
+          title: 'A revised title',
+        },
+      ],
+    })
+    client.destroy()
+  })
+
   it('repairs a remote deletion when a move record arrives before the editor opens', async () => {
     const articleId = '018f0000-0000-7000-8000-000000000003'
     const baseline = new Y.Doc()
@@ -547,7 +579,7 @@ describe('createSyncClient', () => {
 
     expect(readStartOutput()).toEqual([
       'The sync client has been destroyed',
-      [],
+      ['article-index'],
     ])
   })
 

@@ -1,3 +1,5 @@
+import '#index.css'
+
 import { EditorSelection } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import type { Result } from 'neverthrow'
@@ -11,11 +13,13 @@ import * as Y from 'yjs'
 import { getBody, listMemos, moveBlock, setBody } from '#article/index'
 import type { ArticleEditorIntegrationProps } from '#components/article-editor-view'
 import type { Article, SyncClientApi } from '#lib/sync-client'
+import { ArticleEditorPage } from '#pages/article-editor-page'
 import { ArticleWorkspace } from '#pages/article-workspace'
 
 let host: HTMLDivElement | undefined
 let root: Root | undefined
 let doc: Y.Doc | undefined
+let additionalDocs: Y.Doc[] = []
 
 type WorkspaceOptions = ArticleEditorIntegrationProps & {
   error?: string
@@ -98,6 +102,8 @@ afterEach(() => {
   host = undefined
   doc?.destroy()
   doc = undefined
+  for (const additionalDoc of additionalDocs) additionalDoc.destroy()
+  additionalDocs = []
   vi.unstubAllGlobals()
 })
 
@@ -303,6 +309,152 @@ describe('article editor screen', () => {
     })
   })
 
+  it('shows all desktop panels with the application stylesheet loaded', async () => {
+    await page.viewport(1280, 800)
+    const article: Article = {
+      id: 'article-desktop-panels',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# First section\n\nFirst paragraph.\n')
+    renderWorkspace(article, articleDoc, {
+      sourcesPanel: (
+        <section aria-label="Reference sources">Reference material</section>
+      ),
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+
+    const widthOf = (selector: string) =>
+      host?.querySelector<HTMLElement>(selector)?.getBoundingClientRect()
+        .width ?? 0
+    const readDesktopPanelOutput = () => ({
+      outlineVisible: widthOf('[aria-label="Article outline"]') > 0,
+      memoVisible: widthOf('[aria-labelledby="memo-panel-heading"]') > 0,
+      sourcesVisible: widthOf('[aria-label="Reference sources"]') > 0,
+      bodyVisible: widthOf('.cm-content') > 0,
+      tabListDisplay: getComputedStyle(
+        host?.querySelector('[data-slot="tabs-list"]')?.parentElement ??
+          document.createElement('div'),
+      ).display,
+    })
+    expect(readDesktopPanelOutput()).toEqual({
+      outlineVisible: true,
+      memoVisible: true,
+      sourcesVisible: true,
+      bodyVisible: true,
+      tabListDisplay: 'none',
+    })
+  })
+
+  it('keeps a long desktop outline within a scrollable left column', async () => {
+    await page.viewport(1280, 800)
+    const article: Article = {
+      id: 'article-long-outline',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(
+      articleDoc,
+      Array.from(
+        { length: 30 },
+        (_, index) => `## Section ${String(index + 1)}\n\nDetails.\n`,
+      ).join('\n'),
+    )
+    renderWorkspace(article, articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+
+    const sidebar = host?.querySelector<HTMLElement>('aside')
+    const readLongOutlineOutput = () => ({
+      overflowY: sidebar ? getComputedStyle(sidebar).overflowY : null,
+      contentExceedsVisibleHeight:
+        sidebar !== null && sidebar !== undefined
+          ? sidebar.scrollHeight > sidebar.clientHeight
+          : false,
+      bodyVisible:
+        (host?.querySelector('.cm-content')?.getBoundingClientRect().width ??
+          0) > 0,
+    })
+    expect(readLongOutlineOutput()).toEqual({
+      overflowY: 'auto',
+      contentExceedsVisibleHeight: true,
+      bodyVisible: true,
+    })
+  })
+
+  it('shows the article panel after widening from the mobile outline tab', async () => {
+    await page.viewport(375, 812)
+    const article: Article = {
+      id: 'article-mobile-resize',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# First section\n\nFirst paragraph.\n')
+    renderWorkspace(article, articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('tab', { name: 'Outline' }))
+    })
+    const editor = host?.querySelector('.cm-content')
+    const selectedMobileTab = host?.querySelector(
+      '[role="tab"][aria-selected="true"]',
+    )?.textContent
+    const tabList = host?.querySelector(
+      '[data-slot="tabs-list"]',
+    )?.parentElement
+
+    await act(async () => {
+      await page.viewport(1280, 800)
+    })
+    const desktopBodyVisible =
+      (host?.querySelector('.cm-content')?.getBoundingClientRect().width ?? 0) >
+      0
+    const desktopOutlineVisible =
+      (host
+        ?.querySelector('[aria-label="Article outline"]')
+        ?.getBoundingClientRect().width ?? 0) > 0
+    const desktopTabListDisplay = tabList
+      ? getComputedStyle(tabList).display
+      : null
+
+    await act(async () => {
+      await page.viewport(375, 812)
+    })
+    const mobileTabListDisplay = tabList
+      ? getComputedStyle(tabList).display
+      : null
+    const readResizeOutput = () => ({
+      selectedMobileTab,
+      desktopBodyVisible,
+      desktopOutlineVisible,
+      desktopTabListDisplay,
+      mobileTabListDisplay,
+      editorRetained: host?.querySelector('.cm-content') === editor,
+    })
+    expect(readResizeOutput()).toEqual({
+      selectedMobileTab: 'Outline',
+      desktopBodyVisible: true,
+      desktopOutlineVisible: true,
+      desktopTabListDisplay: 'none',
+      mobileTabListDisplay: 'block',
+      editorRetained: true,
+    })
+  })
+
   it('moves and undoes a section from the desktop outline', async () => {
     await page.viewport(1280, 800)
     const article: Article = {
@@ -481,9 +633,13 @@ describe('article editor screen', () => {
         contextHistory = history
         return null
       },
-      outlineAccessory: () => <div>Outline accessory</div>,
-      premiseAccessory: () => <div>Premise accessory</div>,
-      sourcesPanel: <div>Source material</div>,
+      outlineAccessory: () => (
+        <div data-testid="outline-accessory">Outline accessory</div>
+      ),
+      premiseAccessory: () => (
+        <div data-testid="premise-accessory">Premise accessory</div>
+      ),
+      sourcesPanel: <div data-testid="source-material">Source material</div>,
     })
 
     await act(async () => {
@@ -503,9 +659,12 @@ describe('article editor screen', () => {
       relativeBodyContainer: host
         ?.querySelector('[data-testid="body-accessory"]')
         ?.parentElement?.classList.contains('relative'),
-      outlineAccessory: host?.textContent.includes('Outline accessory'),
-      premiseAccessory: host?.textContent.includes('Premise accessory'),
-      sourceMaterial: host?.textContent.includes('Source material'),
+      outlineAccessory: host?.querySelector('[data-testid="outline-accessory"]')
+        ?.textContent,
+      premiseAccessory: host?.querySelector('[data-testid="premise-accessory"]')
+        ?.textContent,
+      sourceMaterial: host?.querySelector('[data-testid="source-material"]')
+        ?.textContent,
       savedPremise: articleDoc.getMap('premise').get('audience'),
     }
 
@@ -518,10 +677,75 @@ describe('article editor screen', () => {
       sameHistory: true,
       bodyAccessory: 'Draft request',
       relativeBodyContainer: true,
-      outlineAccessory: true,
-      premiseAccessory: true,
-      sourceMaterial: true,
+      outlineAccessory: 'Outline accessory',
+      premiseAccessory: 'Premise accessory',
+      sourceMaterial: 'Source material',
       savedPremise: 'Designers',
+    })
+  })
+
+  it('shares move errors with the outline and clears them after reopening', async () => {
+    const article: Article = {
+      id: 'article-move-error',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    const initialBody = '# Starting point\n'
+    setBody(articleDoc, initialBody)
+    let attemptInvalidMove: (() => string) | undefined
+    renderWorkspace(article, articleDoc, {
+      headerActions: ({ history, view }) => {
+        if (!view) return null
+        attemptInvalidMove = () =>
+          history
+            .move({ from: initialBody.length, destination: 0 }, view)
+            .match(
+              () => 'moved',
+              (error) => error.message,
+            )
+        return null
+      },
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const initialOutlineError =
+      host?.querySelector('[aria-label="Article outline"] [role="alert"]')
+        ?.textContent ?? null
+    let invalidMoveResult: string | undefined
+    act(() => {
+      invalidMoveResult = attemptInvalidMove?.()
+    })
+    const outlineErrorAfterMove =
+      host?.querySelector('[aria-label="Article outline"] [role="alert"]')
+        ?.textContent ?? null
+
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Back to articles' }),
+      )
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const outlineErrorAfterReopen =
+      host?.querySelector('[aria-label="Article outline"] [role="alert"]')
+        ?.textContent ?? null
+
+    const readMoveErrorOutput = () => ({
+      initialOutlineError,
+      invalidMoveResult,
+      outlineErrorAfterMove,
+      outlineErrorAfterReopen,
+    })
+    expect(readMoveErrorOutput()).toEqual({
+      initialOutlineError: null,
+      invalidMoveResult: 'No Markdown block at position',
+      outlineErrorAfterMove: 'No Markdown block at position',
+      outlineErrorAfterReopen: null,
     })
   })
 
@@ -546,12 +770,13 @@ describe('article editor screen', () => {
 
     const readSyncOutput = () => ({
       syncError: host?.querySelector('[role="alert"]')?.textContent,
-      reauthentication: host?.textContent.includes('Log in again'),
+      reauthentication: host?.querySelector('[aria-live="assertive"] button')
+        ?.textContent,
       syncState: host?.querySelector('[data-state="unsynced"]')?.textContent,
     })
     expect(readSyncOutput()).toEqual({
       syncError: 'Sync needs attention.',
-      reauthentication: true,
+      reauthentication: 'Log in again',
       syncState: '未同期',
     })
   })
@@ -566,6 +791,7 @@ describe('article editor screen', () => {
     doc = articleDoc
     setBody(articleDoc, '# Starting point\n')
     let initialReplacementResult: string | undefined
+    let bodyAfterEarlyCall: string | undefined
     let liveReplacement: string | undefined
     let staleReplaceBody: ((value: string) => Result<void, Error>) | undefined
     renderWorkspace(article, articleDoc, {
@@ -576,6 +802,7 @@ describe('article editor screen', () => {
             () => 'ready',
             (error) => error.name,
           )
+          bodyAfterEarlyCall = getBody(articleDoc).toJSON()
         }
         return (
           <button
@@ -609,18 +836,110 @@ describe('article editor screen', () => {
       () => 'ready',
       (error) => error.name,
     )
+    const bodyAfterStaleCall = getBody(articleDoc).toJSON()
 
     const readReplaceBodyOutput = () => ({
       initialReplacementResult,
+      bodyAfterEarlyCall,
       liveReplacement,
       staleReplacementResult,
-      body: getBody(articleDoc).toJSON(),
+      bodyAfterStaleCall,
     })
     expect(readReplaceBodyOutput()).toEqual({
       initialReplacementResult: 'EditorNotReadyError',
+      bodyAfterEarlyCall: '# Starting point\n',
       liveReplacement: 'ready',
       staleReplacementResult: 'EditorNotReadyError',
-      body: '# Exported body\n',
+      bodyAfterStaleCall: '# Exported body\n',
+    })
+  })
+
+  it('keeps a stale body replacement scoped to its original article', async () => {
+    const firstArticle: Article = {
+      id: 'article-old',
+      title: 'First article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const secondArticle: Article = {
+      id: 'article-new',
+      title: 'Second article',
+      createdAt: Date.UTC(2026, 0, 16),
+    }
+    const firstDoc = new Y.Doc()
+    const secondDoc = new Y.Doc()
+    doc = firstDoc
+    additionalDocs = [secondDoc]
+    setBody(firstDoc, '# First article body\n')
+    setBody(secondDoc, '# Second article body\n')
+    const documents = new Map([
+      [firstArticle.id, firstDoc],
+      [secondArticle.id, secondDoc],
+    ])
+    const client: SyncClientApi = {
+      start: () => okAsync(undefined),
+      openDocument: (id) => ok(documents.get(id) ?? firstDoc),
+      createArticle: () => ok(firstArticle),
+      updateArticleTitle: () => ok(undefined),
+      listArticles: () => [firstArticle, secondArticle],
+      getStatus: () => 'synced',
+      getError: () => undefined,
+      requiresAuthentication: () => false,
+      subscribe: () => () => {},
+      destroy: () => {},
+    }
+    let staleReplaceBody: ((value: string) => Result<void, Error>) | undefined
+
+    function ArticleEditorPageHarness({ article }: { article: Article }) {
+      return (
+        <ArticleEditorPage
+          article={article}
+          client={client}
+          headerActions={({ replaceBody }) => {
+            if (article.id === firstArticle.id) {
+              staleReplaceBody ??= replaceBody
+            }
+            return null
+          }}
+          onBack={() => {}}
+          onLoginAgain={() => {}}
+          requiresAuthentication={false}
+        />
+      )
+    }
+
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root?.render(
+        <StrictMode>
+          <ArticleEditorPageHarness article={firstArticle} />
+        </StrictMode>,
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      root?.render(
+        <StrictMode>
+          <ArticleEditorPageHarness article={secondArticle} />
+        </StrictMode>,
+      )
+      await Promise.resolve()
+    })
+
+    const staleResult = staleReplaceBody?.('# Stale replacement\n')
+    const readStaleArticleOutput = () => ({
+      staleResult: staleResult?.match(
+        () => 'ready',
+        (error) => error.name,
+      ),
+      firstBody: getBody(firstDoc).toJSON(),
+      secondBody: getBody(secondDoc).toJSON(),
+    })
+    expect(readStaleArticleOutput()).toEqual({
+      staleResult: 'EditorNotReadyError',
+      firstBody: '# First article body\n',
+      secondBody: '# Second article body\n',
     })
   })
 })

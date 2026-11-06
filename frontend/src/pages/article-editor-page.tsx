@@ -51,6 +51,7 @@ export function ArticleEditorPage({
 
   return (
     <ArticleEditorView
+      key={article.id}
       articleId={article.id}
       bodyAccessory={bodyAccessory}
       doc={doc}

@@ -66,6 +66,66 @@ function createConflictUpdates() {
 }
 
 describe('sync document persistence', () => {
+  it('starts the article index while its local persistence is still loading', async () => {
+    const persistenceByDocId = new Map<string, ManualPersistence>()
+    const providerDocIds: string[] = []
+    const client = createSyncClient({
+      createDoc: () => new Y.Doc(),
+      createPersistence: (docId) => {
+        const persistence = new ManualPersistence()
+        persistenceByDocId.set(docId, persistence)
+        return persistence
+      },
+      createWebsocketProvider: (_url, docId) => {
+        providerDocIds.push(docId)
+        return new FakeWebsocketProvider(docId)
+      },
+      createArticleId: () => 'article-created-before-index-load',
+      now: () => 1_800_000_000_000,
+    })._unsafeUnwrap()
+    const startResult = await Promise.race([
+      client.start().match(
+        () => 'started',
+        (error) => error.message,
+      ),
+      new Promise<string>((resolve) => {
+        setTimeout(() => {
+          resolve('pending')
+        }, 50)
+      }),
+    ])
+    const createdArticle = client.createArticle()._unsafeUnwrap()
+
+    const readPendingIndexOutput = () => ({
+      startResult,
+      createdArticle,
+      articles: client.listArticles(),
+      providers: providerDocIds,
+      articleStatus: client.getStatus(createdArticle.id),
+      indexPersistenceReady:
+        persistenceByDocId.get('article-index')?.synced ?? false,
+    })
+    expect(readPendingIndexOutput()).toEqual({
+      startResult: 'started',
+      createdArticle: {
+        id: 'article-created-before-index-load',
+        createdAt: 1_800_000_000_000,
+        title: 'Untitled article',
+      },
+      articles: [
+        {
+          id: 'article-created-before-index-load',
+          createdAt: 1_800_000_000_000,
+          title: 'Untitled article',
+        },
+      ],
+      providers: ['article-index'],
+      articleStatus: 'unsynced',
+      indexPersistenceReady: false,
+    })
+    client.destroy()
+  })
+
   it('repairs a persisted move conflict before opening its websocket', () => {
     const articleId = 'article-hydration'
     const { baseline, offlineEditor, mover, offlineUpdate, moveUpdate } =
@@ -108,11 +168,11 @@ describe('sync document persistence', () => {
       statusAfterLoad: client.getStatus(articleId),
     })
     expect(readHydrationOutput()).toEqual({
-      providerDocIdsBeforeLoad: [],
+      providerDocIdsBeforeLoad: ['article-index'],
       statusBeforeLoad: 'unsynced',
       bodyBeforeLoad: '## Cedar\na1\nxy## Vista\nz9\n\n## Fjord\nmaple ma\n',
       acknowledgementsBeforeLoad: 1,
-      providerDocIdsAfterLoad: [articleId],
+      providerDocIdsAfterLoad: ['article-index', articleId],
       body: '## Cedar\na1\nxy## Vista\nz9\n\n## Fjord\nmaple ma\n',
       acknowledgements: 1,
       statusAfterLoad: 'syncing',
@@ -147,7 +207,7 @@ describe('sync document persistence', () => {
     expect(readLocalOnlyOutput()).toEqual({
       status: 'unsynced',
       body: 'Local draft\n',
-      providerDocIds: [],
+      providerDocIds: ['article-index'],
     })
     client.destroy()
   })

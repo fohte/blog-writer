@@ -18,6 +18,7 @@ type StoryArgs = {
   status: 'ready' | 'loading' | 'error'
   integrations: boolean
   showSyncIssue: boolean
+  longOutline: boolean
 }
 
 function ArticleEditorPreview({
@@ -27,19 +28,23 @@ function ArticleEditorPreview({
   status,
   integrations,
   showSyncIssue,
+  longOutline,
 }: StoryArgs) {
   const doc = useMemo(() => {
     if (status !== 'ready') return undefined
     const nextDoc = new Y.Doc()
-    setBody(
-      nextDoc,
-      '# A clear starting point\n\nWrite the article here.\n\n## A supporting section\n\nAdd details that support the main idea.\n',
-    )
+    const articleBody = longOutline
+      ? Array.from(
+          { length: 24 },
+          (_, index) => `## Section ${String(index + 1)}`,
+        ).join('\n')
+      : '# A clear starting point\n\nWrite the article here.\n\n## A supporting section\n\nAdd details that support the main idea.\n'
+    setBody(nextDoc, articleBody)
     setPremise(nextDoc, 'audience', 'Readers learning the subject')
     setPremise(nextDoc, 'purpose', 'Explain one useful idea')
     setPremise(nextDoc, 'claim', 'A focused article is easier to follow')
     return nextDoc
-  }, [status])
+  }, [longOutline, status])
 
   useEffect(() => {
     if (!doc) return
@@ -49,98 +54,93 @@ function ArticleEditorPreview({
   }, [doc])
 
   return (
-    <ArticleEditorView
-      articleId="story-article"
-      doc={doc}
-      bodyAccessory={
-        integrations
-          ? () => (
-              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
-                Draft request
-              </div>
-            )
-          : undefined
-      }
-      editorExtensions={
-        integrations
-          ? () => [
-              EditorView.theme({
-                '.cm-content': {
-                  borderLeft: '3px solid var(--primary)',
-                  paddingLeft: '0.5rem',
-                },
-              }),
-            ]
-          : undefined
-      }
-      headerActions={
-        integrations
-          ? ({ doc: articleDoc, replaceBody }) => (
-              <Button
-                onClick={() => {
-                  const body = getBody(articleDoc).toJSON()
-                  replaceBody(body).match(
-                    () => undefined,
-                    () => undefined,
-                  )
-                }}
-                type="button"
-                variant="outline"
-              >
-                Export
-              </Button>
-            )
-          : undefined
-      }
-      initialMobilePanel={initialMobilePanel}
-      layout={layout}
-      onBack={() => {}}
-      onViewChange={integrations ? () => {} : undefined}
-      outlineAccessory={
-        integrations
-          ? () => (
-              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
-                Outline suggestion
-              </div>
-            )
-          : undefined
-      }
-      onTitleChange={() => {}}
-      premiseAccessory={
-        integrations
-          ? () => (
-              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm sm:col-span-3">
-                Premise guidance
-              </div>
-            )
-          : undefined
-      }
-      status={
-        status === 'loading'
-          ? { kind: 'loading' }
-          : status === 'error'
-            ? { kind: 'error', message: 'The article could not be opened.' }
+    <div className={layout === 'mobile' ? 'mx-auto w-full max-w-sm' : 'w-full'}>
+      <ArticleEditorView
+        articleId="story-article"
+        doc={doc}
+        bodyAccessory={
+          integrations
+            ? () => (
+                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                  Draft request
+                </div>
+              )
             : undefined
-      }
-      sourcesPanel={
-        sources ? (
-          <section
-            aria-label="Reference sources"
-            className="flex flex-col gap-2"
-          >
-            <h2 className="text-xl font-semibold">Sources</h2>
-            <p className="text-muted-foreground">
-              Reference material appears here.
-            </p>
-          </section>
-        ) : undefined
-      }
-      title="A useful article"
-      syncStatus={showSyncIssue ? 'unsynced' : undefined}
-      syncError={showSyncIssue ? 'Synchronization needs attention.' : undefined}
-      requiresAuthentication={showSyncIssue}
-      onLoginAgain={showSyncIssue ? () => {} : undefined}
-    />
+        }
+        editorExtensions={
+          integrations ? () => [EditorView.lineWrapping] : undefined
+        }
+        headerActions={
+          integrations
+            ? ({ doc: articleDoc, replaceBody }) => (
+                <Button
+                  onClick={() => {
+                    const body = getBody(articleDoc).toJSON()
+                    replaceBody(body).match(
+                      () => undefined,
+                      () => undefined,
+                    )
+                  }}
+                  type="button"
+                  variant="outline"
+                >
+                  Export
+                </Button>
+              )
+            : undefined
+        }
+        initialMobilePanel={initialMobilePanel}
+        layout={layout}
+        onBack={() => {}}
+        onViewChange={integrations ? () => {} : undefined}
+        outlineAccessory={
+          integrations
+            ? () => (
+                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                  Outline suggestion
+                </div>
+              )
+            : undefined
+        }
+        onTitleChange={() => {}}
+        premiseAccessory={
+          integrations
+            ? () => (
+                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm sm:col-span-3">
+                  Premise guidance
+                </div>
+              )
+            : undefined
+        }
+        status={
+          status === 'loading'
+            ? { kind: 'loading' }
+            : status === 'error'
+              ? { kind: 'error', message: 'The article could not be opened.' }
+              : undefined
+        }
+        sourcesPanel={
+          sources ? (
+            <section
+              aria-label="Reference sources"
+              className="flex flex-col gap-2"
+            >
+              <h2 className="text-xl font-semibold">Sources</h2>
+              <p className="text-muted-foreground">
+                Reference material appears here.
+              </p>
+            </section>
+          ) : undefined
+        }
+        title="A useful article"
+        syncStatus={showSyncIssue ? 'unsynced' : undefined}
+        syncError={
+          showSyncIssue ? 'Synchronization needs attention.' : undefined
+        }
+        requiresAuthentication={showSyncIssue}
+        onLoginAgain={showSyncIssue ? () => {} : undefined}
+      />
+    </div>
   )
 }
 
@@ -154,6 +154,7 @@ const meta = {
     status: 'ready',
     integrations: false,
     showSyncIssue: false,
+    longOutline: false,
   },
 } satisfies Meta<StoryArgs>
 
@@ -172,6 +173,11 @@ export const DesktopWithIntegrations: Story = {
 export const DesktopSyncIssue: Story = {
   name: 'the desktop editor shows an unsynced article and reauthentication prompt.',
   args: { showSyncIssue: true },
+}
+
+export const DesktopLongOutline: Story = {
+  name: 'the desktop layout scrolls a long outline within the left column.',
+  args: { longOutline: true },
 }
 
 export const MobileArticle: Story = {
