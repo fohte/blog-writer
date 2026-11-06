@@ -1133,6 +1133,32 @@ describe('suggestion layer', () => {
     expect(body.toJSON()).toEqual('- revised sentence\nnext line')
   })
 
+  it('accepts a focused suggestion in another layer before indenting a list', () => {
+    const content = '- selected sentence\nnext line'
+    const secondLayer = createSuggestionLayer()
+    const { body, view } = createEditor(content, undefined, [
+      secondLayer.extension,
+    ])
+    const from = content.indexOf('selected')
+    let result: ReturnType<typeof secondLayer.setSuggestions> | undefined
+    act(() => {
+      result = secondLayer.setSuggestions([
+        {
+          id: 'suggestion-secondary',
+          from,
+          to: from + 'selected sentence'.length,
+          replacement: 'revised sentence',
+        },
+      ])
+      view.dispatch({ selection: { anchor: from } })
+      dispatchKey(view, 'Tab')
+    })
+    if (!result) throw new Error('Could not set suggestion')
+    if (result.isErr()) throw new Error('Could not set suggestion')
+
+    expect(body.toJSON()).toEqual('- revised sentence\nnext line')
+  })
+
   it('cancels in-flight work before rejecting a focused suggestion', () => {
     const events: string[] = []
     const { body, host, layer, view } = createEditor(initialText, (event) => {
@@ -1179,6 +1205,52 @@ describe('suggestion layer', () => {
       afterReject: null,
       body: initialText,
       events: ['cancel', 'reject'],
+    })
+  })
+
+  it('cancels another layer in-flight work before rejecting a focused suggestion', () => {
+    const events: string[] = []
+    const secondLayer = createSuggestionLayer({
+      onCancelInFlight: () => events.push('cancel'),
+    })
+    const { body, host, layer, view } = createEditor(
+      initialText,
+      (event) => events.push(event),
+      [secondLayer.extension],
+    )
+    const from = initialText.indexOf('selected')
+    const suggestionResult = layer.setSuggestions([
+      {
+        id: 'suggestion-primary',
+        from,
+        to: from + 'selected sentence'.length,
+        replacement: 'revised sentence',
+      },
+    ])
+    if (suggestionResult.isErr()) throw new Error('Could not set suggestion')
+    const inFlightResult = secondLayer.setInFlight({
+      from: initialText.length,
+      to: initialText.length,
+    })
+    if (inFlightResult.isErr()) throw new Error('Could not set in-flight state')
+
+    act(() => {
+      view.dispatch({ selection: { anchor: from } })
+      dispatchKey(view, 'Escape')
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      suggestionWidgets: host.querySelectorAll('.cm-suggestion-widget').length,
+      generatingWidgets: host.querySelectorAll('.suggestion-diff-generating')
+        .length,
+      events,
+    })
+    expect(readOutput()).toEqual({
+      body: initialText,
+      suggestionWidgets: 1,
+      generatingWidgets: 0,
+      events: ['cancel'],
     })
   })
 

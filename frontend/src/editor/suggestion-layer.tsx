@@ -290,8 +290,14 @@ export class SuggestionLayerController {
       }),
       Prec.highest(
         keymap.of([
-          { key: 'Tab', run: (view) => this.handleTab(view) },
-          { key: 'Escape', run: () => this.handleEscape() },
+          { key: 'Tab', run: () => this.acceptFocusedSuggestion() },
+          { key: 'Escape', run: () => this.cancelInFlight() },
+        ]),
+      ),
+      Prec.high(
+        keymap.of([
+          { key: 'Tab', run: (view) => this.navigateSuggestions(view) },
+          { key: 'Escape', run: () => this.rejectFocusedSuggestion() },
         ]),
       ),
       EditorView.baseTheme({
@@ -399,19 +405,20 @@ export class SuggestionLayerController {
     this.view.focus()
   }
 
-  private handleTab(view: EditorView): boolean {
-    const state = view.state.field(this.stateField, false)
+  private acceptFocusedSuggestion(): boolean {
     const focused = this.focusedSuggestion()
-    if (focused) {
-      this.accept(focused.id)
-      return true
-    }
+    if (!focused) return false
+    this.accept(focused.id)
+    return true
+  }
 
+  private navigateSuggestions(view: EditorView): boolean {
     const line = view.state.doc.lineAt(view.state.selection.main.head)
     if (/^\s*(?:[-*+]|\d+[.)])\s/.test(line.text) && indentMore(view)) {
       return true
     }
 
+    const state = view.state.field(this.stateField, false)
     const suggestions = state?.suggestions ?? []
     if (suggestions.length === 0) return false
     const head = view.state.selection.main.head
@@ -424,23 +431,23 @@ export class SuggestionLayerController {
     return true
   }
 
-  private handleEscape(): boolean {
+  private cancelInFlight(): boolean {
     const view = this.view
     const state = view?.state.field(this.stateField, false)
-    if (state?.inFlight) {
-      this.setInFlight(null).match(
-        () => undefined,
-        () => undefined,
-      )
-      this.options.onCancelInFlight?.()
-      return true
-    }
+    if (!state?.inFlight) return false
+    this.setInFlight(null).match(
+      () => undefined,
+      () => undefined,
+    )
+    this.options.onCancelInFlight?.()
+    return true
+  }
+
+  private rejectFocusedSuggestion(): boolean {
     const focused = this.focusedSuggestion()
-    if (focused) {
-      this.reject(focused.id)
-      return true
-    }
-    return false
+    if (!focused) return false
+    this.reject(focused.id)
+    return true
   }
 
   private findSuggestion(id: string): TextSuggestion | undefined {

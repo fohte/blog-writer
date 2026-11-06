@@ -19,3 +19,13 @@ export {
   type BodyRequestEditorContext,
   bodyRequestExtensions,
 } from '#proposals/body-request'
+export {
+  createOutlineProposalExtension,
+  OutlineProposalAccessory,
+  type OutlineProposalAccessoryContext,
+  type OutlineProposalEditorContext,
+  type OutlineProposalOptions,
+  type OutlineProposalState,
+  type OutlineSuggestion,
+} from '#proposals/outline'
+export { transitionProposalEditorExtensions } from '#proposals/transition'
