@@ -259,7 +259,6 @@ function applyMoveBlock(
     : undefined
   if (structureError) return err(structureError)
   const mapPosition = (position: number) => {
-    if (position < range.from || position >= range.to) return undefined
     const withinRange = mapWithinRange(position, range, replacements)
     return withinRange === undefined ? undefined : newFrom + withinRange
   }
