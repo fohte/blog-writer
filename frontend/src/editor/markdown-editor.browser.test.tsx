@@ -145,6 +145,16 @@ function readEditorEvidenceOutput(doc: Y.Doc, host: HTMLElement) {
   }
 }
 
+function dispatchHistoryShortcut(content: HTMLElement | null, key: 'z' | 'y') {
+  content?.dispatchEvent(
+    new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
+    }),
+  )
+}
+
 function readEvidenceUndoRedoOutput(
   afterMove: ReturnType<typeof readEditorEvidenceOutput>,
   afterUndo: ReturnType<typeof readEditorEvidenceOutput>,
@@ -963,13 +973,7 @@ describe('MarkdownEditor', () => {
     act(() => {
       editor.current?.replaceBody('longer 🦊 middle gold')
     })
-    content?.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'z',
-        bubbles: true,
-        [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
-      }),
-    )
+    dispatchHistoryShortcut(content, 'z')
 
     expect(body.toJSON()).toEqual('red 🦊 middle blue')
   })
@@ -984,13 +988,7 @@ describe('MarkdownEditor', () => {
       editor.current?.replaceBody(replacement)
     })
     const bodyAfterReplace = body.toJSON()
-    content?.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'z',
-        bubbles: true,
-        [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
-      }),
-    )
+    dispatchHistoryShortcut(content, 'z')
 
     const readOutput = () => ({
       bodyAfterReplace,
@@ -1012,13 +1010,7 @@ describe('MarkdownEditor', () => {
     act(() => {
       editor.current?.replaceBody('imported body')
     })
-    content?.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'z',
-        bubbles: true,
-        [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
-      }),
-    )
+    dispatchHistoryShortcut(content, 'z')
 
     expect(body.toJSON()).toEqual('original body!')
   })
@@ -1066,13 +1058,7 @@ describe('MarkdownEditor', () => {
         )
         ._unsafeUnwrap()
     })
-    content?.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'z',
-        bubbles: true,
-        [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
-      }),
-    )
+    dispatchHistoryShortcut(content, 'z')
 
     expect(readEditorEvidenceOutput(doc, host)).toEqual({
       body: markdown,
@@ -1124,15 +1110,6 @@ describe('MarkdownEditor', () => {
     )
     const view = content ? EditorView.findFromDOM(content) : null
     if (!view) throw new Error('CodeMirror view was not rendered')
-    const dispatchHistoryShortcut = (key: 'z' | 'y') => {
-      content?.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key,
-          bubbles: true,
-          [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
-        }),
-      )
-    }
     act(() => {
       history
         .move({ from: 0, destination: markdown.length }, view)
@@ -1140,7 +1117,7 @@ describe('MarkdownEditor', () => {
     })
     const afterMove = readEditorEvidenceOutput(doc, host)
     act(() => {
-      dispatchHistoryShortcut('z')
+      dispatchHistoryShortcut(content, 'z')
     })
     await vi.waitFor(() => {
       if (
@@ -1151,7 +1128,7 @@ describe('MarkdownEditor', () => {
     })
     const afterUndo = readEditorEvidenceOutput(doc, host)
     act(() => {
-      dispatchHistoryShortcut('y')
+      dispatchHistoryShortcut(content, 'y')
     })
     await vi.waitFor(() => {
       if (
