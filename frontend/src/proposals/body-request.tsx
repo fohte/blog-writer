@@ -22,6 +22,8 @@ import {
   getBodyRequestContext,
 } from '#proposals/body-request-context'
 
+const overlappingSuggestionError = 'この範囲には別の提案が表示されています'
+
 export type BodyRequestEditorContext = {
   doc: Y.Doc
   history: MoveHistory
@@ -129,9 +131,6 @@ function cursorLineAnchor(view: EditorView | null): HTMLElement | null {
   const position = view.state.selection.main.head
   const { node } = view.domAtPos(position)
   const positionElement = node instanceof Element ? node : node.parentElement
-  const directWidget = positionElement?.closest('.cm-suggestion-widget')
-  if (directWidget instanceof HTMLElement) return directWidget
-
   const matchingWidget = Array.from(
     view.dom.querySelectorAll<HTMLElement>('.cm-suggestion-widget'),
   ).find((widget) => {
@@ -251,7 +250,7 @@ export function BodyRequestAccessory({
       target: context.target,
     }
     if (manager.layer.overlapsOtherLayer(context.range)) {
-      setError('この範囲には別の提案が表示されています')
+      setError(overlappingSuggestionError)
       setPhase('error')
       setOpen(true)
       return
@@ -269,7 +268,7 @@ export function BodyRequestAccessory({
           ? '本文エディターを準備できませんでした。'
           : pending.error.type === 'invalid-range'
             ? '依頼する範囲を特定できませんでした。'
-            : 'この範囲には別の提案が表示されています',
+            : overlappingSuggestionError,
       )
       setPhase('error')
       setOpen(true)

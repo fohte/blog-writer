@@ -34,7 +34,10 @@ export type {
 
 type ScopedEffect<Value> = { scope: symbol; value: Value }
 
-const mountedSuggestionLayers = new Set<SuggestionLayerController>()
+const mountedSuggestionLayers = new WeakMap<
+  EditorView,
+  Set<SuggestionLayerController>
+>()
 
 const replaceSuggestions =
   StateEffect.define<ScopedEffect<readonly TextSuggestion[]>>()
@@ -165,12 +168,19 @@ export class SuggestionLayerController {
       this.stateField,
       ViewPlugin.define((view) => {
         this.view = view
-        mountedSuggestionLayers.add(this)
+        const viewLayers = mountedSuggestionLayers.get(view)
+        if (viewLayers) {
+          viewLayers.add(this)
+        } else {
+          mountedSuggestionLayers.set(view, new Set([this]))
+        }
         return {
           destroy: () => {
+            const viewLayers = mountedSuggestionLayers.get(view)
+            viewLayers?.delete(this)
+            if (viewLayers?.size === 0) mountedSuggestionLayers.delete(view)
             if (this.view === view) {
               this.view = null
-              mountedSuggestionLayers.delete(this)
             }
           },
         }
@@ -292,8 +302,8 @@ export class SuggestionLayerController {
     const view = this.view
     if (!view) return false
 
-    for (const layer of mountedSuggestionLayers) {
-      if (layer === this || layer.view !== view) continue
+    for (const layer of mountedSuggestionLayers.get(view) ?? []) {
+      if (layer === this) continue
       const state = view.state.field(layer.stateField, false)
       if (!state) continue
       if (
