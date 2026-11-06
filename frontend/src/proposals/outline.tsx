@@ -16,6 +16,11 @@ import { postLlmResult } from '#lib/llm-sse'
 import { ArticleOutline } from '#outline/article-outline'
 import type { MoveHistory } from '#outline/move-history'
 import {
+  type RejectedSuggestion,
+  rejectionKey,
+  sameRejectedSuggestion,
+} from '#proposals/outline-rejection'
+import {
   isOutlineProposalResponse,
   type OutlineProposalRequest,
   type OutlineProposalResponse,
@@ -60,8 +65,8 @@ type TrackedSuggestion = Pick<
 type ManagedSuggestion = OutlineSuggestion & {
   guardFrom: number
   guardTo: number
+  original: string
 }
-type RejectedSuggestion = TrackedSuggestion
 
 type InternalState = {
   suggestions: ManagedSuggestion[]
@@ -129,10 +134,6 @@ class OutlineProposalController {
           const mapped = mapRange(suggestion, transaction.changes)
           return mapped ? [{ ...suggestion, ...mapped }] : []
         })
-        rejected = rejected.flatMap((suggestion) => {
-          const mapped = mapRange(suggestion, transaction.changes)
-          return mapped ? [mapped] : []
-        })
       }
 
       for (const effect of transaction.effects) {
@@ -147,16 +148,10 @@ class OutlineProposalController {
           )
           suggestions = suggestions.filter(({ id }) => id !== effect.value)
           if (rejectedSuggestion) {
-            rejected = [
-              ...rejected,
-              {
-                from: rejectedSuggestion.from,
-                to: rejectedSuggestion.to,
-                replacement: rejectedSuggestion.replacement,
-                guardFrom: rejectedSuggestion.guardFrom,
-                guardTo: rejectedSuggestion.guardTo,
-              },
-            ]
+            const key = rejectionKey(rejectedSuggestion)
+            if (!rejected.some((item) => sameRejectedSuggestion(item, key))) {
+              rejected = [...rejected, key]
+            }
           }
         }
       }
@@ -277,12 +272,13 @@ class OutlineProposalController {
       this.timer = undefined
       const markdown = this.view?.state.doc.toString()
       if (markdown === undefined || markdown === this.lastStartedBody) return
+      const previousStartedBody = this.lastStartedBody
       this.lastStartedBody = markdown
-      this.startRequest(markdown)
+      this.startRequest(markdown, previousStartedBody)
     }, this.options.debounceMs ?? 30_000)
   }
 
-  private startRequest(markdown: string): void {
+  private startRequest(markdown: string, previousStartedBody: string): void {
     this.activeRequest?.abort()
     const abortController = new AbortController()
     this.activeRequest = abortController
@@ -296,7 +292,7 @@ class OutlineProposalController {
       (() => loadLlmSettings(() => window.localStorage))
     )()
     if (settings.isErr()) {
-      this.finishRequest(requestId, tracker)
+      this.finishRequest(requestId, tracker, previousStartedBody)
       return
     }
 
@@ -326,7 +322,11 @@ class OutlineProposalController {
         this.finishRequest(requestId, tracker)
       },
       () => {
-        this.finishRequest(requestId, tracker)
+        this.finishRequest(
+          requestId,
+          tracker,
+          abortController.signal.aborted ? undefined : previousStartedBody,
+        )
       },
     )
   }
@@ -350,19 +350,30 @@ class OutlineProposalController {
       ) {
         return []
       }
-      const targetBlock = request.blocks.find((block) =>
-        suggestion.from === suggestion.to
-          ? block.kind === 'paragraph' && block.from === suggestion.from
-          : block.kind === 'heading' &&
-            block.from === suggestion.from &&
-            block.to === suggestion.to,
-      )
+      const targetBlock = request.blocks.find((block) => {
+        if (suggestion.from === suggestion.to) {
+          return block.kind === 'paragraph' && block.from === suggestion.from
+        }
+        if (block.kind !== 'heading' || block.from !== suggestion.from) {
+          return false
+        }
+        const targetTo =
+          suggestion.replacement === '' && block.to < request.body_length
+            ? block.to + 1
+            : block.to
+        return targetTo === suggestion.to
+      })
+      if (!targetBlock) return []
+      const targetTo =
+        suggestion.replacement === '' && targetBlock.to < request.body_length
+          ? targetBlock.to + 1
+          : targetBlock.to
       let mapped: TrackedSuggestion | null = {
         from: suggestion.from,
         to: suggestion.to,
         replacement: suggestion.replacement,
-        guardFrom: targetBlock?.from ?? suggestion.from,
-        guardTo: targetBlock?.to ?? suggestion.to,
+        guardFrom: targetBlock.from,
+        guardTo: targetTo,
       }
       for (const changes of tracker) {
         if (!mapped) break
@@ -372,13 +383,11 @@ class OutlineProposalController {
         !mapped ||
         mapped.from < 0 ||
         mapped.to > view.state.doc.length ||
-        state.rejected.some(
-          (rejected) =>
-            rejected.from === mapped.from &&
-            rejected.to === mapped.to &&
-            rejected.guardFrom === mapped.guardFrom &&
-            rejected.guardTo === mapped.guardTo &&
-            rejected.replacement === mapped.replacement,
+        state.rejected.some((rejected) =>
+          sameRejectedSuggestion(
+            rejected,
+            rejectionKey({ ...mapped, original: targetBlock.markdown }),
+          ),
         )
       ) {
         return []
@@ -387,6 +396,7 @@ class OutlineProposalController {
         {
           id: `outline-${String(this.suggestionId + index)}`,
           ...mapped,
+          original: targetBlock.markdown,
         },
       ]
     })
@@ -394,9 +404,14 @@ class OutlineProposalController {
     this.dispatchEffect(updateSuggestions.of(candidates))
   }
 
-  private finishRequest(requestId: number, tracker: ChangeSet[]): void {
+  private finishRequest(
+    requestId: number,
+    tracker: ChangeSet[],
+    retryBody?: string,
+  ): void {
     this.trackers.delete(tracker)
     if (requestId === this.requestId) {
+      if (retryBody !== undefined) this.lastStartedBody = retryBody
       this.activeRequest = undefined
       this.dispatchEffect(updateGenerating.of(false))
     }

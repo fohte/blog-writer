@@ -105,6 +105,26 @@ fn heading_level(value: &str) -> Option<usize> {
         .filter(|level| heading.chars().nth(*level).is_some_and(char::is_whitespace))
 }
 
+fn heading_has_text(value: &str) -> bool {
+    let heading = value.strip_suffix('\n').unwrap_or(value);
+    let Some(level) = heading_level(value) else {
+        return false;
+    };
+    let Some(mut text) = heading.get(level..) else {
+        return false;
+    };
+    let without_closing_hashes = text.trim_end_matches('#');
+    if without_closing_hashes.len() < text.len()
+        && without_closing_hashes
+            .chars()
+            .last()
+            .is_some_and(char::is_whitespace)
+    {
+        text = without_closing_hashes;
+    }
+    !text.trim().is_empty()
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum RejectionReason {
     UnknownAlias,
@@ -127,7 +147,7 @@ fn to_suggestion(
 
     match operation {
         OperationKind::Add if block.kind == "paragraph" => {
-            if !replacement.ends_with('\n') || heading_level(&replacement).is_none() {
+            if !replacement.ends_with('\n') || !heading_has_text(&replacement) {
                 return Err(RejectionReason::InvalidOperation);
             }
             Ok(OutlineSuggestion {
@@ -140,7 +160,10 @@ fn to_suggestion(
             let Some(previous_level) = heading_level(&block.markdown) else {
                 return Err(RejectionReason::InvalidOperation);
             };
-            if replacement.ends_with('\n') || heading_level(&replacement) != Some(previous_level) {
+            if replacement.ends_with('\n')
+                || heading_level(&replacement) != Some(previous_level)
+                || !heading_has_text(&replacement)
+            {
                 return Err(RejectionReason::InvalidOperation);
             }
             Ok(OutlineSuggestion {
@@ -153,9 +176,14 @@ fn to_suggestion(
             if heading_level(&block.markdown).is_none() || !replacement.is_empty() {
                 return Err(RejectionReason::InvalidOperation);
             }
+            let to = if block.to < body_length {
+                block.to + 1
+            } else {
+                block.to
+            };
             Ok(OutlineSuggestion {
                 from: block.from,
-                to: block.to,
+                to,
                 replacement: String::new(),
             })
         }
@@ -345,7 +373,7 @@ mod tests {
             suggestions: vec![
                 OutlineSuggestion { from: 0, to: 10, replacement: "# Updated".to_owned() },
                 OutlineSuggestion { from: 12, to: 12, replacement: "## Added\n".to_owned() },
-                OutlineSuggestion { from: 34, to: 44, replacement: String::new() },
+                OutlineSuggestion { from: 34, to: 45, replacement: String::new() },
             ],
         }
     )]
@@ -363,6 +391,14 @@ mod tests {
         OutlineProposalResponse {
             suggestions: vec![OutlineSuggestion { from: 12, to: 12, replacement: "## First\n".to_owned() }],
         }
+    )]
+    #[case::drops_empty_heading_text(
+        vec![
+            GeneratedOperation { operation: OperationKind::Add, block_alias: "b2".to_owned(), replacement: "##   \n".to_owned() },
+            GeneratedOperation { operation: OperationKind::Rename, block_alias: "b1".to_owned(), replacement: "#   ".to_owned() },
+        ],
+        54,
+        OutlineProposalResponse { suggestions: Vec::new() }
     )]
     fn translates_only_valid_operations(
         #[case] operations: Vec<GeneratedOperation>,
@@ -390,6 +426,40 @@ mod tests {
         );
 
         assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case::tail_heading_with_line_ending(8, 8)]
+    #[case::tail_heading_without_line_ending(7, 7)]
+    fn delete_ranges_include_the_heading_line_ending(
+        #[case] body_length: usize,
+        #[case] expected_to: usize,
+    ) {
+        let aliases = BTreeMap::from([("b1".to_owned(), "heading".to_owned())]);
+        let blocks = vec![block("heading", "heading", "# Title", 0, 7)];
+        let actual = to_suggestions(
+            GeneratedOutline {
+                operations: vec![GeneratedOperation {
+                    operation: OperationKind::Delete,
+                    block_alias: "b1".to_owned(),
+                    replacement: String::new(),
+                }],
+            },
+            &aliases,
+            &blocks,
+            body_length,
+        );
+
+        assert_eq!(
+            actual,
+            OutlineProposalResponse {
+                suggestions: vec![OutlineSuggestion {
+                    from: 0,
+                    to: expected_to,
+                    replacement: String::new(),
+                }],
+            },
+        );
     }
 
     fn block(

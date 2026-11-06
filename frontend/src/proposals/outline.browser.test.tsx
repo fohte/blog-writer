@@ -17,7 +17,7 @@ import { createMoveHistory } from '#outline/index'
 
 const cleanups: (() => void)[] = []
 
-type RequestBlock = { from: number; kind: string }
+type RequestBlock = { from: number; kind: string; to: number }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -32,11 +32,12 @@ function readRequestBlocks(body: string): RequestBlock[] {
     if (
       !isRecord(block) ||
       typeof block['from'] !== 'number' ||
+      typeof block['to'] !== 'number' ||
       typeof block['kind'] !== 'string'
     ) {
       throw new Error('The outline request has an invalid block')
     }
-    return { from: block['from'], kind: block['kind'] }
+    return { from: block['from'], kind: block['kind'], to: block['to'] }
   })
 }
 
@@ -46,6 +47,15 @@ function paragraphFrom(body: string): number {
   )
   if (!paragraph) throw new Error('The outline request has no paragraph')
   return paragraph.from
+}
+
+function lastHeadingRange(body: string): { from: number; to: number } {
+  const headings = readRequestBlocks(body).filter(
+    ({ kind }) => kind === 'heading',
+  )
+  const heading = headings[headings.length - 1]
+  if (!heading) throw new Error('The outline request has no heading')
+  return { from: heading.from, to: heading.to }
 }
 
 function requestBodyFromInit(init: RequestInit | undefined): string {
@@ -96,6 +106,20 @@ function readProposalOutput(
   }
 }
 
+function readRetryOutput(
+  requestBodies: string[],
+  outlineHost: HTMLElement,
+  view: EditorView,
+) {
+  return {
+    requestCount: requestBodies.length,
+    retriedSameBody: requestBodies[0] === requestBodies[1],
+    body: view.state.doc.toString(),
+    proposalButtons: proposalButtons(outlineHost),
+    alert: alertText(outlineHost),
+  }
+}
+
 function readAcceptanceOutput(input: {
   requestsWithoutBodyChange: number
   requestsBeforeIdle: number
@@ -116,8 +140,10 @@ function readAcceptanceOutput(input: {
   }
 }
 
-function createFixture(fetcher: typeof fetch) {
-  const markdown = '# Intro\n\nParagraph.\n'
+function createFixture(
+  fetcher: typeof fetch,
+  markdown = '# Intro\n\nParagraph.\n',
+) {
   const doc = new Y.Doc()
   setBody(doc, markdown)
   setPremise(doc, 'audience', 'New readers')
@@ -381,9 +407,11 @@ describe('outline proposal integration', () => {
 
   it('does not offer a rejected proposal again while the page stays open', async () => {
     let requestCount = 0
+    let requestBody = ''
     const fetcher: typeof fetch = (_input, init) => {
       requestCount += 1
-      const from = paragraphFrom(requestBodyFromInit(init))
+      requestBody = requestBodyFromInit(init)
+      const from = paragraphFrom(requestBody)
       return Promise.resolve(
         responseWithSuggestions([
           { from, to: from, replacement: '## Added\n' },
@@ -400,18 +428,144 @@ describe('outline proposal integration', () => {
       (button) => button.textContent.includes('却下'),
     )
     if (!rejectButton) throw new Error('The outline suggestion is missing')
+    const paragraph = paragraphFrom(requestBody)
     await act(async () => {
       await userEvent.click(rejectButton)
-      view.dispatch({ changes: { from: 7, to: 7, insert: ' X' } })
+      view.dispatch({ changes: { from: paragraph, insert: 'Updated ' } })
       await vi.advanceTimersByTimeAsync(30_000)
       for (let index = 0; index < 8; index += 1) await Promise.resolve()
     })
 
     expect(readProposalOutput(outlineHost, view, requestCount)).toEqual({
       requestCount: 2,
-      body: '# Intro X\n\nParagraph.\n!',
+      body: '# Intro\n\nUpdated Paragraph.\n!',
       proposalButtons: [],
       alert: null,
+    })
+  })
+
+  it('retries a failed request after the body returns to the same text', async () => {
+    const requestBodies: string[] = []
+    const fetcher: typeof fetch = (_input, init) => {
+      requestBodies.push(requestBodyFromInit(init))
+      return Promise.resolve(
+        requestBodies.length === 1
+          ? new Response('unavailable', { status: 429 })
+          : responseWithSuggestions([]),
+      )
+    }
+    const { outlineHost, view } = createFixture(fetcher)
+    await act(async () => {
+      view.dispatch({ changes: { from: view.state.doc.length, insert: '!' } })
+      await vi.advanceTimersByTimeAsync(30_000)
+      for (let index = 0; index < 8; index += 1) await Promise.resolve()
+    })
+    await act(async () => {
+      view.dispatch({ changes: { from: 0, insert: 'A' } })
+      view.dispatch({ changes: { from: 0, to: 1, insert: '' } })
+      await vi.advanceTimersByTimeAsync(30_000)
+      for (let index = 0; index < 8; index += 1) await Promise.resolve()
+    })
+
+    expect(readRetryOutput(requestBodies, outlineHost, view)).toEqual({
+      requestCount: 2,
+      retriedSameBody: true,
+      body: '# Intro\n\nParagraph.\n!',
+      proposalButtons: [],
+      alert: null,
+    })
+  })
+
+  it('deletes the final heading line and restores it in one undo step', async () => {
+    const markdown = '# Intro\n\nParagraph.\n## Tail\n'
+    const requests: { url: string; body: string }[] = []
+    const fetcher: typeof fetch = (input, init) => {
+      const body = requestBodyFromInit(init)
+      const heading = lastHeadingRange(body)
+      requests.push({ url: requestUrl(input), body })
+      return Promise.resolve(
+        responseWithSuggestions([
+          { from: heading.from, to: heading.to + 1, replacement: '' },
+        ]),
+      )
+    }
+    const { doc, outlineHost, view, history } = createFixture(fetcher, markdown)
+    act(() => {
+      view.dispatch({ changes: { from: 9, insert: '!' } })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+      for (let index = 0; index < 8; index += 1) await Promise.resolve()
+    })
+    const acceptButton = [...outlineHost.querySelectorAll('button')].find(
+      (button) => button.textContent.includes('採用'),
+    )
+    if (!acceptButton) throw new Error('The heading deletion is missing')
+    await act(async () => {
+      await userEvent.click(acceptButton)
+    })
+    const beforeUndo = view.state.doc.toString()
+    let undo = 'pending'
+    act(() => {
+      undo = history.undo(view).match(
+        (value) => (value ? 'undone' : 'empty'),
+        () => 'failed',
+      )
+    })
+
+    expect(
+      readAcceptanceOutput({
+        requestsWithoutBodyChange: 0,
+        requestsBeforeIdle: 0,
+        requests,
+        beforeUndo,
+        undo,
+        view,
+        doc,
+      }),
+    ).toEqual({
+      requestsWithoutBodyChange: 0,
+      requestsBeforeIdle: 0,
+      requests: [
+        {
+          url: '/api/proposals/outline',
+          body: JSON.stringify({
+            premise: {
+              audience: 'New readers',
+              purpose: 'Explain the subject',
+              thesis: 'The outline guides the article',
+            },
+            body_length: markdown.length + 1,
+            blocks: [
+              {
+                id: 'article-block-1',
+                kind: 'heading',
+                markdown: '# Intro',
+                from: 0,
+                to: 7,
+              },
+              {
+                id: 'article-block-2',
+                kind: 'paragraph',
+                markdown: '!Paragraph.',
+                from: 9,
+                to: 20,
+              },
+              {
+                id: 'article-block-3',
+                kind: 'heading',
+                markdown: '## Tail',
+                from: 21,
+                to: 28,
+              },
+            ],
+          }),
+        },
+      ],
+      beforeUndo: '# Intro\n\n!Paragraph.\n',
+      undo: 'undone',
+      afterUndo: '# Intro\n\n!Paragraph.\n## Tail\n',
+      yBody: '# Intro\n\n!Paragraph.\n## Tail\n',
     })
   })
 
