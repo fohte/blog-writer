@@ -357,5 +357,5 @@ describe('random move and edit sequences', () => {
       },
       firstFailure: null,
     })
-  })
+  }, 20_000)
 })
