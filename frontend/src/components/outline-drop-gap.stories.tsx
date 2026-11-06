@@ -1,9 +1,9 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
-import { OutlineMemoDropGap } from '#components/outline-memo-drop-gap'
+import { OutlineDropGap } from '#components/outline-drop-gap'
 
 const meta = {
-  component: OutlineMemoDropGap,
+  component: OutlineDropGap,
   args: {
     beforeFrom: 24,
     bodyLength: 80,
@@ -12,7 +12,7 @@ const meta = {
     onInsertMemo: () => {},
     onMove: () => {},
   },
-} satisfies Meta<typeof OutlineMemoDropGap>
+} satisfies Meta<typeof OutlineDropGap>
 
 export default meta
 type Story = StoryObj<typeof meta>

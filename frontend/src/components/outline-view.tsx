@@ -18,9 +18,9 @@ import type { MoveBlockInput } from '#article/index'
 import { flattenHeadingTreeWithDepth } from '#article/index'
 import type { Heading } from '#article/types'
 import {
-  OutlineMemoDropGap,
-  type OutlineMemoGapTarget,
-} from '#components/outline-memo-drop-gap'
+  OutlineDropGap,
+  type OutlineGapDropTarget,
+} from '#components/outline-drop-gap'
 import { memoIdFrom } from '#outline/memo-drag'
 
 type OutlineDropTarget =
@@ -358,14 +358,14 @@ export function OutlineView({
   )
   const [localGapDropTarget, setLocalGapDropTarget] =
     useState<OutlineDropTarget>()
-  const memoDropTarget =
+  const gapDropTarget =
     dropTarget?.kind === 'memo-heading' ||
     dropTarget?.kind === 'memo-gap' ||
     dropTarget?.kind === 'block-gap'
       ? dropTarget
       : localGapDropTarget
-  const handleMemoGapDragChange = useCallback(
-    (target: OutlineMemoGapTarget | undefined) => {
+  const handleGapDragChange = useCallback(
+    (target: OutlineGapDropTarget | undefined) => {
       setLocalGapDropTarget(
         target === undefined
           ? undefined
@@ -380,9 +380,9 @@ export function OutlineView({
     [],
   )
   const isGapActive = (beforeFrom?: number) =>
-    (memoDropTarget?.kind === 'memo-gap' ||
-      memoDropTarget?.kind === 'block-gap') &&
-    memoDropTarget.beforeFrom === beforeFrom
+    (gapDropTarget?.kind === 'memo-gap' ||
+      gapDropTarget?.kind === 'block-gap') &&
+    gapDropTarget.beforeFrom === beforeFrom
 
   return (
     <section
@@ -396,10 +396,10 @@ export function OutlineView({
       {flattened.length === 0 ? (
         <>
           <p className="text-sm text-muted-foreground">No headings yet.</p>
-          <OutlineMemoDropGap
+          <OutlineDropGap
             active={isGapActive()}
             bodyLength={bodyLength}
-            onDragChange={handleMemoGapDragChange}
+            onDragChange={handleGapDragChange}
             onInsertMemo={onInsertMemo}
             onMove={onMove}
           />
@@ -408,11 +408,11 @@ export function OutlineView({
         <List aria-label="Headings" role="listbox">
           {flattened.map(({ heading, depth }) => (
             <Fragment key={heading.from}>
-              <OutlineMemoDropGap
+              <OutlineDropGap
                 active={isGapActive(heading.from)}
                 beforeFrom={heading.from}
                 bodyLength={bodyLength}
-                onDragChange={handleMemoGapDragChange}
+                onDragChange={handleGapDragChange}
                 onInsertMemo={onInsertMemo}
                 onMove={onMove}
               />
@@ -422,7 +422,7 @@ export function OutlineView({
                 bodyLength={bodyLength}
                 depth={depth}
                 dropTarget={
-                  dropTarget?.kind === 'move' ? dropTarget : memoDropTarget
+                  dropTarget?.kind === 'move' ? dropTarget : gapDropTarget
                 }
                 heading={heading}
                 onAdoptMemo={onAdoptMemo}
@@ -435,10 +435,10 @@ export function OutlineView({
               />
             </Fragment>
           ))}
-          <OutlineMemoDropGap
+          <OutlineDropGap
             active={isGapActive()}
             bodyLength={bodyLength}
-            onDragChange={handleMemoGapDragChange}
+            onDragChange={handleGapDragChange}
             onInsertMemo={onInsertMemo}
             onMove={onMove}
           />

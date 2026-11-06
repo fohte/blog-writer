@@ -4,28 +4,28 @@ import { useEffect, useRef } from 'react'
 import type { MoveBlockInput } from '#article/index'
 import { memoIdFrom } from '#outline/memo-drag'
 
-export type OutlineMemoGapTarget = {
+export type OutlineGapDropTarget = {
   kind: 'block' | 'memo'
   beforeFrom?: number
 }
 
-type OutlineMemoDropGapProps = {
+type OutlineDropGapProps = {
   beforeFrom?: number
   bodyLength: number
   active: boolean
-  onDragChange: (target: OutlineMemoGapTarget | undefined) => void
+  onDragChange: (target: OutlineGapDropTarget | undefined) => void
   onInsertMemo?: ((memoId: string, beforeFrom?: number) => void) | undefined
   onMove: (input: MoveBlockInput) => void
 }
 
-export function OutlineMemoDropGap({
+export function OutlineDropGap({
   beforeFrom,
   bodyLength,
   active,
   onDragChange,
   onInsertMemo,
   onMove,
-}: OutlineMemoDropGapProps) {
+}: OutlineDropGapProps) {
   const gapRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
