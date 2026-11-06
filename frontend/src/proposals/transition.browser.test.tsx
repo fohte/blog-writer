@@ -7,9 +7,9 @@ import * as Y from 'yjs'
 
 import { getBody, setBody } from '#article/body'
 import { blockMoved } from '#article/index'
+import { transitionProposalEditorExtensions } from '#editor/index'
 import { saveLlmSettings } from '#lib/llm-settings'
 import { createMoveHistory } from '#outline/index'
-import { transitionProposalEditorExtensions } from '#proposals/index'
 
 const beforeMove = [
   '# Section A',

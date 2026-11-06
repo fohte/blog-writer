@@ -12,7 +12,7 @@ import {
   createSuggestionLayer,
   type SuggestionPosition,
   type TextSuggestion,
-} from '#editor/index'
+} from '#editor/suggestion-layer'
 import type { components } from '#lib/api/schema.gen.d.ts'
 import { isRecord } from '#lib/guards'
 import { type LlmSettings, loadLlmSettings } from '#lib/llm-settings'
