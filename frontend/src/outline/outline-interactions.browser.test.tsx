@@ -10,7 +10,7 @@ import { GFM } from '@lezer/markdown'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { page, userEvent } from 'vitest/browser'
+import { cdp, page, userEvent } from 'vitest/browser'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
@@ -55,6 +55,115 @@ afterEach(() => {
 })
 
 describe('outline interactions', () => {
+  it('opens a body handle menu by touch or click and moves the block with one undo', async () => {
+    const markdownText = 'First paragraph.\n\nSecond paragraph.\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const editorHost = document.createElement('div')
+    document.body.append(editorHost)
+    const root: Root = createRoot(editorHost)
+    const viewRef: { current: EditorView | null } = { current: null }
+    act(() => {
+      root.render(
+        createElement(MarkdownEditor, {
+          extensions: [createOutlineEditorExtension(history)],
+          history,
+          onViewChange: (view: EditorView | null) => {
+            viewRef.current = view
+          },
+          text: body,
+        }),
+      )
+    })
+    const view = viewRef.current
+    if (!view) throw new Error('The markdown editor did not mount')
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      history.destroy()
+      doc.destroy()
+      editorHost.remove()
+    })
+
+    const handle = view.dom.querySelector<HTMLButtonElement>(
+      '.cm-block-drag-handle',
+    )
+    if (!handle) throw new Error('The body move handle is missing')
+    view.contentDOM.dispatchEvent(
+      new CompositionEvent('compositionstart', {
+        bubbles: true,
+        data: '日本語',
+      }),
+    )
+    handle.click()
+    const menuDuringComposition = document.querySelector('[role="menu"]')
+    view.contentDOM.dispatchEvent(
+      new CompositionEvent('compositionend', {
+        bubbles: true,
+        data: '日本語',
+      }),
+    )
+
+    if (navigator.userAgent.includes('Chrome')) {
+      const rect = handle.getBoundingClientRect()
+      await act(async () => {
+        await cdp().send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [
+            {
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+              id: 1,
+            },
+          ],
+        })
+        await cdp().send('Input.dispatchTouchEvent', {
+          type: 'touchEnd',
+          touchPoints: [],
+        })
+      })
+    } else {
+      await act(async () => {
+        await userEvent.click(handle)
+      })
+    }
+
+    const menuItems = [...document.querySelectorAll('[role="menuitem"]')].map(
+      (item) => item.textContent,
+    )
+    const moveDown = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((item) => item.textContent === 'Move down')
+    if (!moveDown) throw new Error('The Move down item is missing')
+    await act(async () => {
+      await userEvent.click(moveDown)
+    })
+    const afterMove = body.toJSON()
+    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    await act(async () => {
+      view.focus()
+      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+    })
+
+    const readOutput = () => ({
+      menuDuringComposition: menuDuringComposition !== null,
+      menuItems,
+      afterMove,
+      afterUndo: body.toJSON(),
+      editor: view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      menuDuringComposition: false,
+      menuItems: ['Move up', 'Move down'],
+      afterMove: 'Second paragraph.\n\nFirst paragraph.\n',
+      afterUndo: markdownText,
+      editor: markdownText,
+    })
+  })
+
   it('moves the editor selection to the heading chosen in the outline', async () => {
     const markdownText =
       '# Overview\n\nFirst section.\n\n# Details\n\nSecond section.\n'
@@ -340,10 +449,12 @@ describe('outline interactions', () => {
     const readOutput = () => ({
       body: body.toJSON(),
       editor: view.state.doc.toString(),
+      menuOpen: document.querySelector('[role="menu"]') !== null,
     })
     expect(readOutput()).toEqual({
       body: 'Second paragraph.\n\nFirst paragraph.\n',
       editor: 'Second paragraph.\n\nFirst paragraph.\n',
+      menuOpen: false,
     })
   })
 

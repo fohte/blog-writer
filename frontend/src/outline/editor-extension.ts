@@ -12,7 +12,12 @@ import {
   type ViewUpdate,
   WidgetType,
 } from '@codemirror/view'
+import { createElement, type RefObject } from 'react'
+import { flushSync } from 'react-dom'
+import { createRoot, type Root } from 'react-dom/client'
 
+import type { BlockMoveMenuAction } from '#components/block-move-menu'
+import { BlockMoveMenu } from '#components/block-move-menu'
 import { adjacentMove, blockStarts, bodyDropInput } from '#outline/block-ranges'
 import type { MoveHistory } from '#outline/move-history'
 
@@ -22,6 +27,8 @@ class BlockDragHandle extends WidgetType {
   constructor(
     private readonly from: number,
     private readonly history: MoveHistory,
+    private readonly view: EditorView,
+    private readonly composingViews: WeakSet<EditorView>,
   ) {
     super()
   }
@@ -29,20 +36,94 @@ class BlockDragHandle extends WidgetType {
   private cleanup: (() => void) | undefined
 
   override eq(other: BlockDragHandle): boolean {
-    return this.from === other.from && this.history === other.history
+    return (
+      this.from === other.from &&
+      this.history === other.history &&
+      this.view === other.view &&
+      this.composingViews === other.composingViews
+    )
   }
 
   override toDOM(): HTMLElement {
+    const wrapper = document.createElement('span')
     const button = document.createElement('button')
+    const menuHost = document.createElement('span')
+    const anchor: RefObject<HTMLButtonElement | null> = { current: button }
+    let root: Root | undefined
+    let menuOpen = false
+    let dragStarted = false
+    const actions = (): BlockMoveMenuAction[] => [
+      {
+        label: 'Move up',
+        input: adjacentMove(this.view.state, this.from, 'up'),
+      },
+      {
+        label: 'Move down',
+        input: adjacentMove(this.view.state, this.from, 'down'),
+      },
+    ]
+    const renderMenu = (open: boolean, sync = false) => {
+      menuOpen = open
+      button.setAttribute('aria-expanded', String(open))
+      root ??= createRoot(menuHost)
+      const render = () => {
+        root?.render(
+          createElement(BlockMoveMenu, {
+            actions: actions(),
+            anchor,
+            onMove: (input) => {
+              this.history.move(input, this.view).match(
+                () => true,
+                () => false,
+              )
+            },
+            onOpenChange: renderMenu,
+            open,
+          }),
+        )
+      }
+      if (sync) flushSync(render)
+      else render()
+    }
+    const handleClick = (event: MouseEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (dragStarted) {
+        dragStarted = false
+        return
+      }
+      if (this.view.composing || this.composingViews.has(this.view)) return
+      renderMenu(!menuOpen, true)
+    }
     button.type = 'button'
     button.className = 'cm-block-drag-handle'
     button.setAttribute('aria-label', 'Move block')
+    button.setAttribute('aria-haspopup', 'menu')
+    button.setAttribute('aria-expanded', 'false')
     button.textContent = '⠿'
-    this.cleanup = draggable({
+    button.addEventListener('click', handleClick)
+    button.addEventListener('mousedown', (event) => {
+      event.stopPropagation()
+    })
+    const cleanupDraggable = draggable({
       element: button,
       getInitialData: () => ({ kind: 'block', from: this.from }),
+      onDragStart: () => {
+        dragStarted = true
+      },
+      onDrop: () => {
+        window.setTimeout(() => {
+          dragStarted = false
+        }, 0)
+      },
     })
-    return button
+    wrapper.append(button, menuHost)
+    this.cleanup = () => {
+      cleanupDraggable()
+      button.removeEventListener('click', handleClick)
+      if (root) queueMicrotask(() => root?.unmount())
+    }
+    return wrapper
   }
 
   override destroy() {
@@ -50,11 +131,15 @@ class BlockDragHandle extends WidgetType {
   }
 }
 
-function createDecorations(view: EditorView, history: MoveHistory) {
+function createDecorations(
+  view: EditorView,
+  history: MoveHistory,
+  composingViews: WeakSet<EditorView>,
+) {
   return Decoration.set(
     blockStarts(view.state, view.viewport.from, view.viewport.to).map((from) =>
       Decoration.widget({
-        widget: new BlockDragHandle(from, history),
+        widget: new BlockDragHandle(from, history, view, composingViews),
         side: -1,
       }).range(from),
     ),
@@ -81,7 +166,7 @@ function createDragPlugin(
       }
 
       constructor(readonly view: EditorView) {
-        this.decorations = createDecorations(view, history)
+        this.decorations = createDecorations(view, history, composingViews)
         view.contentDOM.addEventListener(
           'keydown',
           this.preventCompositionShortcut,
@@ -139,7 +224,7 @@ function createDragPlugin(
           )
         )
           return
-        this.decorations = createDecorations(this.view, history)
+        this.decorations = createDecorations(this.view, history, composingViews)
       }
 
       startComposition() {
