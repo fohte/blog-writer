@@ -296,7 +296,7 @@ describe('outline interactions', () => {
     })
   })
 
-  it('moves a Markdown block with a real pointer drag from the body handle', () => {
+  it('moves a Markdown block when drag events reach the target paragraph lower half', () => {
     const markdownText = 'First paragraph.\n\nSecond paragraph.\n'
     const doc = new Y.Doc()
     setBody(doc, markdownText)
