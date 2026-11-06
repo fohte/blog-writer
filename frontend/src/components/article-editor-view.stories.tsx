@@ -48,6 +48,7 @@ function ArticleEditorPreview({
 
   return (
     <ArticleEditorView
+      articleId="story-article"
       doc={doc}
       bodyAccessory={
         integrations
@@ -76,7 +77,10 @@ function ArticleEditorPreview({
               <Button
                 onClick={() => {
                   const body = getBody(articleDoc).toJSON()
-                  replaceBody(body)
+                  replaceBody(body).match(
+                    () => undefined,
+                    () => undefined,
+                  )
                 }}
                 type="button"
                 variant="outline"
@@ -161,6 +165,11 @@ export const DesktopWithIntegrations: Story = {
 export const MobileArticle: Story = {
   name: 'the mobile layout opens on the article tab without injected controls.',
   args: { layout: 'mobile', initialMobilePanel: 'body' },
+}
+
+export const MobileMemo: Story = {
+  name: 'the mobile layout opens the memo tab with its empty state.',
+  args: { layout: 'mobile', initialMobilePanel: 'memo' },
 }
 
 export const MobileArticleWithIntegrations: Story = {

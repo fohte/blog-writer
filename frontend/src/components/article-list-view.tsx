@@ -1,5 +1,5 @@
 import { Button } from '@fohte/ui/button'
-import { List } from '@fohte/ui/list'
+import { List, ListItem } from '@fohte/ui/list'
 import { Panel } from '@fohte/ui/panel'
 
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
@@ -69,26 +69,26 @@ export function ArticleListView({
             <List aria-label="Articles">
               {articles.map(({ id, title, createdAt }) => (
                 <div
-                  className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 last:border-b-0"
+                  className="border-b border-border last:border-b-0"
                   key={id}
-                  role="listitem"
                 >
-                  <button
-                    className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left"
-                    onClick={() => {
+                  <ListItem
+                    aria-label={title}
+                    onSelect={() => {
                       onOpenArticle(id)
                     }}
-                    type="button"
                   >
-                    <span className="truncate font-medium">{title}</span>
-                    <time
-                      className="text-sm text-muted-foreground"
-                      dateTime={new Date(createdAt).toISOString()}
-                    >
-                      {new Date(createdAt).toLocaleString()}
-                    </time>
-                  </button>
-                  <SyncStatus state={statuses[id] ?? 'saved'} />
+                    <div className="flex min-w-0 flex-1 flex-col items-start gap-1">
+                      <span className="truncate font-medium">{title}</span>
+                      <time
+                        className="text-sm text-muted-foreground"
+                        dateTime={new Date(createdAt).toISOString()}
+                      >
+                        {new Date(createdAt).toLocaleString()}
+                      </time>
+                    </div>
+                    <SyncStatus state={statuses[id] ?? 'saved'} />
+                  </ListItem>
                 </div>
               ))}
             </List>

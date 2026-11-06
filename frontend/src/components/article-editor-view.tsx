@@ -5,6 +5,7 @@ import { Input } from '@fohte/ui/input'
 import { Panel } from '@fohte/ui/panel'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@fohte/ui/tabs'
 import { Textarea } from '@fohte/ui/textarea'
+import { err, ok, type Result } from 'neverthrow'
 import type { ReactNode } from 'react'
 import {
   useEffect,
@@ -15,11 +16,14 @@ import {
 } from 'react'
 import * as Y from 'yjs'
 
-import { getBody, getPremise, setBody, setPremise } from '#article/index'
+import { getBody, getPremise, setPremise } from '#article/index'
 import type { PremiseField } from '#article/types'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { MarkdownEditor } from '#components/markdown-editor'
+import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
+import { SyncStatus } from '#components/sync-status'
 import { moveConflictExtension } from '#editor/index'
+import type { SyncState } from '#lib/sync-client'
 import { MemoPanel } from '#memos/memo-panel'
 import {
   ArticleOutline,
@@ -30,11 +34,19 @@ import {
 
 export type ArticleEditorPanel = 'memo' | 'outline' | 'body' | 'sources'
 export type ArticleEditorLayout = 'responsive' | 'mobile' | 'desktop'
-export type ArticleEditorContext = {
+type ArticleEditorContext = {
+  articleId: string
   doc: Y.Doc
   history: MoveHistory
   view: EditorView | null
-  replaceBody: (value: string) => void
+  replaceBody: (value: string) => Result<void, EditorNotReadyError>
+}
+
+class EditorNotReadyError extends Error {
+  constructor() {
+    super('The article editor is not ready')
+    this.name = 'EditorNotReadyError'
+  }
 }
 
 function isArticleEditorPanel(value: string): value is ArticleEditorPanel {
@@ -47,6 +59,7 @@ function isArticleEditorPanel(value: string): value is ArticleEditorPanel {
 }
 
 export interface ArticleEditorViewProps {
+  articleId: string
   title: string
   doc?: Y.Doc | undefined
   status?: { kind: 'loading' } | { kind: 'error'; message: string } | undefined
@@ -61,6 +74,10 @@ export interface ArticleEditorViewProps {
   headerActions?: ((context: ArticleEditorContext) => ReactNode) | undefined
   sourcesPanel?: ReactNode | undefined
   onViewChange?: ((view: EditorView | null) => void) | undefined
+  syncStatus?: SyncState | undefined
+  syncError?: string | undefined
+  requiresAuthentication?: boolean | undefined
+  onLoginAgain?: (() => void) | undefined
   onTitleChange: (title: string) => void
   onBack: () => void
 }
@@ -81,6 +98,30 @@ const premiseFields: Array<{ field: PremiseField; label: string }> = [
   { field: 'purpose', label: 'Purpose' },
   { field: 'claim', label: 'Claim' },
 ]
+
+const emptyExtensions: Extension[] = []
+const moveHistoriesByDocument = new WeakMap<Y.Doc, MoveHistory>()
+const extensionsByDocument = new WeakMap<Y.Doc, Extension[]>()
+
+function getMoveHistory(doc: Y.Doc) {
+  const existing = moveHistoriesByDocument.get(doc)
+  if (existing) return existing
+  const history = createMoveHistory(doc)
+  moveHistoriesByDocument.set(doc, history)
+  return history
+}
+
+function getCachedEditorExtensions(
+  doc: Y.Doc,
+  history: MoveHistory,
+  factory: (context: { doc: Y.Doc; history: MoveHistory }) => Extension[],
+) {
+  const existing = extensionsByDocument.get(doc)
+  if (existing) return existing
+  const extensions = factory({ doc, history })
+  extensionsByDocument.set(doc, extensions)
+  return extensions
+}
 
 function subscribeToViewportChange(listener: () => void) {
   const media = window.matchMedia('(max-width: 767px)')
@@ -104,6 +145,7 @@ function useIsMobile(layout: ArticleEditorLayout) {
 }
 
 export function ArticleEditorView({
+  articleId,
   title,
   doc,
   status,
@@ -116,6 +158,10 @@ export function ArticleEditorView({
   headerActions,
   sourcesPanel,
   onViewChange,
+  syncStatus,
+  syncError,
+  requiresAuthentication = false,
+  onLoginAgain,
   onTitleChange,
   onBack,
 }: ArticleEditorViewProps) {
@@ -125,24 +171,25 @@ export function ArticleEditorView({
   const [premise, setPremiseValue] = useState(() =>
     doc ? getPremise(doc) : { audience: null, purpose: null, claim: null },
   )
-  const history = useMemo(
-    () => (doc ? createMoveHistory(doc) : undefined),
-    [doc],
-  )
+  const history = doc ? getMoveHistory(doc) : undefined
   const body = doc ? getBody(doc) : undefined
   const [view, setView] = useState<EditorView | null>(null)
   const editorRef = useRef<MarkdownEditorHandle>(null)
-  const [editorExtensionsFactory] = useState(() => editorExtensions)
+  const editorViewRef = useRef<EditorView | null>(null)
+  const suppliedExtensions =
+    doc && history && editorExtensions
+      ? getCachedEditorExtensions(doc, history, editorExtensions)
+      : emptyExtensions
   const extensions = useMemo(
     () =>
       doc && history
         ? [
             moveConflictExtension(doc),
             createOutlineEditorExtension(history),
-            ...(editorExtensionsFactory?.({ doc, history }) ?? []),
+            ...suppliedExtensions,
           ]
         : [],
-    [doc, editorExtensionsFactory, history],
+    [doc, history, suppliedExtensions],
   )
 
   useEffect(() => {
@@ -171,15 +218,17 @@ export function ArticleEditorView({
   }
 
   const replaceBody = (value: string) => {
-    if (!doc) return
-    if (editorRef.current) editorRef.current.replaceBody(value)
-    else setBody(doc, value)
+    if (!editorViewRef.current || !editorRef.current)
+      return err(new EditorNotReadyError())
+    editorRef.current.replaceBody(value)
+    return ok(undefined)
   }
 
   const context =
-    doc && history ? { doc, history, view, replaceBody } : undefined
+    doc && history ? { articleId, doc, history, view, replaceBody } : undefined
 
   const handleViewChange = (nextView: EditorView | null) => {
+    editorViewRef.current = nextView
     setView(nextView)
     onViewChange?.(nextView)
   }
@@ -192,6 +241,9 @@ export function ArticleEditorView({
         <ArticleOutline
           doc={context.doc}
           history={context.history}
+          onHeadingSelected={() => {
+            if (isMobile) setMobilePanel('body')
+          }}
           view={view}
         />
       ) : null
@@ -205,17 +257,19 @@ export function ArticleEditorView({
     }
     if (panel === 'sources') return sourcesPanel ?? null
     return doc && body && history ? (
-      <Panel className="min-h-96 overflow-auto rounded-lg p-4">
-        <MarkdownEditor
-          ariaLabel="Article body"
-          className="min-h-96"
-          extensions={extensions}
-          history={history}
-          onViewChange={handleViewChange}
-          ref={editorRef}
-          text={body}
-        />
-        {context ? bodyAccessory?.(context) : null}
+      <Panel className="relative min-h-96 overflow-auto rounded-lg p-4">
+        <div className="relative" style={{ position: 'relative' }}>
+          <MarkdownEditor
+            ariaLabel="Article body"
+            className="min-h-96"
+            extensions={extensions}
+            history={history}
+            onViewChange={handleViewChange}
+            ref={editorRef}
+            text={body}
+          />
+          {context ? bodyAccessory?.(context) : null}
+        </div>
       </Panel>
     ) : null
   }
@@ -224,10 +278,15 @@ export function ArticleEditorView({
     { value: 'memo', label: 'Memo' },
     { value: 'outline', label: 'Outline' },
     { value: 'body', label: 'Article' },
-    ...(sourcesPanel === undefined
+    ...(sourcesPanel == null
       ? []
       : [{ value: 'sources' as const, label: 'Sources' }]),
   ]
+  const selectedMobilePanel = availablePanels.some(
+    ({ value }) => value === mobilePanel,
+  )
+    ? mobilePanel
+    : 'body'
 
   return (
     <main className="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6">
@@ -290,8 +349,13 @@ export function ArticleEditorView({
           {status.kind === 'loading' ? 'Opening article…' : status.message}
         </p>
       ) : null}
+      {syncError !== undefined ? <p role="alert">{syncError}</p> : null}
+      {requiresAuthentication && onLoginAgain ? (
+        <ReauthenticationPrompt onLoginAgain={onLoginAgain} />
+      ) : null}
+      {syncStatus ? <SyncStatus state={syncStatus} /> : null}
 
-      {doc && isMobile ? (
+      {doc ? (
         <Tabs
           onValueChange={(value) => {
             const nextValue: unknown = value
@@ -302,36 +366,48 @@ export function ArticleEditorView({
               setMobilePanel(nextValue)
             }
           }}
-          value={mobilePanel}
+          value={selectedMobilePanel}
         >
-          <TabsList aria-label="Article sections">
-            {availablePanels.map(({ value, label }) => (
-              <TabsTab key={value} value={value}>
-                {label}
-              </TabsTab>
-            ))}
-          </TabsList>
-          {availablePanels.map(({ value }) => (
-            <TabsPanel key={value} keepMounted={value === 'body'} value={value}>
-              <div className="pt-4">
-                {value === 'body' || mobilePanel === value
-                  ? renderPanel(value)
-                  : null}
-              </div>
-            </TabsPanel>
-          ))}
+          <div className={isMobile ? 'block' : 'hidden'}>
+            <TabsList aria-label="Article sections">
+              {availablePanels.map(({ value, label }) => (
+                <TabsTab key={value} value={value}>
+                  {label}
+                </TabsTab>
+              ))}
+            </TabsList>
+          </div>
+          <div className="grid min-w-0 gap-6 lg:grid-cols-3">
+            <aside className="flex min-w-0 flex-col gap-6 lg:col-span-1">
+              {(['outline', 'memo', 'sources'] as const).map((value) =>
+                availablePanels.some((panel) => panel.value === value) ? (
+                  <TabsPanel
+                    inert={!isMobile ? false : undefined}
+                    key={value}
+                    keepMounted
+                    style={!isMobile ? { display: 'block' } : undefined}
+                    value={value}
+                  >
+                    <div className="pt-4 lg:pt-0">{renderPanel(value)}</div>
+                  </TabsPanel>
+                ) : null,
+              )}
+            </aside>
+            <section
+              aria-label="Article body"
+              className="min-w-0 lg:col-span-2"
+            >
+              <TabsPanel
+                inert={!isMobile ? false : undefined}
+                keepMounted
+                style={!isMobile ? { display: 'block' } : undefined}
+                value="body"
+              >
+                <div className="pt-4 lg:pt-0">{renderPanel('body')}</div>
+              </TabsPanel>
+            </section>
+          </div>
         </Tabs>
-      ) : doc ? (
-        <div className="grid min-w-0 gap-6 lg:grid-cols-3">
-          <aside className="flex min-w-0 flex-col gap-6 lg:col-span-1">
-            {renderPanel('outline')}
-            {renderPanel('memo')}
-            {sourcesPanel}
-          </aside>
-          <section aria-label="Article body" className="min-w-0 lg:col-span-2">
-            {renderPanel('body')}
-          </section>
-        </div>
       ) : null}
     </main>
   )

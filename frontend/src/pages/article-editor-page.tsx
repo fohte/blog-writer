@@ -5,18 +5,26 @@ import {
   type ArticleEditorIntegrationProps,
   ArticleEditorView,
 } from '#components/article-editor-view'
-import type { Article, SyncClientApi } from '#lib/sync-client'
+import type { Article, SyncClientApi, SyncState } from '#lib/sync-client'
 
 type ArticleEditorPageProps = {
   article: Article
   client: SyncClientApi
   onBack: () => void
+  error?: string | undefined
+  syncStatus?: SyncState | undefined
+  requiresAuthentication: boolean
+  onLoginAgain: () => void
 } & ArticleEditorIntegrationProps
 
 export function ArticleEditorPage({
   article,
   client,
   onBack,
+  error: syncError,
+  syncStatus,
+  requiresAuthentication,
+  onLoginAgain,
   bodyAccessory,
   editorExtensions,
   headerActions,
@@ -43,12 +51,14 @@ export function ArticleEditorPage({
 
   return (
     <ArticleEditorView
+      articleId={article.id}
       bodyAccessory={bodyAccessory}
       doc={doc}
       editorExtensions={editorExtensions}
       headerActions={headerActions}
       onBack={onBack}
       onViewChange={onViewChange}
+      onLoginAgain={onLoginAgain}
       outlineAccessory={outlineAccessory}
       premiseAccessory={premiseAccessory}
       onTitleChange={(title) => {
@@ -62,6 +72,9 @@ export function ArticleEditorPage({
         )
       }}
       sourcesPanel={sourcesPanel}
+      syncError={syncError}
+      syncStatus={syncStatus}
+      requiresAuthentication={requiresAuthentication}
       status={
         error === undefined
           ? doc === undefined

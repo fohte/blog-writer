@@ -39,18 +39,25 @@ export function ArticleWorkspace({
   if (article && client) {
     return (
       <ArticleEditorPage
+        key={article.id}
         article={article}
         bodyAccessory={bodyAccessory}
         client={client}
         editorExtensions={editorExtensions}
+        error={error}
         headerActions={headerActions}
+        onLoginAgain={() => {
+          window.location.reload()
+        }}
         onBack={() => {
           setSelectedArticleId(undefined)
         }}
         onViewChange={onViewChange}
         outlineAccessory={outlineAccessory}
         premiseAccessory={premiseAccessory}
+        requiresAuthentication={requiresAuthentication}
         sourcesPanel={sourcesPanel}
+        syncStatus={statuses[article.id] ?? client.getStatus(article.id)}
       />
     )
   }
