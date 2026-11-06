@@ -420,6 +420,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
       }
     },
     destroy() {
+      clearError()
       errorListeners.clear()
     },
   }
