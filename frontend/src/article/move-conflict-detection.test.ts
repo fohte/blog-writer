@@ -159,6 +159,7 @@ cc
     const restoreAt = body.toJSON().indexOf('# Ccc')
     body.insert(restoreAt, 'one ')
     const afterState = stateVector(A.doc)
+    body.insert(restoreAt + 'one '.length, 'typed ')
     body.delete(0, 2)
     recordMoveConflictRestoration(A.doc, beforeState, afterState)
     settle({ A, B })
@@ -173,7 +174,7 @@ cc
       bodies: [
         `Aaa
 aa
-one # Ccc
+one typed # Ccc
 cc
 
 # Bbb
@@ -181,7 +182,7 @@ two
 `,
         `Aaa
 aa
-one # Ccc
+one typed # Ccc
 cc
 
 # Bbb
@@ -189,8 +190,8 @@ two
 `,
       ],
       conflicts: [
-        [{ text: 'one ', target: 31 }],
-        [{ text: 'one ', target: 31 }],
+        [{ text: 'one ', target: 37 }],
+        [{ text: 'one ', target: 37 }],
       ],
     })
   })

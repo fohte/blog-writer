@@ -1,6 +1,10 @@
 import * as Y from 'yjs'
 
 import {
+  getMoveConflictEligibleRanges,
+  type MoveConflictTarget,
+} from '#article/move-conflict-eligibility'
+import {
   findItem,
   indexInternalItems,
   indexRelocations,
@@ -94,7 +98,7 @@ function targetFromAnchor(
   anchor: TrackedId | null,
   side: 'before' | 'after',
   index: InternalItemIndex,
-): { target: TrackedTarget; position: number; recordId: string } | undefined {
+): MoveConflictTarget | undefined {
   if (!anchor) return undefined
   const candidates = sourceCandidatesFromAnchor(
     sourceIndex,
@@ -150,14 +154,22 @@ function targetFromAnchor(
       if (mapped) {
         const target: TrackedTarget = { ...mapped, side }
         const position = targetPositionFromIndex(index, target)
-        if (position !== undefined) return { target, position, recordId }
+        if (position !== undefined)
+          return {
+            target,
+            position,
+            recordId,
+            includeConcurrent: false,
+            includeAll: true,
+          }
       }
       continue
     }
     if ('relocationOnly' in candidate) continue
     const sourceOffset = candidate.sourceOffset
+    const includeConcurrent = side === 'after' || sourceOffset > 0
     const concurrent =
-      (side === 'after' || sourceOffset > 0) &&
+      includeConcurrent &&
       isConcurrent(doc, record, item.id.client, item.id.clock)
     const restored = isItemRestored(restorations, recordId, item)
     if (!concurrent && !restored) continue
@@ -172,6 +184,8 @@ function targetFromAnchor(
         target,
         position,
         recordId: moveRecordId(record),
+        includeConcurrent,
+        includeAll: false,
       }
     }
   }
@@ -208,10 +222,7 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
   const itemIndex = indexInternalItems(text, sourceIndex)
   const decisions = indexMoveConflictDecisions(doc)
   const restorations = indexMoveConflictRestorations(doc)
-  const tainted = new Map<
-    InternalItem,
-    { target: TrackedTarget; position: number; recordId: string }
-  >()
+  const tainted = new Map<InternalItem, MoveConflictTarget>()
   const ranges: Array<{
     from: number
     to: number
@@ -260,7 +271,7 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
           (isConcurrent(doc, record, item.id.client, item.id.clock) ||
             isItemRestored(restorations, taintedTarget.recordId, item))
         ) {
-          target = taintedTarget
+          target = { ...taintedTarget, includeConcurrent: true }
         }
         if (target) break
       }
@@ -274,37 +285,46 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
       continue
     }
     let lastOffset = 0
-    for (const decisionRange of getUnkeptMoveConflictRanges(
-      decisions,
-      target.recordId,
+    const eligibleRanges = getMoveConflictEligibleRanges(
+      doc,
       decisionRangeForItem(item),
-    )) {
-      const offset = decisionRange.clock - item.id.clock
-      const from = position + offset
-      const to = from + decisionRange.length
-      if (offset > lastOffset) last = undefined
-      if (
-        last &&
-        last.to === from &&
-        idEqual(last.target, target.target) &&
-        last.target.side === target.target.side &&
-        last.recordId === target.recordId
-      ) {
-        last.to = to
-        last.decisionRanges.push(decisionRange)
-      } else {
-        last = {
-          from,
-          to,
-          target: target.target,
-          targetPosition: target.position,
-          id: `${decisionRange.client.toString()}:${decisionRange.clock.toString()}`,
-          recordId: target.recordId,
-          decisionRanges: [decisionRange],
+      recordsById.get(target.recordId),
+      target,
+      restorations.get(target.recordId) ?? [],
+    )
+    for (const eligibleRange of eligibleRanges) {
+      for (const decisionRange of getUnkeptMoveConflictRanges(
+        decisions,
+        target.recordId,
+        eligibleRange,
+      )) {
+        const offset = decisionRange.clock - item.id.clock
+        const from = position + offset
+        const to = from + decisionRange.length
+        if (offset > lastOffset) last = undefined
+        if (
+          last &&
+          last.to === from &&
+          idEqual(last.target, target.target) &&
+          last.target.side === target.target.side &&
+          last.recordId === target.recordId
+        ) {
+          last.to = to
+          last.decisionRanges.push(decisionRange)
+        } else {
+          last = {
+            from,
+            to,
+            target: target.target,
+            targetPosition: target.position,
+            id: `${decisionRange.client.toString()}:${decisionRange.clock.toString()}`,
+            recordId: target.recordId,
+            decisionRanges: [decisionRange],
+          }
+          ranges.push(last)
         }
-        ranges.push(last)
+        lastOffset = offset + decisionRange.length
       }
-      lastOffset = offset + decisionRange.length
     }
     if (lastOffset < item.length) last = undefined
     position += item.length
@@ -325,6 +345,7 @@ export function detectMoveConflictDetails(doc: Y.Doc): MoveConflictDetail[] {
   }))
 }
 
+// Pass state snapshots from immediately before and after undo; every new body item in that interval is treated as restored.
 export function recordMoveConflictRestoration(
   doc: Y.Doc,
   beforeState: ReadonlyMap<number, number>,

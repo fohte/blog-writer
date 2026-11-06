@@ -272,12 +272,24 @@ export function isConcurrent(
   client: number,
   clock: number,
 ): boolean {
-  const ack = getMoveAcks(doc).get(moveAckKey(record, client))
+  const range = getConcurrentClockRange(doc, record, client)
   return (
-    client !== record.copy[0] &&
-    clock >= (record.sv[client.toString()] ?? 0) &&
-    clock < (ack ?? Number.POSITIVE_INFINITY)
+    range !== undefined &&
+    clock >= range.clock &&
+    clock < range.clock + range.length
   )
+}
+
+export function getConcurrentClockRange(
+  doc: Y.Doc,
+  record: MoveRecord,
+  client: number,
+): TrackedIdRange | undefined {
+  if (client === record.copy[0]) return undefined
+  const clock = record.sv[client.toString()] ?? 0
+  const end =
+    getMoveAcks(doc).get(moveAckKey(record, client)) ?? Number.POSITIVE_INFINITY
+  return clock < end ? { client, clock, length: end - clock } : undefined
 }
 
 function deleteSetIntersectsSource(
