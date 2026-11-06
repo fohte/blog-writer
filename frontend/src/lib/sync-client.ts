@@ -4,6 +4,8 @@ import { IndexeddbPersistence } from 'y-indexeddb'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 
+import { observeMoveConflicts } from '#article/move-conflicts'
+
 const ARTICLE_INDEX_DOC_ID = 'article-index'
 
 export type SyncState = 'saved' | 'unsynced' | 'syncing' | 'synced'
@@ -12,6 +14,7 @@ type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'
 export type Article = {
   id: string
   createdAt: number
+  title: string
 }
 
 class SyncClientError extends Error {
@@ -57,6 +60,7 @@ export interface SyncClientApi {
   start(): ResultAsync<void, SyncClientError>
   openDocument(docId: string): Result<Y.Doc, SyncClientError>
   createArticle(): Result<Article, SyncClientError>
+  updateArticleTitle(id: string, title: string): Result<void, SyncClientError>
   listArticles(): Article[]
   getStatus(docId: string): SyncState | undefined
   getError(): SyncClientError | undefined
@@ -70,6 +74,7 @@ type SyncDocument = {
   persistence: LocalPersistence
   provider: WebsocketConnection
   status: SyncState
+  stopObservingMoveConflicts: () => void
   subscribe: (listener: (event: SyncDocumentEvent) => void) => () => void
 }
 
@@ -135,11 +140,23 @@ const checkAccessRedirect = () => {
 const buildSyncDocument = (options: SyncClientOptions, docId: string) =>
   Result.fromThrowable(() => options.createDoc(), toSyncClientError)().andThen(
     (doc) => {
+      const observerResult = Result.fromThrowable(
+        () =>
+          docId === ARTICLE_INDEX_DOC_ID ? () => {} : observeMoveConflicts(doc),
+        toSyncClientError,
+      )()
+      if (observerResult.isErr()) {
+        doc.destroy()
+        return err(observerResult.error)
+      }
+      const stopObservingMoveConflicts = observerResult.value
+
       const persistenceResult = Result.fromThrowable(
         () => options.createPersistence(docId, doc),
         toSyncClientError,
       )()
       if (persistenceResult.isErr()) {
+        stopObservingMoveConflicts()
         doc.destroy()
         return err(persistenceResult.error)
       }
@@ -149,16 +166,23 @@ const buildSyncDocument = (options: SyncClientOptions, docId: string) =>
         toSyncClientError,
       )()
       if (providerResult.isErr()) {
+        stopObservingMoveConflicts()
         doc.destroy()
         return err(providerResult.error)
       }
 
       return Result.fromThrowable(
         () =>
-          makeSyncDocument(doc, persistenceResult.value, providerResult.value),
+          makeSyncDocument(
+            doc,
+            persistenceResult.value,
+            providerResult.value,
+            stopObservingMoveConflicts,
+          ),
         toSyncClientError,
       )().mapErr((error) => {
         providerResult.value.destroy()
+        stopObservingMoveConflicts()
         doc.destroy()
         return error
       })
@@ -234,6 +258,7 @@ class SyncClient implements SyncClientApi {
       () => ({
         id: this.options.createArticleId(),
         createdAt: this.options.now(),
+        title: 'Untitled article',
       }),
       toSyncClientError,
     )().andThen((article) =>
@@ -241,6 +266,7 @@ class SyncClient implements SyncClientApi {
         Result.fromThrowable(() => {
           const entry = new Y.Map<unknown>()
           entry.set('createdAt', article.createdAt)
+          entry.set('title', article.title)
           this.index.doc
             .getMap<Y.Map<unknown>>('articles')
             .set(article.id, entry)
@@ -251,11 +277,25 @@ class SyncClient implements SyncClientApi {
     )
   }
 
+  updateArticleTitle(id: string, title: string) {
+    const entry = this.index.doc.getMap<Y.Map<unknown>>('articles').get(id)
+    if (!entry)
+      return err(new SyncClientError('Article not found', new Error(id)))
+    return Result.fromThrowable(() => {
+      entry.set('title', title)
+    }, toSyncClientError)()
+  }
+
   listArticles(): Article[] {
     return [...this.index.doc.getMap<Y.Map<unknown>>('articles')]
       .map(([id, entry]) => {
         const createdAt = entry.get('createdAt')
-        return { id, createdAt: typeof createdAt === 'number' ? createdAt : 0 }
+        const title = entry.get('title')
+        return {
+          id,
+          createdAt: typeof createdAt === 'number' ? createdAt : 0,
+          title: typeof title === 'string' ? title : 'Untitled article',
+        }
       })
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
   }
@@ -282,6 +322,7 @@ class SyncClient implements SyncClientApi {
     this.destroyed = true
     for (const document of this.documents.values()) {
       document.provider.destroy()
+      document.stopObservingMoveConflicts()
       document.doc.destroy()
     }
     this.documents.clear()
@@ -361,6 +402,7 @@ const makeSyncDocument = (
   doc: Y.Doc,
   persistence: LocalPersistence,
   provider: WebsocketConnection,
+  stopObservingMoveConflicts: () => void,
 ): SyncDocument => {
   let status: SyncState = 'saved'
   let localReady = persistence.synced
@@ -423,6 +465,7 @@ const makeSyncDocument = (
     doc,
     persistence,
     provider,
+    stopObservingMoveConflicts,
     get status() {
       return status
     },

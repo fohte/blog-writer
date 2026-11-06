@@ -1,0 +1,120 @@
+import { ok, okAsync } from 'neverthrow'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { page, userEvent } from 'vitest/browser'
+import * as Y from 'yjs'
+
+import { getBody, setBody } from '#article/index'
+import type { Article, SyncClientApi } from '#lib/sync-client'
+import { ArticleWorkspace } from '#pages/article-workspace'
+
+let host: HTMLDivElement | undefined
+let root: Root | undefined
+let doc: Y.Doc | undefined
+
+beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+})
+
+afterEach(() => {
+  act(() => root?.unmount())
+  root = undefined
+  host?.remove()
+  host = undefined
+  doc?.destroy()
+  doc = undefined
+  vi.unstubAllGlobals()
+})
+
+describe('article editor screen', () => {
+  it('opens an article, edits and reorders its body, undoes the move, and returns to the list', async () => {
+    const article: Article = {
+      id: 'article-a',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    const body = getBody(articleDoc)
+    const initialBody =
+      '# First section\n\nFirst paragraph.\n\n# Second section\n\nSecond paragraph.\n'
+    setBody(articleDoc, initialBody)
+    const client: SyncClientApi = {
+      start: () => okAsync(undefined),
+      openDocument: () => ok(articleDoc),
+      createArticle: () => ok(article),
+      updateArticleTitle: () => ok(undefined),
+      listArticles: () => [article],
+      getStatus: () => 'synced',
+      getError: () => undefined,
+      requiresAuthentication: () => false,
+      subscribe: () => () => {},
+      destroy: () => {},
+    }
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+
+    act(() => {
+      root?.render(
+        <ArticleWorkspace
+          articles={[article]}
+          client={client}
+          onCreateArticle={() => undefined}
+          onOpenSettings={() => {}}
+          ready
+          requiresAuthentication={false}
+          statuses={{ [article.id]: 'synced' }}
+        />,
+      )
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const editor = host.querySelector<HTMLElement>('.cm-content')
+    const firstLine = host.querySelector<HTMLElement>('.cm-line')
+    if (!editor || !firstLine)
+      throw new Error('The article editor did not open')
+
+    await act(async () => {
+      await userEvent.click(firstLine)
+      await userEvent.keyboard('{Home}')
+      await userEvent.keyboard('{ArrowRight}{ArrowRight}')
+      await userEvent.type(editor, 'Updated ')
+      await userEvent.keyboard('{Alt>}{ArrowDown}{/Alt}')
+    })
+    const bodyAfterMove = body.toJSON()
+
+    await act(async () => {
+      await userEvent.keyboard('{Meta>}z{/Meta}')
+    })
+
+    const editedBody = initialBody.replace(
+      '# First section',
+      '# Updated First section',
+    )
+    const bodyAfterUndo = body.toJSON()
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Back to articles' }),
+      )
+    })
+
+    const readScreenOutput = () => ({
+      bodyAfterMove,
+      bodyAfterUndo,
+      listTitle: host?.querySelector('[role="listitem"] button span')
+        ?.textContent,
+      editorCount: host?.querySelectorAll('.cm-content').length,
+    })
+    expect(readScreenOutput()).toEqual({
+      bodyAfterMove:
+        '# Second section\n\nSecond paragraph.\n\n# Updated First section\n\nFirst paragraph.\n',
+      bodyAfterUndo: editedBody,
+      listTitle: article.title,
+      editorCount: 0,
+    })
+  })
+})

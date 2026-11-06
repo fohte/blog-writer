@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
+import { moveBlock, readBody, setBody } from '#article/index'
+import { observeMoveConflicts } from '#article/move-conflicts'
 import type { SyncClientOptions } from '#lib/sync-client'
 import { createSyncClient } from '#lib/sync-client'
 
@@ -155,6 +157,7 @@ describe('createSyncClient', () => {
         {
           id: '018f0000-0000-7000-8000-000000000001',
           createdAt: 1_800_000_000_000,
+          title: 'Untitled article',
         },
       ],
       [
@@ -185,8 +188,8 @@ describe('createSyncClient', () => {
     ]
 
     expect(readArticleOutput()).toEqual([
-      { id, createdAt: 1_800_000_000_001 },
-      [{ id, createdAt: 1_800_000_000_001 }],
+      { id, createdAt: 1_800_000_000_001, title: 'Untitled article' },
+      [{ id, createdAt: 1_800_000_000_001, title: 'Untitled article' }],
       true,
     ])
     client.destroy()
@@ -194,9 +197,84 @@ describe('createSyncClient', () => {
     const restored = createFixture(savedDocuments)
     await restored.client.start()
     expect(restored.client.listArticles()).toEqual([
-      { id, createdAt: 1_800_000_000_001 },
+      { id, createdAt: 1_800_000_000_001, title: 'Untitled article' },
     ])
     restored.client.destroy()
+  })
+
+  it('keeps article titles in the index document instead of the article document', () => {
+    const { client } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    const articleDoc = client.openDocument(article.id)._unsafeUnwrap()
+    client.updateArticleTitle(article.id, 'A revised title')._unsafeUnwrap()
+
+    const readTitleOutput = () => ({
+      articles: client.listArticles(),
+      articleDocumentHasTitle: articleDoc.share.has('title'),
+    })
+    expect(readTitleOutput()).toEqual({
+      articles: [
+        {
+          id: article.id,
+          createdAt: article.createdAt,
+          title: 'A revised title',
+        },
+      ],
+      articleDocumentHasTitle: false,
+    })
+    client.destroy()
+  })
+
+  it('repairs a remote deletion when a move record arrives before the editor opens', async () => {
+    const articleId = '018f0000-0000-7000-8000-000000000003'
+    const baseline = new Y.Doc()
+    baseline.clientID = 71
+    const scenarioMarkdown =
+      '## Cedar\na1\n## Fjord\nmaple maple\n## Vista\nz9\n'
+    setBody(baseline, scenarioMarkdown)
+
+    const offlineEditor = new Y.Doc()
+    offlineEditor.clientID = 73
+    Y.applyUpdate(offlineEditor, Y.encodeStateAsUpdate(baseline))
+    const offlineBody = offlineEditor.getText('body')
+    offlineBody.insert(offlineBody.toJSON().indexOf('maple') + 5, 'xy')
+    offlineBody.delete(offlineBody.toJSON().lastIndexOf('ple'), 3)
+
+    const mover = new Y.Doc()
+    mover.clientID = 72
+    Y.applyUpdate(mover, Y.encodeStateAsUpdate(baseline))
+    moveBlock(mover, {
+      from: scenarioMarkdown.indexOf('## Fjord\n'),
+      destination: scenarioMarkdown.length,
+    })._unsafeUnwrap()
+    const moveUpdate = Y.encodeStateAsUpdate(
+      mover,
+      Y.encodeStateVector(baseline),
+    )
+
+    const savedDocuments = new Map([
+      [articleId, Y.encodeStateAsUpdate(offlineEditor)],
+    ])
+    const { client } = createFixture(savedDocuments)
+    await client.start()
+    const openedDoc = client.openDocument(articleId)._unsafeUnwrap()
+    const stopEditorObserver = observeMoveConflicts(openedDoc)
+    Y.applyUpdate(openedDoc, moveUpdate, 'remote-move')
+
+    const readMoveOutput = () => ({
+      body: readBody(openedDoc),
+      acknowledgements: openedDoc.getMap('move-acks').size,
+    })
+    expect(readMoveOutput()).toEqual({
+      body: '## Cedar\na1\nxy## Vista\nz9\n\n## Fjord\nmaple ma\n',
+      acknowledgements: 1,
+    })
+
+    stopEditorObserver()
+    client.destroy()
+    baseline.destroy()
+    mover.destroy()
+    offlineEditor.destroy()
   })
 
   it('updates document status across a connection and failed reconnect', async () => {
