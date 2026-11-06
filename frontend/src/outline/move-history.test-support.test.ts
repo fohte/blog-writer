@@ -1,5 +1,7 @@
 import { EditorSelection, EditorState, Transaction } from '@codemirror/state'
 import { EditorView, type ViewUpdate } from '@codemirror/view'
+import { act } from 'react'
+import { userEvent } from 'vitest/browser'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
@@ -79,6 +81,26 @@ export function step(
       throw error
     },
   )
+}
+
+function modifierKey() {
+  return navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+}
+
+export async function pressUndo(view: EditorView) {
+  view.focus()
+  const modifier = modifierKey()
+  await act(async () => {
+    await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+  })
+}
+
+export async function pressRedo(view: EditorView) {
+  view.focus()
+  const modifier = modifierKey()
+  await act(async () => {
+    await userEvent.keyboard(`{${modifier}>}{Shift>}z{/Shift}{/${modifier}}`)
+  })
 }
 
 export function readSelection(selection: EditorSelection) {

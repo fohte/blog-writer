@@ -15,7 +15,7 @@ import {
 } from '#article/index'
 import { insertMemoAsHeading } from '#memos/adoption'
 import { createMoveHistory } from '#outline/index'
-import { pressRedo, pressUndo } from '#test-utils/browser-editor-history'
+import { pressRedo, pressUndo } from '#outline/move-history.test-support.test'
 
 type MountedEditor = {
   doc: Y.Doc

@@ -24,7 +24,7 @@ import {
   createOutlineEditorExtension,
 } from '#outline/index'
 import type { MoveHistory } from '#outline/move-history'
-import { pressRedo, pressUndo } from '#test-utils/browser-editor-history'
+import { pressRedo, pressUndo } from '#outline/move-history.test-support.test'
 
 type ViewRef = { current: EditorView | null }
 type MountedEditor = {
