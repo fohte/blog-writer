@@ -7,20 +7,14 @@ import * as Y from 'yjs'
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
 
 describe('MarkdownEditor', () => {
-  it('shows heading and inline-code markers while the cursor is in their ranges', () => {
+  it('shows heading and inline-code markers while the cursor is in their ranges', async () => {
     const { content, host } = mountMarkdownEditor(
       '## Heading **bold** and `code`',
     )
     content?.focus()
-    content?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'End', bubbles: true }),
-    )
-    content?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }),
-    )
-    content?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }),
-    )
+    await act(async () => {
+      await userEvent.keyboard('{End}{ArrowLeft}{ArrowLeft}')
+    })
 
     const readOutput = () => ({
       text: content?.textContent,
