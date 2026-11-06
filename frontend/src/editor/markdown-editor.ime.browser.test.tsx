@@ -68,7 +68,7 @@ const webkitDriver: ImeDriver = {
     )
     for (const char of text) {
       await userEvent.keyboard(char)
-      // WebKit's Page.insertText can ignore the DOM caret while layout is dirty.
+      // WebKit's Page.insertText appears to ignore the DOM caret while layout is dirty.
       content?.getBoundingClientRect()
     }
     await nextFrame()
