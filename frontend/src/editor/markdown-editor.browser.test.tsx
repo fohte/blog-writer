@@ -5,6 +5,7 @@ import { userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
+import { nextFrame } from '#test-support/browser'
 
 describe('MarkdownEditor', () => {
   it('shows heading and inline-code markers while the cursor is in their ranges', async () => {
@@ -14,11 +15,7 @@ describe('MarkdownEditor', () => {
     content?.focus()
     await act(async () => {
       await userEvent.keyboard('{End}{ArrowLeft}{ArrowLeft}')
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          resolve()
-        })
-      })
+      await nextFrame()
     })
 
     const readOutput = () => ({
