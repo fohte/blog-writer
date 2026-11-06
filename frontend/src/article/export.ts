@@ -4,6 +4,29 @@ import remarkMdx from 'remark-mdx'
 
 export type ExportFormat = 'markdown' | 'mdx'
 
+const editorComponents = new Set([
+  'CardLink',
+  'ImageGrid',
+  'Kbd',
+  'SpeakerDeck',
+])
+const voidHtmlElements = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+])
+
 class ArticleExportError extends Error {
   constructor(cause: unknown) {
     super('The article could not be converted to MDX.', { cause })
@@ -32,25 +55,48 @@ function rewriteComment(node: ExportNode): void {
   const match = /^\s*<!--([\s\S]*?)-->\s*$/.exec(node.value)
   if (!match) return
 
-  node.value = `{/*${match[1] ?? ''}*/}`
+  node.value = `{/*${(match[1] ?? '').replaceAll('*/', '*\\/')}*/}`
 }
 
-function rewriteArrayType(node: ExportNode): void {
+function rewriteParagraph(node: ExportNode): void {
   if (node.type !== 'paragraph' || node.children === undefined) return
 
-  for (let index = 1; index < node.children.length; index += 1) {
+  for (let index = 0; index < node.children.length; index += 1) {
     const previous = node.children[index - 1]
     const current = node.children[index]
     if (
-      !isExportNode(previous) ||
       !isExportNode(current) ||
-      previous.type !== 'text' ||
       current.type !== 'html' ||
-      current.value !== '<T>' ||
-      !/(^|\W)Array$/.test(previous.value ?? '')
+      current.value === undefined
     ) {
       continue
     }
+
+    const tag = /^<([A-Za-z][\w-]*)([^>]*)\s*\/?\s*>$/.exec(current.value)
+    const tagName = tag?.[1]
+    if (tagName === undefined) continue
+
+    if (voidHtmlElements.has(tagName.toLowerCase())) {
+      current.value = current.value.replace(/\s*\/?>$/, ' />')
+      continue
+    }
+
+    if (editorComponents.has(tagName)) continue
+    if (current.value.trimEnd().endsWith('/>')) continue
+
+    const previousText =
+      isExportNode(previous) && previous.type === 'text'
+        ? (previous.value ?? '')
+        : ''
+    const nextClose = node.children
+      .slice(index + 1)
+      .some(
+        (candidate) =>
+          isExportNode(candidate) &&
+          candidate.type === 'html' &&
+          candidate.value === `</${tagName}>`,
+      )
+    if (nextClose || !/[A-Za-z_$][\w$]*$/.test(previousText)) continue
 
     current.type = 'text'
   }
@@ -58,7 +104,7 @@ function rewriteArrayType(node: ExportNode): void {
 
 function rewriteTree(node: ExportNode): void {
   rewriteComment(node)
-  rewriteArrayType(node)
+  rewriteParagraph(node)
   for (const child of node.children ?? []) {
     if (isExportNode(child)) rewriteTree(child)
   }

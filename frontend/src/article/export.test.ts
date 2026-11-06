@@ -6,12 +6,12 @@ import { exportArticleBody } from '#article/export'
 const articleBody = [
   'Literal {x}, 1<2, and <https://example.test>.',
   '',
-  'Array<T>, <CardLink />, <Kbd>Cmd</Kbd>, <SpeakerDeck />, and <ImageGrid />.',
+  'Promise<string>, Map<K, V>, Array<T>, <br>, <CardLink />, <Kbd>Cmd</Kbd>, <SpeakerDeck />, and <ImageGrid />.',
   '',
   '    const value = 1',
   '    return value',
   '',
-  '<!-- note -->',
+  '<!-- note */ stays safe -->',
   '',
   '<details>',
   '<summary>More information</summary>',
@@ -41,14 +41,14 @@ describe('exportArticleBody', () => {
     expect(result).toEqual(
       String.raw`Literal \{x}, 1\<2, and [https://example.test](https://example.test).
 
-Array\<T>, <CardLink />, <Kbd>Cmd</Kbd>, <SpeakerDeck />, and <ImageGrid />.
+Promise\<string>, Map\<K, V>, Array\<T>, <br />, <CardLink />, <Kbd>Cmd</Kbd>, <SpeakerDeck />, and <ImageGrid />.
 
 ${'```'}
 const value = 1
 return value
 ${'```'}
 
-{/* note */}
+{/* note *\/ stays safe */}
 
 <details>
 <summary>More information</summary>
@@ -59,7 +59,7 @@ Unclosed tags remain raw JSX.
 
   it('produces MDX accepted by the MDX compiler', async () => {
     const result = await exportArticleBody(
-      'Text {x} and 1<2.\n\n<!-- note -->\n\n<details>Info</details>',
+      'Text {x} and 1<2. Promise<string> and <br>.\n\n<!-- note */ -->\n\n<details>Info</details>',
       'mdx',
     ).match(
       (value) => value,

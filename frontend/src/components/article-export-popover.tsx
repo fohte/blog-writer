@@ -20,6 +20,7 @@ type ArticleExportPopoverProps = {
   body: string
   open?: boolean | undefined
   format?: ExportFormat | undefined
+  error?: string | undefined
 }
 
 export function ArticleExportPopover({
@@ -27,10 +28,12 @@ export function ArticleExportPopover({
   body,
   open,
   format,
+  error,
 }: ArticleExportPopoverProps) {
   const [internalOpen, setInternalOpen] = useState(false)
   const [internalFormat, setInternalFormat] = useState<ExportFormat>('markdown')
-  const [error, setError] = useState<string>()
+  const [conversionError, setConversionError] = useState<string>()
+  const visibleError = error ?? conversionError
   const isOpen = open ?? internalOpen
   const selectedFormat = format ?? internalFormat
 
@@ -48,7 +51,7 @@ export function ArticleExportPopover({
   }
 
   function handleDownload() {
-    setError(undefined)
+    setConversionError(undefined)
     void exportArticleBody(body, selectedFormat).match(
       (contents) => {
         downloadArticleFile(
@@ -57,7 +60,7 @@ export function ArticleExportPopover({
         )
       },
       (exportError) => {
-        setError(exportError.message)
+        setConversionError(exportError.message)
       },
     )
   }
@@ -75,8 +78,8 @@ export function ArticleExportPopover({
           options={formatOptions}
           value={selectedFormat}
         />
-        {error !== undefined && error.length > 0 ? (
-          <p role="alert">{error}</p>
+        {visibleError !== undefined && visibleError.length > 0 ? (
+          <p role="alert">{visibleError}</p>
         ) : null}
         <Button onClick={handleDownload} type="button">
           ダウンロード

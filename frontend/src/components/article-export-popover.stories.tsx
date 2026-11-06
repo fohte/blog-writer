@@ -32,3 +32,12 @@ export const MdxSelected: Story = {
     format: 'mdx',
   },
 }
+
+export const ConversionError: Story = {
+  name: 'the export options show a conversion error',
+  args: {
+    open: true,
+    format: 'mdx',
+    error: 'The article could not be converted to MDX.',
+  },
+}

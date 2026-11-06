@@ -41,7 +41,22 @@ afterEach(() => {
 })
 
 describe('ArticleExportPopover', () => {
-  it('downloads the selected format with the article body', async () => {
+  it.each([
+    {
+      name: 'downloads the default Markdown format unchanged',
+      format: undefined,
+      expected: ['sample-article.md', 'Literal {x} and 1<2.'],
+    },
+    {
+      name: 'downloads MDX after the format is selected',
+      format: 'mdx',
+      expected: [
+        'sample-article.mdx',
+        String.raw`Literal \{x} and 1\<2.
+`,
+      ],
+    },
+  ] as const)('$name', async ({ format, expected }) => {
     host = document.createElement('div')
     document.body.append(host)
     root = createRoot(host)
@@ -57,16 +72,14 @@ describe('ArticleExportPopover', () => {
 
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: '書き出す' }))
-      await userEvent.click(page.getByRole('button', { name: 'MDX' }))
+      if (format !== undefined) {
+        await userEvent.click(page.getByRole('button', { name: 'MDX' }))
+      }
       await userEvent.click(page.getByRole('button', { name: 'ダウンロード' }))
     })
 
     await vi.waitFor(async () => {
-      expect(await readDownload()).toEqual([
-        'sample-article.mdx',
-        String.raw`Literal \{x} and 1\<2.
-`,
-      ])
+      expect(await readDownload()).toEqual(expected)
     })
   })
 })
