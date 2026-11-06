@@ -35,7 +35,7 @@ const articleBody = [
   '',
   '<br>',
   '<hr>',
-  '<img src="sample.png">',
+  '<img alt="a>b" src="sample.png">',
   '',
   '<details>',
   '<summary>More information</summary>',
@@ -97,7 +97,7 @@ describe('exportArticleBody', () => {
         '',
         '<br />',
         '<hr />',
-        '<img src="sample.png" />',
+        '<img alt="a>b" src="sample.png" />',
         '',
         '<details>',
         '<summary>More information</summary>',
@@ -121,6 +121,7 @@ describe('exportArticleBody', () => {
       '    return value',
       '',
       '<details><summary>More information</summary><br></details>',
+      '<img alt="a>b" src="sample.png">',
     ].join('\n')
     const result = await exportArticleBody(source, 'mdx').match(
       async (value) => ({

@@ -37,7 +37,7 @@ const phrasingParents = new Set([
   'tableCell',
 ])
 const htmlRewritePattern = new RegExp(
-  `<!--[\\s\\S]*?-->|<(${[...voidHtmlElements].join('|')})(?=[\\s/>])([^<>]*?)\\s*\\/?>`,
+  `<!--[\\s\\S]*?-->|<(${[...voidHtmlElements].join('|')})(?=[\\s/>])((?:"[^"]*"|'[^']*'|[^<>"'])*?)\\s*\\/?>`,
   'gi',
 )
 
