@@ -9,7 +9,7 @@ import {
   readSelection,
   step,
 } from '#outline/move-history.test-support.test'
-import { nextFrame } from '#test-support/browser'
+import { nextFrame } from '#test-support/browser.test-support.test'
 
 afterEach(cleanupHistoryEditors)
 

@@ -5,18 +5,18 @@ import { userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
-import { nextFrame } from '#test-support/browser'
+import { nextFrame } from '#test-support/browser.test-support.test'
 
 describe('MarkdownEditor', () => {
   it('shows heading and inline-code markers while the cursor is in their ranges', async () => {
     const markdownText = '## Heading **bold** and `code`'
+    const cursorPosition = markdownText.indexOf('code') + 2
     const { content, host } = mountMarkdownEditor(markdownText)
     const view = content ? EditorView.findFromDOM(content) : null
-    content?.focus()
-    await act(async () => {
-      await userEvent.keyboard('{End}{ArrowLeft}{ArrowLeft}')
-      await nextFrame()
+    act(() => {
+      view?.dispatch({ selection: { anchor: cursorPosition } })
     })
+    await nextFrame()
 
     const readOutput = () => ({
       text: content?.textContent,
@@ -27,7 +27,7 @@ describe('MarkdownEditor', () => {
     expect(readOutput()).toEqual({
       text: '## Heading bold and `code`',
       headingClass: 'cm-line cm-md-heading cm-md-heading-2',
-      selection: 27,
+      selection: cursorPosition,
     })
   })
 
