@@ -15,6 +15,7 @@ interface StoryArgs {
   suggestion?: TextSuggestion
   initialSelectionHead: number
   initialInFlight?: SuggestionPosition
+  width?: string
 }
 
 function SuggestionEditorPreview({
@@ -22,6 +23,7 @@ function SuggestionEditorPreview({
   suggestion,
   initialSelectionHead,
   initialInFlight,
+  width,
 }: StoryArgs) {
   const { body, doc, layer } = useMemo(() => {
     const doc = new Y.Doc()
@@ -29,7 +31,6 @@ function SuggestionEditorPreview({
     body.insert(0, content)
     const layer = createSuggestionLayer({
       initialSuggestions: suggestion ? [suggestion] : [],
-      initialSelectionHead,
       ...(initialInFlight ? { initialInFlight } : {}),
     })
     return { body, doc, layer }
@@ -42,7 +43,7 @@ function SuggestionEditorPreview({
   }, [doc])
 
   return (
-    <div style={{ height: '24rem' }}>
+    <div style={{ height: '24rem', width }}>
       <MarkdownEditor
         extensions={[layer.extension]}
         initialSelection={{ anchor: initialSelectionHead }}
@@ -107,11 +108,18 @@ export const Generating: Story = {
   },
 }
 
+const midLineArgs: StoryArgs = {
+  content,
+  suggestion: inlineSuggestion,
+  initialSelectionHead: inlineSuggestion.from + 2,
+}
+
 export const MidLineRange: Story = {
   name: 'the editor shows a suggestion that replaces words within a sentence.',
-  args: {
-    content,
-    suggestion: inlineSuggestion,
-    initialSelectionHead: inlineSuggestion.from + 2,
-  },
+  args: midLineArgs,
+}
+
+export const NarrowMidLineRange: Story = {
+  name: 'the editor shows an inline suggestion in a 20rem-wide view.',
+  args: { ...midLineArgs, width: '20rem' },
 }

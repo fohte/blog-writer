@@ -147,7 +147,6 @@ function focusForSelection(
 
 export interface SuggestionLayerOptions {
   initialSuggestions?: readonly TextSuggestion[]
-  initialSelectionHead?: number
   initialInFlight?: SuggestionPosition
   onResolve?: (suggestion: TextSuggestion, decision: SuggestionDecision) => void
   onCancelInFlight?: () => void
@@ -184,10 +183,7 @@ export class SuggestionLayerController {
             )
               ? initialInFlight
               : null,
-          focusedId: focusForSelection(
-            suggestions,
-            options.initialSelectionHead ?? state.selection.main.head,
-          ),
+          focusedId: focusForSelection(suggestions, state.selection.main.head),
         }
       },
       update: (value, transaction) => {
@@ -286,6 +282,13 @@ export class SuggestionLayerController {
     if (!view) return err({ type: 'not-mounted' })
     const validation = validateSuggestions(suggestions, view.state.doc.length)
     if (validation.isErr()) return err(validation.error)
+    const inFlight = view.state.field(this.stateField, false)?.inFlight
+    if (
+      inFlight &&
+      validation.value.some((suggestion) => rangesOverlap(suggestion, inFlight))
+    ) {
+      return err({ type: 'overlapping-ranges' })
+    }
 
     view.dispatch({ effects: replaceSuggestions.of(validation.value) })
     return ok(undefined)
@@ -297,12 +300,18 @@ export class SuggestionLayerController {
     if (!view || !state?.inFlight) return ok(undefined)
 
     const id = this.createSuggestionId(state.suggestions)
-    const result = this.setSuggestions([
-      ...state.suggestions,
-      { ...state.inFlight, id, replacement },
-    ])
-    if (result.isErr()) return result
-    return this.setInFlight(null)
+    const validation = validateSuggestions(
+      [...state.suggestions, { ...state.inFlight, id, replacement }],
+      view.state.doc.length,
+    )
+    if (validation.isErr()) return err(validation.error)
+    view.dispatch({
+      effects: [
+        replaceSuggestions.of(validation.value),
+        replaceInFlight.of(null),
+      ],
+    })
+    return ok(undefined)
   }
 
   setInFlight(
@@ -315,6 +324,14 @@ export class SuggestionLayerController {
       !isRangeValid(position.from, position.to, view.state.doc.length)
     ) {
       return err({ type: 'invalid-range', id: 'in-flight' })
+    }
+    const suggestions =
+      view.state.field(this.stateField, false)?.suggestions ?? []
+    if (
+      position &&
+      suggestions.some((suggestion) => rangesOverlap(suggestion, position))
+    ) {
+      return err({ type: 'overlapping-ranges' })
     }
     view.dispatch({ effects: replaceInFlight.of(position) })
     return ok(undefined)
@@ -336,6 +353,7 @@ export class SuggestionLayerController {
       annotations: Transaction.userEvent.of('input.type'),
     })
     view.state.facet(undoManagerFacet)?.stopCapturing()
+    view.focus()
     this.options.onResolve?.(suggestion, 'accept')
   }
 
@@ -344,6 +362,7 @@ export class SuggestionLayerController {
     const suggestion = this.findSuggestion(id)
     if (!view || !suggestion) return
     view.dispatch({ effects: removeSuggestion.of(id) })
+    view.focus()
     this.options.onResolve?.(suggestion, 'reject')
   }
 

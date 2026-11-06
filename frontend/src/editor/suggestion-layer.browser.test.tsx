@@ -152,6 +152,44 @@ describe('suggestion layer', () => {
     expect(readOutput()).toEqual({ content: 'short', suggestionWidgets: 0 })
   })
 
+  it('uses the editor selection to focus an initial suggestion', () => {
+    const from = initialText.indexOf('selected')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const layer = createSuggestionLayer({
+      initialSuggestions: [
+        {
+          id: 'suggestion-initial',
+          from,
+          to: from + 'selected sentence'.length,
+          replacement: 'revised sentence',
+        },
+      ],
+    })
+    let view: EditorView | undefined
+    act(() => {
+      view = new EditorView({
+        parent: host,
+        state: EditorState.create({
+          doc: initialText,
+          selection: { anchor: from },
+          extensions: [layer.extension],
+        }),
+      })
+    })
+    if (!view) throw new Error('The suggestion editor did not mount')
+    cleanups.push(() => {
+      act(() => view?.destroy())
+      host.remove()
+    })
+
+    const readOutput = () => ({
+      focused: host.querySelector('[data-focused="true"]') !== null,
+      buttonCount: host.querySelectorAll('button').length,
+    })
+    expect(readOutput()).toEqual({ focused: true, buttonCount: 2 })
+  })
+
   it('maps a suggestion after an outside edit and removes it after an edit inside the range', () => {
     const { host, setSuggestion, view } = createEditor()
     const from = initialText.indexOf('selected')
@@ -201,6 +239,35 @@ describe('suggestion layer', () => {
     expect(readOutput()).toEqual({
       lineCount: 1,
       text: 'A sentence with selectedrevised words in the middle.',
+    })
+  })
+
+  it('shows a non-empty in-flight range inline within one editor line', () => {
+    const content = 'A sentence with a pending phrase in the middle.'
+    const { host, layer } = createEditor(content)
+    const from = content.indexOf('pending')
+    let result: ReturnType<typeof layer.setInFlight> | undefined
+    act(() => {
+      result = layer.setInFlight({ from, to: from + 1 })
+    })
+    if (!result) throw new Error('Could not set in-flight state')
+    if (result.isErr()) throw new Error('Could not set in-flight state')
+
+    const line = host.querySelector('.cm-line')
+    const widget = host.querySelector('.cm-suggestion-widget')
+    const readOutput = () => ({
+      lineCount: host.querySelectorAll('.cm-line').length,
+      lineText: line?.textContent ?? null,
+      widgetTag: widget?.tagName ?? null,
+      widgetIsInLine: line?.contains(widget) ?? false,
+      status: widget?.querySelector('[role="status"]')?.textContent ?? null,
+    })
+    expect(readOutput()).toEqual({
+      lineCount: 1,
+      lineText: `${content.slice(0, from)}作成中${content.slice(from)}`,
+      widgetTag: 'SPAN',
+      widgetIsInLine: true,
+      status: '作成中',
     })
   })
 
@@ -314,6 +381,73 @@ describe('suggestion layer', () => {
     },
   )
 
+  it.each([
+    {
+      name: 'drops a proposal when a deletion crosses its start',
+      from: 2,
+      to: 6,
+      insert: '',
+      expectedVisible: false,
+      expectedBody: 'abghijklmnop',
+    },
+    {
+      name: 'drops a proposal when a deletion crosses its end',
+      from: 8,
+      to: 12,
+      insert: '',
+      expectedVisible: false,
+      expectedBody: 'abcdefghmnop',
+    },
+    {
+      name: 'keeps a proposal when a replacement ends at its start',
+      from: 2,
+      to: 4,
+      insert: 'QR',
+      expectedVisible: true,
+      expectedBody: 'abQRXYZklmnop',
+    },
+    {
+      name: 'keeps a proposal when a replacement starts at its end',
+      from: 10,
+      to: 12,
+      insert: 'QR',
+      expectedVisible: true,
+      expectedBody: 'abcdXYZQRmnop',
+    },
+  ])('$name', ({ from, to, insert, expectedVisible, expectedBody }) => {
+    const content = 'abcdefghijklmnop'
+    const { body, host, layer, view } = createEditor(content)
+    const result = layer.setSuggestions([
+      {
+        id: 'suggestion-boundary',
+        from: 4,
+        to: 10,
+        replacement: 'XYZ',
+      },
+    ])
+    if (result.isErr()) throw new Error('Could not set suggestion')
+
+    act(() => {
+      view.dispatch({ changes: { from, to, insert } })
+    })
+    const visibleAfterEdit =
+      host.querySelector('.cm-suggestion-widget') !== null
+    if (visibleAfterEdit) {
+      act(() => {
+        layer.accept('suggestion-boundary')
+      })
+    }
+
+    const readOutput = () => ({
+      visibleAfterEdit,
+      body: body.toJSON(),
+    })
+    expect(readOutput()).toEqual({
+      visibleAfterEdit: expectedVisible,
+      body: expectedBody,
+    })
+  })
+
   it('drops a zero-length suggestion when text is inserted at its position', () => {
     const { host, from, view } = createInsertionEditor()
 
@@ -380,6 +514,82 @@ describe('suggestion layer', () => {
     expect(body.toJSON()).toEqual(
       `new ${initialText.replace('selected sentence', 'revised sentence')}`,
     )
+  })
+
+  it('rejects an in-flight range that overlaps an existing suggestion', () => {
+    const { host, setSuggestion, layer } = createEditor()
+    const from = initialText.indexOf('selected')
+    setSuggestion({
+      id: 'suggestion-a',
+      from,
+      to: from + 'selected sentence'.length,
+      replacement: 'revised sentence',
+    })
+
+    let result: ReturnType<typeof layer.setInFlight> | undefined
+    act(() => {
+      result = layer.setInFlight({ from: from + 2, to: from + 6 })
+    })
+    if (!result) throw new Error('Could not set in-flight state')
+    const inFlightResult = result
+
+    const readOutput = () => ({
+      error: inFlightResult.match(
+        () => null,
+        (error) => error.type,
+      ),
+      generating: host.querySelector('.suggestion-diff-generating') !== null,
+      suggestionText:
+        host.querySelector('.suggestion-diff-text')?.textContent ?? null,
+    })
+    expect(readOutput()).toEqual({
+      error: 'overlapping-ranges',
+      generating: false,
+      suggestionText: 'selectedrevised sentence',
+    })
+  })
+
+  it('rejects a suggestion that overlaps an existing in-flight range', () => {
+    const { host, layer } = createEditor()
+    const from = initialText.indexOf('selected')
+    let inFlightResult: ReturnType<typeof layer.setInFlight> | undefined
+    act(() => {
+      inFlightResult = layer.setInFlight({
+        from,
+        to: from + 'selected sentence'.length,
+      })
+    })
+    if (!inFlightResult) throw new Error('Could not set in-flight state')
+    if (inFlightResult.isErr()) throw new Error('Could not set in-flight state')
+
+    let result: ReturnType<typeof layer.setSuggestions> | undefined
+    act(() => {
+      result = layer.setSuggestions([
+        {
+          id: 'suggestion-a',
+          from: from + 2,
+          to: from + 6,
+          replacement: 'revised',
+        },
+      ])
+    })
+    if (!result) throw new Error('Could not set suggestion')
+    const suggestionResult = result
+
+    const readOutput = () => ({
+      error: suggestionResult.match(
+        () => null,
+        (error) => error.type,
+      ),
+      generating:
+        host.querySelector('.suggestion-diff-generating')?.textContent ?? null,
+      suggestionVisible: host.querySelector('.suggestion-diff-text') !== null,
+    })
+    expect(readOutput()).toEqual({
+      error: 'overlapping-ranges',
+      generating: '作成中',
+      suggestionVisible: false,
+    })
   })
 
   it('ignores an in-flight result after an edit inside its range', () => {
@@ -626,7 +836,7 @@ describe('suggestion layer', () => {
     expect(readOutput()).toEqual({ body: initialText, fallbackRuns: 1 })
   })
 
-  it('accepts a focused suggestion from its button', () => {
+  it('accepts a focused suggestion from its button and restores editor focus', async () => {
     const { body, host, setSuggestion, view } = createEditor()
     const from = initialText.indexOf('selected')
     setSuggestion({
@@ -638,16 +848,21 @@ describe('suggestion layer', () => {
     act(() => {
       view.dispatch({ selection: { anchor: from } })
     })
-    act(() => {
-      host.querySelector<HTMLButtonElement>('button')?.click()
-    })
+    const button = host.querySelector<HTMLButtonElement>('button')
+    if (!button) throw new Error('Could not find accept button')
+    await userEvent.click(button)
 
-    expect(body.toJSON()).toEqual(
-      initialText.replace('selected sentence', 'revised sentence'),
-    )
+    const readOutput = () => ({
+      body: body.toJSON(),
+      editorFocused: view.hasFocus,
+    })
+    expect(readOutput()).toEqual({
+      body: initialText.replace('selected sentence', 'revised sentence'),
+      editorFocused: true,
+    })
   })
 
-  it('rejects a focused suggestion from its button', () => {
+  it('rejects a focused suggestion from its button and restores editor focus', async () => {
     const { body, host, setSuggestion, view } = createEditor()
     const from = initialText.indexOf('selected')
     setSuggestion({
@@ -659,15 +874,20 @@ describe('suggestion layer', () => {
     act(() => {
       view.dispatch({ selection: { anchor: from } })
     })
-    act(() => {
-      host.querySelectorAll<HTMLButtonElement>('button')[1]?.click()
-    })
+    const button = host.querySelectorAll<HTMLButtonElement>('button')[1]
+    if (!button) throw new Error('Could not find reject button')
+    await userEvent.click(button)
 
     const readOutput = () => ({
       body: body.toJSON(),
       visible: host.querySelector('.cm-suggestion-widget') !== null,
+      editorFocused: view.hasFocus,
     })
-    expect(readOutput()).toEqual({ body: initialText, visible: false })
+    expect(readOutput()).toEqual({
+      body: initialText,
+      visible: false,
+      editorFocused: true,
+    })
   })
 
   it('prioritizes list indentation before moving to the next suggestion', () => {
