@@ -1,3 +1,4 @@
+import { List } from '@fohte/ui/list'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
 import { OutlineProposalRow } from '#components/outline-proposal-row'
@@ -23,4 +24,9 @@ type Story = StoryObj<typeof meta>
 export const ProposedHeading: Story = {
   name: 'the outline shows a proposed heading with accept and reject actions.',
   args: {},
+  render: (args) => (
+    <List aria-label="Headings" role="listbox">
+      <OutlineProposalRow {...args} />
+    </List>
+  ),
 }

@@ -1,3 +1,5 @@
+import { ListItem } from '@fohte/ui/list'
+
 import { SuggestionDiff } from '#components/suggestion-diff'
 import type { OutlineSuggestion } from '#proposals/outline'
 
@@ -58,10 +60,10 @@ export function OutlineProposalRow({
   onProposalReject?: (id: string) => void
 }) {
   return (
-    <div
+    <ListItem
       aria-label={headingText(proposal.replacement)}
-      className="flex min-h-9 w-full items-center gap-2 px-3 text-left text-sm"
-      role="group"
+      indent={0}
+      selected={false}
     >
       <span
         className="min-w-0 flex-1 truncate"
@@ -75,6 +77,6 @@ export function OutlineProposalRow({
           {...proposalDiffActions(proposal, onProposalAccept, onProposalReject)}
         />
       </span>
-    </div>
+    </ListItem>
   )
 }
