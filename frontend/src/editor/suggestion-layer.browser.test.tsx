@@ -14,11 +14,16 @@ import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
 import { getBody, setBody } from '#article/body'
-import { MarkdownEditor } from '#editor/index'
+import { blockMoved } from '#article/index'
+import {
+  MarkdownEditor,
+  transitionProposalEditorExtensions,
+} from '#editor/index'
 import {
   createSuggestionLayer,
   type SuggestionLayerOptions,
 } from '#editor/suggestion-layer'
+import { saveLlmSettings } from '#lib/llm-settings'
 import { createMoveHistory } from '#outline/index'
 
 const initialText = 'opening sentence\nselected sentence\nclosing sentence'
@@ -203,6 +208,53 @@ describe('suggestion layer', () => {
       afterOutsideEdit: 'selectedrevised sentence',
       afterInsideEdit: null,
     })
+  })
+
+  it('keeps each suggestion layer state isolated in a shared editor', () => {
+    const otherLayer = createSuggestionLayer()
+    const { host, layer } = createEditor(initialText, undefined, [
+      otherLayer.extension,
+    ])
+    otherLayer
+      .setSuggestions([
+        {
+          id: 'other-layer-proposal',
+          from: 0,
+          to: 'opening'.length,
+          replacement: 'revised',
+        },
+      ])
+      .match(
+        () => undefined,
+        () => {
+          throw new Error('Could not set the other layer proposal')
+        },
+      )
+    layer.setInFlight({ from: 9, to: 16 }).match(
+      () => undefined,
+      () => {
+        throw new Error('Could not set the in-flight range')
+      },
+    )
+    layer.setSuggestions([]).match(
+      () => undefined,
+      () => {
+        throw new Error('Could not clear the body request suggestions')
+      },
+    )
+    layer.setInFlight(null).match(
+      () => undefined,
+      () => {
+        throw new Error('Could not clear the in-flight range')
+      },
+    )
+
+    const readOutput = () => ({
+      proposalWidgets: host.querySelectorAll('.cm-suggestion-widget').length,
+      generatingWidgets: host.querySelectorAll('.suggestion-diff-generating')
+        .length,
+    })
+    expect(readOutput()).toEqual({ proposalWidgets: 1, generatingWidgets: 0 })
   })
 
   it('keeps an inline suggestion on the same paragraph line', () => {
@@ -748,9 +800,17 @@ describe('suggestion layer', () => {
 
   it('ignores an in-flight result after an edit inside its range', () => {
     const cancellations: string[] = []
-    const { body, host, layer, view } = createEditor(initialText, (event) => {
-      cancellations.push(event)
-    })
+    const rangeEdits: string[] = []
+    const { body, host, layer, view } = createEditor(
+      initialText,
+      (event) => cancellations.push(event),
+      [],
+      {
+        layerOptions: {
+          onInFlightRangeEdited: () => rangeEdits.push('edited'),
+        },
+      },
+    )
     const from = initialText.indexOf('selected')
     let inFlightResult: ReturnType<typeof layer.setInFlight> | undefined
     act(() => {
@@ -775,13 +835,141 @@ describe('suggestion layer', () => {
     const readOutput = () => ({
       body: body.toJSON(),
       cancellations,
+      rangeEdits,
       suggestion:
         host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
     })
     expect(readOutput()).toEqual({
       body: initialText.replace('selected sentence', 'sexlected sentence'),
-      cancellations: ['cancel'],
+      cancellations: [],
+      rangeEdits: ['edited'],
       suggestion: null,
+    })
+  })
+
+  it('keeps a later transition proposal when the first seam is edited', async () => {
+    const settings = saveLlmSettings(() => window.localStorage, {
+      route: 'server',
+      bridgeUrl: '',
+    })
+    if (settings.isErr()) throw settings.error
+
+    const paragraphs = [
+      'Alpha sentence.',
+      'Beta sentence.',
+      'Gamma sentence.',
+      'Delta sentence.',
+      'Epsilon sentence.',
+    ] as const
+    const content = paragraphs.join('\n\n')
+    const [alpha, beta, gamma, delta, epsilon] = paragraphs
+
+    let resolveFetch: ((response: Response) => void) | undefined
+    const fetchMock = vi.fn<typeof fetch>(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const doc = new Y.Doc()
+    setBody(doc, content)
+    const body = getBody(doc)
+    const history = createMoveHistory(doc)
+    const host = document.createElement('div')
+    document.body.append(host)
+    let view: EditorView | undefined
+    act(() => {
+      view = new EditorView({
+        parent: host,
+        state: EditorState.create({
+          doc: body.toJSON(),
+          extensions: [
+            history.extension,
+            yCollab(body, null, { undoManager: false }),
+            ...transitionProposalEditorExtensions({ doc, history }),
+          ],
+        }),
+      })
+    })
+    if (!view) throw new Error('The transition editor did not mount')
+    const editorView = view
+    cleanups.push(() => {
+      act(() => {
+        editorView.destroy()
+      })
+      history.destroy()
+      doc.destroy()
+      host.remove()
+    })
+
+    const seam0 = {
+      from: content.indexOf(alpha),
+      to: content.indexOf(beta) + beta.length,
+    }
+    const seam2 = {
+      from: content.indexOf(delta),
+      to: content.indexOf(epsilon) + epsilon.length,
+    }
+    await act(async () => {
+      editorView.dispatch({
+        annotations: [
+          blockMoved.of({
+            from: content.indexOf(beta),
+            to: content.indexOf(gamma),
+            seam: content.indexOf(epsilon),
+          }),
+          Transaction.userEvent.of('move'),
+        ],
+      })
+      await vi.waitFor(() => {
+        if (fetchMock.mock.calls.length !== 1)
+          throw new Error('The transition request did not start')
+      })
+    })
+
+    await act(async () => {
+      editorView.dispatch({
+        changes: { from: seam0.from + 2, to: seam0.from + 3, insert: 'x' },
+      })
+      resolveFetch?.(
+        new Response(
+          `data: ${JSON.stringify({
+            event: 'result',
+            data: {
+              suggestions: [
+                {
+                  seam_id: 'seam-0',
+                  ...seam0,
+                  replacement: 'Alpha revised.\n\nBeta revised.',
+                },
+                {
+                  seam_id: 'seam-2',
+                  ...seam2,
+                  replacement: 'Delta revised.\n\nEpsilon revised.',
+                },
+              ],
+            },
+          })}\n\n`,
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      requestAborted: fetchMock.mock.calls[0]?.[1]?.signal?.aborted ?? null,
+      addedText: Array.from(
+        editorView.dom.querySelectorAll('.suggestion-diff-added'),
+        (node) => node.textContent,
+      ),
+    })
+    expect(readOutput()).toEqual({
+      body: content.replace('Alpha sentence.', 'Alxha sentence.'),
+      requestAborted: false,
+      addedText: ['revised', 'revised'],
     })
   })
 
@@ -1161,9 +1349,17 @@ describe('suggestion layer', () => {
 
   it('cancels in-flight work before rejecting a focused suggestion', () => {
     const events: string[] = []
-    const { body, host, layer, view } = createEditor(initialText, (event) => {
-      events.push(event)
-    })
+    const rangeEdits: string[] = []
+    const { body, host, layer, view } = createEditor(
+      initialText,
+      (event) => events.push(event),
+      [],
+      {
+        layerOptions: {
+          onInFlightRangeEdited: () => rangeEdits.push('edited'),
+        },
+      },
+    )
     const from = initialText.indexOf('selected')
     const result = layer.setSuggestions([
       {
@@ -1199,12 +1395,14 @@ describe('suggestion layer', () => {
         host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
       body: body.toJSON(),
       events,
+      rangeEdits,
     })
     expect(readOutput()).toEqual({
       afterCancel: 'selectedrevised sentence',
       afterReject: null,
       body: initialText,
       events: ['cancel', 'reject'],
+      rangeEdits: [],
     })
   })
 

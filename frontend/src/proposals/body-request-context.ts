@@ -1,10 +1,11 @@
 import { deriveHeadingTree } from '#article/headings'
+import { topLevelBlocks } from '#article/move-block-structure'
 
-export type TextRange = { from: number; to: number }
+type TextRange = { from: number; to: number }
 
 type HeadingRange = TextRange & { level: number }
 
-export type BodyRequestContext = {
+type BodyRequestContext = {
   headings: string[]
   section: string
   target: string
@@ -32,6 +33,17 @@ function lineIsHeading(text: string, start: number, end: number): boolean {
   return /^#{1,6}(?:[ \t]+|$)/.test(text.slice(start, end))
 }
 
+function fencedCodeRangeAt(
+  text: string,
+  position: number,
+): TextRange | undefined {
+  const block = topLevelBlocks(text).find(
+    ({ name, from, contentTo }) =>
+      name === 'FencedCode' && from <= position && position <= contentTo,
+  )
+  return block ? { from: block.from, to: block.contentTo } : undefined
+}
+
 function resolveBodyRequestRange(
   text: string,
   selection: TextRange,
@@ -42,6 +54,11 @@ function resolveBodyRequestRange(
 
   let start = lineStartAt(text, from)
   let end = lineEndAt(text, from)
+  const fencedCodeRange = fencedCodeRangeAt(text, from)
+  if (fencedCodeRange) return fencedCodeRange
+
+  if (lineIsHeading(text, start, end)) return { from: start, to: end }
+
   if (lineIsBlank(text, start, end)) return { from, to: from }
 
   while (start > 0) {
@@ -93,21 +110,9 @@ export function getBodyRequestContext(
   )
   const activeHeading = headingRanges[activeIndex]
   const sectionStart = activeHeading?.from ?? 0
-  let sectionEnd = text.length
-
-  if (activeHeading) {
-    const nextSectionHeading = headingRanges
-      .slice(activeIndex + 1)
-      .find(
-        (heading) =>
-          heading.from >= range.to && heading.level <= activeHeading.level,
-      )
-    sectionEnd = nextSectionHeading?.from ?? text.length
-  } else {
-    sectionEnd =
-      headingRanges.find((heading) => heading.from >= range.to)?.from ??
-      text.length
-  }
+  const sectionEnd =
+    headingRanges.find((heading) => heading.from >= range.to)?.from ??
+    text.length
 
   const headings = headingRanges.map(({ from, to }) => text.slice(from, to))
   const section = text.slice(sectionStart, sectionEnd)
@@ -115,7 +120,28 @@ export function getBodyRequestContext(
     from: range.from - sectionStart,
     to: range.to - sectionStart,
   }
-  const markedSection = `${section.slice(0, sectionRange.from)}⟪依頼範囲の開始⟫${section.slice(sectionRange.from, sectionRange.to)}⟪依頼範囲の終了⟫${section.slice(sectionRange.to)}`
+  const sectionBeforeRange = section.slice(0, sectionRange.from)
+  const sectionAfterRange = section.slice(sectionRange.to)
+  const isBlankLineInsertion =
+    sectionRange.from === sectionRange.to &&
+    lineIsBlank(
+      text,
+      lineStartAt(text, range.from),
+      lineEndAt(text, range.from),
+    )
+  const separatorBeforeRange =
+    isBlankLineInsertion &&
+    sectionBeforeRange.trim().length > 0 &&
+    !sectionBeforeRange.endsWith('\n\n')
+      ? '\n'
+      : ''
+  const separatorAfterRange =
+    isBlankLineInsertion &&
+    sectionAfterRange.trim().length > 0 &&
+    !sectionAfterRange.startsWith('\n\n')
+      ? '\n'
+      : ''
+  const markedSection = `${sectionBeforeRange}${separatorBeforeRange}⟪依頼範囲の開始⟫${section.slice(sectionRange.from, sectionRange.to)}⟪依頼範囲の終了⟫${separatorAfterRange}${sectionAfterRange}`
   return {
     headings,
     section: markedSection.trimEnd(),

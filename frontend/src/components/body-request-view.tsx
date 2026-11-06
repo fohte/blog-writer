@@ -5,7 +5,7 @@ import { useRef } from 'react'
 
 export type BodyRequestPhase = 'input' | 'loading' | 'error'
 
-export type BodyRequestViewProps = {
+type BodyRequestViewProps = {
   anchor: HTMLElement | null
   open: boolean
   touchDevice: boolean

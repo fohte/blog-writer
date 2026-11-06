@@ -5,7 +5,7 @@ import { isRecord } from '#lib/guards'
 import type { LlmSettings } from '#lib/llm-settings'
 import { postLlmResult } from '#lib/llm-sse'
 
-export type BodyRequestResult = components['schemas']['BodyRequestResult']
+type BodyRequestResult = components['schemas']['BodyRequestResult']
 export type BodyRequestInput = components['schemas']['BodyRequest']
 
 function isBodyRequestResult(value: unknown): value is BodyRequestResult {

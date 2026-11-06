@@ -7,6 +7,7 @@ use std::{
 
 use axum::{Router, body::Body, http::Request};
 use indoc::indoc;
+use rstest::rstest;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -170,5 +171,46 @@ async fn rejects_an_empty_instruction() -> Result<(), Box<dyn std::error::Error>
         actual,
         (400, json!({"error": "Instruction must not be empty"}))
     );
+    Ok(())
+}
+
+#[rstest]
+#[case::empty_target(
+    "",
+    json!({
+        "data": {"message": "LLM result does not match the request"},
+        "event": "error"
+    })
+)]
+#[case::non_empty_target(
+    "既存の文です。",
+    json!({"data": {"replacement": ""}, "event": "result"})
+)]
+#[tokio::test]
+async fn handles_an_empty_replacement_according_to_the_target(
+    #[case] target: &str,
+    #[case] expected_event: Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let state = LlmState::with_provider(
+        FixedProvider {
+            output: json!({"replacement": ""}),
+            prompt: Arc::new(Mutex::new(None)),
+        },
+        ProviderName::ClaudeCode,
+        Duration::from_secs(1),
+    );
+    let actual = post_request(
+        json!({
+            "instruction": "依頼",
+            "premise": {"audience": "読者", "purpose": "目的", "claim": "主張"},
+            "headings": [],
+            "section": "本文",
+            "target": target
+        }),
+        state,
+    )
+    .await?;
+
+    assert_eq!(actual, (200, expected_event));
     Ok(())
 }

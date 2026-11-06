@@ -5,7 +5,7 @@ use utoipa::ToSchema;
 
 use crate::{
     error::{ApiJson, AppError, ErrorResponse},
-    llm::{LlmState, call_to_sse_with},
+    llm::{LlmError, LlmState, call_to_sse_with},
 };
 
 use super::prompt::build_prompt;
@@ -85,12 +85,18 @@ pub(crate) async fn propose_body_request(
         crate::llm_context::SYSTEM_PROMPT
     );
 
+    let target_is_empty = request.target.is_empty();
+
     Ok(
         call_to_sse_with::<GeneratedReplacement, BodyRequestResult, _>(
             state,
             system_prompt,
             prompt,
-            |generated| {
+            move |generated| {
+                if target_is_empty && generated.replacement.is_empty() {
+                    return Err(LlmError::InvalidResult);
+                }
+
                 Ok(BodyRequestResult {
                     replacement: generated.replacement,
                 })

@@ -1,5 +1,6 @@
-import { EditorState } from '@codemirror/state'
+import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { ok } from 'neverthrow'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,7 +10,11 @@ import * as Y from 'yjs'
 
 import { getBody, setBody } from '#article/body'
 import { setPremise } from '#article/premise'
-import { BodyRequestAccessory, bodyRequestExtensions } from '#editor/index'
+import {
+  BodyRequestAccessory,
+  bodyRequestExtensions,
+  createSuggestionLayer,
+} from '#editor/index'
 import { createMoveHistory } from '#outline/index'
 
 const content = '# Article\n\n## Section\nRewrite this sentence.'
@@ -41,9 +46,12 @@ function createPendingFetch() {
   return { fetcher, resolveResponse, signals }
 }
 
-function createRequestEditor() {
+function createRequestEditor(
+  additionalExtensions: Extension[] = [],
+  article = content,
+) {
   const doc = new Y.Doc()
-  setBody(doc, content)
+  setBody(doc, article)
   setPremise(doc, 'audience', 'fictional audience')
   setPremise(doc, 'purpose', 'fictional purpose')
   setPremise(doc, 'claim', 'fictional claim')
@@ -51,18 +59,21 @@ function createRequestEditor() {
   const history = createMoveHistory(doc)
   const editorHost = document.createElement('div')
   const accessoryHost = document.createElement('div')
+  const selectionFrom = article.indexOf('Rewrite')
+  const selectionTo = article.indexOf('sentence.') + 'sentence.'.length
   document.body.append(editorHost, accessoryHost)
   const view = new EditorView({
     parent: editorHost,
     state: EditorState.create({
       doc: body.toJSON(),
-      selection: {
-        anchor: content.indexOf('Rewrite'),
-        head: content.indexOf('sentence.') + 'sentence.'.length,
-      },
+      selection:
+        selectionFrom < 0 || selectionTo < 0
+          ? { anchor: 0 }
+          : { anchor: selectionFrom, head: selectionTo },
       extensions: [
         yCollab(body, null, { undoManager: false }),
         bodyRequestExtensions({ doc, history }),
+        ...additionalExtensions,
       ],
     }),
   })
@@ -77,22 +88,39 @@ function createRequestEditor() {
       />,
     )
   })
-  cleanups.push(() => {
+  let accessoryMounted = true
+  const unmountAccessory = () => {
+    if (!accessoryMounted) return
+    accessoryMounted = false
     act(() => {
       root.unmount()
     })
+  }
+  cleanups.push(() => {
+    unmountAccessory()
     view.destroy()
     history.destroy()
     doc.destroy()
     editorHost.remove()
     accessoryHost.remove()
   })
-  return { body, view }
+  return { body, view, unmountAccessory }
 }
 
 function pressModK(view: EditorView) {
   view.focus()
   const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
+  const event = new KeyboardEvent('keydown', {
+    bubbles: true,
+    key: 'k',
+    [modifier]: true,
+  })
+  view.contentDOM.dispatchEvent(event)
+}
+
+function pressNonModK(view: EditorView) {
+  view.focus()
+  const modifier = navigator.platform.includes('Mac') ? 'ctrlKey' : 'metaKey'
   const event = new KeyboardEvent('keydown', {
     bubbles: true,
     key: 'k',
@@ -143,6 +171,17 @@ afterEach(() => {
 })
 
 describe('body request', () => {
+  it('opens only for the platform Mod-K shortcut', async () => {
+    const { view } = createRequestEditor()
+
+    await act(async () => {
+      pressNonModK(view)
+      await Promise.resolve()
+    })
+
+    expect(document.querySelector('#body-request')).toEqual(null)
+  })
+
   it('shows an error without changing the article when the request fails', async () => {
     const { body, view } = createRequestEditor()
     let requestCount = 0
@@ -223,6 +262,111 @@ describe('body request', () => {
     })
   })
 
+  it('keeps a blank-line insertion separated from surrounding paragraphs', async () => {
+    const article = '# Article\n\n## Section\n\nfollowing paragraph'
+    const { body, view } = createRequestEditor([], article)
+    const { fetcher, resolveResponse, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+    const position = article.indexOf('\n\n', article.indexOf('## Section')) + 1
+    act(() => {
+      view.dispatch({ selection: { anchor: position } })
+    })
+
+    await submitRequest(
+      view,
+      'insert a sentence here',
+      () => signals.length === 1,
+    )
+    await act(async () => {
+      await resolveResponse(0, 'NEW')
+    })
+    const acceptButton = view.dom.querySelector<HTMLButtonElement>('button')
+    if (!acceptButton)
+      throw new Error('The insertion proposal has no accept action')
+    await act(async () => {
+      await userEvent.click(acceptButton)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      proposalWidgets: view.dom.querySelectorAll('[aria-label="提案差分"]')
+        .length,
+      requestAborted: signals.map((signal) => signal.aborted),
+    })
+    expect(readOutput()).toEqual({
+      body: '# Article\n\n## Section\n\nNEW\n\nfollowing paragraph',
+      proposalWidgets: 0,
+      requestAborted: [false],
+    })
+  })
+
+  it('replaces an existing proposal when a new request targets the same range', async () => {
+    const { body, view } = createRequestEditor()
+    const { fetcher, resolveResponse, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+
+    await submitRequest(view, 'make it concise', () => signals.length === 1)
+    await act(async () => {
+      await resolveResponse(0, 'A shorter sentence.')
+    })
+    await submitRequest(
+      view,
+      'make it even shorter',
+      () => signals.length === 2,
+    )
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      error: document.querySelector('[role="alert"]')?.textContent ?? null,
+      inFlight:
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+      proposals: view.dom.querySelectorAll('[aria-label="提案差分"]').length,
+      requestAborted: signals.map((signal) => signal.aborted),
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      error: null,
+      inFlight: '作成中',
+      proposals: 0,
+      requestAborted: [false, false],
+    })
+  })
+
+  it('replaces a non-overlapping proposal instead of stacking it', async () => {
+    const { body, view } = createRequestEditor()
+    const { fetcher, resolveResponse, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+
+    await submitRequest(
+      view,
+      'rewrite the paragraph',
+      () => signals.length === 1,
+    )
+    await act(async () => {
+      await resolveResponse(0, 'A rewritten paragraph.')
+    })
+    const from = content.indexOf('## Section')
+    view.dispatch({
+      selection: { anchor: from, head: from + '## Section'.length },
+    })
+    await submitRequest(view, 'rewrite the heading', () => signals.length === 2)
+    await act(async () => {
+      await resolveResponse(1, '## New section')
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      proposals: view.dom.querySelectorAll('[aria-label="提案差分"]').length,
+      requestAborted: signals.map((signal) => signal.aborted),
+    })
+    expect(readOutput()).toEqual({
+      body: content,
+      proposals: 1,
+      requestAborted: [false, false],
+    })
+  })
+
   it('aborts the previous request and ignores its late response', async () => {
     const { body, view } = createRequestEditor()
     const { fetcher, resolveResponse, signals } = createPendingFetch()
@@ -253,25 +397,76 @@ describe('body request', () => {
   })
 
   it('aborts the active request with Escape and keeps the article unchanged', async () => {
-    const { body, view } = createRequestEditor()
+    const otherLayer = createSuggestionLayer()
+    const { body, view } = createRequestEditor([otherLayer.extension])
     const { fetcher, signals } = createPendingFetch()
     vi.stubGlobal('fetch', fetcher)
+    expect(
+      otherLayer.setSuggestions([
+        {
+          id: 'separate-proposal',
+          from: 0,
+          to: '# Article'.length,
+          replacement: '# Revised',
+        },
+      ]),
+    ).toEqual(ok(undefined))
+    act(() => {
+      view.dispatch({
+        selection: { anchor: content.indexOf('Rewrite this sentence.') },
+      })
+    })
 
     await submitRequest(view, 'make it concise', () => signals.length === 1)
     const loadingMessage =
       view.dom.querySelector('.suggestion-diff-generating')?.textContent ?? null
+    const proposalWidgetsBeforeEscape = view.dom.querySelectorAll(
+      '.cm-suggestion-widget',
+    ).length
     await pressEscape(view)
 
     const readOutput = () => ({
       body: body.toJSON(),
       loadingMessage,
       inFlight:
-        view.dom.querySelector('.cm-suggestion-widget')?.textContent ?? null,
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+      proposalWidgetsBeforeEscape,
+      proposalWidgetsAfterEscape: view.dom.querySelectorAll(
+        '.cm-suggestion-widget',
+      ).length,
+      separateProposal:
+        view.dom.querySelector('.cm-suggestion-widget') !== null,
       requestAborted: signals.map((signal) => signal.aborted),
     })
     expect(readOutput()).toEqual({
       body: content,
       loadingMessage: '作成中',
+      inFlight: null,
+      proposalWidgetsBeforeEscape: 2,
+      proposalWidgetsAfterEscape: 1,
+      separateProposal: true,
+      requestAborted: [true],
+    })
+  })
+
+  it('aborts an active request when the accessory unmounts', async () => {
+    const { body, view, unmountAccessory } = createRequestEditor()
+    const { fetcher, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+
+    await submitRequest(view, 'make it concise', () => signals.length === 1)
+    unmountAccessory()
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      inFlight:
+        view.dom.querySelector('.suggestion-diff-generating')?.textContent ??
+        null,
+      requestAborted: signals.map((signal) => signal.aborted),
+    })
+    expect(readOutput()).toEqual({
+      body: content,
       inFlight: null,
       requestAborted: [true],
     })

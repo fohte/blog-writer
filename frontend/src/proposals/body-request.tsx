@@ -1,5 +1,5 @@
-import type { Extension } from '@codemirror/state'
-import type { EditorView } from '@codemirror/view'
+import { type Extension, Prec } from '@codemirror/state'
+import { type EditorView, keymap } from '@codemirror/view'
 import { errAsync } from 'neverthrow'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type * as Y from 'yjs'
@@ -29,23 +29,59 @@ export type BodyRequestAccessoryContext = BodyRequestEditorContext & {
   replaceBody: MarkdownEditorHandle['replaceBody']
 }
 
+function preserveBlankLineSeparators(
+  text: string,
+  range: { from: number; to: number },
+  replacement: string,
+): string {
+  if (range.from !== range.to || replacement.length === 0) return replacement
+
+  const before = text.slice(0, range.from)
+  const after = text.slice(range.to)
+  const needsBeforeSeparator =
+    before.trim().length > 0 &&
+    !before.endsWith('\n\n') &&
+    !replacement.startsWith('\n')
+  const needsAfterSeparator =
+    after.trim().length > 0 &&
+    !after.startsWith('\n\n') &&
+    !replacement.endsWith('\n')
+
+  return `${needsBeforeSeparator ? '\n' : ''}${replacement}${needsAfterSeparator ? '\n' : ''}`
+}
+
 class BodyRequestManager {
   readonly layer = createSuggestionLayer({
     onCancelInFlight: () => {
+      this.cancelRequest()
+    },
+    onInFlightRangeEdited: () => {
       this.cancelRequest()
     },
   })
 
   private activeRequest: AbortController | null = null
   private readonly listeners = new Set<() => void>()
+  private readonly openListeners = new Set<() => void>()
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
   }
 
+  subscribeOpen(listener: () => void): () => void {
+    this.openListeners.add(listener)
+    return () => this.openListeners.delete(listener)
+  }
+
+  openRequest(): void {
+    this.openListeners.forEach((listener) => {
+      listener()
+    })
+  }
+
   beginRequest(): AbortController {
-    this.activeRequest?.abort()
+    this.abortActiveRequest()
     const controller = new AbortController()
     this.activeRequest = controller
     return controller
@@ -62,9 +98,20 @@ class BodyRequestManager {
     )
   }
 
-  cancelRequest(): void {
+  clearSuggestions(): void {
+    this.layer.setSuggestions([]).match(
+      () => undefined,
+      () => undefined,
+    )
+  }
+
+  abortActiveRequest(): void {
     this.activeRequest?.abort()
     this.activeRequest = null
+  }
+
+  cancelRequest(): void {
+    this.abortActiveRequest()
     this.listeners.forEach((listener) => {
       listener()
     })
@@ -86,7 +133,20 @@ export function bodyRequestExtensions(
   context: BodyRequestEditorContext,
 ): Extension[] {
   const manager = getManager(context.doc)
-  return [manager.layer.extension]
+  return [
+    manager.layer.extension,
+    Prec.high(
+      keymap.of([
+        {
+          key: 'Mod-k',
+          run: () => {
+            manager.openRequest()
+            return true
+          },
+        },
+      ]),
+    ),
+  ]
 }
 
 export function BodyRequestAccessory({
@@ -123,6 +183,25 @@ export function BodyRequestAccessory({
     [manager],
   )
 
+  useEffect(
+    () =>
+      manager.subscribeOpen(() => {
+        setError(undefined)
+        setInstruction('')
+        setPhase('input')
+        setOpen(true)
+      }),
+    [manager],
+  )
+
+  useEffect(
+    () => () => {
+      manager.abortActiveRequest()
+      manager.clearInFlight()
+    },
+    [manager],
+  )
+
   const startRequest = () => {
     if (!view) return
     const selection = view.state.selection.main
@@ -143,6 +222,8 @@ export function BodyRequestAccessory({
       target: context.target,
     }
     const controller = manager.beginRequest()
+    manager.clearSuggestions()
+    manager.clearInFlight()
     const pending = manager.layer.setInFlight(context.range)
     if (pending.isErr()) {
       manager.finishRequest(controller)
@@ -169,17 +250,25 @@ export function BodyRequestAccessory({
         if (controller.signal.aborted) return
         manager.finishRequest(controller)
         setPhase('input')
-        manager.layer.resolveInFlight(response.replacement).match(
-          () => {
-            setOpen(false)
-          },
-          () => {
-            manager.clearInFlight()
-            setError('提案を本文に表示できませんでした。')
-            setPhase('error')
-            setOpen(true)
-          },
-        )
+        manager.layer
+          .resolveInFlight((range) =>
+            preserveBlankLineSeparators(
+              view.state.doc.toString(),
+              range,
+              response.replacement,
+            ),
+          )
+          .match(
+            () => {
+              setOpen(false)
+            },
+            () => {
+              manager.clearInFlight()
+              setError('提案を本文に表示できませんでした。')
+              setPhase('error')
+              setOpen(true)
+            },
+          )
       },
       (cause) => {
         manager.finishRequest(controller)
@@ -201,33 +290,22 @@ export function BodyRequestAccessory({
 
   useEffect(() => {
     if (!view) return
-    const handleOpen = () => {
-      setError(undefined)
-      setInstruction('')
-      setPhase('input')
-      setOpen(true)
-    }
-    const handleShortcut = (event: KeyboardEvent) => {
+    const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && phase === 'loading') {
+        if (event.target instanceof Node && view.dom.contains(event.target)) {
+          return
+        }
         event.preventDefault()
+        event.stopPropagation()
         cancelRequest()
-        return
-      }
-      if (
-        event.key.toLowerCase() === 'k' &&
-        (event.metaKey || event.ctrlKey) &&
-        event.target instanceof Node &&
-        view.dom.contains(event.target)
-      ) {
-        event.preventDefault()
-        handleOpen()
+        manager.clearInFlight()
       }
     }
-    window.addEventListener('keydown', handleShortcut, true)
+    window.addEventListener('keydown', handleEscape, true)
     return () => {
-      window.removeEventListener('keydown', handleShortcut, true)
+      window.removeEventListener('keydown', handleEscape, true)
     }
-  }, [cancelRequest, phase, view])
+  }, [cancelRequest, manager, phase, view])
 
   return (
     <BodyRequestView

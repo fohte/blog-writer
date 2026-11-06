@@ -58,9 +58,69 @@ describe('getBodyRequestContext', () => {
     ).toEqual({
       headings: ['# Article', '## First'],
       section:
-        '## First\n⟪依頼範囲の開始⟫⟪依頼範囲の終了⟫\nfollowing paragraph',
+        '## First\n\n⟪依頼範囲の開始⟫⟪依頼範囲の終了⟫\n\nfollowing paragraph',
       target: '',
       range: { from: position, to: position },
+    })
+  })
+
+  it('separates a blank-line insertion from both surrounding paragraphs', () => {
+    const text = 'first paragraph\n\nsecond paragraph'
+    const position = text.indexOf('\n\n') + 1
+
+    expect(
+      getBodyRequestContext(text, { from: position, to: position }),
+    ).toEqual({
+      headings: [],
+      section:
+        'first paragraph\n\n⟪依頼範囲の開始⟫⟪依頼範囲の終了⟫\n\nsecond paragraph',
+      target: '',
+      range: { from: position, to: position },
+    })
+  })
+
+  it('uses only the heading line when the cursor is on a heading', () => {
+    const text = '# Main\n\n## Child\nparagraph'
+    const headingStart = text.indexOf('## Child')
+    const cursor = headingStart + 4
+
+    expect(getBodyRequestContext(text, { from: cursor, to: cursor })).toEqual({
+      headings: ['# Main', '## Child'],
+      section: '⟪依頼範囲の開始⟫## Child⟪依頼範囲の終了⟫\nparagraph',
+      target: '## Child',
+      range: { from: headingStart, to: headingStart + '## Child'.length },
+    })
+  })
+
+  it('uses the whole fenced code block when the cursor is inside it', () => {
+    const codeBlock = '```md\n## code heading\n\ncode paragraph\n```'
+    const text = `# Main\n\nBefore.\n\n${codeBlock}\n\nAfter.`
+    const codeStart = text.indexOf(codeBlock)
+    const cursor = text.indexOf('code heading') + 2
+
+    expect(getBodyRequestContext(text, { from: cursor, to: cursor })).toEqual({
+      headings: ['# Main'],
+      section: `# Main\n\nBefore.\n\n⟪依頼範囲の開始⟫${codeBlock}⟪依頼範囲の終了⟫\n\nAfter.`,
+      target: codeBlock,
+      range: { from: codeStart, to: codeStart + codeBlock.length },
+    })
+  })
+
+  it('ends an H1 introduction at the next heading of any level', () => {
+    const text =
+      '# Main\nintroduction paragraph\n\n## Section\nsection paragraph\n\n# Later\nlater paragraph'
+    const from = text.indexOf('introduction paragraph')
+
+    expect(
+      getBodyRequestContext(text, {
+        from,
+        to: from + 'introduction paragraph'.length,
+      }),
+    ).toEqual({
+      headings: ['# Main', '## Section', '# Later'],
+      section: '# Main\n⟪依頼範囲の開始⟫introduction paragraph⟪依頼範囲の終了⟫',
+      target: 'introduction paragraph',
+      range: { from, to: from + 'introduction paragraph'.length },
     })
   })
 
