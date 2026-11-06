@@ -91,6 +91,31 @@ function orderSuggestions(
   return [...suggestions].sort((a, b) => a.from - b.from || a.to - b.to)
 }
 
+function rangesOverlap(
+  first: SuggestionPosition,
+  second: SuggestionPosition,
+): boolean {
+  if (first.from === first.to) {
+    return second.from === second.to
+      ? first.from === second.from
+      : first.from >= second.from && first.from < second.to
+  }
+  if (second.from === second.to) {
+    return second.from >= first.from && second.from < first.to
+  }
+  return first.from < second.to && second.from < first.to
+}
+
+function hasOverlappingRange(
+  suggestions: readonly SuggestionPosition[],
+  position: SuggestionPosition | null | undefined,
+): boolean {
+  return (
+    position != null &&
+    suggestions.some((range) => rangesOverlap(range, position))
+  )
+}
+
 function validateSuggestions(
   suggestions: readonly TextSuggestion[],
   docLength: number,
@@ -109,29 +134,11 @@ function validateSuggestions(
   const ordered = orderSuggestions(suggestions)
   for (const [index, current] of ordered.slice(1).entries()) {
     const previous = ordered[index]
-    if (
-      previous &&
-      (current.from < previous.to || current.from === previous.from)
-    ) {
+    if (previous && rangesOverlap(previous, current)) {
       return err({ type: 'overlapping-ranges' })
     }
   }
   return ok(ordered)
-}
-
-function rangesOverlap(
-  first: SuggestionPosition,
-  second: SuggestionPosition,
-): boolean {
-  if (first.from === first.to) {
-    return second.from === second.to
-      ? first.from === second.from
-      : first.from >= second.from && first.from <= second.to
-  }
-  if (second.from === second.to) {
-    return second.from >= first.from && second.from <= first.to
-  }
-  return first.from < second.to && second.from < first.to
 }
 
 function focusForSelection(
@@ -283,10 +290,7 @@ export class SuggestionLayerController {
     const validation = validateSuggestions(suggestions, view.state.doc.length)
     if (validation.isErr()) return err(validation.error)
     const inFlight = view.state.field(this.stateField, false)?.inFlight
-    if (
-      inFlight &&
-      validation.value.some((suggestion) => rangesOverlap(suggestion, inFlight))
-    ) {
+    if (hasOverlappingRange(validation.value, inFlight)) {
       return err({ type: 'overlapping-ranges' })
     }
 
@@ -300,6 +304,7 @@ export class SuggestionLayerController {
     if (!view || !state?.inFlight) return ok(undefined)
 
     const id = this.createSuggestionId(state.suggestions)
+    // The pending range is itself the replacement, so it is not a conflict.
     const validation = validateSuggestions(
       [...state.suggestions, { ...state.inFlight, id, replacement }],
       view.state.doc.length,
@@ -327,10 +332,7 @@ export class SuggestionLayerController {
     }
     const suggestions =
       view.state.field(this.stateField, false)?.suggestions ?? []
-    if (
-      position &&
-      suggestions.some((suggestion) => rangesOverlap(suggestion, position))
-    ) {
+    if (hasOverlappingRange(suggestions, position)) {
       return err({ type: 'overlapping-ranges' })
     }
     view.dispatch({ effects: replaceInFlight.of(position) })

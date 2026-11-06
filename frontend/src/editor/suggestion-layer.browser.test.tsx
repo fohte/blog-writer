@@ -15,16 +15,25 @@ import * as Y from 'yjs'
 
 import { getBody, setBody } from '#article/body'
 import { MarkdownEditor } from '#editor/index'
-import { createSuggestionLayer } from '#editor/suggestion-layer'
+import {
+  createSuggestionLayer,
+  type SuggestionLayerOptions,
+} from '#editor/suggestion-layer'
 import { undoManagerFacet } from '#editor/undo-manager-facet'
 
 const initialText = 'opening sentence\nselected sentence\nclosing sentence'
 const cleanups: (() => void)[] = []
 
+interface CreateEditorOptions {
+  layerOptions?: SuggestionLayerOptions
+  selection?: number
+}
+
 function createEditor(
   content = initialText,
   onResolve?: (decision: string) => void,
   additionalExtensions: Extension[] = [],
+  options: CreateEditorOptions = {},
 ) {
   const doc = new Y.Doc()
   setBody(doc, content)
@@ -33,6 +42,7 @@ function createEditor(
   const host = document.createElement('div')
   document.body.append(host)
   const layer = createSuggestionLayer({
+    ...options.layerOptions,
     onCancelInFlight: () => onResolve?.('cancel'),
     onResolve: (_suggestion, decision) => onResolve?.(decision),
   })
@@ -43,6 +53,9 @@ function createEditor(
       parent: host,
       state: EditorState.create({
         doc: body.toJSON(),
+        ...(options.selection === undefined
+          ? {}
+          : { selection: { anchor: options.selection } }),
         extensions: [
           indentUnit.of('  '),
           yCollab(body, null, { undoManager }),
@@ -120,29 +133,14 @@ afterEach(() => {
 
 describe('suggestion layer', () => {
   it('ignores invalid initial suggestion and in-flight ranges', () => {
-    const host = document.createElement('div')
-    document.body.append(host)
-    const layer = createSuggestionLayer({
-      initialSuggestions: [
-        { id: 'suggestion-a', from: 0, to: 3, replacement: 'one' },
-        { id: 'suggestion-b', from: 2, to: 4, replacement: 'two' },
-      ],
-      initialInFlight: { from: 0, to: 10 },
-    })
-    let view: EditorView | undefined
-    act(() => {
-      view = new EditorView({
-        parent: host,
-        state: EditorState.create({
-          doc: 'short',
-          extensions: [layer.extension],
-        }),
-      })
-    })
-    if (!view) throw new Error('The suggestion editor did not mount')
-    cleanups.push(() => {
-      act(() => view?.destroy())
-      host.remove()
+    const { host } = createEditor('short', undefined, [], {
+      layerOptions: {
+        initialSuggestions: [
+          { id: 'suggestion-a', from: 0, to: 3, replacement: 'one' },
+          { id: 'suggestion-b', from: 2, to: 4, replacement: 'two' },
+        ],
+        initialInFlight: { from: 0, to: 10 },
+      },
     })
 
     const readOutput = () => ({
@@ -154,33 +152,18 @@ describe('suggestion layer', () => {
 
   it('uses the editor selection to focus an initial suggestion', () => {
     const from = initialText.indexOf('selected')
-    const host = document.createElement('div')
-    document.body.append(host)
-    const layer = createSuggestionLayer({
-      initialSuggestions: [
-        {
-          id: 'suggestion-initial',
-          from,
-          to: from + 'selected sentence'.length,
-          replacement: 'revised sentence',
-        },
-      ],
-    })
-    let view: EditorView | undefined
-    act(() => {
-      view = new EditorView({
-        parent: host,
-        state: EditorState.create({
-          doc: initialText,
-          selection: { anchor: from },
-          extensions: [layer.extension],
-        }),
-      })
-    })
-    if (!view) throw new Error('The suggestion editor did not mount')
-    cleanups.push(() => {
-      act(() => view?.destroy())
-      host.remove()
+    const { host } = createEditor(initialText, undefined, [], {
+      layerOptions: {
+        initialSuggestions: [
+          {
+            id: 'suggestion-initial',
+            from,
+            to: from + 'selected sentence'.length,
+            replacement: 'revised sentence',
+          },
+        ],
+      },
+      selection: from,
     })
 
     const readOutput = () => ({
@@ -589,6 +572,57 @@ describe('suggestion layer', () => {
       error: 'overlapping-ranges',
       generating: '作成中',
       suggestionVisible: false,
+    })
+  })
+
+  it('resolves an in-flight insertion at a suggestion end boundary', () => {
+    const content = 'keep proposal'
+    const { body, host, setSuggestion, layer } = createEditor(content)
+    const from = content.indexOf('proposal')
+    setSuggestion({
+      id: 'suggestion-a',
+      from,
+      to: content.length,
+      replacement: 'revised proposal',
+    })
+
+    let inFlightResult: ReturnType<typeof layer.setInFlight> | undefined
+    act(() => {
+      inFlightResult = layer.setInFlight({
+        from: content.length,
+        to: content.length,
+      })
+    })
+    if (!inFlightResult) throw new Error('Could not set in-flight state')
+    const setInFlightResult = inFlightResult
+
+    let resolveResult: ReturnType<typeof layer.resolveInFlight> | undefined
+    act(() => {
+      resolveResult = layer.resolveInFlight('more text')
+    })
+    if (!resolveResult)
+      throw new Error('Could not resolve in-flight suggestion')
+    const resolutionResult = resolveResult
+
+    const readOutput = () => ({
+      inFlightError: setInFlightResult.match(
+        () => null,
+        (error) => error.type,
+      ),
+      resolveError: resolutionResult.match(
+        () => null,
+        (error) => error.type,
+      ),
+      body: body.toJSON(),
+      suggestionCount: host.querySelectorAll('.cm-suggestion-widget').length,
+      pendingCount: host.querySelectorAll('.suggestion-diff-generating').length,
+    })
+    expect(readOutput()).toEqual({
+      inFlightError: null,
+      resolveError: null,
+      body: content,
+      suggestionCount: 2,
+      pendingCount: 0,
     })
   })
 
