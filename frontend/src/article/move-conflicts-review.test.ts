@@ -181,6 +181,97 @@ describe('move conflict review regressions', () => {
     })
   })
 
+  it('reads a persisted boolean keep decision from an earlier schema', () => {
+    const replicas = prepareConflict()
+    activeReplicas.push(replicas.A, replicas.B)
+    settle(replicas)
+
+    const conflict = getMoveConflicts(replicas.B.doc)[0]
+    const record = getMoveRecords(replicas.B.doc).get(0)
+    if (!conflict) throw new Error('Expected a move conflict')
+    replicas.B.doc
+      .getMap<true | Array<{ client: number; clock: number; length: number }>>(
+        'move-decisions',
+      )
+      .set(
+        `${record.copy[0].toString()}:${record.copy[1].toString()}/${conflict.id}`,
+        true,
+      )
+    settle(replicas)
+
+    const readOutput = () => ({
+      conflicts: [
+        getMoveConflicts(replicas.A.doc),
+        getMoveConflicts(replicas.B.doc),
+      ],
+      decisions: [
+        Array.from(replicas.A.doc.getMap('move-decisions').values()),
+        Array.from(replicas.B.doc.getMap('move-decisions').values()),
+      ],
+    })
+    expect(readOutput()).toEqual({
+      conflicts: [[], []],
+      decisions: [[true], [true]],
+    })
+  })
+
+  it('keeps neighbouring conflicts independent when they share an anchor', () => {
+    const A = makeReplica(121)
+    const B = makeReplica(122)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+
+    const body = B.doc.getText('body')
+    const source = body.toJSON().indexOf('maple maple')
+    body.insert(source + 1, 'x')
+    body.insert(source + 3, 'z')
+    moveSection(A.doc, 'end')
+    settle({ A, B })
+    const conflictsBeforeResolution = [
+      getMoveConflicts(A.doc),
+      getMoveConflicts(B.doc),
+    ]
+    const firstConflict = conflictsBeforeResolution[1]?.[0]
+    if (!firstConflict) throw new Error('Expected a move conflict')
+    resolveMoveConflict(B.doc, firstConflict.id, 'keep')._unsafeUnwrap()
+    settle({ A, B })
+
+    const readOutput = () => ({
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflictsBeforeResolution,
+      conflictsAfterResolution: [
+        getMoveConflicts(A.doc),
+        getMoveConflicts(B.doc),
+      ],
+      decisions: [
+        A.doc.getMap('move-decisions').size,
+        B.doc.getMap('move-decisions').size,
+      ],
+    })
+
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\nxz## Vista\nz9\n\n## Fjord\nmaple maple\n',
+        '## Cedar\na1\nxz## Vista\nz9\n\n## Fjord\nmaple maple\n',
+      ],
+      conflictsBeforeResolution: [
+        [
+          { id: '122:0', from: 12, to: 13, text: 'x', target: 37 },
+          { id: '122:1', from: 13, to: 14, text: 'z', target: 38 },
+        ],
+        [
+          { id: '122:0', from: 12, to: 13, text: 'x', target: 37 },
+          { id: '122:1', from: 13, to: 14, text: 'z', target: 38 },
+        ],
+      ],
+      conflictsAfterResolution: [
+        [{ id: '122:1', from: 13, to: 14, text: 'z', target: 38 }],
+        [{ id: '122:1', from: 13, to: 14, text: 'z', target: 38 }],
+      ],
+      decisions: [1, 1],
+    })
+  })
+
   it('keeps text received after the move update when the source was not yet known', () => {
     const A = makeReplica(71)
     const B = makeReplica(72)

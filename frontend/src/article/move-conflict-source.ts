@@ -21,6 +21,16 @@ export type MoveRecord = {
   createdAt: number
 }
 
+const moveRecordIds = new WeakMap<object, string>()
+
+export function moveRecordId(record: Pick<MoveRecord, 'copy'>): string {
+  const cached = moveRecordIds.get(record)
+  if (cached !== undefined) return cached
+  const id = `${record.copy[0].toString()}:${record.copy[1].toString()}`
+  moveRecordIds.set(record, id)
+  return id
+}
+
 function pushRun(
   runs: MoveSourceRun[],
   client: number,

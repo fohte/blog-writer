@@ -1,7 +1,7 @@
 import * as Y from 'yjs'
 
 import { locate, type TrackedTarget } from '#article/move-conflict-records'
-import type { MoveRecord } from '#article/move-conflict-source'
+import { type MoveRecord, moveRecordId } from '#article/move-conflict-source'
 import {
   type MoveRecordSourceIndex,
   type MoveSourceMatch,
@@ -19,8 +19,15 @@ export type InternalItemIndex = {
   byClient: Map<number, InternalItem[]>
   positionByItem: Map<InternalItem, number>
   documentOffsetByItem: Map<InternalItem, number>
+  visibleItems: VisibleItemSpan[] | undefined
   sourceCandidatesToLeft: Array<MoveSourceMatch[] | undefined>
   sourceCandidatesToRight: Array<MoveSourceMatch[] | undefined>
+}
+
+export type VisibleItemSpan = {
+  item: InternalItem
+  from: number
+  to: number
 }
 
 export type RelocationIndex = Map<string, Map<string, TrackedId>>
@@ -28,11 +35,15 @@ export type RelocationIndex = Map<string, Map<string, TrackedId>>
 export function indexInternalItems(
   text: Y.Text,
   sourceIndex?: MoveRecordSourceIndex,
+  includeVisibleItems = false,
 ): InternalItemIndex {
   const items = [...internalItems(text)]
   const byClient = new Map<number, InternalItem[]>()
   const positionByItem = new Map<InternalItem, number>()
   const documentOffsetByItem = new Map<InternalItem, number>()
+  const visibleItems: VisibleItemSpan[] | undefined = includeVisibleItems
+    ? []
+    : undefined
   let documentOffset = 0
   for (const [position, item] of items.entries()) {
     const clientItems = byClient.get(item.id.client) ?? []
@@ -40,7 +51,14 @@ export function indexInternalItems(
     byClient.set(item.id.client, clientItems)
     positionByItem.set(item, position)
     documentOffsetByItem.set(item, documentOffset)
-    if (!item.deleted && item.countable) documentOffset += item.length
+    if (!item.deleted && item.countable) {
+      visibleItems?.push({
+        item,
+        from: documentOffset,
+        to: documentOffset + item.length,
+      })
+      documentOffset += item.length
+    }
   }
   for (const clientItems of byClient.values()) {
     clientItems.sort((left, right) => left.id.clock - right.id.clock)
@@ -80,9 +98,35 @@ export function indexInternalItems(
     byClient,
     positionByItem,
     documentOffsetByItem,
+    visibleItems,
     sourceCandidatesToLeft,
     sourceCandidatesToRight,
   }
+}
+
+export function visibleItemsInRange(
+  index: InternalItemIndex,
+  from: number,
+  to: number,
+): VisibleItemSpan[] {
+  if (from >= to) return []
+  const items = index.visibleItems ?? []
+  let low = 0
+  let high = items.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    const span = items[middle]
+    if (!span || span.to <= from) low = middle + 1
+    else high = middle
+  }
+
+  const result: VisibleItemSpan[] = []
+  for (let position = low; position < items.length; position += 1) {
+    const span = items[position]
+    if (!span || span.from >= to) break
+    result.push(span)
+  }
+  return result
 }
 
 export function findItem(
@@ -195,7 +239,15 @@ export function sourceCandidatesFromAnchor(
     side === 'before'
       ? index.sourceCandidatesToRight[itemIndex]
       : index.sourceCandidatesToLeft[itemIndex]
-  for (const match of neighboringMatches ?? []) {
+  const adjacentMatches =
+    neighboringMatches ??
+    neighboringSourceMatches(
+      sourceIndex,
+      index,
+      itemIndex,
+      side === 'before' ? 1 : -1,
+    )
+  for (const match of adjacentMatches) {
     if (!candidates.has(match.recordOrder)) {
       candidates.set(match.recordOrder, match)
     }
@@ -205,15 +257,35 @@ export function sourceCandidatesFromAnchor(
   )
 }
 
+function neighboringSourceMatches(
+  sourceIndex: MoveRecordSourceIndex,
+  index: InternalItemIndex,
+  itemIndex: number,
+  direction: -1 | 1,
+): MoveSourceMatch[] {
+  const matches = new Map<number, MoveSourceMatch>()
+  for (
+    let position = itemIndex + direction;
+    position >= 0 && position < index.items.length;
+    position += direction
+  ) {
+    const item = index.items[position]
+    if (!item || !item.deleted) break
+    const clock = item.id.clock + (direction < 0 ? item.length - 1 : 0)
+    for (const match of moveSourcesAt(sourceIndex, item.id.client, clock)) {
+      matches.set(match.recordOrder, match)
+    }
+  }
+  return [...matches.values()].toSorted(
+    (left, right) => left.recordOrder - right.recordOrder,
+  )
+}
+
 export function indexRelocations(
   doc: Y.Doc,
   records: MoveRecord[],
 ): RelocationIndex {
-  const recordIds = new Set(
-    records.map(
-      (record) => `${record.copy[0].toString()}:${record.copy[1].toString()}`,
-    ),
-  )
+  const recordIds = new Set(records.map(moveRecordId))
   const result: RelocationIndex = new Map()
   for (const [key, destination] of doc
     .getMap<TrackedId>('move-conflict-relocations')

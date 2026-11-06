@@ -1,6 +1,6 @@
 import * as Y from 'yjs'
 
-import type { MoveRecord } from '#article/move-conflict-source'
+import { type MoveRecord, moveRecordId } from '#article/move-conflict-source'
 import { locate } from '#article/move-conflict-source-index'
 import {
   internalItems,
@@ -32,8 +32,8 @@ function getMoveAcks(doc: Y.Doc): Y.Map<number> {
   return doc.getMap<number>(MOVE_ACKS)
 }
 
-function getMoveDecisions(doc: Y.Doc): Y.Map<TrackedIdRange[]> {
-  return doc.getMap<TrackedIdRange[]>(MOVE_DECISIONS)
+function getMoveDecisions(doc: Y.Doc): Y.Map<TrackedIdRange[] | true> {
+  return doc.getMap<TrackedIdRange[] | true>(MOVE_DECISIONS)
 }
 
 export function getMoveConflictRestorations(
@@ -46,12 +46,8 @@ function getMoveConflictRelocations(doc: Y.Doc): Y.Map<TrackedId> {
   return doc.getMap<TrackedId>(MOVE_CONFLICT_RELOCATIONS)
 }
 
-function moveId(record: MoveRecord): string {
-  return `${record.copy[0].toString()}:${record.copy[1].toString()}`
-}
-
 function moveAckKey(record: MoveRecord, client: number): string {
-  return `${moveId(record)}/${client.toString()}`
+  return `${moveRecordId(record)}/${client.toString()}`
 }
 
 function isMoveRecord(value: unknown): value is MoveRecord {
@@ -85,7 +81,7 @@ export function cleanupMoveRecords(doc: Y.Doc, now = Date.now()): void {
   const removed = records
     .toArray()
     .filter((record) => record.createdAt <= cutoff)
-    .map(moveId)
+    .map(moveRecordId)
   if (removed.length === 0) return
 
   const removedIds = new Set(removed)
@@ -93,7 +89,8 @@ export function cleanupMoveRecords(doc: Y.Doc, now = Date.now()): void {
     const current = records.toArray()
     for (let index = current.length - 1; index >= 0; index -= 1) {
       const record = current[index]
-      if (record && removedIds.has(moveId(record))) records.delete(index, 1)
+      if (record && removedIds.has(moveRecordId(record)))
+        records.delete(index, 1)
     }
     const acks = getMoveAcks(doc)
     for (const key of acks.keys()) {
@@ -154,14 +151,14 @@ export function isMoveConflictKept(
 ): boolean {
   const prefix = `${recordId}/`
   for (const [key, storedRanges] of getMoveDecisions(doc)) {
+    if (!key.startsWith(prefix)) continue
     if (
-      key.startsWith(prefix) &&
+      storedRanges === true ||
       storedRanges.some((stored) =>
         decisionRanges.some((current) => idRangesOverlap(stored, current)),
       )
-    ) {
+    )
       return true
-    }
   }
   return false
 }
@@ -331,7 +328,7 @@ function repairDeletedMoveCharacters(
         wasDeletedWhileConflicted &&
         !records.some(
           (other) =>
-            moveId(other) !== moveId(record) &&
+            moveRecordId(other) !== moveRecordId(record) &&
             locate(other, client, clock + index) !== undefined,
         )
       ) {
@@ -397,7 +394,7 @@ function observeMoveRecords(doc: Y.Doc): () => void {
       )
     }
   }
-  let knownRecordIds = new Set(currentRecords.map(moveId))
+  let knownRecordIds = new Set(currentRecords.map(moveRecordId))
   const observe = (transaction: Y.Transaction) => {
     if (
       !transaction.changed.has(records) &&
@@ -406,18 +403,18 @@ function observeMoveRecords(doc: Y.Doc): () => void {
       return
     }
     const allRecords = records.toArray().filter(isMoveRecord)
-    const allRecordIds = new Set(allRecords.map(moveId))
+    const allRecordIds = new Set(allRecords.map(moveRecordId))
     const addedRecordIds = new Set(
       allRecords
-        .filter((record) => !knownRecordIds.has(moveId(record)))
-        .map(moveId),
+        .filter((record) => !knownRecordIds.has(moveRecordId(record)))
+        .map(moveRecordId),
     )
     knownRecordIds = allRecordIds
 
     for (const record of allRecords) {
       if (record.copy[0] === doc.clientID) continue
       if (record.createdAt <= Date.now() - RETENTION_MS) continue
-      const recordWasAdded = addedRecordIds.has(moveId(record))
+      const recordWasAdded = addedRecordIds.has(moveRecordId(record))
       if (
         recordWasAdded ||
         deleteSetIntersectsSource(record, transaction.deleteSet)

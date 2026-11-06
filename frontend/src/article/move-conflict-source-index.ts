@@ -3,8 +3,8 @@ import type { MoveRecord } from '#article/move-conflict-source'
 export type MoveSourceMatch = {
   record: MoveRecord
   recordOrder: number
-  sourceClock?: number
-  sourceOffset?: number
+  sourceClock: number
+  sourceOffset: number
 }
 
 type IndexedMoveSourceRange = {
@@ -110,8 +110,8 @@ export function moveSourcesInRange(
     if (
       previous &&
       (direction === 'forward'
-        ? (previous.sourceClock ?? matchClock) <= matchClock
-        : (previous.sourceClock ?? matchClock) >= matchClock)
+        ? previous.sourceClock <= matchClock
+        : previous.sourceClock >= matchClock)
     ) {
       continue
     }

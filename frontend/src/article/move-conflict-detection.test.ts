@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
 import {
@@ -45,6 +45,7 @@ function observeUndoRestorations(
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   for (const undoManager of undoManagers.splice(0)) undoManager.destroy()
   for (const { stop } of activeReplicas.splice(0)) stop()
 })
@@ -82,6 +83,47 @@ describe('move conflict detection', () => {
         [{ id: '72:1', from: 12, to: 15, text: 'ple', target: 45 }],
         [{ id: '72:1', from: 12, to: 15, text: 'ple', target: 45 }],
       ],
+    })
+  })
+
+  it('purges restoration ranges with their expired move record', () => {
+    vi.useFakeTimers({ now: new Date('2026-01-01T00:00:00.000Z') })
+    const A = makeReplica(77)
+    const B = makeReplica(78)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+    const body = B.doc.getText('body')
+    const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
+    undoManagers.push(undoManager)
+    observeUndoRestorations(B.doc, body, undoManager)
+
+    body.delete(body.toJSON().lastIndexOf('ple'), 3)
+    moveSection(A.doc, 'end')
+    settle({ A, B })
+    undoManager.undo()
+    settle({ A, B })
+
+    const beforeExpiry = [
+      A.doc.getMap('move-conflict-restorations').size,
+      B.doc.getMap('move-conflict-restorations').size,
+    ]
+    vi.setSystemTime(new Date('2026-02-02T00:00:00.000Z'))
+    getMoveConflicts(A.doc)
+    settle({ A, B })
+
+    const readOutput = () => ({
+      beforeExpiry,
+      afterExpiry: [
+        A.doc.getMap('move-conflict-restorations').size,
+        B.doc.getMap('move-conflict-restorations').size,
+      ],
+      records: [A.doc.getArray('moves').length, B.doc.getArray('moves').length],
+    })
+
+    expect(readOutput()).toEqual({
+      beforeExpiry: [1, 1],
+      afterExpiry: [0, 0],
+      records: [0, 0],
     })
   })
 

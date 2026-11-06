@@ -9,6 +9,7 @@ import {
   sourceCandidatesFromAnchor,
   sourceOffsetFromAnchor,
   targetPositionFromIndex,
+  visibleItemsInRange,
 } from '#article/move-conflict-index'
 import {
   coalesceIdRanges,
@@ -22,10 +23,11 @@ import {
   type TrackedIdRange,
   type TrackedTarget,
 } from '#article/move-conflict-records'
-import type { MoveRecord } from '#article/move-conflict-source'
+import { type MoveRecord, moveRecordId } from '#article/move-conflict-source'
 import {
   indexMoveRecordSources,
   type MoveRecordSourceIndex,
+  type MoveSourceMatch,
   moveSourcesAt,
 } from '#article/move-conflict-source-index'
 import {
@@ -50,26 +52,20 @@ type MoveConflictDetail = {
   target: TrackedTarget
 }
 
+type RelocationMoveCandidate = {
+  record: MoveRecord
+  recordOrder: number
+  relocationOnly: true
+}
+
+type MoveRecordCandidate = MoveSourceMatch | RelocationMoveCandidate
+
 function idEqual(left: TrackedId, right: TrackedId): boolean {
   return left.client === right.client && left.clock === right.clock
 }
 
-function moveRecordId(record: { copy: [number, number] }): string {
-  const cached = moveRecordIds.get(record)
-  if (cached !== undefined) return cached
-  const id = `${record.copy[0].toString()}:${record.copy[1].toString()}`
-  moveRecordIds.set(record, id)
-  return id
-}
-
-const moveRecordIds = new WeakMap<object, string>()
-
 function decisionRangesForItem(item: InternalItem): TrackedIdRange[] {
-  return coalesceIdRanges([
-    { ...item.id, length: item.length },
-    ...(item.origin ? [{ ...item.origin, length: 1 }] : []),
-    ...(item.rightOrigin ? [{ ...item.rightOrigin, length: 1 }] : []),
-  ])
+  return [{ ...item.id, length: item.length }]
 }
 
 function targetFromAnchor(
@@ -90,7 +86,7 @@ function targetFromAnchor(
     side,
     index,
   )
-  const candidatesByRecord = new Map(
+  const candidatesByRecord = new Map<string, MoveRecordCandidate>(
     candidates.map((candidate) => [moveRecordId(candidate.record), candidate]),
   )
   const relocatedAnchors =
@@ -106,6 +102,7 @@ function targetFromAnchor(
         candidatesByRecord.set(recordId, {
           record,
           recordOrder,
+          relocationOnly: true,
         })
       }
     }
@@ -141,8 +138,8 @@ function targetFromAnchor(
       }
       continue
     }
+    if ('relocationOnly' in candidate) continue
     const sourceOffset = candidate.sourceOffset
-    if (sourceOffset === undefined) continue
     const concurrent =
       (side === 'after' || sourceOffset > 0) &&
       isConcurrent(doc, record, item.id.client, item.id.clock)
@@ -298,7 +295,8 @@ export function recordMoveConflictRestoration(
   const text = doc.getText('body')
   const records = getMoveRecords(doc).toArray()
   if (records.length === 0 || events.length === 0) return
-  const index = indexInternalItems(text)
+  const sourceIndex = indexMoveRecordSources(records)
+  const index = indexInternalItems(text, undefined, true)
   const restorations: Array<{ recordId: string; range: TrackedIdRange }> = []
 
   for (const event of events) {
@@ -312,15 +310,36 @@ export function recordMoveConflictRestoration(
       const to = position
       if (from === to) continue
 
-      for (const item of index.items) {
-        if (item.deleted || !item.countable) continue
-        const itemFrom = index.documentOffsetByItem.get(item)
-        if (itemFrom === undefined) continue
+      for (const span of visibleItemsInRange(index, from, to)) {
+        const { item, from: itemFrom } = span
         const start = Math.max(from - itemFrom, 0)
         const end = Math.min(to - itemFrom, item.length)
         if (start >= end) continue
 
-        for (const record of records) {
+        const candidates = new Map<number, MoveSourceMatch>()
+        if (item.origin) {
+          for (const candidate of sourceCandidatesFromAnchor(
+            sourceIndex,
+            item.origin,
+            'after',
+            index,
+          )) {
+            candidates.set(candidate.recordOrder, candidate)
+          }
+        }
+        if (item.rightOrigin) {
+          for (const candidate of sourceCandidatesFromAnchor(
+            sourceIndex,
+            item.rightOrigin,
+            'before',
+            index,
+          )) {
+            candidates.set(candidate.recordOrder, candidate)
+          }
+        }
+
+        for (const candidate of candidates.values()) {
+          const { record } = candidate
           if (
             item.id.client === record.copy[0] ||
             locate(record, item.id.client, item.id.clock) !== undefined
