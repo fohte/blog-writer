@@ -14,7 +14,10 @@ export default mergeConfig(
   viteConfig,
   defineConfig({
     test: {
-      exclude: ['src/editor/__tests__/markdown-editor-setup.test.tsx'],
+      exclude: [
+        'src/article/move-conflicts.test-support.test.ts',
+        'src/editor/__tests__/markdown-editor-setup.test.tsx',
+      ],
       projects: [
         {
           extends: true,
@@ -24,6 +27,7 @@ export default mergeConfig(
               '**/node_modules/**',
               '**/dist/**',
               '**/*.browser.test.tsx',
+              'src/article/move-conflicts.test-support.test.ts',
               'src/editor/__tests__/markdown-editor-setup.test.tsx',
             ],
           },

@@ -34,6 +34,12 @@ export {
   registerBlockMoveUpdater,
   reverseBlockMove,
 } from '#article/move-block'
+export type { MoveConflict } from '#article/move-conflicts'
+export {
+  getMoveConflicts,
+  recordMoveConflictRestoration,
+  resolveMoveConflict,
+} from '#article/move-conflicts'
 export { getPremise, setPremise } from '#article/premise'
 export type { AddFindingInput, AddSourceInput } from '#article/sources'
 export {
