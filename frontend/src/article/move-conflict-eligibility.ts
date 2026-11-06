@@ -2,6 +2,7 @@ import * as Y from 'yjs'
 
 import {
   coalesceIdRanges,
+  containsIdRange,
   intersectIdRange,
   type TrackedIdRange,
 } from '#article/move-conflict-ranges'
@@ -29,16 +30,11 @@ export function getMoveConflictEligibleRanges(
   const eligible: TrackedIdRange[] = []
   if (target.eligibility === 'concurrent-or-restored' && record) {
     const concurrent = getConcurrentClockRange(doc, record, range.client)
+    // Restoration ranges cannot add IDs when concurrency already covers the item.
+    if (concurrent && containsIdRange(concurrent, range)) return [range]
     const intersection = concurrent && intersectIdRange(range, concurrent)
-    if (
-      intersection?.clock === range.clock &&
-      intersection.length === range.length
-    ) {
-      return [range]
-    }
     if (intersection) eligible.push(intersection)
   }
-  if (restorations.length === 0) return eligible
   for (const restoration of restorations) {
     const intersection = intersectIdRange(range, restoration)
     if (intersection) eligible.push(intersection)

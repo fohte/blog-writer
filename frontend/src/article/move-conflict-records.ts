@@ -272,11 +272,11 @@ export function isConcurrent(
   client: number,
   clock: number,
 ): boolean {
-  const ack = getMoveAcks(doc).get(moveAckKey(record, client))
+  const range = getConcurrentClockRange(doc, record, client)
   return (
-    client !== record.copy[0] &&
-    clock >= (record.sv[client.toString()] ?? 0) &&
-    clock < (ack ?? Number.POSITIVE_INFINITY)
+    range !== undefined &&
+    clock >= range.clock &&
+    clock < range.clock + range.length
   )
 }
 

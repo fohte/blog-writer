@@ -2,6 +2,17 @@ import type { TrackedId } from '#article/yjs-internals'
 
 export type TrackedIdRange = TrackedId & { length: number }
 
+export function containsIdRange(
+  range: TrackedIdRange,
+  contained: TrackedIdRange,
+): boolean {
+  return (
+    range.client === contained.client &&
+    range.clock <= contained.clock &&
+    range.clock + range.length >= contained.clock + contained.length
+  )
+}
+
 export function intersectIdRange(
   left: TrackedIdRange,
   right: TrackedIdRange,
