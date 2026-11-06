@@ -10,8 +10,18 @@ afterEach(cleanupHistoryEditors)
 
 describe('MoveHistory local seeded sequences', () => {
   it('preserves mixed move undo and redo sequences across seeded runs', () => {
-    const initial =
-      '# Saffron\n\nseed-a\n\n# Glacier\n\nseed-b\n\n# Meadow\n\nseed-c\n'
+    const initial = `# Saffron
+
+seed-a
+
+# Glacier
+
+seed-b
+
+# Meadow
+
+seed-c
+`
     const seeds = Array.from({ length: 32 }, (_, index) => index + 1)
     const operationCount = 48
     const actual = seeds.map((seed) => {
@@ -130,8 +140,18 @@ describe('MoveHistory local seeded sequences', () => {
   })
 
   it('keeps seeded text and move undo and redo states exact', () => {
-    const initial =
-      '# Saffron\n\nsaffron-para: seed\n\n# Glacier\n\nglacier-para: seed\n\n# Meadow\n\nmeadow-para: seed\n'
+    const initial = `# Saffron
+
+saffron-para: seed
+
+# Glacier
+
+glacier-para: seed
+
+# Meadow
+
+meadow-para: seed
+`
     const seeds = Array.from({ length: 64 }, (_, index) => index + 1)
     const operationCount = 48
     const actual = seeds.map((seed) => {

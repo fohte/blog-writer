@@ -13,7 +13,14 @@ afterEach(cleanupHistoryEditors)
 
 describe('MoveHistory local operations', () => {
   it('undoes and redoes local text changes and moves newest first', () => {
-    const initial = '# Redwood\n\nAmber meadow.\n\n# Indigo\n\nCobalt shore.\n'
+    const initial = `# Redwood
+
+Amber meadow.
+
+# Indigo
+
+Cobalt shore.
+`
     const editor = createHistoryEditor(initial)
     const titleEnd = initial.indexOf('Indigo') + 'Indigo'.length
     edit(editor, titleEnd, titleEnd, '!', 'input.type')
@@ -56,23 +63,59 @@ describe('MoveHistory local operations', () => {
     })
     expect(readOutput()).toEqual({
       moveSucceeded: true,
-      beforeMove: '# Redwood\n\nAmber meadow.\n\n# Indigo!\n\nCobalt shore.\n',
-      afterMove: '# Indigo!\n\nCobalt shore.\n\n# Redwood\n\nAmber meadow.\n',
-      afterSecondEdit:
-        '# Indigo!\n\nCobalt shore.\n\n# Redwood\n\nAmber meadow.\n Draft.',
+      beforeMove: `# Redwood
+
+Amber meadow.
+
+# Indigo!
+
+Cobalt shore.
+`,
+      afterMove: `# Indigo!
+
+Cobalt shore.
+
+# Redwood
+
+Amber meadow.
+`,
+      afterSecondEdit: `# Indigo!
+
+Cobalt shore.
+
+# Redwood
+
+Amber meadow.
+ Draft.`,
       undoResults: [true, true, true],
       afterUndo: initial,
       redoResults: [true, true, true],
-      afterRedo:
-        '# Indigo!\n\nCobalt shore.\n\n# Redwood\n\nAmber meadow.\n Draft.',
-      editor:
-        '# Indigo!\n\nCobalt shore.\n\n# Redwood\n\nAmber meadow.\n Draft.',
+      afterRedo: `# Indigo!
+
+Cobalt shore.
+
+# Redwood
+
+Amber meadow.
+ Draft.`,
+      editor: `# Indigo!
+
+Cobalt shore.
+
+# Redwood
+
+Amber meadow.
+ Draft.`,
     })
   })
 
   it('undoes and redoes a paragraph move without changing its text', () => {
-    const initial =
-      'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n'
+    const initial = `First paragraph.
+
+Second paragraph.
+
+Third paragraph.
+`
     const editor = createHistoryEditor(initial)
     const move = editor.history.move(
       { from: 0, destination: initial.length },
@@ -99,11 +142,21 @@ describe('MoveHistory local operations', () => {
     })
     expect(readOutput()).toEqual({
       moveSucceeded: true,
-      afterMove: 'Second paragraph.\n\nThird paragraph.\n\nFirst paragraph.\n',
+      afterMove: `Second paragraph.
+
+Third paragraph.
+
+First paragraph.
+`,
       undo: true,
       afterUndo: initial,
       redo: true,
-      afterRedo: 'Second paragraph.\n\nThird paragraph.\n\nFirst paragraph.\n',
+      afterRedo: `Second paragraph.
+
+Third paragraph.
+
+First paragraph.
+`,
       secondUndo: true,
       afterSecondUndo: initial,
       editor: initial,
@@ -111,8 +164,12 @@ describe('MoveHistory local operations', () => {
   })
 
   it('restores split paragraphs after undoing a later move', () => {
-    const initial =
-      '# Loom\n\nFirst sentence. Next sentence.\n\nFollowing paragraph.\n'
+    const initial = `# Loom
+
+First sentence. Next sentence.
+
+Following paragraph.
+`
     const editor = createHistoryEditor(initial)
     const splitAt = initial.indexOf('Next sentence') - 1
     edit(editor, splitAt, splitAt, '\n\n', 'input.type', 1_000)
@@ -143,13 +200,35 @@ describe('MoveHistory local operations', () => {
       editor: editor.view.state.doc.toString(),
     })
     expect(readOutput()).toEqual({
-      afterFirstSplit:
-        '# Loom\n\nFirst sentence.\n\n Next sentence.\n\nFollowing paragraph.\n',
-      afterSecondSplit:
-        '# Loom\n\nFirst sentence.\n\n\n\n Next sentence.\n\nFollowing paragraph.\n',
+      afterFirstSplit: `# Loom
+
+First sentence.
+
+ Next sentence.
+
+Following paragraph.
+`,
+      afterSecondSplit: `# Loom
+
+First sentence.
+
+
+
+ Next sentence.
+
+Following paragraph.
+`,
       moveSucceeded: true,
-      afterMove:
-        '# Loom\n\nFirst sentence.\n\n\n\n Following paragraph.\n\nNext sentence.\n',
+      afterMove: `# Loom
+
+First sentence.
+
+
+
+ Following paragraph.
+
+Next sentence.
+`,
       undoResults: [true, true, true],
       finalText: initial,
       editor: initial,
@@ -157,8 +236,18 @@ describe('MoveHistory local operations', () => {
   })
 
   it('restores separated edits around a moved paragraph', () => {
-    const initial =
-      '# Maple\n\npqr\n\n# Ocean\n\nfirst memo\n\n# Stone\n\nlast line\n'
+    const initial = `# Maple
+
+pqr
+
+# Ocean
+
+first memo
+
+# Stone
+
+last line
+`
     const editor = createHistoryEditor(initial)
     const removedPrefix = initial.indexOf('pq')
     edit(editor, removedPrefix, removedPrefix + 2, '', 'delete.selection')
@@ -190,13 +279,43 @@ describe('MoveHistory local operations', () => {
       editor: editor.view.state.doc.toString(),
     })
     expect(readOutput()).toEqual({
-      afterFirstEdit:
-        '# Maple\n\nr\n\n# Ocean\n\nfirst memo\n\n# Stone\n\nlast line\n',
+      afterFirstEdit: `# Maple
+
+r
+
+# Ocean
+
+first memo
+
+# Stone
+
+last line
+`,
       moveSucceeded: true,
-      afterMove:
-        '# Maple\n\nr\n\n# Ocean\n\n# Stone\n\nfirst memo\n\nlast line\n',
-      afterLastEdit:
-        '# Maple\n\nr\n\n# Ocean\n\n# Stone\n\nfirst memo\n\n line\n',
+      afterMove: `# Maple
+
+r
+
+# Ocean
+
+# Stone
+
+first memo
+
+last line
+`,
+      afterLastEdit: `# Maple
+
+r
+
+# Ocean
+
+# Stone
+
+first memo
+
+ line
+`,
       undoResults: [true, true, true],
       finalText: initial,
       editor: initial,
@@ -204,7 +323,10 @@ describe('MoveHistory local operations', () => {
   })
 
   it('keeps a memo adopted when undo restores its deleted heading', () => {
-    const initial = '# Cedar\n\nA note remains.\n'
+    const initial = `# Cedar
+
+A note remains.
+`
     const editor = createHistoryEditor(initial)
     addMemo(editor.doc, { id: 'memo-cedar', text: 'Keep this title', order: 0 })
     setMemoAdoptedTo(editor.doc, 'memo-cedar', 0)
@@ -235,7 +357,10 @@ describe('MoveHistory local operations', () => {
   })
 
   it('keeps a memo adopted when grouped edits delete and restore its heading', () => {
-    const initial = '#  Cedar\n\nA note remains.\n'
+    const initial = `#  Cedar
+
+A note remains.
+`
     const editor = createHistoryEditor(initial)
     addMemo(editor.doc, { id: 'memo-cedar', text: 'Keep this title', order: 0 })
     setMemoAdoptedTo(editor.doc, 'memo-cedar', 0)
@@ -255,8 +380,14 @@ describe('MoveHistory local operations', () => {
       afterUndoMemoStates,
     })
     expect(readOutput()).toEqual({
-      afterFirstDelete: '# Cedar\n\nA note remains.\n',
-      afterSecondDelete: ' Cedar\n\nA note remains.\n',
+      afterFirstDelete: `# Cedar
+
+A note remains.
+`,
+      afterSecondDelete: ` Cedar
+
+A note remains.
+`,
       undo: true,
       afterUndo: initial,
       afterUndoMemoStates: [
@@ -272,7 +403,18 @@ describe('MoveHistory local operations', () => {
   })
 
   it('restores memo adoption when a deleted range contains multiple headings', () => {
-    const initial = '# A\n\nFirst.\n\n# B\n\nSecond.\n\n# C\n\nThird.\n'
+    const initial = `# A
+
+First.
+
+# B
+
+Second.
+
+# C
+
+Third.
+`
     const editor = createHistoryEditor(initial)
     addMemo(editor.doc, { id: 'memo-b', text: 'A note', order: 0 })
     setMemoAdoptedTo(editor.doc, 'memo-b', initial.indexOf('# B'))
@@ -294,7 +436,10 @@ describe('MoveHistory local operations', () => {
       memoAfterUndo,
     })
     expect(readOutput()).toEqual({
-      afterDelete: '# C\n\nThird.\n',
+      afterDelete: `# C
+
+Third.
+`,
       memoAfterDelete: [{ id: 'memo-b', state: { kind: 'unorganized' } }],
       undo: { ok: true, value: true },
       afterUndo: initial,
@@ -311,7 +456,10 @@ describe('MoveHistory local operations', () => {
   })
 
   it('keeps memo adoption across deleting and restoring a heading repeatedly', () => {
-    const initial = '# Cedar\n\nA note remains.\n'
+    const initial = `# Cedar
+
+A note remains.
+`
     const editor = createHistoryEditor(initial)
     addMemo(editor.doc, { id: 'memo-cedar', text: 'A note', order: 0 })
     setMemoAdoptedTo(editor.doc, 'memo-cedar', 0)
@@ -339,7 +487,10 @@ describe('MoveHistory local operations', () => {
       memo: readMemoStates(editor.doc),
     })
     expect(readOutput()).toEqual({
-      afterDelete: ' Cedar\n\nA note remains.\n',
+      afterDelete: ` Cedar
+
+A note remains.
+`,
       undoResults: [
         { ok: true, value: true },
         { ok: true, value: true },
@@ -359,10 +510,20 @@ describe('MoveHistory local operations', () => {
   })
 
   it('keeps a memo adopted to a typed heading through undo and redo', () => {
-    const initial = 'Opening paragraph.\n'
+    const initial = `Opening paragraph.
+`
     const editor = createHistoryEditor(initial)
     addMemo(editor.doc, { id: 'memo-opening', text: 'A note', order: 0 })
-    edit(editor, 0, 0, '# Opening\n\n', 'input.type', 10_000)
+    edit(
+      editor,
+      0,
+      0,
+      `# Opening
+
+`,
+      'input.type',
+      10_000,
+    )
     const afterTyping = editor.body.toJSON()
     setMemoAdoptedTo(editor.doc, 'memo-opening', 0)
     const afterAdoption = readMemoStates(editor.doc)
@@ -388,7 +549,10 @@ describe('MoveHistory local operations', () => {
       memoAfterRedo: readMemoStates(editor.doc),
     })
     expect(readOutput()).toEqual({
-      afterTyping: '# Opening\n\nOpening paragraph.\n',
+      afterTyping: `# Opening
+
+Opening paragraph.
+`,
       afterAdoption: [
         {
           id: 'memo-opening',
@@ -402,7 +566,10 @@ describe('MoveHistory local operations', () => {
       afterUndo: initial,
       memoAfterUndo: [{ id: 'memo-opening', state: { kind: 'unorganized' } }],
       redo: { ok: true, value: true },
-      afterRedo: '# Opening\n\nOpening paragraph.\n',
+      afterRedo: `# Opening
+
+Opening paragraph.
+`,
       memoAfterRedo: [
         {
           id: 'memo-opening',
@@ -416,7 +583,14 @@ describe('MoveHistory local operations', () => {
   })
 
   it('undoes and redoes a replacement around a later move', () => {
-    const initial = '# Cedar\n\nbefore target after\n\n# Flint\n\nsecond\n'
+    const initial = `# Cedar
+
+before target after
+
+# Flint
+
+second
+`
     const editor = createHistoryEditor(initial)
     const targetFrom = initial.indexOf('target')
     edit(
@@ -450,15 +624,42 @@ describe('MoveHistory local operations', () => {
       editor: editor.view.state.doc.toString(),
     })
     expect(readOutput()).toEqual({
-      afterReplacement:
-        '# Cedar\n\nbefore replacement after\n\n# Flint\n\nsecond\n',
+      afterReplacement: `# Cedar
+
+before replacement after
+
+# Flint
+
+second
+`,
       moveSucceeded: true,
-      afterMove: '# Flint\n\nsecond\n\n# Cedar\n\nbefore replacement after\n',
+      afterMove: `# Flint
+
+second
+
+# Cedar
+
+before replacement after
+`,
       undoResults: [true, true],
       afterUndo: initial,
       redoResults: [true, true],
-      afterRedo: '# Flint\n\nsecond\n\n# Cedar\n\nbefore replacement after\n',
-      editor: '# Flint\n\nsecond\n\n# Cedar\n\nbefore replacement after\n',
+      afterRedo: `# Flint
+
+second
+
+# Cedar
+
+before replacement after
+`,
+      editor: `# Flint
+
+second
+
+# Cedar
+
+before replacement after
+`,
     })
   })
 })

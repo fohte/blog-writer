@@ -12,7 +12,12 @@ afterEach(cleanupHistoryEditors)
 
 describe('MoveHistory remote operations', () => {
   it('resolves a move after a remote insertion before the moved block', () => {
-    const initial = 'first\n\nsecond\n\nthird\n'
+    const initial = `first
+
+second
+
+third
+`
     const editor = createHistoryEditor(initial)
     const move = editor.history.move(
       { from: initial.indexOf('second'), destination: editor.body.length },
@@ -20,7 +25,12 @@ describe('MoveHistory remote operations', () => {
     )
     const afterMove = editor.body.toJSON()
     editor.doc.transact(() => {
-      editor.body.insert(0, 'remote\n\n')
+      editor.body.insert(
+        0,
+        `remote
+
+`,
+      )
     }, 'remote')
     const afterRemoteInsert = editor.body.toJSON()
     const undo = editor.history.undo(editor.view)
@@ -35,16 +45,45 @@ describe('MoveHistory remote operations', () => {
     })
     expect(readOutput()).toEqual({
       moveSucceeded: true,
-      afterMove: 'first\n\nthird\n\nsecond\n',
-      afterRemoteInsert: 'remote\n\nfirst\n\nthird\n\nsecond\n',
+      afterMove: `first
+
+third
+
+second
+`,
+      afterRemoteInsert: `remote
+
+first
+
+third
+
+second
+`,
       undoSucceeded: true,
-      body: 'remote\n\nfirst\n\nsecond\n\nthird\n',
-      editor: 'remote\n\nfirst\n\nsecond\n\nthird\n',
+      body: `remote
+
+first
+
+second
+
+third
+`,
+      editor: `remote
+
+first
+
+second
+
+third
+`,
     })
   })
 
   it('undoes a move with a remote edit inside the moved block', () => {
-    const initial = 'first\n\nsecond\n'
+    const initial = `first
+
+second
+`
     const editor = createHistoryEditor(initial)
     const errors: string[] = []
     editor.history.onError((error) => {
@@ -103,24 +142,48 @@ describe('MoveHistory remote operations', () => {
       errors,
     })
     expect(readOutput()).toEqual({
-      afterEdit: 'first typed\n\nsecond\n',
+      afterEdit: `first typed
+
+second
+`,
       moveSucceeded: true,
-      beforeUndo: 'sremote econd\n\nfirst typed\n',
+      beforeUndo: `sremote econd
+
+first typed
+`,
       moveUndo: true,
-      afterMoveUndo: 'first typed\n\nsremote econd\n',
-      afterRemoteWhileRedo: 'first peer typed\n\nsremote econd\n',
+      afterMoveUndo: `first typed
+
+sremote econd
+`,
+      afterRemoteWhileRedo: `first peer typed
+
+sremote econd
+`,
       moveRedo: true,
-      afterMoveRedo: 'sremote econd\n\nfirst peer typed\n',
+      afterMoveRedo: `sremote econd
+
+first peer typed
+`,
       secondMoveUndo: true,
-      afterSecondMoveUndo: 'first peer typed\n\nsremote econd\n',
+      afterSecondMoveUndo: `first peer typed
+
+sremote econd
+`,
       olderUndo: true,
-      finalText: 'first peer\n\nsremote econd\n',
+      finalText: `first peer
+
+sremote econd
+`,
       errors: [],
     })
   })
 
   it('drops older history after a remote edit crosses a move seam', () => {
-    const initial = 'first\n\nsecond\n'
+    const initial = `first
+
+second
+`
     const editor = createHistoryEditor(initial)
     const firstEnd = initial.indexOf('first') + 'first'.length
     edit(editor, firstEnd, firstEnd, ' typed', 'input.type')
@@ -161,20 +224,38 @@ describe('MoveHistory remote operations', () => {
       finalText: editor.body.toJSON(),
     })
     expect(readOutput()).toEqual({
-      afterEdit: 'first typed\n\nsecond\n',
+      afterEdit: `first typed
+
+second
+`,
       moveSucceeded: true,
-      movedSecond: 'second\n\nfirst typed\n',
-      beforeUndo: 'second\n\nfirst typed\nremote ',
+      movedSecond: `second
+
+first typed
+`,
+      beforeUndo: `second
+
+first typed
+remote `,
       failedUndo: 'A remote change overlaps a moved block boundary',
-      afterFailedUndo: 'second\n\nfirst typed\nremote ',
+      afterFailedUndo: `second
+
+first typed
+remote `,
       olderUndo: false,
       redo: false,
-      finalText: 'second\n\nfirst typed\nremote ',
+      finalText: `second
+
+first typed
+remote `,
     })
   })
 
   it('drops history when a remote edit changes a moved separator', () => {
-    const initial = 'First paragraph.\n\nSecond paragraph.\n'
+    const initial = `First paragraph.
+
+Second paragraph.
+`
     const editor = createHistoryEditor(initial)
     edit(editor, 0, 0, 'Local ', 'input.type', 10_000)
     const afterEdit = editor.body.toJSON()
@@ -206,19 +287,32 @@ describe('MoveHistory remote operations', () => {
     })
     expect(readOutput()).toEqual({
       moveSucceeded: true,
-      afterEdit: 'Local First paragraph.\n\nSecond paragraph.\n',
-      afterMove: 'Second paragraph.\n\nLocal First paragraph.\n',
+      afterEdit: `Local First paragraph.
+
+Second paragraph.
+`,
+      afterMove: `Second paragraph.
+
+Local First paragraph.
+`,
       separatorPosition: 18,
-      afterRemoteDelete: 'Second paragraph.\nLocal First paragraph.\n',
+      afterRemoteDelete: `Second paragraph.
+Local First paragraph.
+`,
       failedUndo: 'A remote change overlaps a moved separator',
-      afterFailedUndo: 'Second paragraph.\nLocal First paragraph.\n',
+      afterFailedUndo: `Second paragraph.
+Local First paragraph.
+`,
       olderUndo: false,
       redo: false,
     })
   })
 
   it('clears both stacks after a move can no longer be reversed', () => {
-    const initial = 'first\n\nsecond\n'
+    const initial = `first
+
+second
+`
     const editor = createHistoryEditor(initial)
     const firstEnd = initial.indexOf('first') + 'first'.length
     edit(editor, firstEnd, firstEnd, ' typed', 'input.type', 10_000)
@@ -273,25 +367,54 @@ describe('MoveHistory remote operations', () => {
       editor: editor.view.state.doc.toString(),
     })
     expect(readOutput()).toEqual({
-      afterEdit: 'first typed\n\nsecond\n',
+      afterEdit: `first typed
+
+second
+`,
       moveSucceeded: true,
-      afterMove: 'second\n\nfirst typed\n',
-      afterLaterEdit: 'second\n\nfirst typed\n later',
+      afterMove: `second
+
+first typed
+`,
+      afterLaterEdit: `second
+
+first typed
+ later`,
       undoLaterEdit: true,
-      afterUndoLaterEdit: 'second\n\nfirst typed\n',
-      beforeFailedUndo: 'Sxyznd\n\nfirst typed\n',
+      afterUndoLaterEdit: `second
+
+first typed
+`,
+      beforeFailedUndo: `Sxyznd
+
+first typed
+`,
       failedUndo:
         'The block can no longer be restored to its previous position',
-      afterFailedUndo: 'Sxyznd\n\nfirst typed\n',
+      afterFailedUndo: `Sxyznd
+
+first typed
+`,
       olderUndo: false,
       redo: false,
-      finalText: 'Sxyznd\n\nfirst typed\n',
-      editor: 'Sxyznd\n\nfirst typed\n',
+      finalText: `Sxyznd
+
+first typed
+`,
+      editor: `Sxyznd
+
+first typed
+`,
     })
   })
 
   it('continues past a text undo invalidated by a remote deletion', () => {
-    const initial = 'alpha\n\nbravo\n\ncharlie\n'
+    const initial = `alpha
+
+bravo
+
+charlie
+`
     const editor = createHistoryEditor(initial)
     const alphaMove = editor.history.move(
       { from: initial.indexOf('alpha'), destination: editor.body.length },
@@ -330,11 +453,31 @@ describe('MoveHistory remote operations', () => {
     })
     expect(readOutput()).toEqual({
       alphaMoveSucceeded: true,
-      afterAlphaMove: 'bravo\n\ncharlie\n\nalpha\n',
-      afterEdit: 'bravo typed\n\ncharlie\n\nalpha\n',
+      afterAlphaMove: `bravo
+
+charlie
+
+alpha
+`,
+      afterEdit: `bravo typed
+
+charlie
+
+alpha
+`,
       charlieMoveSucceeded: true,
-      afterCharlieMove: 'charlie\n\nbravo typed\n\nalpha\n',
-      afterRemoteDelete: 'charlie\n\nbravo\n\nalpha\n',
+      afterCharlieMove: `charlie
+
+bravo typed
+
+alpha
+`,
+      afterRemoteDelete: `charlie
+
+bravo
+
+alpha
+`,
       undoResults: [true, true, false],
       finalText: initial,
       editor: initial,
@@ -342,7 +485,10 @@ describe('MoveHistory remote operations', () => {
   })
 
   it('clears move redo after a new text edit', () => {
-    const initial = 'alpha\n\nbeta\n'
+    const initial = `alpha
+
+beta
+`
     const editor = createHistoryEditor(initial)
     const move = editor.history.move(
       { from: initial.indexOf('beta'), destination: 0 },
@@ -367,18 +513,45 @@ describe('MoveHistory remote operations', () => {
     })
     expect(readOutput()).toEqual({
       moveSucceeded: true,
-      afterMove: 'beta\n\nalpha\n',
+      afterMove: `beta
+
+alpha
+`,
       undoSucceeded: true,
       afterUndo: initial,
-      afterEdit: 'typed alpha\n\nbeta\n',
+      afterEdit: `typed alpha
+
+beta
+`,
       redoAvailable: false,
-      finalText: 'typed alpha\n\nbeta\n',
-      editor: 'typed alpha\n\nbeta\n',
+      finalText: `typed alpha
+
+beta
+`,
+      editor: `typed alpha
+
+beta
+`,
     })
   })
 
   it('restores the first moved heading section after another section moves', () => {
-    const initial = '# A\n\naaa\n\n## A1\n\nx\n\n# B\n\nb\n\n# C\n\nc\n'
+    const initial = `# A
+
+aaa
+
+## A1
+
+x
+
+# B
+
+b
+
+# C
+
+c
+`
     const editor = createHistoryEditor(initial)
     const firstMove = editor.history.move(
       { from: initial.indexOf('aaa'), destination: initial.indexOf('# C') },
@@ -406,9 +579,39 @@ describe('MoveHistory remote operations', () => {
     })
     expect(readOutput()).toEqual({
       firstMoveSucceeded: true,
-      afterFirstMove: '# A\n\n## A1\n\nx\n\n# B\n\nb\n\naaa\n\n# C\n\nc\n',
+      afterFirstMove: `# A
+
+## A1
+
+x
+
+# B
+
+b
+
+aaa
+
+# C
+
+c
+`,
       secondMoveSucceeded: true,
-      afterSecondMove: '# B\n\nb\n\naaa\n\n# C\n\nc\n\n# A\n\n## A1\n\nx\n',
+      afterSecondMove: `# B
+
+b
+
+aaa
+
+# C
+
+c
+
+# A
+
+## A1
+
+x
+`,
       undoResults: [true, true],
       finalText: initial,
       editor: initial,
@@ -416,8 +619,22 @@ describe('MoveHistory remote operations', () => {
   })
 
   it('restores deleted text in its original section after moving that section', () => {
-    const initial =
-      '# A\n\nkeep\n\n## A1\n\ndeleted para\n\n# B\n\nb\n\n# C\n\nc\n'
+    const initial = `# A
+
+keep
+
+## A1
+
+deleted para
+
+# B
+
+b
+
+# C
+
+c
+`
     const editor = createHistoryEditor(initial)
     const deletedFrom = initial.indexOf('deleted para')
     edit(
@@ -444,9 +661,37 @@ describe('MoveHistory remote operations', () => {
       editor: editor.view.state.doc.toString(),
     })
     expect(readOutput()).toEqual({
-      afterDelete: '# A\n\nkeep\n\n## A1\n\n\n\n# B\n\nb\n\n# C\n\nc\n',
+      afterDelete: `# A
+
+keep
+
+## A1
+
+
+
+# B
+
+b
+
+# C
+
+c
+`,
       moveSucceeded: true,
-      afterMove: '# B\n\nb\n\n# C\n\nc\n\n# A\n\nkeep\n\n## A1\n',
+      afterMove: `# B
+
+b
+
+# C
+
+c
+
+# A
+
+keep
+
+## A1
+`,
       undoResults: [true, true],
       finalText: initial,
       editor: initial,

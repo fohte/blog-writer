@@ -18,8 +18,22 @@ afterEach(cleanupHistoryEditors)
 
 describe('MoveHistory remote seeded sequences', () => {
   it('preserves remote text across seeded local undo and redo sequences', () => {
-    const initial =
-      'Opening paragraph.\n\n# Saffron\n\nsaffron-para: seed\n\nsaffron-shared: stable\n\n# Glacier\n\nglacier-para: seed\n\n# Meadow\n\nmeadow-para: seed\n'
+    const initial = `Opening paragraph.
+
+# Saffron
+
+saffron-para: seed
+
+saffron-shared: stable
+
+# Glacier
+
+glacier-para: seed
+
+# Meadow
+
+meadow-para: seed
+`
     const seeds = Array.from({ length: 24 }, (_, index) => index + 1)
     const operationCount = 32
     const remoteText = (markdown: string, seed: number) =>
@@ -169,8 +183,24 @@ describe('MoveHistory remote seeded sequences', () => {
   })
 
   it('keeps CodeMirror and Yjs aligned for seeded emoji moves and remote edits', () => {
-    const initial =
-      '# A\n\naaa aaa\n\n## A1\n\na1 a1\n\n# B\n\nbbb 😀 bbb\n\npara two\n\n# C\n\nccc\n'
+    const initial = `# A
+
+aaa aaa
+
+## A1
+
+a1 a1
+
+# B
+
+bbb 😀 bbb
+
+para two
+
+# C
+
+ccc
+`
     const seeds = [3386, 3668]
     const actual = seeds.map((seed) => {
       const random = seededRandomIndex(seed * 9_973)
@@ -196,7 +226,17 @@ describe('MoveHistory remote seeded sequences', () => {
       const sync = () => {
         syncDocs(editor.doc, peer)
       }
-      const characters = ['x', 'yy', '\n', '\n\n', '# H\n', '😀', ' ', '## ']
+      const characters = [
+        'x',
+        'yy',
+        '\n',
+        '\n\n',
+        `# H
+`,
+        '😀',
+        ' ',
+        '## ',
+      ]
       let remoteCount = 0
       const insertedRemoteTokens: string[] = []
       const syncMismatches: {

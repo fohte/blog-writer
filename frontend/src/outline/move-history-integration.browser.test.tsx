@@ -38,7 +38,13 @@ function applyMissingUpdate(source: Y.Doc, destination: Y.Doc): void {
 
 describe('MoveHistory integration', () => {
   it('records text restored by undo for move conflict detection', () => {
-    const initial = '## Cedar\na1\n## Fjord\nmaple maple\n## Vista\nz9\n'
+    const initial = `## Cedar
+a1
+## Fjord
+maple maple
+## Vista
+z9
+`
     const editor = createHistoryEditor(initial)
     const peer = replicate(editor.doc)
     observerStops.push(
@@ -85,8 +91,22 @@ describe('MoveHistory integration', () => {
     expect(readOutput()).toEqual({
       conflictsBeforeUndo: [],
       undo: { ok: true, value: true },
-      bodyAfterUndo: '## Cedar\na1\nple## Vista\nz9\n\n## Fjord\nmaple ma\n',
-      editorAfterUndo: '## Cedar\na1\nple## Vista\nz9\n\n## Fjord\nmaple ma\n',
+      bodyAfterUndo: `## Cedar
+a1
+ple## Vista
+z9
+
+## Fjord
+maple ma
+`,
+      editorAfterUndo: `## Cedar
+a1
+ple## Vista
+z9
+
+## Fjord
+maple ma
+`,
       conflictsAfterUndo: [
         [{ from: 12, to: 15, text: 'ple', target: 46 }],
         [{ from: 12, to: 15, text: 'ple', target: 46 }],
@@ -94,8 +114,117 @@ describe('MoveHistory integration', () => {
     })
   })
 
+  it('records text restored by move undo for move conflict detection', () => {
+    const initial = `## Cedar
+a1
+## Fjord
+maple maple
+## Vista
+z9
+`
+    const editor = createHistoryEditor(initial)
+    const peer = replicate(editor.doc)
+    observerStops.push(
+      observeMoveConflicts(editor.doc),
+      observeMoveConflicts(peer),
+    )
+    const editorMove = editor.history.move(
+      { from: initial.indexOf('## Fjord'), destination: initial.length },
+      editor.view,
+    )
+    const peerBody = getBody(peer)
+    const peerText = peerBody.toJSON()
+    const peerMove = moveBlock(peer, {
+      from: peerText.indexOf('## Fjord'),
+      destination: 0,
+    })
+    applyMissingUpdate(peer, editor.doc)
+    applyMissingUpdate(editor.doc, peer)
+
+    const conflictsBeforeUndo = [editor.doc, peer].map((doc) =>
+      getMoveConflicts(doc).map(({ from, to, text, target }) => ({
+        from,
+        to,
+        text,
+        target,
+      })),
+    )
+    const undo = editor.history.undo(editor.view).match(
+      (value) => ({ ok: true, value }),
+      (error) => ({ ok: false, error: error.message }),
+    )
+    applyMissingUpdate(editor.doc, peer)
+    applyMissingUpdate(peer, editor.doc)
+    const conflictsAfterUndo = [editor.doc, peer].map((doc) =>
+      getMoveConflicts(doc).map(({ from, to, text, target }) => ({
+        from,
+        to,
+        text,
+        target,
+      })),
+    )
+    const readOutput = () => ({
+      editorMoveSucceeded: editorMove.isOk(),
+      peerMoveSucceeded: peerMove.isOk(),
+      conflictsBeforeUndo,
+      undo,
+      editorBody: editor.body.toJSON(),
+      peerBody: getBody(peer).toJSON(),
+      conflictsAfterUndo,
+    })
+    expect(readOutput()).toEqual({
+      editorMoveSucceeded: true,
+      peerMoveSucceeded: true,
+      conflictsBeforeUndo: [[], []],
+      undo: { ok: true, value: true },
+      editorBody: `## Fjord
+maple maple
+
+## Cedar
+a1
+## Fjord
+maple maple
+## Vista
+z9
+`,
+      peerBody: `## Fjord
+maple maple
+
+## Cedar
+a1
+## Fjord
+maple maple
+## Vista
+z9
+`,
+      conflictsAfterUndo: [
+        [
+          {
+            from: 34,
+            to: 55,
+            text: `## Fjord
+maple maple
+`,
+            target: 21,
+          },
+        ],
+        [
+          {
+            from: 34,
+            to: 55,
+            text: `## Fjord
+maple maple
+`,
+            target: 21,
+          },
+        ],
+      ],
+    })
+  })
+
   it('maps saved selections through a remote insertion before undo and redo', () => {
-    const initial = 'prefix target suffix\n'
+    const initial = `prefix target suffix
+`
     const editor = createHistoryEditor(initial)
     const peer = replicate(editor.doc)
     const targetFrom = initial.indexOf('target')
@@ -135,21 +264,35 @@ describe('MoveHistory integration', () => {
     })
     expect(readOutput()).toEqual({
       selectionBeforeEdit: { ranges: [{ anchor: 7, head: 13 }] },
-      afterLocalEdit: 'prefix target suffix local\n',
-      afterRemoteInsert: 'remote prefix target suffix local\n',
+      afterLocalEdit: `prefix target suffix local
+`,
+      afterRemoteInsert: `remote prefix target suffix local
+`,
       selectionAfterRemote: { ranges: [{ anchor: 14, head: 20 }] },
       undo: true,
-      afterUndo: 'remote prefix target suffix\n',
+      afterUndo: `remote prefix target suffix
+`,
       selectionAfterUndo: { ranges: [{ anchor: 14, head: 20 }] },
       redo: true,
-      afterRedo: 'remote prefix target suffix local\n',
+      afterRedo: `remote prefix target suffix local
+`,
       selectionAfterRedo: { ranges: [{ anchor: 14, head: 20 }] },
     })
   })
 
   it('discards history when a remote edit changes a moved heading marker', () => {
-    const initial =
-      '# Parent\n\nparent text\n\n# Child\n\nchild text\n\n# Other\n\nother text\n'
+    const initial = `# Parent
+
+parent text
+
+# Child
+
+child text
+
+# Other
+
+other text
+`
     const editor = createHistoryEditor(initial)
     const peer = replicate(editor.doc)
     const typedAt = initial.indexOf('parent text') + 'parent text'.length
@@ -193,20 +336,70 @@ describe('MoveHistory integration', () => {
       editor: editor.view.state.doc.toString(),
     })
     expect(readOutput()).toEqual({
-      afterLocalEdit:
-        '# Parent\n\nparent text local\n\n# Child\n\nchild text\n\n# Other\n\nother text\n',
+      afterLocalEdit: `# Parent
+
+parent text local
+
+# Child
+
+child text
+
+# Other
+
+other text
+`,
       moveSucceeded: true,
-      afterMove:
-        '# Parent\n\nparent text local\n\n## Child\n\nchild text\n\n# Other\n\nother text\n',
-      beforeUndo:
-        '# Parent\n\nparent text local\n\n# Child\n\nchild text\n\n# Other\n\nother text\n',
+      afterMove: `# Parent
+
+parent text local
+
+## Child
+
+child text
+
+# Other
+
+other text
+`,
+      beforeUndo: `# Parent
+
+parent text local
+
+# Child
+
+child text
+
+# Other
+
+other text
+`,
       failedUndo: 'A remote change overlaps a moved heading marker',
-      afterFailedUndo:
-        '# Parent\n\nparent text local\n\n# Child\n\nchild text\n\n# Other\n\nother text\n',
+      afterFailedUndo: `# Parent
+
+parent text local
+
+# Child
+
+child text
+
+# Other
+
+other text
+`,
       olderUndo: false,
       redo: false,
-      editor:
-        '# Parent\n\nparent text local\n\n# Child\n\nchild text\n\n# Other\n\nother text\n',
+      editor: `# Parent
+
+parent text local
+
+# Child
+
+child text
+
+# Other
+
+other text
+`,
     })
   })
 })

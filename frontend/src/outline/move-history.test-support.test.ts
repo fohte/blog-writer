@@ -3,14 +3,7 @@ import { EditorView, type ViewUpdate } from '@codemirror/view'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
-import {
-  addMemo,
-  getBody,
-  listMemos,
-  setBody,
-  setMemoAdoptedTo,
-  topLevelBlocks,
-} from '#article/index'
+import { getBody, listMemos, setBody } from '#article/index'
 import { createMoveHistory } from '#outline/index'
 
 export type HistoryEditor = {
@@ -82,7 +75,9 @@ export function step(
 ): boolean {
   return editor.history[direction](editor.view).match(
     (changed) => changed,
-    () => false,
+    (error) => {
+      throw error
+    },
   )
 }
 
@@ -139,5 +134,3 @@ export function syncDocs(left: Y.Doc, right: Y.Doc): void {
   Y.applyUpdate(right, leftUpdate, 'remote')
   Y.applyUpdate(left, rightUpdate, 'remote')
 }
-
-export { addMemo, setMemoAdoptedTo, topLevelBlocks }

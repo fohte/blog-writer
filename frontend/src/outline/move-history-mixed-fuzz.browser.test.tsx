@@ -15,8 +15,20 @@ afterEach(cleanupHistoryEditors)
 
 describe('MoveHistory mixed seeded sequences', () => {
   it('maps remote edits at multiple history stages without losing their text', () => {
-    const initial =
-      '# A\n\nalpha 😀 alpha\n\n# B\n\nbeta paragraph\n\n    indented code\n\n# C\n\nthird paragraph\n'
+    const initial = `# A
+
+alpha 😀 alpha
+
+# B
+
+beta paragraph
+
+    indented code
+
+# C
+
+third paragraph
+`
     const seeds = Array.from({ length: 12 }, (_, index) => index + 1)
     const actual = seeds.map((seed) => {
       const random = seededRandomIndex(seed)
@@ -128,11 +140,35 @@ describe('MoveHistory mixed seeded sequences', () => {
     expect(actual).toEqual(
       seeds.map((seed) => ({
         seed,
-        afterEdit:
-          '# A\n\nalpha local 😀 alpha\n\n# B\n\nbeta paragraph\n\n    indented code\n\n# C\n\nthird paragraph\n',
+        afterEdit: `# A
+
+alpha local 😀 alpha
+
+# B
+
+beta paragraph
+
+    indented code
+
+# C
+
+third paragraph
+`,
         moveSucceeded: true,
-        afterMove:
-          '# B\n\nbeta paragraph\n\n    indented code\n\n# A\n\nalpha local 😀 alpha\n\n# C\n\nthird paragraph\n',
+        afterMove: `# B
+
+beta paragraph
+
+    indented code
+
+# A
+
+alpha local 😀 alpha
+
+# C
+
+third paragraph
+`,
         firstToken: `R${String(seed)}a`,
         tokensAfterFirstRemote: [`R${String(seed)}a`],
         undoMove: { ok: true, value: true },
@@ -166,15 +202,41 @@ describe('MoveHistory mixed seeded sequences', () => {
   })
 
   it('restores seeded paragraph edits and moves exactly through undo and redo', () => {
-    const initial =
-      '# A\n\nalpha 😀 alpha\n\n## A1\n\nchild paragraph\n\n# B\n\nbeta paragraph\n\n    indented code\n\n# C\n\nlast paragraph\n'
+    const initial = `# A
+
+alpha 😀 alpha
+
+## A1
+
+child paragraph
+
+# B
+
+beta paragraph
+
+    indented code
+
+# C
+
+last paragraph
+`
     const seeds = Array.from({ length: 24 }, (_, index) => index + 1)
     const operationCount = 40
     const actual = seeds.map((seed) => {
       const random = seededRandomIndex(seed)
       const safeBoundary = isSafeUtf16Boundary
       const editor = createHistoryEditor(initial)
-      const insertions = ['x', 'yy', '\n', '\n\n', '# H\n\n', '😀', ' ']
+      const insertions = [
+        'x',
+        'yy',
+        '\n',
+        '\n\n',
+        `# H
+
+`,
+        '😀',
+        ' ',
+      ]
       const undoStates = [initial]
       const redoStates: string[] = []
       const errors: { operation: number; message: string }[] = []
