@@ -1,4 +1,9 @@
-import { Annotation, Transaction } from '@codemirror/state'
+import {
+  Annotation,
+  type ChangeSet,
+  Text,
+  Transaction,
+} from '@codemirror/state'
 import { err, ok, Result } from 'neverthrow'
 import * as Y from 'yjs'
 
@@ -6,7 +11,18 @@ import { getBody } from '#article/body'
 import { InvalidBlockMoveError } from '#article/errors'
 import { prepareEvidenceAnchorMove } from '#article/evidence'
 import { prepareMemoAnchorMove } from '#article/memos'
-import type { MoveInsertion, MoveSource } from '#article/move-block-plan'
+import {
+  changeSetForMove,
+  mapMoveHistoryRemote,
+  type MoveRecord,
+  type MoveSeparator,
+} from '#article/move-block-history'
+import type {
+  MoveInsertion,
+  MoveSource,
+  Range,
+  TextReplacement,
+} from '#article/move-block-plan'
 import {
   mapWithinRange,
   planBlockMove,
@@ -16,8 +32,15 @@ import {
 } from '#article/move-block-plan'
 import {
   collectHeadings,
+  findMoveBlockRange,
   validatePlannedMoveStructure,
 } from '#article/move-block-structure'
+import {
+  captureMoveSource,
+  cleanupMoveRecords,
+  createMoveRecord,
+  getMoveRecords,
+} from '#article/move-conflict-records'
 
 export type BlockMoved = {
   from: number
@@ -45,7 +68,7 @@ export type MoveBlockInput = {
   destination: number
   childOf?: number
   headingLevel?: number
-  userEvent?: 'move' | 'undo'
+  userEvent?: 'move' | 'undo' | 'redo'
 }
 
 export type MoveBlockResult = BlockMoved & {
@@ -56,96 +79,70 @@ export type MoveBlockResult = BlockMoved & {
   originalHeadingLevel?: number
 }
 
-type AnchoredTextRange = {
-  from: Y.RelativePosition
-  to: Y.RelativePosition
-  text: string
-}
-type MoveHistory = {
-  movedFrom: Y.RelativePosition
-  seam: Y.RelativePosition
-  insertedSelection: string
-  source?: MoveSource
-  separators: AnchoredTextRange[]
-}
 type ApplyMoveOptions = {
+  range?: Range
   expectedSelection?: string
   replacement?: MoveSource
-  removeRanges?: AnchoredTextRange[]
+  removeRanges?: { from: number; to: number; text: string }[]
+  validate?: boolean
 }
-
 const updatersByDoc = new WeakMap<Y.Doc, Set<BlockMoveUpdater>>()
-const historyByMove = new WeakMap<MoveBlockResult, MoveHistory>()
-
-function resolvePosition(
-  doc: Y.Doc,
-  body: Y.Text,
-  relativePosition: Y.RelativePosition,
-): number | undefined {
-  const absolutePosition = Y.createAbsolutePositionFromRelativePosition(
-    relativePosition,
-    doc,
-  )
-  return absolutePosition?.type === body ? absolutePosition.index : undefined
-}
-
-function resolveTextRange(
-  doc: Y.Doc,
-  body: Y.Text,
-  markdown: string,
-  anchoredRange: AnchoredTextRange,
-): { from: number; to: number } | undefined {
-  const from = resolvePosition(doc, body, anchoredRange.from)
-  const to = resolvePosition(doc, body, anchoredRange.to)
-  if (
-    from === undefined ||
-    to === undefined ||
-    to < from ||
-    markdown.slice(from, to) !== anchoredRange.text
-  ) {
-    return undefined
-  }
-  return { from, to }
-}
+const historyByMove = new WeakMap<MoveBlockResult, MoveRecord>()
 
 function rememberMove(input: {
-  body: Y.Text
   move: MoveBlockResult
-  insertionIndex: number
   insertion: MoveInsertion
-  source?: MoveSource
+  inverse: ChangeSet
+  source: MoveSource
+  headingLevel?: number
+  contentReplacements: TextReplacement[]
+  mapPosition: (position: number, assoc: number) => number | undefined
 }): void {
-  const { body, move, insertionIndex, insertion, source } = input
+  const {
+    move,
+    insertion,
+    inverse,
+    source,
+    headingLevel,
+    contentReplacements,
+    mapPosition,
+  } = input
   const prefix = insertion.text.slice(0, insertion.prefixLength)
   const suffix = insertion.text.slice(
     insertion.prefixLength + insertion.contentLength,
   )
-  const moveTo = move.to
-  const separators: AnchoredTextRange[] = []
+  const separators: MoveSeparator[] = []
   if (prefix.length > 0) {
-    separators.push({
-      from: Y.createRelativePositionFromTypeIndex(body, insertionIndex, 1),
-      to: Y.createRelativePositionFromTypeIndex(body, move.from, -1),
-      text: prefix,
-    })
+    separators.push({ side: 'prefix', text: prefix })
   }
   if (suffix.length > 0) {
-    separators.push({
-      from: Y.createRelativePositionFromTypeIndex(body, moveTo, 1),
-      to: Y.createRelativePositionFromTypeIndex(
-        body,
-        moveTo + suffix.length,
-        -1,
-      ),
-      text: suffix,
-    })
+    separators.push({ side: 'suffix', text: suffix })
   }
   historyByMove.set(move, {
-    movedFrom: Y.createRelativePositionFromTypeIndex(body, move.from, 1),
-    seam: Y.createRelativePositionFromTypeIndex(body, move.seam, 1),
     insertedSelection: insertion.text.slice(insertion.prefixLength),
-    ...(source === undefined ? {} : { source }),
+    ...(headingLevel === undefined ? {} : { headingLevel }),
+    contentReplacements,
+    mapPosition,
+    inverse,
+    source,
     separators,
+  })
+}
+
+function reverseContentReplacements(
+  rangeFrom: number,
+  replacements: TextReplacement[],
+): TextReplacement[] {
+  let offset = 0
+  return replacements.map((replacement) => {
+    const from = replacement.from - rangeFrom + offset
+    const to = from + replacement.text.length
+    offset += replacement.text.length - (replacement.to - replacement.from)
+    return {
+      from,
+      to,
+      text: '#'.repeat(replacement.to - replacement.from),
+    }
   })
 }
 
@@ -172,12 +169,22 @@ function applyMoveBlock(
   input: MoveBlockInput,
   options: ApplyMoveOptions = {},
 ): Result<MoveBlockResult, InvalidBlockMoveError> {
+  cleanupMoveRecords(doc)
   const body = getBody(doc)
   const markdown = body.toJSON()
   const headings = collectHeadings(markdown)
-  const validation = validateMove(markdown, input, headings)
-  if (validation.isErr()) return err(validation.error)
-  const { range, targetLevel } = validation.value
+  const shouldValidate = options.validate !== false
+  const validation = shouldValidate
+    ? validateMove(markdown, input, headings)
+    : undefined
+  if (validation?.isErr() === true) return err(validation.error)
+  const validated = validation?.isOk() === true ? validation.value : undefined
+  const range = validated
+    ? validated.range
+    : (options.range ?? findMoveBlockRange(markdown, input.from, headings))
+  if (!range)
+    return err(new InvalidBlockMoveError('No Markdown block at position'))
+  const targetLevel = validated ? validated.targetLevel : input.headingLevel
   if (
     options.expectedSelection !== undefined &&
     markdown.slice(range.from, range.to) !== options.expectedSelection
@@ -192,22 +199,28 @@ function applyMoveBlock(
   )
   const movedText = transformedText(markdown, range, replacements)
   const sourceText = markdown.slice(range.from, range.to)
-  const removeRanges = (options.removeRanges ?? []).map((anchoredRange) =>
-    resolveTextRange(doc, body, markdown, anchoredRange),
+  const moveSource = captureMoveSource(body, range.from, range.to)
+  const moveStateVector = Object.fromEntries(
+    Y.decodeStateVector(Y.encodeStateVector(doc)),
   )
-  if (removeRanges.some((resolved) => resolved === undefined))
+  const removeRanges = options.removeRanges ?? []
+  if (
+    removeRanges.some(
+      ({ from, to, text }) =>
+        from < 0 ||
+        to < from ||
+        to > markdown.length ||
+        markdown.slice(from, to) !== text,
+    )
+  )
     return err(new InvalidBlockMoveError('A moved separator has changed'))
-  const resolvedRanges = removeRanges.filter(
-    (resolved): resolved is { from: number; to: number } =>
-      resolved !== undefined,
-  )
   const removeFrom = Math.min(
     range.from,
-    ...resolvedRanges.map((resolved) => resolved.from),
+    ...removeRanges.map((resolved) => resolved.from),
   )
   const removeTo = Math.max(
     range.to,
-    ...resolvedRanges.map((resolved) => resolved.to),
+    ...removeRanges.map((resolved) => resolved.to),
   )
   const plannedMove = planBlockMove({
     markdown,
@@ -229,15 +242,20 @@ function applyMoveBlock(
     insertedFrom,
     insertedTo,
   } = plannedMove
+  const inverse = changeSetForMove(markdown, plannedMove).invert(
+    Text.of(markdown.split('\n')),
+  )
   const newFrom = insertedFrom
   const newTo = newFrom + insertion.contentLength
-  const structureError = validatePlannedMoveStructure({
-    originalMarkdown: markdown,
-    originalRange: { from: range.from, to: range.to },
-    plannedMarkdown,
-    movedRange: { from: insertedFrom, to: insertedTo },
-    isSection: range.headingLevel !== undefined,
-  })
+  const structureError = shouldValidate
+    ? validatePlannedMoveStructure({
+        originalMarkdown: markdown,
+        originalRange: { from: range.from, to: range.to },
+        plannedMarkdown,
+        movedRange: { from: insertedFrom, to: insertedTo },
+        isSection: range.headingLevel !== undefined,
+      })
+    : undefined
   if (structureError) return err(structureError)
   const mapping: MovePositionMapping = {
     from: range.from,
@@ -245,9 +263,17 @@ function applyMoveBlock(
     newFrom,
     newTo,
     mapPosition: (position) => {
+      if (position === range.to) return newTo
       const withinRange = mapWithinRange(position, range, replacements)
       return withinRange === undefined ? undefined : newFrom + withinRange
     },
+  }
+  const mapDocumentPosition = (position: number, assoc: number) => {
+    if (position === range.from && assoc < 0) return undefined
+    if (position === range.to) return assoc < 0 ? newTo : undefined
+    const withinRange = mapWithinRange(position, range, replacements)
+    if (withinRange === undefined) return undefined
+    return newFrom + Math.min(withinRange, insertion.contentLength)
   }
   const annotationValue = { from: newFrom, to: newTo, seam }
   const annotations = [
@@ -264,6 +290,23 @@ function applyMoveBlock(
       .filter((finishMove) => finishMove !== undefined)
     body.delete(deletionFrom, removedLength)
     body.insert(insertionIndex, insertion.text)
+    const offsets = Array.from(
+      { length: range.to - range.from },
+      (_, index) => {
+        const mapped = mapWithinRange(range.from + index, range, replacements)
+        return mapped === undefined
+          ? null
+          : Math.max(0, Math.min(insertion.contentLength - 1, mapped))
+      },
+    )
+    const moveRecord = createMoveRecord({
+      text: body,
+      copyFrom: insertedFrom,
+      src: moveSource,
+      sv: moveStateVector,
+      offsets,
+    })
+    if (moveRecord) getMoveRecords(doc).push([moveRecord])
     finishMemoAnchorMove()
     finishEvidenceAnchorMove()
     for (const finishMove of finishUpdaterMoves) finishMove()
@@ -276,19 +319,28 @@ function applyMoveBlock(
       ? {}
       : { originalHeadingLevel: range.headingLevel }),
   }
+  const sourcePrefix = removeRanges
+    .filter((separator) => separator.to === range.from)
+    .map((separator) => separator.text)
+    .join('')
+  const sourceSuffix = removeRanges
+    .filter((separator) => separator.from === range.to)
+    .map((separator) => separator.text)
+    .join('')
   rememberMove({
-    body,
     move,
-    insertionIndex,
     insertion,
-    ...(options.replacement === undefined
-      ? {
-          source: {
-            text: sourceText,
-            prefix: plannedMove.sourcePrefix,
-          },
-        }
-      : {}),
+    inverse,
+    mapPosition: mapDocumentPosition,
+    ...(range.headingLevel === undefined
+      ? {}
+      : { headingLevel: targetLevel ?? range.headingLevel }),
+    source: {
+      text: sourceText,
+      prefix: sourcePrefix + plannedMove.sourcePrefix,
+      ...(sourceSuffix.length === 0 ? {} : { suffix: sourceSuffix }),
+    },
+    contentReplacements: reverseContentReplacements(range.from, replacements),
   })
   return ok(move)
 }
@@ -300,21 +352,104 @@ export function moveBlock(
   return applyMoveBlock(doc, input)
 }
 
+export function resolveMoveBlockStart(
+  doc: Y.Doc,
+  move: MoveBlockResult,
+): number | undefined {
+  const history = historyByMove.get(move)
+  const body = getBody(doc)
+  return history && move.from >= 0 && move.from < body.length
+    ? move.from
+    : undefined
+}
+
+export function mapMoveBlockPosition(
+  move: MoveBlockResult,
+  position: number,
+  assoc = 1,
+): number | undefined {
+  return historyByMove.get(move)?.mapPosition(position, assoc)
+}
+
+export function getReverseMoveChange(
+  move: MoveBlockResult,
+): ChangeSet | undefined {
+  return historyByMove.get(move)?.inverse
+}
+
+export function mapMoveBlockHistoryRemote(
+  move: MoveBlockResult,
+  change: ChangeSet,
+  inverse: ChangeSet,
+): Result<
+  {
+    move: MoveBlockResult
+    changeBeforeMove: ChangeSet
+  },
+  InvalidBlockMoveError
+> {
+  const history = historyByMove.get(move)
+  if (!history)
+    return err(new InvalidBlockMoveError('The move cannot be reversed'))
+
+  const mapped = mapMoveHistoryRemote(move, history, change, inverse)
+  if (mapped.isErr()) return err(mapped.error)
+
+  const { history: mappedHistory, ...mappedMove } = mapped.value
+  const updatedMove: MoveBlockResult = {
+    ...move,
+    from: mappedMove.from,
+    to: mappedMove.to,
+    seam: mappedMove.seam,
+    annotations: [
+      blockMoved.of({
+        from: mappedMove.from,
+        to: mappedMove.to,
+        seam: mappedMove.seam,
+      }),
+      move.annotations[1],
+    ],
+  }
+  historyByMove.set(updatedMove, mappedHistory)
+  return ok({
+    move: updatedMove,
+    changeBeforeMove: mappedMove.changeBeforeMove,
+  })
+}
+
 export function reverseBlockMove(
   doc: Y.Doc,
   move: MoveBlockResult,
+  userEvent: 'undo' | 'redo' = 'undo',
+  options: { validate?: boolean } = {},
 ): Result<MoveBlockResult, InvalidBlockMoveError> {
   const history = historyByMove.get(move)
   if (!history)
     return err(new InvalidBlockMoveError('The move cannot be reversed'))
 
   const body = getBody(doc)
-  const from = resolvePosition(doc, body, history.movedFrom)
-  const destination = resolvePosition(doc, body, history.seam)
-  if (from === undefined || destination === undefined)
+  const from = move.from
+  const destination = move.seam
+
+  const markdown = body.toJSON()
+  const range =
+    options.validate === false
+      ? {
+          from,
+          to: from + history.insertedSelection.length,
+          ...(history.headingLevel === undefined
+            ? {}
+            : { headingLevel: history.headingLevel }),
+        }
+      : findMoveBlockRange(markdown, from)
+  if (!range)
     return err(
       new InvalidBlockMoveError('The moved block is no longer available'),
     )
+  const separators = history.separators.map(({ side, text }) => {
+    const to = side === 'prefix' ? range.from : range.to
+    return { from: to - text.length, to, text }
+  })
 
   return applyMoveBlock(
     doc,
@@ -324,12 +459,14 @@ export function reverseBlockMove(
       ...(move.originalHeadingLevel === undefined
         ? {}
         : { headingLevel: move.originalHeadingLevel }),
-      userEvent: 'undo',
+      userEvent,
     },
     {
+      ...(options.validate === false ? { range } : {}),
       expectedSelection: history.insertedSelection,
       ...(history.source === undefined ? {} : { replacement: history.source }),
-      removeRanges: history.separators,
+      removeRanges: separators,
+      ...(options.validate === undefined ? {} : { validate: options.validate }),
     },
   )
 }

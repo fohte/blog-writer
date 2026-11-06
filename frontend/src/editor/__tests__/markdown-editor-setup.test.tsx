@@ -6,12 +6,14 @@ import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
 import { MarkdownEditor, type MarkdownEditorHandle } from '#editor/index'
+import { createMoveHistory, type MoveHistory } from '#outline/index'
 
 interface MountedMarkdownEditor {
   body: Y.Text
   content: HTMLElement | null
   doc: Y.Doc
   editor: RefObject<MarkdownEditorHandle | null>
+  history: MoveHistory
   host: HTMLDivElement
   updateExtensions: (extensions: Extension[]) => void
 }
@@ -50,6 +52,7 @@ export function mountMarkdownEditor(
   options.prepareDoc?.(doc)
   const mountedExtensions = [...extensions, ...(extensionFactory?.(doc) ?? [])]
   const editor = createRef<MarkdownEditorHandle>()
+  const history = createMoveHistory(doc)
 
   act(() => {
     root.render(
@@ -64,6 +67,7 @@ export function mountMarkdownEditor(
         {...(options.onEvidenceError !== undefined
           ? { onEvidenceError: options.onEvidenceError }
           : {})}
+        history={history}
         ref={editor}
         text={body}
       />,
@@ -74,6 +78,7 @@ export function mountMarkdownEditor(
     act(() => {
       root.unmount()
     })
+    history.destroy()
     doc.destroy()
     host.remove()
   })
@@ -83,6 +88,7 @@ export function mountMarkdownEditor(
     content: host.querySelector<HTMLElement>('.cm-content'),
     doc,
     editor,
+    history,
     host,
     updateExtensions: (extensions) => {
       act(() => {
@@ -98,6 +104,7 @@ export function mountMarkdownEditor(
             {...(options.onEvidenceError !== undefined
               ? { onEvidenceError: options.onEvidenceError }
               : {})}
+            history={history}
             ref={editor}
             text={body}
           />,

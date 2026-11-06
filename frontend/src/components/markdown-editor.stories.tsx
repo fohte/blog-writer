@@ -7,12 +7,14 @@ import { addEvidence } from '#article/evidence'
 import { addSource } from '#article/sources'
 import type { EvidenceVerdict } from '#article/types'
 import { MarkdownEditor } from '#editor/index'
+import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
 
 interface StoryArgs {
   content: string
   initialSelection?: { anchor: number; head?: number }
   evidenceVerdict?: EvidenceVerdict
   evidenceEdited?: boolean
+  showMoveHandles?: boolean
 }
 
 const defaultContent = [
@@ -48,8 +50,9 @@ function MarkdownEditorPreview({
   initialSelection,
   evidenceVerdict,
   evidenceEdited,
+  showMoveHandles = false,
 }: StoryArgs) {
-  const { body, doc } = useMemo(() => {
+  const { body, doc, history, extensions } = useMemo(() => {
     const doc = new Y.Doc()
     const body = getBody(doc)
     body.insert(0, content)
@@ -75,19 +78,26 @@ function MarkdownEditorPreview({
         checkedAt,
       })._unsafeUnwrap()
     }
-    return { body: getBody(doc), doc }
-  }, [content, evidenceEdited, evidenceVerdict])
+    const history = createMoveHistory(doc)
+    const extensions = showMoveHandles
+      ? [createOutlineEditorExtension(history)]
+      : []
+    return { body, doc, history, extensions }
+  }, [content, evidenceEdited, evidenceVerdict, showMoveHandles])
 
   useEffect(() => {
     return () => {
+      history.destroy()
       doc.destroy()
     }
-  }, [doc])
+  }, [doc, history])
 
   return (
     <div style={{ height: '32rem' }}>
       <MarkdownEditor
         text={body}
+        history={history}
+        extensions={extensions}
         {...(initialSelection ? { initialSelection } : {})}
       />
     </div>
@@ -152,5 +162,15 @@ export const EditedEvidenceMarker: Story = {
     content: evidenceContent,
     evidenceVerdict: 'supported',
     evidenceEdited: true,
+  },
+}
+
+export const BlockMoveHandles: Story = {
+  name: 'the editor shows drag handles beside Markdown blocks.',
+  args: {
+    content:
+      '# Overview\n\nA first paragraph.\n\n## Details\n\nA second paragraph.\n',
+    initialSelection: { anchor: 0 },
+    showMoveHandles: true,
   },
 }

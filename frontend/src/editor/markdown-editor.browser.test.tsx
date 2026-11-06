@@ -937,7 +937,7 @@ describe('MarkdownEditor', () => {
   it('restores evidence when a moved section is undone in the editor', () => {
     const markdown = '# Alpha\n\nFirst sentence.\n\n# Beta\n\nFinal sentence.'
     const claim = 'Final sentence.'
-    const { content, doc, host } = mountMarkdownEditor(
+    const { content, doc, history, host } = mountMarkdownEditor(
       markdown,
       [],
       undefined,
@@ -964,11 +964,18 @@ describe('MarkdownEditor', () => {
         },
       },
     )
+    const view = content ? EditorView.findFromDOM(content) : null
+    if (!view) throw new Error('CodeMirror view was not rendered')
     act(() => {
-      moveBlock(doc, {
-        from: markdown.indexOf('# Beta'),
-        destination: 0,
-      })._unsafeUnwrap()
+      history
+        .move(
+          {
+            from: markdown.indexOf('# Beta'),
+            destination: 0,
+          },
+          view,
+        )
+        ._unsafeUnwrap()
     })
     content?.dispatchEvent(
       new KeyboardEvent('keydown', {

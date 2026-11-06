@@ -4,6 +4,7 @@ import { InvalidBlockMoveError } from '#article/errors'
 import type { MoveBlockInput } from '#article/move-block'
 import {
   findHeadingSection,
+  findMoveBlockRange,
   type MarkdownBlockRange,
   topLevelBlocks,
 } from '#article/move-block-structure'
@@ -12,7 +13,7 @@ import type { Heading } from '#article/types'
 export type Range = { from: number; to: number; headingLevel?: number }
 export type TextReplacement = { from: number; to: number; text: string }
 export type ValidatedMove = { range: Range; targetLevel?: number }
-export type MoveSource = { text: string; prefix: string }
+export type MoveSource = { text: string; prefix: string; suffix?: string }
 export type MoveInsertion = {
   text: string
   prefixLength: number
@@ -29,25 +30,6 @@ type PlannedMove = {
   insertedFrom: number
   insertedTo: number
 }
-function findBlockRange(
-  blocks: MarkdownBlockRange[],
-  position: number,
-): Range | undefined {
-  const block = blocks.find(({ from, to }) => from <= position && position < to)
-  return block ? { from: block.from, to: block.to } : undefined
-}
-
-function findRange(
-  markdown: string,
-  from: number,
-  headings: Heading[],
-  blocks: MarkdownBlockRange[],
-): Range | undefined {
-  return (
-    findHeadingSection(markdown, headings, from) ?? findBlockRange(blocks, from)
-  )
-}
-
 export function sectionReplacements(
   markdown: string,
   range: Range,
@@ -175,7 +157,7 @@ export function validateMove(
   }
 
   const blocks = topLevelBlocks(markdown)
-  const range = findRange(markdown, input.from, headings, blocks)
+  const range = findMoveBlockRange(markdown, input.from, headings, blocks)
   if (!range)
     return err(new InvalidBlockMoveError('No Markdown block at position'))
   if (isInsideBlock(blocks, input.destination))
@@ -273,12 +255,9 @@ export function mapWithinRange(
       continue
     }
     if (position >= replacement.from) {
-      return (
-        replacement.from -
-        range.from +
-        delta +
-        Math.min(position - replacement.from, replacement.text.length)
-      )
+      const replacementOffset = position - replacement.from
+      if (replacementOffset >= replacement.text.length) return undefined
+      return replacement.from - range.from + delta + replacementOffset
     }
     break
   }
@@ -386,7 +365,8 @@ export function planBlockMove(input: {
     replacement === undefined
       ? getInsertionText(sourceSeparator.text, insertionIndex, movedText)
       : {
-          text: replacement.prefix + replacement.text,
+          text:
+            replacement.prefix + replacement.text + (replacement.suffix ?? ''),
           prefixLength: replacement.prefix.length,
           contentLength: replacement.text.length,
         }

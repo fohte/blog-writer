@@ -32,7 +32,7 @@ yrs = { version = "=0.28.0", features = ["sync"] }
 [dev-dependencies]
 tokio = { version = "=1.54.1", features = ["test-util"] }
 rstest = "=0.26.1"
-indoc = "=2.0.6"
+indoc = "=2.0.8"
 tower = { version = "=0.5.3", features = ["util"] }
 wiremock = "=0.6.5"
 tokio-tungstenite = "=0.28.0"

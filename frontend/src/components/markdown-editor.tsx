@@ -14,7 +14,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
+import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
@@ -30,6 +30,7 @@ import { evidenceDrop } from '#editor/evidence-drop'
 import { markdownDecorations } from '#editor/markdown-decorations'
 import { replaceBody } from '#editor/replace-body'
 import { editorTheme, markdownHighlightStyle } from '#editor/theme'
+import type { MoveHistory } from '#outline/move-history'
 
 export interface MarkdownEditorHandle {
   replaceBody(value: string): void
@@ -43,9 +44,19 @@ export interface MarkdownEditorProps {
   className?: string
   articleId?: string
   onEvidenceError?: (message: string) => void
+  history: MoveHistory
+  onViewChange?: (view: EditorView | null) => void
 }
 
 const noExtensions: Extension[] = []
+
+function runHistoryStep(history: MoveHistory, step: 'undo' | 'redo') {
+  return (view: EditorView) =>
+    history[step](view).match(
+      () => true,
+      () => true,
+    )
+}
 
 export const MarkdownEditor = forwardRef<
   MarkdownEditorHandle,
@@ -59,6 +70,8 @@ export const MarkdownEditor = forwardRef<
     className,
     articleId,
     onEvidenceError,
+    history,
+    onViewChange,
   },
   ref,
 ) {
@@ -67,12 +80,12 @@ export const MarkdownEditor = forwardRef<
   const [evidenceVersion, setEvidenceVersion] = useState(0)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
-  const undoManagerRef = useRef<Y.UndoManager | null>(null)
   const extensionsCompartment = useRef(new Compartment()).current
   const evidenceExtensionsCompartment = useRef(new Compartment()).current
   const initialSelectionAtMount = useRef(initialSelection).current
   const onEvidenceErrorRef = useRef(onEvidenceError)
   onEvidenceErrorRef.current = onEvidenceError
+  const onViewChangeRef = useRef(onViewChange)
   const openEvidence = useCallback((id: string) => {
     setActiveEvidenceId((current) => (current === id ? undefined : id))
   }, [])
@@ -106,13 +119,16 @@ export const MarkdownEditor = forwardRef<
   const appliedEvidenceExtensions = useRef(initialEvidenceExtensions)
   const appliedCustomExtensions = useRef(initialCustomExtensions)
 
+  useEffect(() => {
+    onViewChangeRef.current = onViewChange
+  }, [onViewChange])
+
   useImperativeHandle(
     ref,
     () => ({
       replaceBody(value) {
         const view = viewRef.current
-        const undoManager = undoManagerRef.current
-        if (view && undoManager) replaceBody(view, undoManager, value)
+        if (view) replaceBody(view, value)
       },
     }),
     [],
@@ -133,10 +149,6 @@ export const MarkdownEditor = forwardRef<
     const host = hostRef.current
     if (!host) return
 
-    const undoManager = new Y.UndoManager(
-      text.doc ? [text, text.doc.getMap('evidence')] : text,
-      { trackedOrigins: new Set([null, Array]) },
-    )
     const view = new EditorView({
       parent: host,
       state: EditorState.create({
@@ -150,14 +162,29 @@ export const MarkdownEditor = forwardRef<
           markdownDecorations,
           editorTheme,
           EditorView.lineWrapping,
-          keymap.of([...yUndoManagerKeymap, ...defaultKeymap]),
+          history.extension,
+          keymap.of([
+            {
+              key: 'Mod-z',
+              run: runHistoryStep(history, 'undo'),
+            },
+            {
+              key: 'Mod-Shift-z',
+              run: runHistoryStep(history, 'redo'),
+            },
+            {
+              key: 'Mod-y',
+              run: runHistoryStep(history, 'redo'),
+            },
+            ...defaultKeymap,
+          ]),
           EditorView.contentAttributes.of({
             'aria-label': ariaLabel,
             'aria-multiline': 'true',
             role: 'textbox',
             spellcheck: 'false',
           }),
-          yCollab(text, null, { undoManager }),
+          yCollab(text, null, { undoManager: false }),
           evidenceExtensionsCompartment.of(initialEvidenceExtensions),
           extensionsCompartment.of(initialCustomExtensions),
         ],
@@ -165,18 +192,18 @@ export const MarkdownEditor = forwardRef<
     })
 
     viewRef.current = view
-    undoManagerRef.current = undoManager
+    onViewChangeRef.current?.(view)
 
     return () => {
       view.destroy()
-      undoManager.destroy()
+      onViewChangeRef.current?.(null)
       viewRef.current = null
-      undoManagerRef.current = null
     }
   }, [
     ariaLabel,
     evidenceExtensionsCompartment,
     extensionsCompartment,
+    history,
     initialCustomExtensions,
     initialEvidenceExtensions,
     text,

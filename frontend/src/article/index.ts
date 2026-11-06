@@ -22,11 +22,13 @@ export {
 export { deriveHeadingTree } from '#article/headings'
 export {
   addMemo,
+  captureDeletedMemoAdoptions,
   dismissMemo,
   getMemoState,
   listMemos,
   observeMemos,
   restoreMemo,
+  restoreMemoAdoptions,
   setMemoAdoptedTo,
   updateMemoOrder,
 } from '#article/memos'
@@ -39,10 +41,24 @@ export type {
 } from '#article/move-block'
 export {
   blockMoved,
+  getReverseMoveChange,
+  mapMoveBlockHistoryRemote,
+  mapMoveBlockPosition,
   moveBlock,
   registerBlockMoveUpdater,
+  resolveMoveBlockStart,
   reverseBlockMove,
 } from '#article/move-block'
+export {
+  findMoveBlockRange,
+  topLevelBlocks,
+} from '#article/move-block-structure'
+export type { MoveConflict } from '#article/move-conflicts'
+export {
+  getMoveConflicts,
+  recordMoveConflictRestoration,
+  resolveMoveConflict,
+} from '#article/move-conflicts'
 export { getPremise, setPremise } from '#article/premise'
 export type { AddFindingInput, AddSourceInput } from '#article/sources'
 export {
