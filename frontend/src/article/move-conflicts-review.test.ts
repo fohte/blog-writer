@@ -181,37 +181,70 @@ describe('move conflict review regressions', () => {
     })
   })
 
-  it('reads a persisted boolean keep decision from an earlier schema', () => {
-    const replicas = prepareConflict()
-    activeReplicas.push(replicas.A, replicas.B)
-    settle(replicas)
+  it('notifies adjacent text typed after a kept conflict was received', () => {
+    const A = makeReplica(123)
+    const B = makeReplica(124)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
 
-    const conflict = getMoveConflicts(replicas.B.doc)[0]
-    const record = getMoveRecords(replicas.B.doc).get(0)
+    const body = B.doc.getText('body')
+    const insertion = body.toJSON().indexOf('maple') + 'maple'.length
+    body.insert(insertion, 'xy')
+    moveSection(A.doc, 'end')
+    pull(A.doc, B.doc)
+
+    const conflict = getMoveConflicts(A.doc)[0]
     if (!conflict) throw new Error('Expected a move conflict')
-    replicas.B.doc
-      .getMap<true | Array<{ client: number; clock: number; length: number }>>(
-        'move-decisions',
-      )
-      .set(
-        `${record.copy[0].toString()}:${record.copy[1].toString()}/${conflict.id}`,
-        true,
-      )
-    settle(replicas)
+    resolveMoveConflict(A.doc, conflict.id, 'keep')._unsafeUnwrap()
+    body.insert(insertion + 2, 'zz')
+    settle({ A, B })
 
     const readOutput = () => ({
-      conflicts: [
-        getMoveConflicts(replicas.A.doc),
-        getMoveConflicts(replicas.B.doc),
-      ],
-      decisions: [
-        Array.from(replicas.A.doc.getMap('move-decisions').values()),
-        Array.from(replicas.B.doc.getMap('move-decisions').values()),
-      ],
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflicts: [A, B].map(({ doc }) =>
+        getMoveConflicts(doc).map(({ text }) => text),
+      ),
     })
     expect(readOutput()).toEqual({
-      conflicts: [[], []],
-      decisions: [[true], [true]],
+      bodies: [
+        '## Cedar\na1\nxyzz## Vista\nz9\n\n## Fjord\nmaple maple\n',
+        '## Cedar\na1\nxyzz## Vista\nz9\n\n## Fjord\nmaple maple\n',
+      ],
+      conflicts: [['zz'], ['zz']],
+    })
+  })
+
+  it('preserves both sides when received text is edited in the middle', () => {
+    const A = makeReplica(125)
+    const B = makeReplica(126)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+
+    const body = B.doc.getText('body')
+    const insertion = body.toJSON().indexOf('maple') + 'maple'.length
+    body.insert(insertion, 'xy')
+    moveSection(A.doc, 'end')
+    pull(B.doc, A.doc)
+    const conflict = getMoveConflicts(B.doc)[0]
+    if (!conflict) throw new Error('Expected a move conflict')
+    body.insert(conflict.from + 1, 'z')
+    settle({ A, B })
+
+    const readOutput = () => ({
+      bodies: [readBody(A.doc), readBody(B.doc)],
+      conflicts: [A, B].map(({ doc }) =>
+        getMoveConflicts(doc).map(({ text }) => text),
+      ),
+    })
+    expect(readOutput()).toEqual({
+      bodies: [
+        '## Cedar\na1\nxzy## Vista\nz9\n\n## Fjord\nmaple maple\n',
+        '## Cedar\na1\nxzy## Vista\nz9\n\n## Fjord\nmaple maple\n',
+      ],
+      conflicts: [
+        ['x', 'y'],
+        ['x', 'y'],
+      ],
     })
   })
 

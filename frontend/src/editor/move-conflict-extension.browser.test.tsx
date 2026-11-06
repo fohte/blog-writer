@@ -17,7 +17,7 @@ import { moveConflictExtension } from '#editor/move-conflict-extension'
 const initialBody = '## Ember\nu1\n## Brindle\nrho rho\n## Quartz\nv1\n'
 const cleanups: (() => void)[] = []
 
-function createConflictEditor() {
+function createConflictEditor({ deferRemoteEdit = false } = {}) {
   const source = new Y.Doc()
   source.clientID = 71
   setBody(source, initialBody)
@@ -39,11 +39,14 @@ function createConflictEditor() {
     Y.encodeStateAsUpdate(source, Y.encodeStateVector(offline)),
     'remote',
   )
-  Y.applyUpdate(
-    source,
-    Y.encodeStateAsUpdate(offline, Y.encodeStateVector(source)),
-    'remote',
-  )
+  const applyRemoteEditToSource = () => {
+    Y.applyUpdate(
+      source,
+      Y.encodeStateAsUpdate(offline, Y.encodeStateVector(source)),
+      'remote',
+    )
+  }
+  if (!deferRemoteEdit) applyRemoteEditToSource()
 
   const host = document.createElement('div')
   document.body.append(host)
@@ -81,7 +84,7 @@ function createConflictEditor() {
       host.querySelector('.cm-move-conflict-range')?.textContent ?? null,
   })
 
-  return { host, offline, readOutput, source, view }
+  return { applyRemoteEditToSource, host, offline, readOutput, source, view }
 }
 
 beforeEach(() => {
@@ -94,6 +97,28 @@ afterEach(() => {
 })
 
 describe('moveConflictExtension', () => {
+  it('shows a remote conflict after the editor has mounted', async () => {
+    const { applyRemoteEditToSource, readOutput } = createConflictEditor({
+      deferRemoteEdit: true,
+    })
+    const outputs = [readOutput()]
+
+    await act(async () => {
+      applyRemoteEditToSource()
+      await Promise.resolve()
+    })
+    outputs.push(readOutput())
+
+    expect(outputs).toEqual([
+      { notice: null, highlightedText: null },
+      {
+        notice:
+          'This text was written in a section that has moved.xyMove it with the sectionKeep it here',
+        highlightedText: 'xy',
+      },
+    ])
+  })
+
   it('keeps the conflict highlight attached after typing before it', async () => {
     const { readOutput, view } = createConflictEditor()
 

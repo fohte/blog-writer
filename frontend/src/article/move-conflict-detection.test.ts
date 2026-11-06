@@ -86,6 +86,108 @@ describe('move conflict detection', () => {
     })
   })
 
+  it('keeps concurrent restoration ranges from separate undo histories', () => {
+    const A = makeReplica(85)
+    const B = makeReplica(86)
+    const C = makeReplica(87)
+    const bodyText = 'AAACCC# Bbb\n# Ccc\n'
+    setBody(B.doc, bodyText)
+    pull(A.doc, B.doc)
+    pull(C.doc, B.doc)
+
+    const undoA = new Y.UndoManager(A.doc.getText('body'), {
+      captureTimeout: 0,
+    })
+    const undoC = new Y.UndoManager(C.doc.getText('body'), {
+      captureTimeout: 0,
+    })
+    undoManagers.push(undoA, undoC)
+    observeUndoRestorations(A.doc, A.doc.getText('body'), undoA)
+    observeUndoRestorations(C.doc, C.doc.getText('body'), undoC)
+    A.doc.getText('body').delete(0, 3)
+    C.doc.getText('body').delete(3, 3)
+    const source = B.doc.getText('body').toJSON()
+    moveBlock(B.doc, {
+      from: source.indexOf('# Bbb'),
+      destination: source.length,
+    })._unsafeUnwrap()
+    pull(A.doc, B.doc)
+    pull(C.doc, B.doc)
+
+    undoA.undo()
+    undoC.undo()
+    settle({ A, B, peers: [C] })
+
+    const documents = [A.doc, B.doc, C.doc]
+    const readOutput = () => ({
+      bodies: documents.map(readBody),
+      conflicts: documents.map((doc) =>
+        getMoveConflicts(doc).map(({ text }) => text),
+      ),
+      restorationRecords: documents.map(
+        (doc) => doc.getMap('move-conflict-restorations').size,
+      ),
+    })
+    expect(readOutput()).toEqual({
+      bodies: [
+        'AAACCC# Ccc\n\n# Bbb\n',
+        'AAACCC# Ccc\n\n# Bbb\n',
+        'AAACCC# Ccc\n\n# Bbb\n',
+      ],
+      conflicts: [
+        ['AAA', 'CCC'],
+        ['AAA', 'CCC'],
+        ['AAA', 'CCC'],
+      ],
+      restorationRecords: [2, 2, 2],
+    })
+  })
+
+  it('rejects restoration events after the body changes again', () => {
+    const A = makeReplica(88)
+    const B = makeReplica(89)
+    setBody(A.doc, initialBody)
+    pull(B.doc, A.doc)
+    const body = B.doc.getText('body')
+    const undoManager = new Y.UndoManager(body, { captureTimeout: 0 })
+    undoManagers.push(undoManager)
+    const undoEvents: Y.YTextEvent[] = []
+    undoManager.on('stack-item-popped', ({ changedParentTypes }) => {
+      for (const [parent, parentEvents] of changedParentTypes) {
+        if (!Object.is(parent, body)) continue
+        undoEvents.push(
+          ...parentEvents.filter(
+            (event): event is Y.YTextEvent => event instanceof Y.YTextEvent,
+          ),
+        )
+      }
+    })
+
+    body.delete(body.toJSON().lastIndexOf('ple'), 3)
+    moveSection(A.doc, 'end')
+    settle({ A, B })
+    undoManager.undo()
+    const cachedDeltaCounts = undoEvents.map((event) => event.delta.length)
+    body.insert(0, 'q')
+    const result = recordMoveConflictRestoration(B.doc, undoEvents)
+
+    const readOutput = () => ({
+      cachedDeltaCounts,
+      result: result.match(
+        () => ({ ok: true, error: null }),
+        (error) => ({ ok: false, error: error.message }),
+      ),
+    })
+    expect(readOutput()).toEqual({
+      cachedDeltaCounts: [2],
+      result: {
+        ok: false,
+        error:
+          'Move conflict restoration events must describe the current document state',
+      },
+    })
+  })
+
   it('purges restoration ranges with their expired move record', () => {
     vi.useFakeTimers({ now: new Date('2026-01-01T00:00:00.000Z') })
     const A = makeReplica(77)

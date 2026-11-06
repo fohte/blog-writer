@@ -10,7 +10,6 @@ import {
 } from '#article/move-conflict-detection'
 import {
   cleanupMoveRecords,
-  isMoveConflictKept,
   keepMoveConflict,
   observeMoveConflictState,
   registerMoveConflictObserver,
@@ -20,12 +19,7 @@ export type { MoveConflict } from '#article/move-conflict-detection'
 
 export function getMoveConflicts(doc: Y.Doc): MoveConflict[] {
   cleanupMoveRecords(doc)
-  return detectMoveConflictDetails(doc)
-    .filter(
-      ({ decisionRanges, recordId }) =>
-        !isMoveConflictKept(doc, recordId, decisionRanges),
-    )
-    .map(({ conflict }) => conflict)
+  return detectMoveConflictDetails(doc).map(({ conflict }) => conflict)
 }
 
 export function resolveMoveConflict(
@@ -57,6 +51,22 @@ export function recordMoveConflictRestoration(
     return err(
       new InvalidBlockMoveError(
         'Move conflict restorations must target the article body',
+      ),
+    )
+  const currentState = Y.decodeStateVector(Y.encodeStateVector(doc))
+  if (
+    events.some((event) => {
+      if (event.transaction.doc !== doc) return true
+      const eventState = event.transaction.afterState
+      const clients = new Set([...currentState.keys(), ...eventState.keys()])
+      return [...clients].some(
+        (client) => currentState.get(client) !== eventState.get(client),
+      )
+    })
+  )
+    return err(
+      new InvalidBlockMoveError(
+        'Move conflict restoration events must describe the current document state',
       ),
     )
   recordRestoration(doc, events)
