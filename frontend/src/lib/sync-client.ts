@@ -1,4 +1,4 @@
-import { err, ok, Result, ResultAsync } from 'neverthrow'
+import { err, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 import { v7 } from 'uuid'
 import * as Y from 'yjs'
 
@@ -73,6 +73,10 @@ const checkAccessRedirect = () => {
 
 class SyncClient implements SyncClientApi {
   private readonly documents = new Map<string, SyncDocument>()
+  private readonly documentInitializationErrors = new Map<
+    string,
+    SyncClientError
+  >()
   private readonly listeners = new Set<() => void>()
   private started = false
   private destroyed = false
@@ -106,10 +110,7 @@ class SyncClient implements SyncClientApi {
   }
 
   start() {
-    return ResultAsync.fromPromise(
-      Promise.resolve(),
-      toSyncClientError,
-    ).andThen(() => {
+    return okAsync(undefined).andThen(() => {
       if (this.destroyed) return err(this.destroyedError())
       this.started = true
       const result = this.openIndexedArticles()
@@ -124,8 +125,17 @@ class SyncClient implements SyncClientApi {
 
     const existing = this.documents.get(docId)
     if (existing) return ok(existing.doc)
+    const initializationError = this.documentInitializationErrors.get(docId)
+    if (initializationError) return err(initializationError)
 
-    return buildSyncDocument(this.options, docId).andThen((document) =>
+    const buildResult = buildSyncDocument(this.options, docId)
+    if (buildResult.isErr()) {
+      this.documentInitializationErrors.set(docId, buildResult.error)
+      this.syncError = buildResult.error
+      return err(buildResult.error)
+    }
+
+    return buildResult.andThen((document) =>
       Result.fromThrowable(() => {
         this.subscribeToDocument(document)
         this.documents.set(docId, document)
@@ -206,6 +216,7 @@ class SyncClient implements SyncClientApi {
       document.destroy()
     }
     this.documents.clear()
+    this.documentInitializationErrors.clear()
     this.listeners.clear()
   }
 

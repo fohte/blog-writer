@@ -9,10 +9,17 @@ class FakePersistence {
   synced = false
   private readonly listeners = new Set<() => void>()
 
-  constructor(docId: string, doc: Y.Doc, storage: Map<string, Uint8Array>) {
+  constructor(
+    docId: string,
+    doc: Y.Doc,
+    storage: Map<string, Uint8Array>,
+    syncedImmediately: boolean,
+  ) {
+    this.synced = syncedImmediately
     const savedUpdate = storage.get(docId)
     if (savedUpdate) Y.applyUpdate(doc, savedUpdate)
     doc.on('update', () => storage.set(docId, Y.encodeStateAsUpdate(doc)))
+    if (syncedImmediately) return
     queueMicrotask(() => {
       this.synced = true
       for (const listener of this.listeners) listener()
@@ -85,8 +92,10 @@ const createFixture = (
     checkAccessRedirect: () => Promise.resolve('unreachable'),
   },
   persistenceFailures = new Set<string>(),
+  immediatelySyncedDocIds = new Set<string>(),
 ) => {
   const providers: FakeWebsocketProvider[] = []
+  const providerAttempts = new Map<string, number>()
   const docs: Y.Doc[] = []
   let articleId = '018f0000-0000-7000-8000-000000000001'
   let now = 1_800_000_000_000
@@ -98,9 +107,15 @@ const createFixture = (
     },
     createPersistence: (docId, doc) => {
       if (persistenceFailures.has(docId)) throw new Error('storage unavailable')
-      return new FakePersistence(docId, doc, savedDocuments)
+      return new FakePersistence(
+        docId,
+        doc,
+        savedDocuments,
+        immediatelySyncedDocIds.has(docId),
+      )
     },
     createWebsocketProvider: (url, docId) => {
+      providerAttempts.set(docId, (providerAttempts.get(docId) ?? 0) + 1)
       if (unavailableDocIds.has(docId)) throw new Error('offline')
       const provider = new FakeWebsocketProvider(url, docId)
       providers.push(provider)
@@ -114,6 +129,7 @@ const createFixture = (
   return {
     client: result._unsafeUnwrap(),
     providers,
+    providerAttempts,
     docs,
     savedDocuments,
     setArticleId: (id: string) => {
@@ -231,25 +247,41 @@ describe('createSyncClient', () => {
 
   it('keeps a provider creation error visible after an article title changes', async () => {
     const articleId = 'article-provider-unavailable'
-    const { client, setArticleId } = createFixture(
-      new Map(),
+    const savedIndex = new Y.Doc()
+    const articleEntry = new Y.Map<unknown>()
+    articleEntry.set('createdAt', 1_800_000_000_000)
+    articleEntry.set('title', 'Untitled article')
+    savedIndex.getMap<Y.Map<unknown>>('articles').set(articleId, articleEntry)
+    const savedDocuments = new Map<string, Uint8Array>([
+      ['article-index', Y.encodeStateAsUpdate(savedIndex)],
+    ])
+    savedIndex.destroy()
+    const { client, providerAttempts } = createFixture(
+      savedDocuments,
+      new Set([articleId]),
+      undefined,
+      undefined,
       new Set([articleId]),
     )
-    setArticleId(articleId)
-    await client.start()
-    const article = client.createArticle()._unsafeUnwrap()
-    await Promise.resolve()
+    const startResult = await client.start().match(
+      () => 'started',
+      (error) => error.message,
+    )
     const errorBeforeTitleChange = client.getError()?.message ?? null
-    client.updateArticleTitle(article.id, 'A revised title')._unsafeUnwrap()
+    client.updateArticleTitle(articleId, 'A revised title')._unsafeUnwrap()
 
     const readProviderErrorOutput = () => ({
+      startResult,
       errorBeforeTitleChange,
       errorAfterTitleChange: client.getError()?.message ?? null,
+      failedArticleProviderAttempts: providerAttempts.get(articleId) ?? 0,
       article: client.listArticles(),
     })
     expect(readProviderErrorOutput()).toEqual({
+      startResult: 'Failed to initialize document synchronization',
       errorBeforeTitleChange: 'Failed to initialize document synchronization',
       errorAfterTitleChange: 'Failed to initialize document synchronization',
+      failedArticleProviderAttempts: 1,
       article: [
         {
           id: articleId,
