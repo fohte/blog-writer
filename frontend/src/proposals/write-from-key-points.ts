@@ -9,6 +9,7 @@ import {
 } from 'neverthrow'
 import * as Y from 'yjs'
 
+import { extractAtxHeadingText } from '#article/headings'
 import {
   addEvidence,
   getPremise,
@@ -80,16 +81,15 @@ function headingText(
   markdown: string,
   block: ReturnType<typeof topLevelBlocks>[number],
 ) {
+  if (block.name.startsWith('ATXHeading')) {
+    return extractAtxHeadingText(markdown, block.from, block.contentTo)
+  }
+
   const blockMarkdown = markdown.slice(block.from, block.contentTo)
   const lineEnd = blockMarkdown.indexOf('\n')
-  const firstLine = blockMarkdown.slice(
-    0,
-    lineEnd === -1 ? blockMarkdown.length : lineEnd,
-  )
-  if (!block.name.startsWith('ATXHeading')) return firstLine.trim()
-
-  const match = /^#{1,6}(?:[ \t]+|$)(.*)$/.exec(firstLine)
-  return match?.[1]?.replace(/[ \t]+#+[ \t]*$/, '').trim() ?? ''
+  return blockMarkdown
+    .slice(0, lineEnd === -1 ? blockMarkdown.length : lineEnd)
+    .trim()
 }
 
 function requestBlocks(markdown: string) {
