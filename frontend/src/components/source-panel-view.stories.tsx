@@ -7,10 +7,13 @@ const meta = {
   args: {
     sources: [],
     findings: [],
+    evidence: [],
     pending: [],
     expandedSourceId: null,
     pasteTargetId: null,
     pastedBody: '',
+    onAddUrl: () => true,
+    onAddFile: () => {},
     onDrop: () => {},
     onDragOver: () => {},
     onPaste: () => {},
@@ -65,7 +68,6 @@ export const Unavailable: Story = {
         summary: '',
       },
     ],
-    expandedSourceId: readySource.id,
     pasteTargetId: readySource.id,
     pastedBody: 'ここに資料本文を貼り付けます。',
   },
@@ -147,8 +149,44 @@ export const RecheckErrorDuringResearch: Story = {
     researchError: '別の調査が実行中のため、根拠を再判定できませんでした。',
     researchProgress: {
       status: 'running',
-      queries: ['主張を照合しています。'],
-      defaultOpen: true,
+      queries: ['公開統計 2026'],
+      target: '利用状況',
+      onCancel: () => {},
+    },
+  },
+}
+
+export const WithEvidence: Story = {
+  name: '資料ごとに、根拠にした文と要確認と確認後に編集した文の数を表示する',
+  args: {
+    sources: [
+      readySource,
+      {
+        ...readySource,
+        id: 'source-b',
+        title: '利用者調査の報告',
+        url: 'https://survey.example.invalid/2026',
+        checkedAt: '2026-01-10T00:00:00.000Z',
+      },
+      {
+        ...readySource,
+        id: 'source-c',
+        title: '会員向けの解説',
+        url: 'https://members.example.invalid/guide',
+        status: 'unavailable',
+        summary: '',
+      },
+    ],
+    evidence: [
+      { sourceId: 'source-a', needsReview: false, edited: false },
+      { sourceId: 'source-a', needsReview: true, edited: true },
+      { sourceId: 'source-b', needsReview: false, edited: false },
+    ],
+    pending: [{ id: 'pending-a', label: 'data.example.invalid/2026' }],
+    researchProgress: {
+      status: 'running',
+      queries: ['公開統計 2026'],
+      target: '利用状況',
       onCancel: () => {},
     },
   },

@@ -146,12 +146,12 @@ export const OtherMarkdownSyntax: Story = {
 const evidenceContent = 'A research sentence.'
 
 export const SupportedEvidenceMarker: Story = {
-  name: 'the sentence ends with a green supported marker.',
+  name: 'the supported sentence ends with the footnote number of its source.',
   args: { content: evidenceContent, evidenceVerdict: 'supported' },
 }
 
 export const NeedsReviewEvidenceMarker: Story = {
-  name: 'the sentence ends with a yellow marker for a contradiction.',
+  name: 'the contradicted sentence is underlined and ends with a boxed question-mark footnote.',
   args: { content: evidenceContent, evidenceVerdict: 'contradicted' },
 }
 

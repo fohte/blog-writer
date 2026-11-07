@@ -172,6 +172,7 @@ export function App() {
                   headingText,
                   instruction,
                 )
+                context.showSources()
               },
             },
             {
@@ -234,6 +235,7 @@ export function App() {
           history={context.history}
           onResearch={(headingText, question) => {
             startResearch(context.articleId, context.doc, headingText, question)
+            context.showSources()
           }}
           view={context.view}
           onHeadingSelected={context.onHeadingSelected}

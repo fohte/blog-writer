@@ -20,7 +20,6 @@ const common = {
   quote: 'The measured value increased during the study period.',
   checkedAt: '2026-02-01T00:00:00.000Z',
   publishedAt: '2025-10-01',
-  open: true,
 } satisfies Omit<ComponentProps<typeof ClaimEvidenceCard>, 'verdict' | 'edited'>
 
 const meta = {
@@ -32,17 +31,17 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const Supported: Story = {
-  name: 'the source directly supports the sentence.',
+  name: 'the card shows the supporting source with its quote and summary.',
   args: { ...common, verdict: 'supported' },
 }
 
 export const Insufficient: Story = {
-  name: 'the source does not provide enough support.',
+  name: 'the card marks the sentence for review because the source lacks support.',
   args: { ...common, verdict: 'insufficient' },
 }
 
 export const InsufficientWithoutSource: Story = {
-  name: 'the claim needs review and has no source.',
+  name: 'the card marks the sentence for review and names no source.',
   args: {
     ...common,
     source: null,
@@ -53,27 +52,27 @@ export const InsufficientWithoutSource: Story = {
 }
 
 export const Outdated: Story = {
-  name: 'the source may be out of date.',
+  name: 'the card marks the sentence for review because the source is outdated.',
   args: { ...common, verdict: 'outdated' },
 }
 
 export const Contradicted: Story = {
-  name: 'the source contradicts the sentence.',
+  name: 'the card marks the sentence for review because the source contradicts it.',
   args: { ...common, verdict: 'contradicted' },
 }
 
 export const EditedAfterCheck: Story = {
-  name: 'the checked sentence has changed since review.',
+  name: 'the card marks the sentence for review because it was edited after the check.',
   args: { ...common, verdict: 'supported', edited: true },
 }
 
 export const InsufficientAfterEdit: Story = {
-  name: 'the checked sentence has changed and the source lacks enough support.',
+  name: 'the card lists both the missing support and the edit after the check.',
   args: { ...common, verdict: 'insufficient', edited: true },
 }
 
 export const SummaryUnavailable: Story = {
-  name: 'the source has no generated summary.',
+  name: 'the card shows an unknown publish date and no summary.',
   args: {
     ...common,
     source: { ...source, summary: '' },

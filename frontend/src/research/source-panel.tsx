@@ -6,8 +6,11 @@ import type { Finding, Source } from '#article/index'
 import {
   addSource,
   deleteSource,
+  getBody,
+  listEvidence,
   listFindings,
   listSources,
+  observeEvidence,
   observeSources,
   setFindings,
   updateSource,
@@ -15,6 +18,7 @@ import {
 import type { ResearchProgressProps } from '#components/research-progress'
 import {
   type PendingSource,
+  type SourceEvidence,
   SourcePanelView,
 } from '#components/source-panel-view'
 import { loadLlmSettings } from '#lib/llm-settings'
@@ -33,10 +37,22 @@ type SourcePanelProps = {
   researchError?: string | undefined
 }
 
-type SourceSnapshot = { sources: Source[]; findings: Finding[] }
+type SourceSnapshot = {
+  sources: Source[]
+  findings: Finding[]
+  evidence: SourceEvidence[]
+}
 
 function getSnapshot(doc: Y.Doc): SourceSnapshot {
-  return { sources: listSources(doc), findings: listFindings(doc) }
+  return {
+    sources: listSources(doc),
+    findings: listFindings(doc),
+    evidence: listEvidence(doc).map(({ sourceId, verdict, edited }) => ({
+      sourceId,
+      needsReview: edited || verdict !== 'supported',
+      edited,
+    })),
+  }
 }
 
 function extractUrls(text: string): string[] {
@@ -82,7 +98,19 @@ export function SourcePanel({
       setSnapshot(getSnapshot(doc))
     }
     refresh()
-    return observeSources(doc, refresh)
+    const body = getBody(doc)
+    const unobserveSources = observeSources(doc, refresh)
+    // A separate listener: both observers watch the sources map, and yjs drops every registration of a listener on its first unobserve.
+    const unobserveEvidence = observeEvidence(doc, () => {
+      refresh()
+    })
+    // Editing a checked sentence turns its evidence into "edited after check".
+    body.observe(refresh)
+    return () => {
+      unobserveSources()
+      unobserveEvidence()
+      body.unobserve(refresh)
+    }
   }, [doc])
 
   useEffect(
@@ -232,6 +260,16 @@ export function SourcePanel({
     )
   }
 
+  const addUrlsFromText = (text: string) => {
+    const urls = extractUrls(text)
+    if (urls.length === 0) {
+      setError('URL を読み取れませんでした。')
+      return false
+    }
+    urls.forEach(addUrl)
+    return true
+  }
+
   const handleTransfer = (transfer: DataTransfer) => {
     const files = [...transfer.files]
     const urls = extractUrls(
@@ -246,8 +284,11 @@ export function SourcePanel({
   return (
     <SourcePanelView
       error={error}
+      evidence={snapshot.evidence}
       expandedSourceId={expandedSourceId}
       findings={snapshot.findings}
+      onAddFile={addFile}
+      onAddUrl={addUrlsFromText}
       onDeleteSource={(id) => {
         void deleteSourceBody(fetch, articleId, id).match(
           () => {

@@ -54,6 +54,8 @@ function getManager(
         trackAcceptedRanges: true,
         onResolve: (...args) => manager?.onResolve(...args),
         onInFlightRangeEdited: () => manager?.onRangeEdited(),
+        // Cancelling from the editor stops the check the same way editing its range does.
+        onCancelInFlight: () => manager?.onRangeEdited(),
       }),
       onResolve,
       onRangeEdited: onRangeEdited ?? (() => undefined),

@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
 import {
+  addEvidence,
   addSource,
+  getBody,
   listFindings,
   listSources,
   setFindings,
@@ -188,8 +190,7 @@ function readOutput(doc: Y.Doc) {
       id: 'generated-finding',
       sourceId: 'generated-source',
     })),
-    renderedTitle: host?.querySelector('[role="listitem"] button span')
-      ?.textContent,
+    renderedTitle: host?.querySelector('[role="listitem"] span')?.textContent,
   }
 }
 
@@ -231,16 +232,21 @@ function dispatchPaste(target: Element | null | undefined, text: string) {
 
 function openPasteField(): HTMLTextAreaElement | null | undefined {
   act(() => {
-    host
-      ?.querySelector('button[aria-expanded="false"]')
-      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-  })
-  act(() => {
     ;[...(host?.querySelectorAll('button') ?? [])]
-      .find((button) => button.textContent === '本文を貼り付け')
+      .find((button) => button.textContent === '本文を貼り付けて登録')
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   })
   return host?.querySelector('textarea')
+}
+
+function submitUrlField(value: string): HTMLInputElement | null | undefined {
+  const field = host?.querySelector<HTMLInputElement>('input[name="url"]')
+  if (!field) return field
+  field.value = value
+  act(() => {
+    field.form?.requestSubmit()
+  })
+  return field
 }
 
 function changeTextarea(textarea: HTMLTextAreaElement, value: string) {
@@ -311,8 +317,8 @@ function readAnalysisFailureOutput(doc: Y.Doc) {
   return {
     ...readOutput(doc),
     alert: host?.querySelector('[role="alert"]')?.textContent,
-    analysisNotice: sourceRow?.querySelector('p')?.textContent,
-    pasteActionVisible: hasElementWithText('button', '本文を貼り付け'),
+    sourceState: sourceRow?.querySelector('p')?.textContent,
+    pasteActionVisible: hasElementWithText('button', '本文を貼り付けて登録'),
     retryActionVisible: hasElementWithText('button', '要約をやり直す'),
     emptyFindingsNoticeVisible: hasElementWithText('p', '要点はありません。'),
     fetchCalls: readFetchCalls(),
@@ -328,8 +334,8 @@ function readExistingAnalysisFailureOutput(doc: Y.Doc) {
     })),
     findings: listFindings(doc),
     alert: host?.querySelector('[role="alert"]')?.textContent,
-    analysisNotice: sourceRow?.querySelector('p')?.textContent,
-    pasteActionVisible: hasElementWithText('button', '本文を貼り付け'),
+    sourceState: sourceRow?.querySelector('p')?.textContent,
+    pasteActionVisible: hasElementWithText('button', '本文を貼り付けて登録'),
     retryActionVisible: hasElementWithText('button', '要約をやり直す'),
     emptyFindingsNoticeVisible: hasElementWithText('p', '要点はありません。'),
     savedBodies,
@@ -476,6 +482,141 @@ describe('SourcePanel', () => {
     doc.destroy()
   })
 
+  it('registers a URL submitted from the add field and clears the field', async () => {
+    const doc = new Y.Doc()
+    mountSourcePanel(doc)
+    const field = submitUrlField('https://data.example.invalid/report')
+    await settleUi(doc)
+
+    expect(field?.value).toBe('')
+    expect(readOutput(doc)).toEqual({
+      sources: [
+        {
+          id: 'generated-source',
+          kind: 'url',
+          title: '資料のタイトル',
+          url: 'https://data.example.invalid/report',
+          fileName: null,
+          checkedAt: 'normalized-date',
+          status: 'ready',
+          summary: '利用者数は増加しました。',
+        },
+      ],
+      findings: [
+        {
+          id: 'generated-finding',
+          sourceId: 'generated-source',
+          text: '利用者数が増加しました。',
+          quote: '利用者数は増加しました。',
+        },
+      ],
+      renderedTitle: '資料のタイトル',
+    })
+    doc.destroy()
+  })
+
+  it('keeps text without a URL in the add field and explains why nothing was added', () => {
+    const doc = new Y.Doc()
+    mountSourcePanel(doc)
+    const field = submitUrlField('資料ページ')
+
+    expect(listSources(doc)).toEqual([])
+    expect(host?.querySelector('[role="alert"]')?.textContent).toBe(
+      'URL を読み取れませんでした。',
+    )
+    expect(field?.value).toBe('資料ページ')
+    expect(readFetchCalls()).toEqual([])
+    doc.destroy()
+  })
+
+  it('registers a file chosen from the file picker', async () => {
+    const doc = new Y.Doc()
+    mountSourcePanel(doc)
+    const picker = host?.querySelector<HTMLInputElement>('input[type="file"]')
+    if (!picker) throw new Error('file picker is not rendered')
+    const transfer = new DataTransfer()
+    transfer.items.add(
+      new File(['資料本文'], 'annual-summary.md', { type: 'text/markdown' }),
+    )
+    picker.files = transfer.files
+    act(() => {
+      picker.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await settleUi(doc)
+
+    expect(readOutput(doc)).toEqual({
+      sources: [
+        {
+          id: 'generated-source',
+          kind: 'file',
+          title: 'annual-summary',
+          url: null,
+          fileName: 'annual-summary.md',
+          checkedAt: 'normalized-date',
+          status: 'ready',
+          summary: '利用者数は増加しました。',
+        },
+      ],
+      findings: [
+        {
+          id: 'generated-finding',
+          sourceId: 'generated-source',
+          text: '利用者数が増加しました。',
+          quote: '利用者数は増加しました。',
+        },
+      ],
+      renderedTitle: 'annual-summary',
+    })
+    doc.destroy()
+  })
+
+  it('counts the evidence of a source and the sentences edited after the check', () => {
+    const doc = new Y.Doc()
+    const checkedAt = '2026-01-14T00:00:00.000Z'
+    getBody(doc).insert(0, 'First claim. Second claim.')
+    addSource(doc, {
+      id: 'source-a',
+      kind: 'url',
+      title: '資料ページ',
+      url: 'https://data.example.invalid/report',
+      fileName: null,
+      checkedAt,
+      status: 'ready',
+    })
+    addEvidence(doc, {
+      id: 'evidence-a',
+      from: 0,
+      to: 12,
+      claim: 'First claim.',
+      sourceId: 'source-a',
+      quote: '最初の引用',
+      verdict: 'supported',
+      checkedAt,
+    })
+    addEvidence(doc, {
+      id: 'evidence-b',
+      from: 13,
+      to: 26,
+      claim: 'Second claim.',
+      sourceId: 'source-a',
+      quote: '次の引用',
+      verdict: 'outdated',
+      checkedAt,
+    })
+    mountSourcePanel(doc)
+    const readRow = () => host?.querySelector('[role="listitem"]')?.textContent
+    expect(readRow()).toBe(
+      '資料ページ根拠 2 · 要確認 1×data.example.invalid · 取得 2026-01-14',
+    )
+    act(() => {
+      getBody(doc).insert(5, ' edited')
+    })
+
+    expect(readRow()).toBe(
+      '資料ページ根拠 2 · 要確認 2×data.example.invalid · 取得 2026-01-14 · 確認後に編集 1',
+    )
+    doc.destroy()
+  })
   it('sends LLM requests to the local bridge while source bodies stay on the server', async () => {
     const doc = new Y.Doc()
     window.localStorage.setItem('blog-writer.llm.route', 'local')
@@ -790,7 +931,7 @@ describe('SourcePanel', () => {
       renderedTitle: '資料のタイトル',
       alert:
         '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
-      analysisNotice: '本文は保存済みですが、要約と要点の作成に失敗しました。',
+      sourceState: 'data.example.invalid · 要約失敗',
       pasteActionVisible: false,
       retryActionVisible: true,
       emptyFindingsNoticeVisible: false,
@@ -848,8 +989,7 @@ describe('SourcePanel', () => {
         renderedTitle: '資料のタイトル',
         alert:
           '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
-        analysisNotice:
-          '本文は保存済みですが、要約と要点の作成に失敗しました。',
+        sourceState: 'data.example.invalid · 要約失敗',
         pasteActionVisible: false,
         retryActionVisible: true,
         emptyFindingsNoticeVisible: false,
@@ -882,8 +1022,7 @@ describe('SourcePanel', () => {
         renderedTitle: '資料のタイトル',
         alert:
           '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
-        analysisNotice:
-          '本文は保存済みですが、要約と要点の作成に失敗しました。',
+        sourceState: 'data.example.invalid · 要約失敗',
         pasteActionVisible: false,
         retryActionVisible: true,
         emptyFindingsNoticeVisible: false,
@@ -999,7 +1138,7 @@ describe('SourcePanel', () => {
       findings: [],
       alert:
         '資料本文は保存済みですが、要約と要点の作成に失敗しました: LLM API returned status 500',
-      analysisNotice: '本文は保存済みですが、要約と要点の作成に失敗しました。',
+      sourceState: 'data.example.invalid · 要約失敗',
       pasteActionVisible: false,
       retryActionVisible: true,
       emptyFindingsNoticeVisible: false,
