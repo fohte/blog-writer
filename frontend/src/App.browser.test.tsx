@@ -198,27 +198,45 @@ describe('App outline proposal integration', () => {
       checkedAt: '2026-01-01T00:00:00Z',
       summary: 'A concise source summary.',
     })._unsafeUnwrap()
-    for (const { claim, text, quote } of [
+    for (const { id, claim, text, quote, verdict } of [
       {
+        id: 'evidence-target-supported',
         claim: 'Target claim.',
         text: 'Target claim.',
         quote: 'Evidence for the target claim.',
+        verdict: 'supported',
       },
       {
+        id: 'evidence-target-outdated',
+        claim: 'Target claim.',
+        text: 'Target claim.',
+        quote: 'An outdated quote for the target claim.',
+        verdict: 'outdated',
+      },
+      {
+        id: 'evidence-target-edited',
+        claim: 'The previous claim.',
+        text: 'Target claim.',
+        quote: 'A quote from the edited claim.',
+        verdict: 'supported',
+      },
+      {
+        id: 'evidence-unrelated',
         claim: 'Unrelated claim.',
         text: 'Unrelated claim.',
         quote: 'Evidence for an unrelated claim.',
+        verdict: 'supported',
       },
-    ]) {
+    ] as const) {
       const from = articleBody.indexOf(text)
       addEvidence(articleDoc, {
-        id: `evidence-${text}`,
+        id,
         from,
         to: from + text.length,
         claim,
         sourceId,
         quote,
-        verdict: 'supported',
+        verdict,
         checkedAt: '2026-01-01T00:00:00Z',
       })._unsafeUnwrap()
     }
@@ -229,9 +247,16 @@ describe('App outline proposal integration', () => {
     })
     const editor = host?.querySelector<HTMLElement>('.cm-content')
     if (!editor) throw new Error('The article editor did not open')
-    await act(async () => {
-      await userEvent.click(page.getByText('Target claim.'))
-      await userEvent.keyboard('{Home}')
+    const editorView = EditorView.findFromDOM(editor)
+    if (!editorView) throw new Error('The article editor view did not open')
+    const targetFrom = articleBody.indexOf('Target claim.')
+    act(() => {
+      editorView.dispatch({
+        selection: {
+          anchor: targetFrom,
+          head: targetFrom + 'Target claim.'.length,
+        },
+      })
     })
 
     let requestBody: unknown
@@ -293,7 +318,11 @@ describe('App outline proposal integration', () => {
           checked_at: '2026-01-01T00:00:00Z',
         },
       ],
-      evidence_quotes: ['Evidence for the target claim.'],
+      evidence_quotes: [
+        'Evidence for the target claim.',
+        'An outdated quote for the target claim.',
+        'A quote from the edited claim.',
+      ],
     })
   })
 
