@@ -795,7 +795,7 @@ describe('MarkdownEditor', () => {
 
   it('shows heading and inline-code markers while the cursor is in their ranges', async () => {
     const markdownText = '## Heading **bold** and `code`'
-    const cursorPosition = markdownText.indexOf('code') + 2
+    const cursorPosition = markdownText.indexOf('code') + 3
     const { content, host } = mountMarkdownEditor(markdownText)
     host.style.width = '800px'
     const view = content ? EditorView.findFromDOM(content) : null
