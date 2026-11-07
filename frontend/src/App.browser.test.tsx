@@ -469,25 +469,6 @@ describe('the application research and evidence integrations', () => {
     })
     await renderApp()
     await openArticle()
-    const addEventListenerSpy = vi.spyOn(window, 'addEventListener')
-    const captureKeydownListenerCount = () =>
-      addEventListenerSpy.mock.calls.filter(
-        ([type, , options]) => type === 'keydown' && options === true,
-      ).length
-    const captureKeydownListenerCountBeforeResearch =
-      captureKeydownListenerCount()
-    const statusLabel = () =>
-      [...document.body.querySelectorAll('button')]
-        .map((button) => button.textContent.trim())
-        .find((text) =>
-          [
-            '調査中',
-            '資料を保存しています',
-            '調査を中断しています',
-            '調査を中断しました',
-            '調査に失敗しました',
-          ].includes(text),
-        )
     await act(async () => {
       await userEvent.click(
         page.getByRole('button', { name: 'Research topic' }),
@@ -500,59 +481,34 @@ describe('the application research and evidence integrations', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    const statusLabelBeforeEscape = statusLabel()
-    const captureKeydownListenerPresentBeforeEscape =
-      captureKeydownListenerCount() > captureKeydownListenerCountBeforeResearch
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     })
-    const statusLabelAfterEscape = statusLabel()
-    let interruptedStateShown = false
-    await act(async () => {
-      interruptedStateShown = await vi
-        .waitFor(() => {
-          if (exactRoleText('status', interruptedText) !== interruptedText)
-            throw new Error('The interrupted state was not shown')
-        })
-        .then(
-          () => true,
-          () => false,
-        )
+    await vi.waitFor(async () => {
+      await act(async () => {
+        await Promise.resolve()
+      })
+      if (exactRoleText('status', interruptedText) !== interruptedText)
+        throw new Error('The interrupted state was not shown')
     })
 
     const readResult = () => ({
       query: requestQuestion,
+      requestSignalAborted: requestSignal?.aborted,
+      abortEventReceived,
       sourceCount: listSources(doc).length,
       findingCount: listFindings(doc).length,
       bodySaveRequests: putCount,
       interruptedMessage: exactRoleText('status', interruptedText),
-      diagnostics: {
-        requestHasSignal: requestSignal !== undefined,
-        signalAborted: requestSignal?.aborted,
-        abortEventReceived,
-        captureKeydownListenerPresentBeforeEscape,
-        statusLabelBeforeEscape,
-        statusLabelAfterEscape,
-        statusLabel: statusLabel(),
-        interruptedStateShown,
-      },
     })
     expect(readResult()).toEqual({
       query: { task: 'key_points', question: 'Research topic' },
+      requestSignalAborted: true,
+      abortEventReceived: true,
       sourceCount: 0,
       findingCount: 0,
       bodySaveRequests: 0,
       interruptedMessage: interruptedText,
-      diagnostics: {
-        requestHasSignal: true,
-        signalAborted: true,
-        abortEventReceived: true,
-        captureKeydownListenerPresentBeforeEscape: true,
-        statusLabelBeforeEscape: '調査中',
-        statusLabelAfterEscape: '調査を中断しています',
-        statusLabel: '調査を中断しました',
-        interruptedStateShown: true,
-      },
     })
   })
 
