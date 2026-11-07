@@ -34,7 +34,7 @@ export function ClaimEvidenceCard({
 }: ClaimEvidenceCardProps) {
   const markerColor =
     edited || verdict !== 'supported'
-      ? 'var(--tint-orange-foreground)'
+      ? 'var(--tint-yellow-foreground)'
       : 'var(--tint-green-foreground)'
   const markerClass =
     edited || verdict !== 'supported'

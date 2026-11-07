@@ -90,7 +90,7 @@ export const editorTheme = EditorView.theme({
   },
   '.cm-evidence-text-insufficient, .cm-evidence-text-outdated, .cm-evidence-text-contradicted, .cm-evidence-text-edited':
     {
-      textDecoration: 'underline dotted var(--tint-orange-foreground)',
+      textDecoration: 'underline dotted var(--tint-yellow-foreground)',
     },
   '.cm-evidence-marker': {
     border: '0',
@@ -101,7 +101,7 @@ export const editorTheme = EditorView.theme({
   },
   '.cm-evidence-supported': { color: 'var(--tint-green-foreground)' },
   '.cm-evidence-needs-review, .cm-evidence-edited': {
-    color: 'var(--tint-orange-foreground)',
+    color: 'var(--tint-yellow-foreground)',
   },
 })
 
