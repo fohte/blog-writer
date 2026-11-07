@@ -3,7 +3,7 @@ import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
 
-import { editorTheme } from '#editor/theme'
+import { editorDarkMode, editorTheme } from '#editor/theme'
 
 type TextDiffViewProps = {
   original: string
@@ -29,6 +29,9 @@ export function TextDiffView({
       EditorView.editable.of(false),
       EditorView.lineWrapping,
       editorTheme,
+      ...(document.documentElement.classList.contains('dark')
+        ? [editorDarkMode]
+        : []),
     ]
     const view = new MergeView({
       a: { doc: original, extensions: readOnlyExtensions },
