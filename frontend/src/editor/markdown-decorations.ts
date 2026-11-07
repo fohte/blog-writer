@@ -46,16 +46,10 @@ function shouldHideMark(
 
   switch (name) {
     case 'HeaderMark':
-      if (!parent || !/^ATXHeading[1-6]$/u.test(parent.name)) return true
-      return !selectionIntersects(state, parent.from, parent.to)
+      return !parent || !/^ATXHeading[1-6]$/u.test(parent.name)
     case 'EmphasisMark':
     case 'StrikethroughMark':
       return !parent || !selectionIntersects(state, parent.from, parent.to)
-    case 'CodeMark':
-      return (
-        parent?.name === 'InlineCode' &&
-        !selectionIntersects(state, parent.from, parent.to)
-      )
     case 'LinkMark': {
       if (parent?.name !== 'Link') return true
 
@@ -146,6 +140,25 @@ function buildDecorations(state: EditorState): DecorationSet {
     if (cursor.name === 'CodeText') {
       decorations.push(
         Decoration.mark({ class: 'cm-md-code-text' }).range(
+          cursor.from,
+          cursor.to,
+        ),
+      )
+    }
+
+    const parentName = cursor.node.parent?.name ?? ''
+    if (cursor.name === 'HeaderMark' && /^ATXHeading[1-6]$/u.test(parentName)) {
+      decorations.push(
+        Decoration.mark({ class: 'cm-md-header-mark' }).range(
+          cursor.from,
+          cursor.to,
+        ),
+      )
+    }
+
+    if (cursor.name === 'CodeMark' && parentName === 'InlineCode') {
+      decorations.push(
+        Decoration.mark({ class: 'cm-md-code-mark' }).range(
           cursor.from,
           cursor.to,
         ),

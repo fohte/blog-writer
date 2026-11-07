@@ -1180,7 +1180,7 @@ describe('outline interactions', () => {
           firstCharacterHitByHandle: false,
         },
         subheading: {
-          firstCharacter: 'D',
+          firstCharacter: '#',
           handleClearsText: true,
           handleIsCentered: true,
           firstCharacterHitByHandle: false,

@@ -27,8 +27,6 @@ const defaultContent = [
   '```',
 ].join('\n')
 
-const headingContent =
-  '# A heading\n\nMove the cursor to reveal the heading marker.'
 const boldContent = 'This is **bold text**.'
 const otherSyntaxContent = [
   '## More Markdown',
@@ -114,7 +112,7 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const MarkdownBody: Story = {
-  name: 'the editor hides Markdown markers while the cursor is at the end.',
+  name: 'the editor shows heading markers in red and hides inline markers while the cursor is at the end.',
   args: {
     content: defaultContent,
     initialSelection: { anchor: defaultContent.length },
@@ -126,14 +124,6 @@ export const CallerProvidedHeight: Story = {
   args: {
     content: 'The editor takes its height from the class name.',
     className: 'h-60',
-  },
-}
-
-export const CursorInHeading: Story = {
-  name: 'the cursor reveals the heading marker for editing.',
-  args: {
-    content: headingContent,
-    initialSelection: { anchor: headingContent.indexOf('A heading') + 2 },
   },
 }
 

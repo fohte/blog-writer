@@ -302,13 +302,13 @@ describe('MarkdownEditor IME', () => {
     expect(actual).toEqual({
       duringComposition: {
         body: '`code`日本語',
-        lines: ['code`日本語'],
-        visible: 'code`日本語',
+        lines: ['`code`日本語'],
+        visible: '`code`日本語',
       },
       committed: {
         body: '`code`日本語',
-        lines: ['code日本語'],
-        visible: 'code日本語',
+        lines: ['`code`日本語'],
+        visible: '`code`日本語',
       },
     })
   })
@@ -429,18 +429,18 @@ describe('MarkdownEditor IME', () => {
     expect(actual).toEqual({
       duringComposition: {
         body: '## Heading日本語',
-        lines: ['Heading日本語'],
-        visible: 'Heading日本語',
+        lines: ['## Heading日本語'],
+        visible: '## Heading日本語',
       },
       committed: {
         body: '## Heading日本語',
-        lines: ['Heading日本語'],
-        visible: 'Heading日本語',
+        lines: ['## Heading日本語'],
+        visible: '## Heading日本語',
       },
       afterBackspace: {
         body: '## Heading日本',
-        lines: ['Heading日本'],
-        visible: 'Heading日本',
+        lines: ['## Heading日本'],
+        visible: '## Heading日本',
       },
     })
   })

@@ -50,7 +50,7 @@ export const editorTheme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
     fontFamily: 'inherit',
-    lineHeight: '1.7',
+    lineHeight: '1.95',
     overflow: 'auto',
   },
   '.cm-gutters': {
@@ -66,20 +66,25 @@ export const editorTheme = EditorView.theme({
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
     backgroundColor: 'color-mix(in srgb, var(--primary) 22%, transparent)',
   },
-  '.cm-md-heading-1': { fontSize: '2rem', fontWeight: '700' },
-  '.cm-md-heading-2': { fontSize: '1.65rem', fontWeight: '700' },
-  '.cm-md-heading-3': { fontSize: '1.35rem', fontWeight: '650' },
-  '.cm-md-heading-4': { fontSize: '1.15rem', fontWeight: '650' },
-  '.cm-md-heading-5': { fontSize: '1.05rem', fontWeight: '600' },
-  '.cm-md-heading-6': { fontSize: '1rem', fontWeight: '600' },
+  '.cm-md-heading': { fontWeight: '700', lineHeight: '1.5' },
+  '.cm-md-heading-1': { fontSize: '1.75rem' },
+  '.cm-md-heading-2': { fontSize: '1.25rem' },
+  '.cm-md-heading-3': { fontSize: '1.0625rem' },
+  '.cm-md-header-mark, .cm-md-header-mark *': {
+    color: 'var(--primary)',
+    fontFamily: 'var(--font-mono)',
+    fontWeight: '400',
+  },
   '.cm-md-hidden-markup': { display: 'none' },
   '.cm-md-inline-code': {
-    backgroundColor: 'color-mix(in srgb, var(--muted) 75%, transparent)',
+    backgroundColor: 'var(--accent)',
     borderRadius: '0.25rem',
     color: 'var(--foreground)',
-    fontFamily: 'var(--font-code)',
-    fontSize: '0.9em',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.875em',
+    padding: '1px 4px',
   },
+  '.cm-md-code-mark, .cm-md-code-mark *': { color: 'var(--muted-foreground)' },
   '.cm-md-code-text': {
     backgroundColor: 'color-mix(in srgb, var(--muted) 35%, transparent)',
     color: 'var(--primary)',
