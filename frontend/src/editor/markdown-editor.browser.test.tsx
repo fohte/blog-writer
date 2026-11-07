@@ -145,14 +145,20 @@ function readEditorEvidenceOutput(doc: Y.Doc, host: HTMLElement) {
   }
 }
 
-function dispatchHistoryShortcut(content: HTMLElement | null, key: 'z' | 'y') {
-  content?.dispatchEvent(
-    new KeyboardEvent('keydown', {
-      key,
-      bubbles: true,
-      [navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey']: true,
-    }),
-  )
+async function dispatchHistoryShortcut(
+  content: HTMLElement | null,
+  action: 'undo' | 'redo',
+) {
+  const isMac = navigator.platform.includes('Mac')
+  const modifier = isMac ? 'Meta' : 'Control'
+  const shortcut =
+    action === 'undo'
+      ? `{${modifier}>}z{/${modifier}}`
+      : isMac
+        ? '{Meta>}{Shift>}z{/Shift}{/Meta}'
+        : '{Control>}y{/Control}'
+  content?.focus()
+  await userEvent.keyboard(shortcut)
 }
 
 function readEvidenceUndoRedoOutput(
@@ -967,18 +973,20 @@ describe('MarkdownEditor', () => {
     })
   })
 
-  it('undoes a body replacement in one Yjs undo step', () => {
+  it('undoes a body replacement in one Yjs undo step', async () => {
     const { body, content, editor } = mountMarkdownEditor('red 🦊 middle blue')
 
     act(() => {
       editor.current?.replaceBody('longer 🦊 middle gold')
     })
-    dispatchHistoryShortcut(content, 'z')
+    await act(async () => {
+      await dispatchHistoryShortcut(content, 'undo')
+    })
 
     expect(body.toJSON()).toEqual('red 🦊 middle blue')
   })
 
-  it('applies a capped body replacement in one Yjs undo step', () => {
+  it('applies a capped body replacement in one Yjs undo step', async () => {
     const unchanged = ' anchor '
     const previous = `${'a'.repeat(4_000)}${unchanged}${'a'.repeat(4_000)}\n`
     const replacement = `${'b'.repeat(4_000)}${unchanged}${'b'.repeat(4_000)}\n`
@@ -988,7 +996,9 @@ describe('MarkdownEditor', () => {
       editor.current?.replaceBody(replacement)
     })
     const bodyAfterReplace = body.toJSON()
-    dispatchHistoryShortcut(content, 'z')
+    await act(async () => {
+      await dispatchHistoryShortcut(content, 'undo')
+    })
 
     const readOutput = () => ({
       bodyAfterReplace,
@@ -1010,12 +1020,14 @@ describe('MarkdownEditor', () => {
     act(() => {
       editor.current?.replaceBody('imported body')
     })
-    dispatchHistoryShortcut(content, 'z')
+    await act(async () => {
+      await dispatchHistoryShortcut(content, 'undo')
+    })
 
     expect(body.toJSON()).toEqual('original body!')
   })
 
-  it('restores evidence when a moved section is undone in the editor', () => {
+  it('restores evidence when a moved section is undone in the editor', async () => {
     const markdown = '# Alpha\n\nFirst sentence.\n\n# Beta\n\nFinal sentence.'
     const claim = 'Final sentence.'
     const { content, doc, history, host } = mountMarkdownEditor(
@@ -1058,7 +1070,9 @@ describe('MarkdownEditor', () => {
         )
         ._unsafeUnwrap()
     })
-    dispatchHistoryShortcut(content, 'z')
+    await act(async () => {
+      await dispatchHistoryShortcut(content, 'undo')
+    })
 
     expect(readEditorEvidenceOutput(doc, host)).toEqual({
       body: markdown,
@@ -1116,8 +1130,8 @@ describe('MarkdownEditor', () => {
         ._unsafeUnwrap()
     })
     const afterMove = readEditorEvidenceOutput(doc, host)
-    act(() => {
-      dispatchHistoryShortcut(content, 'z')
+    await act(async () => {
+      await dispatchHistoryShortcut(content, 'undo')
     })
     await vi.waitFor(() => {
       if (
@@ -1127,8 +1141,8 @@ describe('MarkdownEditor', () => {
         throw new Error('Undo did not restore the hidden evidence')
     })
     const afterUndo = readEditorEvidenceOutput(doc, host)
-    act(() => {
-      dispatchHistoryShortcut(content, 'y')
+    await act(async () => {
+      await dispatchHistoryShortcut(content, 'redo')
     })
     await vi.waitFor(() => {
       if (
