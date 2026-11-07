@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
 import { moveBlock, readBody, setBody } from '#article/index'
-import type { SyncClientOptions } from '#lib/sync-client'
+import type { Article, SyncClientOptions } from '#lib/sync-client'
 import { createSyncClient } from '#lib/sync-client'
 
 class FakePersistence {
@@ -76,6 +76,13 @@ class FakeWebsocketProvider {
   }
 
   destroy() {}
+}
+
+function combineArticleListSnapshots(
+  beforeRestart: Article[],
+  afterRestart: Article[],
+) {
+  return [beforeRestart, afterRestart]
 }
 
 const createFixture = (
@@ -239,6 +246,40 @@ describe('createSyncClient', () => {
       articleDocumentHasTitle: false,
     })
     client.destroy()
+  })
+
+  it('persists export settings on the article index entry', async () => {
+    const { client, savedDocuments } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    client
+      .updateArticleExportSettings(article.id, {
+        exportDestinationId: 'sample-site',
+        exportSlug: 'sample-post',
+        exportFrontmatter: 'title: "Sample article"',
+      })
+      ._unsafeUnwrap()
+
+    const beforeRestart = client.listArticles()
+    const expectedArticles = [
+      {
+        id: article.id,
+        createdAt: article.createdAt,
+        title: article.title,
+        exportDestinationId: 'sample-site',
+        exportSlug: 'sample-post',
+        exportFrontmatter: 'title: "Sample article"',
+      },
+    ]
+    client.destroy()
+
+    const restored = createFixture(savedDocuments)
+    await restored.client.start()
+    const afterRestart = restored.client.listArticles()
+    expect(combineArticleListSnapshots(beforeRestart, afterRestart)).toEqual([
+      expectedArticles,
+      expectedArticles,
+    ])
+    restored.client.destroy()
   })
 
   it('keeps a provider creation error visible after an article title changes', async () => {

@@ -85,6 +85,24 @@ export const editorTheme = EditorView.theme({
     color: 'var(--primary)',
     fontFamily: 'var(--font-code)',
   },
+  '.cm-evidence-text-supported': {
+    textDecoration: 'underline dotted var(--tint-green-foreground)',
+  },
+  '.cm-evidence-text-insufficient, .cm-evidence-text-outdated, .cm-evidence-text-contradicted, .cm-evidence-text-edited':
+    {
+      textDecoration: 'underline dotted var(--tint-yellow-foreground)',
+    },
+  '.cm-evidence-marker': {
+    border: '0',
+    background: 'transparent',
+    cursor: 'pointer',
+    fontSize: '0.72rem',
+    padding: '0 0.1rem',
+  },
+  '.cm-evidence-supported': { color: 'var(--tint-green-foreground)' },
+  '.cm-evidence-needs-review, .cm-evidence-edited': {
+    color: 'var(--tint-yellow-foreground)',
+  },
 })
 
 export const editorDarkMode = EditorView.theme({}, { dark: true })

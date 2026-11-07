@@ -5,6 +5,11 @@ import { ArticleExportPopover } from '#components/article-export-popover'
 import { ArticleFileSyncPopover } from '#components/article-file-sync-popover'
 import { LlmSettingsScreen } from '#components/llm-settings-screen'
 import {
+  ExportApiError,
+  type ExportDestination,
+  getExportDestinations,
+} from '#lib/article-export-api'
+import {
   type FileSyncConfiguration,
   getFileSyncConfiguration,
 } from '#lib/file-sync-api'
@@ -16,6 +21,10 @@ export function App() {
   const [fileSyncConfiguration, setFileSyncConfiguration] =
     useState<FileSyncConfiguration>()
   const [fileSyncConfigurationError, setFileSyncConfigurationError] =
+    useState<string>()
+  const [exportDestinations, setExportDestinations] =
+    useState<ExportDestination[]>()
+  const [exportDestinationsError, setExportDestinationsError] =
     useState<string>()
   const {
     articles,
@@ -38,6 +47,30 @@ export function App() {
       },
       (loadError) => {
         if (active) setFileSyncConfigurationError(loadError.message)
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void getExportDestinations(fetch).match(
+      (response) => {
+        if (active) {
+          setExportDestinations(response.destinations)
+          setExportDestinationsError(undefined)
+        }
+      },
+      (loadError) => {
+        if (!active) return
+        if (loadError instanceof ExportApiError && loadError.status === 503) {
+          setExportDestinations(undefined)
+          setExportDestinationsError(undefined)
+          return
+        }
+        setExportDestinationsError(loadError.message)
       },
     )
     return () => {
@@ -74,6 +107,10 @@ export function App() {
               articleId={context.articleId}
               articleTitle={article?.title ?? ''}
               doc={context.doc}
+              article={article}
+              client={client}
+              destinations={exportDestinations}
+              destinationError={exportDestinationsError}
             />
             {fileSyncConfiguration?.enabled === true ? (
               <ArticleFileSyncPopover

@@ -3,12 +3,17 @@ import { useEffect, useMemo } from 'react'
 import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
+import { addEvidence } from '#article/evidence'
+import { addSource } from '#article/sources'
+import type { EvidenceVerdict } from '#article/types'
 import { MarkdownEditor } from '#editor/index'
 import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
 
 interface StoryArgs {
   content: string
+  className?: string
   initialSelection?: { anchor: number; head?: number }
+  evidenceVerdict?: EvidenceVerdict
   showMoveHandles?: boolean
 }
 
@@ -42,18 +47,43 @@ const otherSyntaxContent = [
 
 function MarkdownEditorPreview({
   content,
+  className,
   initialSelection,
+  evidenceVerdict,
   showMoveHandles = false,
 }: StoryArgs) {
   const { body, doc, history, extensions } = useMemo(() => {
     const doc = new Y.Doc()
-    getBody(doc).insert(0, content)
+    const body = getBody(doc)
+    body.insert(0, content)
+    if (evidenceVerdict !== undefined) {
+      const checkedAt = '2026-02-01T00:00:00.000Z'
+      addSource(doc, {
+        id: 'source-example',
+        kind: 'url',
+        title: 'Example research report',
+        url: 'https://example.invalid/report',
+        fileName: null,
+        checkedAt,
+        summary: 'The report describes a measured change over time.',
+      })._unsafeUnwrap()
+      addEvidence(doc, {
+        id: 'evidence-example',
+        from: 0,
+        to: content.length,
+        claim: content,
+        sourceId: 'source-example',
+        quote: 'The measured value changed during the study period.',
+        verdict: evidenceVerdict,
+        checkedAt,
+      })._unsafeUnwrap()
+    }
     const history = createMoveHistory(doc)
     const extensions = showMoveHandles
       ? [createOutlineEditorExtension(history)]
       : []
-    return { body: getBody(doc), doc, history, extensions }
-  }, [content, showMoveHandles])
+    return { body, doc, history, extensions }
+  }, [content, evidenceVerdict, showMoveHandles])
 
   useEffect(() => {
     return () => {
@@ -68,6 +98,7 @@ function MarkdownEditorPreview({
         text={body}
         history={history}
         extensions={extensions}
+        {...(className === undefined ? {} : { className })}
         {...(initialSelection ? { initialSelection } : {})}
       />
     </div>
@@ -87,6 +118,14 @@ export const MarkdownBody: Story = {
   args: {
     content: defaultContent,
     initialSelection: { anchor: defaultContent.length },
+  },
+}
+
+export const CallerProvidedHeight: Story = {
+  name: 'the editor uses a height supplied by its caller.',
+  args: {
+    content: 'The editor takes its height from the class name.',
+    className: 'h-60',
   },
 }
 
@@ -112,6 +151,18 @@ export const OtherMarkdownSyntax: Story = {
     content: otherSyntaxContent,
     initialSelection: { anchor: otherSyntaxContent.length },
   },
+}
+
+const evidenceContent = 'A research sentence.'
+
+export const SupportedEvidenceMarker: Story = {
+  name: 'the sentence ends with a green supported marker.',
+  args: { content: evidenceContent, evidenceVerdict: 'supported' },
+}
+
+export const NeedsReviewEvidenceMarker: Story = {
+  name: 'the sentence ends with a yellow marker for a contradiction.',
+  args: { content: evidenceContent, evidenceVerdict: 'contradicted' },
 }
 
 export const BlockMoveHandles: Story = {

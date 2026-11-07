@@ -1,7 +1,12 @@
 import { compile } from '@mdx-js/mdx'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { exportArticleBody, getArticleExportFilename } from '#article/export'
+import {
+  createArticleFrontmatter,
+  exportArticleBody,
+  getArticleExportFilename,
+  prependArticleFrontmatter,
+} from '#article/export'
 
 const articleBody = [
   '# Title <T>',
@@ -44,6 +49,7 @@ const articleBody = [
 
 afterEach(() => {
   vi.doUnmock('remark')
+  vi.unstubAllEnvs()
 })
 
 describe('exportArticleBody', () => {
@@ -147,6 +153,35 @@ describe('exportArticleBody', () => {
     )
 
     expect(result).toEqual('MDX 形式に変換できませんでした。')
+  })
+})
+
+describe('article frontmatter', () => {
+  it('quotes template values and prefixes the exported body', () => {
+    const frontmatter = createArticleFrontmatter(
+      'title: {{ title }}\ndate: {{ date }}',
+      'A title: with punctuation',
+      Date.UTC(2026, 0, 15, 12),
+    )
+
+    expect(prependArticleFrontmatter(frontmatter, 'Article body')).toEqual(
+      '---\ntitle: "A title: with punctuation"\ndate: "2026-01-15"\n---\n\nArticle body',
+    )
+  })
+
+  it('escapes title replacement characters and formats the local date', () => {
+    vi.stubEnv('TZ', 'Pacific/Auckland')
+
+    const frontmatter = createArticleFrontmatter(
+      'title: {{ title }}\ndate: {{ date }}',
+      ['Cost $& more: "quoted"', 'second line'].join('\n'),
+      Date.UTC(2026, 0, 15, 12),
+    )
+
+    expect(frontmatter).toEqual(
+      String.raw`title: "Cost $& more: \"quoted\"\nsecond line"
+date: "2026-01-16"`,
+    )
   })
 })
 
