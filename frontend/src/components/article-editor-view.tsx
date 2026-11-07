@@ -27,6 +27,7 @@ import {
   suggestionActionsPresentation,
 } from '#editor/index'
 import { useMobileViewport } from '#hooks/use-mobile-viewport'
+import { useVisualViewportArea } from '#hooks/use-visual-viewport-area'
 import type { SyncState } from '#lib/sync-client'
 import { MemoPanel } from '#memos/memo-panel'
 import {
@@ -150,6 +151,8 @@ export function ArticleEditorView({
   const viewportIsMobile = useMobileViewport()
   const isMobile =
     layout === 'mobile' || (layout === 'responsive' && viewportIsMobile)
+  const visibleArea = useVisualViewportArea()
+  const mobileVisibleArea = isMobile ? visibleArea : undefined
   const [panel, setPanel] = useState<ArticleEditorPanel>(initialPanel)
   const [exportView, setExportView] = useState<{
     section: ArticleExportSection | undefined
@@ -321,9 +324,21 @@ export function ArticleEditorView({
     <>
       {exportContent}
       {/* Hidden instead of unmounted so the editor keeps its undo history and can still take imported text. */}
+      {/* On mobile the transform makes this the containing block of the fixed suggestion sheet, so the sheet follows it above the keyboard. */}
       <div
-        className={`flex min-h-dvh flex-col ${isMobile ? 'h-dvh' : 'lg:h-dvh'}`}
+        className={`flex min-h-dvh flex-col ${isMobile ? 'h-dvh transform-gpu' : 'lg:h-dvh'}`}
         hidden={exportContent !== undefined}
+        style={
+          mobileVisibleArea
+            ? {
+                position: 'fixed',
+                insetInline: 0,
+                top: mobileVisibleArea.top,
+                height: mobileVisibleArea.height,
+                minHeight: 0,
+              }
+            : undefined
+        }
       >
         <ArticleEditorHeader
           mobile={isMobile}

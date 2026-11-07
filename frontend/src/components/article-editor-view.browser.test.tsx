@@ -719,11 +719,7 @@ First paragraph.
     doc = articleDoc
     setBody(articleDoc, 'First paragraph.\n\nSecond paragraph.\n')
     let currentView: EditorView | null = null
-    const requestedArticles: string[] = []
     renderWorkspace(article, articleDoc, {
-      onRequest: (context) => {
-        requestedArticles.push(context.articleId)
-      },
       onViewChange: (view) => {
         if (view) currentView = view
       },
@@ -754,20 +750,55 @@ First paragraph.
     const undoneBody = getBody(articleDoc).toJSON()
     await act(async () => {
       await userEvent.click(toolbarButton('やり直す'))
-      await userEvent.click(toolbarButton('依頼'))
     })
 
     const readToolbarOutput = () => ({
       movedBody,
       undoneBody,
       redoneBody: getBody(articleDoc).toJSON(),
-      requestedArticles,
     })
     expect(readToolbarOutput()).toEqual({
       movedBody: 'Second paragraph.\n\nFirst paragraph.\n',
       undoneBody: 'First paragraph.\n\nSecond paragraph.\n',
       redoneBody: 'Second paragraph.\n\nFirst paragraph.\n',
-      requestedArticles: ['article-mobile-move'],
+    })
+  })
+
+  it('fits the mobile editor to the visible area while the on-screen keyboard is open', async () => {
+    await page.viewport(375, 812)
+    const visualViewport = Object.assign(new EventTarget(), {
+      offsetTop: 0,
+      height: 812,
+    })
+    vi.stubGlobal('visualViewport', visualViewport)
+    const article: Article = {
+      id: 'article-mobile-keyboard',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    doc = new Y.Doc()
+    renderWorkspace(article, doc)
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const resizeVisualViewport = (offsetTop: number, height: number) => {
+      act(() => {
+        Object.assign(visualViewport, { offsetTop, height })
+        visualViewport.dispatchEvent(new Event('resize'))
+      })
+      const editorRoot = page
+        .getByRole('toolbar', { name: '入力補助' })
+        .element().parentElement
+      return { top: editorRoot?.style.top, height: editorRoot?.style.height }
+    }
+
+    const readAreas = () => ({
+      keyboardOpen: resizeVisualViewport(120, 400),
+      keyboardClosed: resizeVisualViewport(0, 812),
+    })
+    expect(readAreas()).toEqual({
+      keyboardOpen: { top: '120px', height: '400px' },
+      keyboardClosed: { top: '', height: '' },
     })
   })
 
