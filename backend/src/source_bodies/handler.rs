@@ -495,10 +495,28 @@ mod tests {
                 api.clone(),
                 Request::builder()
                     .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-test/save-if-unchanged")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":"Prior Markdown body","body":"Research after deletion"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
                     .uri("/articles/article-test/source-bodies/source-test/restore")
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"expected_body":"Research write","restore_body":null}"#,
+                        r#"{"expected_body":"Research after deletion","restore_body":null}"#,
                     ))?,
             )
             .await?,
@@ -530,12 +548,38 @@ mod tests {
             call_json(
                 api.clone(),
                 Request::builder()
-                    .method("POST")
-                    .uri("/articles/article-test/source-bodies/source-new/restore")
+                    .method("PUT")
+                    .uri("/articles/article-test/source-bodies/source-new")
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"expected_body":"New source body","restore_body":null}"#,
+                        r#"{"body":"Concurrent source body"}"#,
                     ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-new/save-if-unchanged")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":null,"body":"Lost research update"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-new")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/articles/article-test/source-bodies/source-new")
+                    .body(Body::empty())?,
             )
             .await?,
             call_json(
@@ -644,6 +688,11 @@ mod tests {
                     })
                 ),
                 (204, Value::Null),
+                (
+                    409,
+                    json!({"error": "Source body changed before it could be stored"})
+                ),
+                (404, json!({"error": "Not Found"})),
                 (204, Value::Null),
                 (404, json!({"error": "Not Found"})),
                 (204, Value::Null),
@@ -653,6 +702,19 @@ mod tests {
                         "source_id": "source-new",
                         "article_id": "article-test",
                         "body": "New source body"
+                    })
+                ),
+                (204, Value::Null),
+                (
+                    409,
+                    json!({"error": "Source body changed before it could be stored"})
+                ),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-new",
+                        "article_id": "article-test",
+                        "body": "Concurrent source body"
                     })
                 ),
                 (204, Value::Null),
