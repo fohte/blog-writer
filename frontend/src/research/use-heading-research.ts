@@ -122,6 +122,16 @@ export function useHeadingResearch() {
           patchProgress(articleId, { status: 'complete' })
         },
         (researchError) => {
+          console.error(
+            'heading-research-abort-error',
+            JSON.stringify({
+              constructorName: researchError.constructor.name,
+              name: researchError.name,
+              signalAborted: controller.signal.aborted,
+              controllerIsCurrent:
+                controllers.current.get(articleId) === controller,
+            }),
+          )
           if (controllers.current.get(articleId) !== controller) {
             releaseResearchLock(articleId, controller)
             return

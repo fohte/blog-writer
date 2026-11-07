@@ -444,6 +444,10 @@ describe('the application research and evidence integrations', () => {
     const interruptedText = '調査を中断しました。資料は保存されていません。'
     let researchStarted: (() => void) | undefined
     let requestQuestion: unknown
+    let requestSignal: AbortSignal | undefined
+    let abortEventReceived = false
+    let abortError: { constructorName: string; name: string } | undefined
+    let fetchRejection: { constructorName: string; name: string } | undefined
     const researchWasStarted = new Promise<void>((resolve) => {
       researchStarted = resolve
     })
@@ -452,11 +456,26 @@ describe('the application research and evidence integrations', () => {
       if (url === '/api/research/jobs') {
         if (typeof init.body === 'string')
           requestQuestion = JSON.parse(init.body) as unknown
+        requestSignal = init.signal ?? undefined
         if (researchStarted !== undefined) researchStarted()
         return new Promise<Response>((_resolve, reject) => {
           init.signal?.addEventListener('abort', () => {
-            reject(new DOMException('Aborted', 'AbortError'))
+            abortEventReceived = true
+            const error = new DOMException('Aborted', 'AbortError')
+            abortError = {
+              constructorName: error.constructor.name,
+              name: error.name,
+            }
+            reject(error)
           })
+        }).catch((error: unknown) => {
+          const rejection =
+            error instanceof Error ? error : new Error(String(error))
+          fetchRejection = {
+            constructorName: rejection.constructor.name,
+            name: rejection.name,
+          }
+          return Promise.reject(rejection)
         })
       }
       if (init.method === 'POST' && url.endsWith('/save-if-unchanged'))
@@ -465,6 +484,13 @@ describe('the application research and evidence integrations', () => {
     })
     await renderApp()
     await openArticle()
+    const addEventListenerSpy = vi.spyOn(window, 'addEventListener')
+    const captureKeydownListenerCount = () =>
+      addEventListenerSpy.mock.calls.filter(
+        ([type, , options]) => type === 'keydown' && options === true,
+      ).length
+    const captureKeydownListenerCountBeforeResearch =
+      captureKeydownListenerCount()
     await act(async () => {
       await userEvent.click(
         page.getByRole('button', { name: 'Research topic' }),
@@ -480,10 +506,33 @@ describe('the application research and evidence integrations', () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     })
-    await waitFor(() => {
-      if (exactRoleText('status', interruptedText) !== interruptedText)
-        throw new Error('The interrupted state was not shown')
+    let interruptedStateShown = false
+    await act(async () => {
+      interruptedStateShown = await vi
+        .waitFor(
+          () => {
+            if (exactRoleText('status', interruptedText) !== interruptedText)
+              throw new Error('The interrupted state was not shown')
+          },
+          { timeout: 5000 },
+        )
+        .then(
+          () => true,
+          () => false,
+        )
     })
+    const statusLabel = () =>
+      [...document.body.querySelectorAll('button')]
+        .map((button) => button.textContent.trim())
+        .find((text) =>
+          [
+            '調査中',
+            '資料を保存しています',
+            '調査を中断しています',
+            '調査を中断しました',
+            '調査に失敗しました',
+          ].includes(text),
+        )
 
     const readResult = () => ({
       query: requestQuestion,
@@ -491,13 +540,40 @@ describe('the application research and evidence integrations', () => {
       findingCount: listFindings(doc).length,
       bodySaveRequests: putCount,
       interruptedMessage: exactRoleText('status', interruptedText),
+      diagnostics: {
+        requestHasSignal: requestSignal !== undefined,
+        signalAborted: requestSignal?.aborted,
+        abortEventReceived,
+        abortError,
+        fetchRejection,
+        captureKeydownListenerAdded:
+          captureKeydownListenerCount() >
+          captureKeydownListenerCountBeforeResearch,
+        statusLabel: statusLabel(),
+        interruptedStateShown,
+      },
     })
-    expect(readResult()).toEqual({
+    const result = readResult()
+    console.error(
+      'heading-research-abort-diagnostics',
+      JSON.stringify(result.diagnostics),
+    )
+    expect(result).toEqual({
       query: { task: 'key_points', question: 'Research topic' },
       sourceCount: 0,
       findingCount: 0,
       bodySaveRequests: 0,
       interruptedMessage: interruptedText,
+      diagnostics: {
+        requestHasSignal: true,
+        signalAborted: true,
+        abortEventReceived: true,
+        abortError: { constructorName: 'DOMException', name: 'AbortError' },
+        fetchRejection: { constructorName: 'DOMException', name: 'AbortError' },
+        captureKeydownListenerAdded: true,
+        statusLabel: '調査を中断しました',
+        interruptedStateShown: true,
+      },
     })
   })
 
