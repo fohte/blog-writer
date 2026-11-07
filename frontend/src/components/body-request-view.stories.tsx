@@ -1,7 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ComponentProps, useState } from 'react'
 
-import { BodyRequestView } from '#components/body-request-view'
+import {
+  type BodyRequestCandidate,
+  BodyRequestView,
+} from '#components/body-request-view'
 
 function BodyRequestStory(args: ComponentProps<typeof BodyRequestView>) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
@@ -22,6 +25,19 @@ function BodyRequestStory(args: ComponentProps<typeof BodyRequestView>) {
   )
 }
 
+const candidates: readonly BodyRequestCandidate[] = [
+  { id: 'concise', label: '簡潔にする', group: 'edit' },
+  { id: 'add-example', label: '例を 1 つ足す', group: 'edit' },
+  { id: 'smooth-flow', label: '前後とのつながりを直す', group: 'edit' },
+  { id: 'verify-claims', label: '根拠を確かめる', group: 'research' },
+  {
+    id: 'research-section',
+    label: 'この見出しについて調べる',
+    group: 'research',
+  },
+  { id: 'write-from-sources', label: '資料をもとに書く', group: 'research' },
+]
+
 const meta = {
   component: BodyRequestView,
   render: (args) => <BodyRequestStory {...args} />,
@@ -31,6 +47,8 @@ const meta = {
     touchDevice: false,
     phase: 'input',
     instruction: '',
+    target: 'paragraph',
+    candidates,
     onOpenChange: () => {},
     onInstructionChange: () => {},
     onSubmit: () => {},
@@ -40,33 +58,37 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
+export const EmptyRequest: Story = {
+  name: 'an empty request lists edit and research candidates with the first one highlighted',
+  args: { defaultHighlightedId: 'concise' },
+}
+
 export const ReadyToRequest: Story = {
-  name: 'the writer can enter a request for the selected text',
+  name: 'the writer can type a request for the paragraph at the cursor',
   args: { instruction: 'この段落を短くしてください' },
 }
 
-export const WithPresets: Story = {
-  name: 'the writer can choose a preset request or enter one freely',
-  args: {
-    instruction: 'この段落を短くしてください',
-    presets: [
-      { id: 'research-section', label: 'この見出しについて調べる' },
-      { id: 'write-from-sources', label: '資料をもとに書く' },
-      { id: 'verify-claims', label: '根拠を確かめる' },
-    ],
-  },
+export const SelectionTarget: Story = {
+  name: 'a request for selected text names the selection as its target',
+  args: { target: 'selection' },
+}
+
+export const InsertionTarget: Story = {
+  name: 'a request on a blank line names an insertion as its target',
+  args: { target: 'insertion' },
 }
 
 export const TouchRequest: Story = {
   name: 'a touch device shows a request button',
-  args: { touchDevice: true },
+  args: { open: false, touchDevice: true },
 }
 
 export const Failed: Story = {
-  name: 'a failed request shows an error',
+  name: 'a failed request shows the reason with retry and close buttons',
   args: {
     phase: 'error',
     instruction: 'この段落を短くしてください',
-    error: '提案を作成できませんでした。',
+    failure: { title: '作成できませんでした', reason: '利用枠に達しました' },
+    onRetry: () => {},
   },
 }
