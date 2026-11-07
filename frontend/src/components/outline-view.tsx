@@ -2,13 +2,12 @@ import {
   draggable,
   dropTargetForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
-import { Button } from '@fohte/ui/button'
 import { List, ListItem } from '@fohte/ui/list'
-import { Popover, PopoverContent } from '@fohte/ui/popover'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { MoveBlockInput } from '#article/index'
 import type { Heading } from '#article/types'
+import { BlockMoveMenu } from '#components/block-move-menu'
 import { stopButtonClickPropagation } from '#components/outline-view/stop-button-click-propagation'
 import { SuggestionDiff } from '#components/suggestion-diff'
 import type {
@@ -269,90 +268,61 @@ function OutlineRow({
             heading.text || 'Untitled heading'
           )}
         </span>
-        <Popover anchor={handleRef} onOpenChange={setMenuOpen} open={menuOpen}>
-          <button
-            aria-expanded={menuOpen}
-            aria-haspopup="menu"
-            aria-label={`Move ${heading.text || 'heading'}`}
-            className="cursor-grab touch-none select-none rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
-            onClick={(event) => {
-              event.stopPropagation()
-              setMenuOpen((isOpen) => !isOpen)
-            }}
-            onMouseDown={(event) => {
-              event.stopPropagation()
-            }}
-            ref={handleRef}
-            style={{ height: '44px', minWidth: '44px', width: '44px' }}
-            type="button"
-          >
-            ⠿
-          </button>
-          <PopoverContent
-            className="flex min-w-36 flex-col gap-1 p-1"
-            onClick={(event) => {
-              event.stopPropagation()
-            }}
-            role="menu"
-          >
-            <Button
-              className="w-full justify-start"
-              disabled={!previousHeading}
-              onClick={() => {
-                if (previousHeading) {
-                  submitMove({
-                    from: heading.from,
-                    destination: previousHeading.from,
-                  })
-                }
-              }}
-              role="menuitem"
-              size="sm"
-              variant="ghost"
-            >
-              Move up
-            </Button>
-            <Button
-              className="w-full justify-start"
-              disabled={!nextHeading}
-              onClick={() => {
-                if (nextHeading) {
-                  submitMove({
+        <button
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          aria-label={`Move ${heading.text || 'heading'}`}
+          className="cursor-grab touch-none select-none rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
+          onClick={(event) => {
+            event.stopPropagation()
+            setMenuOpen((isOpen) => !isOpen)
+          }}
+          onMouseDown={(event) => {
+            event.stopPropagation()
+          }}
+          ref={handleRef}
+          style={{ height: '44px', minWidth: '44px', width: '44px' }}
+          type="button"
+        >
+          ⠿
+        </button>
+        <BlockMoveMenu
+          actions={[
+            {
+              label: 'Move up',
+              input: previousHeading
+                ? { from: heading.from, destination: previousHeading.from }
+                : undefined,
+            },
+            {
+              label: 'Move down',
+              input: nextHeading
+                ? {
                     from: heading.from,
                     destination: sectionEnd(
                       allHeadings,
                       nextHeading.from,
                       bodyLength,
                     ),
-                  })
-                }
-              }}
-              role="menuitem"
-              size="sm"
-              variant="ghost"
-            >
-              Move down
-            </Button>
-            <Button
-              className="w-full justify-start"
-              disabled={!previousHeading}
-              onClick={() => {
-                if (previousHeading) {
-                  submitMove({
+                  }
+                : undefined,
+            },
+            {
+              label: 'Make child',
+              input: previousHeading
+                ? {
                     from: heading.from,
                     destination: heading.from,
                     childOf: previousHeading.from,
-                  })
-                }
-              }}
-              role="menuitem"
-              size="sm"
-              variant="ghost"
-            >
-              Make child
-            </Button>
-          </PopoverContent>
-        </Popover>
+                  }
+                : undefined,
+            },
+          ]}
+          anchor={handleRef}
+          onMove={submitMove}
+          onOpenChange={setMenuOpen}
+          open={menuOpen}
+        />
       </ListItem>
     </div>
   )

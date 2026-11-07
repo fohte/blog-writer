@@ -1,7 +1,4 @@
-import {
-  draggable,
-  dropTargetForElements,
-} from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
+import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
 import { type Extension, Prec, StateEffect } from '@codemirror/state'
 import {
   Decoration,
@@ -13,48 +10,72 @@ import {
   WidgetType,
 } from '@codemirror/view'
 
+import { mountBlockMoveMenu } from '#outline/block-move-menu'
 import { adjacentMove, blockStarts, bodyDropInput } from '#outline/block-ranges'
 import type { MoveHistory } from '#outline/move-history'
 
 const refreshBlockHandles = StateEffect.define()
+const blockHandleCleanups = new WeakMap<HTMLElement, () => void>()
 
 class BlockDragHandle extends WidgetType {
   constructor(
     private readonly from: number,
     private readonly history: MoveHistory,
+    private readonly view: EditorView,
+    private readonly composingViews: WeakSet<EditorView>,
   ) {
     super()
   }
 
-  private cleanup: (() => void) | undefined
-
   override eq(other: BlockDragHandle): boolean {
-    return this.from === other.from && this.history === other.history
+    return (
+      this.from === other.from &&
+      this.history === other.history &&
+      this.view === other.view &&
+      this.composingViews === other.composingViews
+    )
   }
 
   override toDOM(): HTMLElement {
+    const wrapper = document.createElement('span')
     const button = document.createElement('button')
+    const menuHost = document.createElement('span')
     button.type = 'button'
     button.className = 'cm-block-drag-handle'
     button.setAttribute('aria-label', 'Move block')
+    button.setAttribute('aria-haspopup', 'menu')
+    button.setAttribute('aria-expanded', 'false')
     button.textContent = '⠿'
-    this.cleanup = draggable({
-      element: button,
-      getInitialData: () => ({ kind: 'block', from: this.from }),
-    })
-    return button
+    wrapper.append(button, menuHost)
+    blockHandleCleanups.set(
+      wrapper,
+      mountBlockMoveMenu({
+        button,
+        composingViews: this.composingViews,
+        from: this.from,
+        history: this.history,
+        host: menuHost,
+        view: this.view,
+      }),
+    )
+    return wrapper
   }
 
-  override destroy() {
-    this.cleanup?.()
+  override destroy(dom: HTMLElement) {
+    blockHandleCleanups.get(dom)?.()
+    blockHandleCleanups.delete(dom)
   }
 }
 
-function createDecorations(view: EditorView, history: MoveHistory) {
+function createDecorations(
+  view: EditorView,
+  history: MoveHistory,
+  composingViews: WeakSet<EditorView>,
+) {
   return Decoration.set(
     blockStarts(view.state, view.viewport.from, view.viewport.to).map((from) =>
       Decoration.widget({
-        widget: new BlockDragHandle(from, history),
+        widget: new BlockDragHandle(from, history, view, composingViews),
         side: -1,
       }).range(from),
     ),
@@ -81,7 +102,7 @@ function createDragPlugin(
       }
 
       constructor(readonly view: EditorView) {
-        this.decorations = createDecorations(view, history)
+        this.decorations = createDecorations(view, history, composingViews)
         view.contentDOM.addEventListener(
           'keydown',
           this.preventCompositionShortcut,
@@ -139,7 +160,7 @@ function createDragPlugin(
           )
         )
           return
-        this.decorations = createDecorations(this.view, history)
+        this.decorations = createDecorations(this.view, history, composingViews)
       }
 
       startComposition() {
