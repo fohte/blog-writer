@@ -4,6 +4,24 @@ import { DEFAULT_ARTICLE_TITLE } from '#article/constants'
 
 export type ExportFormat = 'markdown' | 'mdx'
 
+export function prependArticleFrontmatter(
+  frontmatter: string,
+  body: string,
+): string {
+  return `---\n${frontmatter}\n---\n\n${body}`
+}
+
+export function createArticleFrontmatter(
+  template: string,
+  title: string,
+  createdAt: number,
+): string {
+  const date = new Date(createdAt).toISOString().slice(0, 10)
+  return template
+    .replaceAll('{{ title }}', JSON.stringify(title))
+    .replaceAll('{{ date }}', JSON.stringify(date))
+}
+
 const editorComponents = new Set([
   'CardLink',
   'ImageGrid',

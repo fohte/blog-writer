@@ -241,6 +241,45 @@ describe('createSyncClient', () => {
     client.destroy()
   })
 
+  it('persists export settings on the article index entry', async () => {
+    const { client, savedDocuments } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    client
+      .updateArticleExportSettings(article.id, {
+        exportDestinationId: 'sample-site',
+        exportSlug: 'sample-post',
+        exportFrontmatter: 'title: "Sample article"',
+      })
+      ._unsafeUnwrap()
+
+    const readSettings = () => client.listArticles()
+    expect(readSettings()).toEqual([
+      {
+        id: article.id,
+        createdAt: article.createdAt,
+        title: article.title,
+        exportDestinationId: 'sample-site',
+        exportSlug: 'sample-post',
+        exportFrontmatter: 'title: "Sample article"',
+      },
+    ])
+    client.destroy()
+
+    const restored = createFixture(savedDocuments)
+    await restored.client.start()
+    expect(restored.client.listArticles()).toEqual([
+      {
+        id: article.id,
+        createdAt: article.createdAt,
+        title: article.title,
+        exportDestinationId: 'sample-site',
+        exportSlug: 'sample-post',
+        exportFrontmatter: 'title: "Sample article"',
+      },
+    ])
+    restored.client.destroy()
+  })
+
   it('keeps a provider creation error visible after an article title changes', async () => {
     const articleId = 'article-provider-unavailable'
     const savedIndex = new Y.Doc()

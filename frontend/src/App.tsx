@@ -5,6 +5,10 @@ import { ArticleExportPopover } from '#components/article-export-popover'
 import { ArticleFileSyncPopover } from '#components/article-file-sync-popover'
 import { LlmSettingsScreen } from '#components/llm-settings-screen'
 import {
+  type ExportDestination,
+  getExportDestinations,
+} from '#lib/article-export-api'
+import {
   type FileSyncConfiguration,
   getFileSyncConfiguration,
 } from '#lib/file-sync-api'
@@ -17,6 +21,8 @@ export function App() {
     useState<FileSyncConfiguration>()
   const [fileSyncConfigurationError, setFileSyncConfigurationError] =
     useState<string>()
+  const [exportDestinations, setExportDestinations] =
+    useState<ExportDestination[]>()
   const {
     articles,
     statuses,
@@ -39,6 +45,19 @@ export function App() {
       (loadError) => {
         if (active) setFileSyncConfigurationError(loadError.message)
       },
+    )
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void getExportDestinations(fetch).match(
+      (response) => {
+        if (active) setExportDestinations(response.destinations)
+      },
+      () => undefined,
     )
     return () => {
       active = false
@@ -74,6 +93,9 @@ export function App() {
               articleId={context.articleId}
               articleTitle={article?.title ?? ''}
               doc={context.doc}
+              article={article}
+              client={client}
+              destinations={exportDestinations}
             />
             {fileSyncConfiguration?.enabled === true ? (
               <ArticleFileSyncPopover

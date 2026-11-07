@@ -12,6 +12,9 @@ import {
   type ExportFormat,
   getArticleExportFilename,
 } from '#article/export'
+import { ArticlePublishContainer } from '#components/article-publish-container'
+import type { ExportDestination } from '#lib/article-export-api'
+import type { Article, SyncClientApi } from '#lib/sync-client'
 
 const formatOptions = [
   { value: 'markdown', label: 'Markdown' },
@@ -25,6 +28,9 @@ type ArticleExportPopoverProps = {
   defaultOpen?: boolean | undefined
   defaultFormat?: ExportFormat | undefined
   initialError?: string | undefined
+  article?: Article | undefined
+  destinations?: ExportDestination[] | undefined
+  client?: SyncClientApi | undefined
 }
 
 export function ArticleExportPopover({
@@ -34,10 +40,14 @@ export function ArticleExportPopover({
   defaultOpen = false,
   defaultFormat = 'markdown',
   initialError,
+  article,
+  destinations,
+  client,
 }: ArticleExportPopoverProps) {
   const [open, setOpen] = useState(defaultOpen)
   const [format, setFormat] = useState(defaultFormat)
   const [error, setError] = useState(initialError)
+  const [showingPublishDiff, setShowingPublishDiff] = useState(false)
   const downloadButtonRef = useRef<HTMLButtonElement>(null)
   const conversionAttempt = useRef(0)
 
@@ -83,7 +93,16 @@ export function ArticleExportPopover({
         書き出す
       </PopoverTrigger>
       <PopoverContent
-        className="flex w-64 flex-col gap-3"
+        className={
+          showingPublishDiff
+            ? 'flex flex-col gap-3'
+            : 'flex w-64 max-w-full flex-col gap-3'
+        }
+        style={
+          showingPublishDiff
+            ? { width: '48rem', maxWidth: 'calc(100vw - 2rem)' }
+            : undefined
+        }
         initialFocus={downloadButtonRef}
       >
         <h2 className="font-semibold">形式</h2>
@@ -106,6 +125,21 @@ export function ArticleExportPopover({
         <Button onClick={handleDownload} ref={downloadButtonRef} type="button">
           ダウンロード
         </Button>
+        {article !== undefined &&
+        client !== undefined &&
+        destinations !== undefined &&
+        destinations.length > 0 ? (
+          <>
+            <div aria-hidden="true" className="border-t border-border" />
+            <ArticlePublishContainer
+              article={article}
+              client={client}
+              destinations={destinations}
+              doc={doc}
+              onDiffChange={setShowingPublishDiff}
+            />
+          </>
+        ) : null}
       </PopoverContent>
     </Popover>
   )

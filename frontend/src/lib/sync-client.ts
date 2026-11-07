@@ -32,6 +32,15 @@ export type Article = {
   syncFilePath?: string
   syncFileHash?: string
   syncFileStatus?: ArticleFileSyncStatus
+  exportDestinationId?: string
+  exportSlug?: string
+  exportFrontmatter?: string
+}
+
+export type ArticleExportSettings = {
+  exportDestinationId?: string | undefined
+  exportSlug?: string | undefined
+  exportFrontmatter?: string | undefined
 }
 
 export type SyncClientOptions = {
@@ -52,6 +61,10 @@ export interface SyncClientApi {
   openDocument(docId: string): Result<Y.Doc, SyncClientError>
   createArticle(): Result<Article, SyncClientError>
   updateArticleTitle(id: string, title: string): Result<void, SyncClientError>
+  updateArticleExportSettings(
+    id: string,
+    settings: ArticleExportSettings,
+  ): Result<void, SyncClientError>
   listArticles(): Article[]
   getStatus(docId: string): SyncState | undefined
   getError(): SyncClientError | undefined
@@ -188,6 +201,18 @@ class SyncClient implements SyncClientApi {
     }, toSyncClientError)()
   }
 
+  updateArticleExportSettings(id: string, settings: ArticleExportSettings) {
+    const entry = this.index.doc.getMap<Y.Map<unknown>>('articles').get(id)
+    if (!entry)
+      return err(new SyncClientError('Article not found', new Error(id)))
+    return Result.fromThrowable(() => {
+      for (const [key, value] of Object.entries(settings)) {
+        if (value === undefined) entry.delete(key)
+        else entry.set(key, value)
+      }
+    }, toSyncClientError)()
+  }
+
   listArticles(): Article[] {
     return [...this.index.doc.getMap<Y.Map<unknown>>('articles')]
       .map(([id, entry]) => {
@@ -196,6 +221,9 @@ class SyncClient implements SyncClientApi {
         const syncFilePath = entry.get('syncFilePath')
         const syncFileHash = entry.get('syncFileHash')
         const syncFileStatus = entry.get('syncFileStatus')
+        const exportDestinationId = entry.get('exportDestinationId')
+        const exportSlug = entry.get('exportSlug')
+        const exportFrontmatter = entry.get('exportFrontmatter')
         return {
           id,
           createdAt: typeof createdAt === 'number' ? createdAt : 0,
@@ -204,6 +232,13 @@ class SyncClient implements SyncClientApi {
           ...(typeof syncFileHash === 'string' ? { syncFileHash } : {}),
           ...(isArticleFileSyncStatus(syncFileStatus)
             ? { syncFileStatus }
+            : {}),
+          ...(typeof exportDestinationId === 'string'
+            ? { exportDestinationId }
+            : {}),
+          ...(typeof exportSlug === 'string' ? { exportSlug } : {}),
+          ...(typeof exportFrontmatter === 'string'
+            ? { exportFrontmatter }
             : {}),
         }
       })
