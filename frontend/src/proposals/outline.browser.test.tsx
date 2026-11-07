@@ -236,7 +236,6 @@ function createFixture(
         doc,
         history,
         view,
-        replaceBody: () => {},
       }),
     )
   })

@@ -708,6 +708,9 @@ First paragraph.
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: /^Premise:/u }))
+    })
     const reader = page.getByRole('textbox', { name: 'Reader' })
     await act(async () => {
       await userEvent.clear(reader)
@@ -745,6 +748,52 @@ First paragraph.
       sourceMaterial: 'Source material',
       savedPremise: 'Designers',
     })
+  })
+
+  it('mounts premise discussion only while the premise row is open', async () => {
+    const article: Article = {
+      id: 'article-premise-toggle',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    renderWorkspace(article, articleDoc, {
+      premiseAccessory: () => (
+        <div data-testid="premise-accessory">Discussion</div>
+      ),
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const readPremiseState = () => ({
+      expanded: host
+        ?.querySelector('[aria-label="Article premise"] button')
+        ?.getAttribute('aria-expanded'),
+      fieldCount:
+        host?.querySelectorAll('#article-premise-fields textarea').length ?? 0,
+      accessory:
+        host?.querySelector('[data-testid="premise-accessory"]')?.textContent ??
+        null,
+    })
+    const states = [readPremiseState()]
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: /^Premise:/u }))
+    })
+    states.push(readPremiseState())
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: /^Premise:/u }))
+    })
+    states.push(readPremiseState())
+
+    expect(states).toEqual([
+      { expanded: 'false', fieldCount: 0, accessory: null },
+      { expanded: 'true', fieldCount: 3, accessory: 'Discussion' },
+      { expanded: 'false', fieldCount: 0, accessory: null },
+    ])
   })
 
   it('shares move errors with the outline and clears them after reopening', async () => {

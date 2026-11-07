@@ -9,7 +9,6 @@ import {
   type BodyRequestPhase,
   BodyRequestView,
 } from '#components/body-request-view'
-import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { createSuggestionLayer } from '#editor/suggestion-layer'
 import { loadLlmSettings } from '#lib/llm-settings'
 import type { MoveHistory } from '#outline/move-history'
@@ -31,7 +30,6 @@ export type BodyRequestEditorContext = {
 
 export type BodyRequestAccessoryContext = BodyRequestEditorContext & {
   view: EditorView | null
-  replaceBody: MarkdownEditorHandle['replaceBody']
 }
 
 function preserveBlankLineSeparators(

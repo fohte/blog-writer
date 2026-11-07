@@ -83,12 +83,7 @@ function createRequestEditor(
   const root = createRoot(accessoryHost)
   act(() => {
     root.render(
-      <BodyRequestAccessory
-        doc={doc}
-        history={history}
-        replaceBody={() => {}}
-        view={view}
-      />,
+      <BodyRequestAccessory doc={doc} history={history} view={view} />,
     )
   })
   let accessoryMounted = true

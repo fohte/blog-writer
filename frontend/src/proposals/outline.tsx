@@ -52,7 +52,6 @@ export type OutlineProposalEditorContext = {
 
 export type OutlineProposalAccessoryContext = OutlineProposalEditorContext & {
   view: EditorView | null
-  replaceBody: (value: string) => void
 }
 
 export interface OutlineProposalOptions {

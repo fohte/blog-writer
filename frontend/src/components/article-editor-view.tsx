@@ -65,6 +65,7 @@ export interface ArticleEditorViewProps {
   status?: { kind: 'loading' } | { kind: 'error'; message: string } | undefined
   layout?: ArticleEditorLayout
   initialMobilePanel?: ArticleEditorPanel
+  initialPremiseOpen?: boolean
   /** Keeps extension instances stable by calling the factory once per article document. */
   editorExtensions?:
     ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
@@ -152,6 +153,7 @@ export function ArticleEditorView({
   status,
   layout = 'responsive',
   initialMobilePanel = 'body',
+  initialPremiseOpen = false,
   editorExtensions,
   bodyAccessory,
   outlineAccessory,
@@ -172,6 +174,7 @@ export function ArticleEditorView({
   const [premise, setPremiseValue] = useState(() =>
     doc ? getPremise(doc) : { audience: null, purpose: null, claim: null },
   )
+  const [premiseOpen, setPremiseOpen] = useState(initialPremiseOpen)
   const history = doc ? getMoveHistory(doc) : undefined
   const body = doc ? getBody(doc) : undefined
   const [view, setView] = useState<EditorView | null>(null)
@@ -334,26 +337,51 @@ export function ArticleEditorView({
               aria-label="Article premise"
               className="flex flex-col gap-3"
             >
-              <div className={`grid gap-3 ${layoutClasses.premiseColumns}`}>
-                {premiseFields.map(({ field, label }) => (
-                  <label
-                    className="flex flex-col gap-2 text-sm font-medium"
-                    htmlFor={`premise-${field}`}
-                    key={field}
-                  >
-                    {label}
-                    <Textarea
-                      id={`premise-${field}`}
-                      onChange={(event) => {
-                        setPremiseField(field, event.currentTarget.value)
-                      }}
-                      placeholder={`${label} for this article`}
-                      value={premise[field] ?? ''}
-                    />
-                  </label>
-                ))}
-              </div>
-              {context ? premiseAccessory?.(context) : null}
+              <button
+                aria-controls="article-premise-fields"
+                aria-expanded={premiseOpen}
+                className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-left text-sm"
+                onClick={() => {
+                  setPremiseOpen((open) => !open)
+                }}
+                type="button"
+              >
+                <span className="min-w-0 truncate">
+                  Premise: Reader {premise.audience ?? 'unset'} · Purpose{' '}
+                  {premise.purpose ?? 'unset'} · Claim{' '}
+                  {premise.claim ?? 'unset'}
+                </span>
+                <span aria-hidden="true">{premiseOpen ? 'Hide' : 'Edit'}</span>
+              </button>
+              {premiseOpen ? (
+                <div
+                  className={`grid gap-3 ${layoutClasses.premiseColumns}`}
+                  id="article-premise-fields"
+                >
+                  {premiseFields.map(({ field, label }) => (
+                    <label
+                      className="flex flex-col gap-2 text-sm font-medium"
+                      htmlFor={`premise-${field}`}
+                      key={field}
+                    >
+                      {label}
+                      <Textarea
+                        id={`premise-${field}`}
+                        onChange={(event) => {
+                          setPremiseField(field, event.currentTarget.value)
+                        }}
+                        placeholder={`${label} for this article`}
+                        value={premise[field] ?? ''}
+                      />
+                    </label>
+                  ))}
+                  {context ? (
+                    <div className="sm:col-span-3">
+                      {premiseAccessory?.(context)}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </section>
           ) : null}
         </div>

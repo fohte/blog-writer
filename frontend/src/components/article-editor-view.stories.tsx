@@ -10,6 +10,7 @@ import {
   type ArticleEditorPanel,
   ArticleEditorView,
 } from '#components/article-editor-view'
+import { PremiseProposalView } from '#components/premise-proposal-view'
 
 type StoryArgs = {
   layout: ArticleEditorLayout
@@ -19,6 +20,7 @@ type StoryArgs = {
   integrations: boolean
   showSyncIssue: boolean
   longOutline: boolean
+  premiseOpen: boolean
 }
 
 function ArticleEditorPreview({
@@ -29,6 +31,7 @@ function ArticleEditorPreview({
   integrations,
   showSyncIssue,
   longOutline,
+  premiseOpen,
 }: StoryArgs) {
   const doc = useMemo(() => {
     if (status !== 'ready') return undefined
@@ -104,14 +107,38 @@ function ArticleEditorPreview({
         }
         onTitleChange={() => {}}
         premiseAccessory={
-          integrations
+          premiseOpen
             ? () => (
-                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm sm:col-span-3">
-                  Premise guidance
-                </div>
+                <PremiseProposalView
+                  draft=""
+                  messages={[
+                    {
+                      role: 'user',
+                      content: 'Make the claim more specific.',
+                    },
+                    {
+                      role: 'assistant',
+                      content: 'Which decision should the article clarify?',
+                    },
+                  ]}
+                  onAccept={() => {}}
+                  onDraftChange={() => {}}
+                  onReject={() => {}}
+                  onSubmit={() => {}}
+                  proposals={[
+                    {
+                      field: 'claim',
+                      label: 'Claim',
+                      original: 'A focused article is easier to follow',
+                      replacement:
+                        'A short checklist helps new maintainers catch risky changes.',
+                    },
+                  ]}
+                />
               )
             : undefined
         }
+        initialPremiseOpen={premiseOpen}
         status={
           status === 'loading'
             ? { kind: 'loading' }
@@ -155,6 +182,7 @@ const meta = {
     integrations: false,
     showSyncIssue: false,
     longOutline: false,
+    premiseOpen: false,
   },
 } satisfies Meta<StoryArgs>
 
@@ -167,7 +195,12 @@ export const Desktop: Story = {
 
 export const DesktopWithIntegrations: Story = {
   name: 'the desktop layout places injected controls near their related content.',
-  args: { integrations: true, sources: true },
+  args: { integrations: true, sources: true, premiseOpen: true },
+}
+
+export const DesktopPremiseConversation: Story = {
+  name: 'the open premise shows a reply and a field-level suggestion.',
+  args: { premiseOpen: true },
 }
 
 export const DesktopSyncIssue: Story = {

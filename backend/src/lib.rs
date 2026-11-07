@@ -14,6 +14,7 @@ pub mod local_file_sync;
 pub mod ogp;
 pub(crate) mod proposal_body_request;
 pub(crate) mod proposal_outline;
+pub(crate) mod proposal_premise;
 pub(crate) mod proposal_transition;
 pub(crate) mod research_claim_evidence;
 pub(crate) mod research_key_points;
