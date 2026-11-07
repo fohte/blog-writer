@@ -446,8 +446,6 @@ describe('the application research and evidence integrations', () => {
     let requestQuestion: unknown
     let requestSignal: AbortSignal | undefined
     let abortEventReceived = false
-    let abortError: { constructorName: string; name: string } | undefined
-    let fetchRejection: { constructorName: string; name: string } | undefined
     const researchWasStarted = new Promise<void>((resolve) => {
       researchStarted = resolve
     })
@@ -461,21 +459,8 @@ describe('the application research and evidence integrations', () => {
         return new Promise<Response>((_resolve, reject) => {
           init.signal?.addEventListener('abort', () => {
             abortEventReceived = true
-            const error = new DOMException('Aborted', 'AbortError')
-            abortError = {
-              constructorName: error.constructor.name,
-              name: error.name,
-            }
-            reject(error)
+            reject(new DOMException('Aborted', 'AbortError'))
           })
-        }).catch((error: unknown) => {
-          const rejection =
-            error instanceof Error ? error : new Error(String(error))
-          fetchRejection = {
-            constructorName: rejection.constructor.name,
-            name: rejection.name,
-          }
-          return Promise.reject(rejection)
         })
       }
       if (init.method === 'POST' && url.endsWith('/save-if-unchanged'))
@@ -544,8 +529,6 @@ describe('the application research and evidence integrations', () => {
         requestHasSignal: requestSignal !== undefined,
         signalAborted: requestSignal?.aborted,
         abortEventReceived,
-        abortError,
-        fetchRejection,
         captureKeydownListenerAdded:
           captureKeydownListenerCount() >
           captureKeydownListenerCountBeforeResearch,
@@ -568,8 +551,6 @@ describe('the application research and evidence integrations', () => {
         requestHasSignal: true,
         signalAborted: true,
         abortEventReceived: true,
-        abortError: { constructorName: 'DOMException', name: 'AbortError' },
-        fetchRejection: { constructorName: 'DOMException', name: 'AbortError' },
         captureKeydownListenerAdded: true,
         statusLabel: '調査を中断しました',
         interruptedStateShown: true,

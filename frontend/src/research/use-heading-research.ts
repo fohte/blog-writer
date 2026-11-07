@@ -123,7 +123,7 @@ export function useHeadingResearch() {
         },
         (researchError) => {
           console.error(
-            'heading-research-abort-error',
+            'heading-research-error',
             JSON.stringify({
               constructorName: researchError.constructor.name,
               name: researchError.name,
