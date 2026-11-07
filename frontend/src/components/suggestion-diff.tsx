@@ -10,7 +10,6 @@ export interface SuggestionDiffProps {
   replacement: string
   focused?: boolean
   inline?: boolean
-  generating?: boolean
   note?: string
   replacementMarks?: readonly SuggestionReplacementMark[]
   onAccept?: () => void
@@ -131,25 +130,12 @@ export function SuggestionDiff({
   replacement,
   focused = false,
   inline = false,
-  generating = false,
   note,
   replacementMarks = [],
   onAccept,
   onReject,
 }: SuggestionDiffProps) {
   const Tag = inline ? 'span' : 'div'
-
-  if (generating) {
-    return (
-      <Tag
-        aria-live="polite"
-        className="suggestion-diff-generating"
-        role="status"
-      >
-        作成中
-      </Tag>
-    )
-  }
 
   return (
     <Tag

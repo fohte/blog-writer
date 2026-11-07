@@ -49,44 +49,6 @@ export const Unfocused: Story = {
   },
 }
 
-export const Generating: Story = {
-  name: 'the editor shows a compact creating state while a suggestion is pending.',
-  args: {
-    generating: true,
-    original: '',
-    replacement: '',
-  },
-}
-
-export const Narrow: Story = {
-  name: 'the diff wraps within a narrow column.',
-  render: (args) => (
-    <div style={{ width: '20rem' }}>
-      <SuggestionDiff {...args} />
-    </div>
-  ),
-  args: {
-    focused: true,
-    onAccept: () => {},
-    onReject: () => {},
-    original: 'A sentence with a longer phrase that wraps on a narrow screen.',
-    replacement:
-      'A more specific sentence that still reads clearly on a narrow screen.',
-  },
-}
-
-export const Inline: Story = {
-  name: 'an inline diff stays within the sentence.',
-  args: {
-    focused: true,
-    inline: true,
-    onAccept: () => {},
-    onReject: () => {},
-    original: 'a short phrase',
-    replacement: 'a clearer phrase',
-  },
-}
-
 export const WritingFromSources: Story = {
   name: 'the draft distinguishes supported and unsupported facts.',
   args: {

@@ -22,6 +22,10 @@ export interface SuggestionPosition {
   to: number
 }
 
+export interface InFlightSuggestion extends SuggestionPosition {
+  label?: string
+}
+
 export interface TrackedSuggestionRange {
   current(): SuggestionPosition | undefined
   dispose(): void
@@ -36,7 +40,7 @@ export type SuggestionLayerError =
 
 export interface SuggestionLayerState<Metadata = unknown> {
   suggestions: readonly TextSuggestion<Metadata>[]
-  inFlight: SuggestionPosition | null
+  inFlight: InFlightSuggestion | null
   focusedId: string | null
 }
 

@@ -299,13 +299,17 @@ describe('suggestion layer', () => {
     })
   })
 
-  it('shows a non-empty in-flight range inline within one editor line', () => {
+  it('underlines a non-empty in-flight range and shows its label below the line', () => {
     const content = 'A sentence with a pending phrase in the middle.'
     const { host, layer } = createEditor(content)
     const from = content.indexOf('pending')
     let result: ReturnType<typeof layer.setInFlight> | undefined
     act(() => {
-      result = layer.setInFlight({ from, to: from + 1 })
+      result = layer.setInFlight({
+        from,
+        to: from + 'pending'.length,
+        label: 'Shorten it',
+      })
     })
     if (!result) throw new Error('Could not set in-flight state')
     if (result.isErr()) throw new Error('Could not set in-flight state')
@@ -315,16 +319,56 @@ describe('suggestion layer', () => {
     const readOutput = () => ({
       lineCount: host.querySelectorAll('.cm-line').length,
       lineText: line?.textContent ?? null,
+      underlined:
+        host.querySelector('.cm-suggestion-in-flight-target')?.textContent ??
+        null,
       widgetTag: widget?.tagName ?? null,
-      widgetIsInLine: line?.contains(widget) ?? false,
+      widgetFollowsLine: line?.nextElementSibling === widget,
+      label:
+        widget?.querySelector('.suggestion-generating-label')?.textContent ??
+        null,
       status: widget?.querySelector('[role="status"]')?.textContent ?? null,
     })
     expect(readOutput()).toEqual({
       lineCount: 1,
-      lineText: `${content.slice(0, from)}作成中${content.slice(from)}`,
-      widgetTag: 'SPAN',
-      widgetIsInLine: true,
+      lineText: content,
+      underlined: 'pending',
+      widgetTag: 'DIV',
+      widgetFollowsLine: true,
+      label: '> Shorten it',
       status: '作成中',
+    })
+  })
+
+  it('cancels the in-flight work from the cancel button', async () => {
+    const events: string[] = []
+    const { host, layer } = createEditor(initialText, (event) =>
+      events.push(event),
+    )
+    const inFlightResult = layer.setInFlight({ from: 0, to: 7 })
+    if (inFlightResult.isErr()) throw new Error('Could not set in-flight state')
+    const cancelButton = await vi.waitFor(() => {
+      const button = Array.from(host.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent.startsWith('中止'),
+      )
+      if (!button) throw new Error('The cancel button was not rendered')
+      return button
+    })
+
+    act(() => {
+      cancelButton.click()
+    })
+
+    const readOutput = () => ({
+      events,
+      inFlight: layer.getInFlight(),
+      generatingWidgets: host.querySelectorAll('.suggestion-diff-generating')
+        .length,
+    })
+    expect(readOutput()).toEqual({
+      events: ['cancel'],
+      inFlight: null,
+      generatingWidgets: 0,
     })
   })
 
