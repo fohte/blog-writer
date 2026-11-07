@@ -38,7 +38,12 @@ export const Synced: Story = {
 export const ExternalChanges: Story = {
   name: 'the file contains changes that can be imported or overwritten',
   args: {
-    content: '# A small article\n\nAn edited paragraph.\n',
+    body: `# 記事の本文
+
+記事本文には変更箇所とその周辺の文章が表示されます。取り込むか上書きするかを判断できるように、両方の内容を同じ幅で読み比べられます。`,
+    content: `# 記事の本文
+
+同期ファイルで段落が変更されました。差分を読み、周辺の文章を含めて変更内容を確認してから、本文に取り込むかファイルを上書きできます。`,
     contentHash: 'sample-hash',
     open: true,
     path: 'notes/example.md',
@@ -70,7 +75,12 @@ export const Busy: Story = {
   name: 'the synchronization request is in progress',
   args: {
     busy: true,
-    content: '# A small article\n\nAn edited paragraph.\n',
+    body: `# 記事の本文
+
+記事本文には変更箇所とその周辺の文章が表示されます。取り込むか上書きするかを判断できるように、両方の内容を同じ幅で読み比べられます。`,
+    content: `# 記事の本文
+
+同期ファイルで段落が変更されました。差分を読み、周辺の文章を含めて変更内容を確認してから、本文に取り込むかファイルを上書きできます。`,
     contentHash: 'sample-hash',
     open: true,
     path: 'notes/example.md',

@@ -46,6 +46,7 @@ export function ArticleFileSyncView({
   onOverwrite,
 }: ArticleFileSyncViewProps) {
   const fileExists = content !== null && content !== undefined
+  const showDiff = status === 'external_changed' && fileExists
 
   return (
     <div className="flex items-center gap-2">
@@ -62,7 +63,14 @@ export function ArticleFileSyncView({
         <PopoverTrigger render={<Button type="button" variant="outline" />}>
           ローカル同期
         </PopoverTrigger>
-        <PopoverContent className="flex w-96 max-w-full flex-col gap-3">
+        <PopoverContent
+          className="flex w-96 max-w-full flex-col gap-3"
+          style={
+            showDiff
+              ? { width: '48rem', maxWidth: 'calc(100vw - 2rem)' }
+              : undefined
+          }
+        >
           <h2 className="font-semibold">同期ファイル</h2>
           <div className="flex gap-2">
             <Input

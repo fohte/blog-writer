@@ -5,6 +5,10 @@ import { useEffect, useRef } from 'react'
 
 import { editorDarkMode, editorTheme } from '#editor/theme'
 
+const diffViewTheme = EditorView.theme({
+  '.cm-content': { padding: '0.5rem 0.75rem' },
+})
+
 type TextDiffViewProps = {
   original: string
   modified: string
@@ -28,6 +32,7 @@ export function TextDiffView({
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),
       EditorView.lineWrapping,
+      diffViewTheme,
       editorTheme,
       ...(document.documentElement.classList.contains('dark')
         ? [editorDarkMode]
