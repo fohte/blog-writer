@@ -500,7 +500,13 @@ describe('App write from key points integration', () => {
           verdict,
         }),
       ),
-      card: appHost.querySelector('[aria-label="根拠"]')?.textContent ?? null,
+      card:
+        appHost
+          .querySelector('[aria-label="根拠"]')
+          ?.textContent.replace(
+            /確認日: \d{4}-\d{2}-\d{2}/u,
+            '確認日: date-placeholder',
+          ) ?? null,
     })
     expect(readOutput()).toEqual({
       rejectedProposal: {
@@ -565,7 +571,7 @@ describe('App write from key points integration', () => {
           verdict: 'insufficient',
         },
       ],
-      card: '資料なし不足引用箇所はありません。確認日: 2026-11-07公開日: 不明外す',
+      card: '資料なし不足引用箇所はありません。確認日: date-placeholder公開日: 不明外す',
     })
   })
 })

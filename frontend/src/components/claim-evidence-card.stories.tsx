@@ -41,6 +41,17 @@ export const Insufficient: Story = {
   args: { ...common, verdict: 'insufficient' },
 }
 
+export const InsufficientWithoutSource: Story = {
+  name: 'the claim needs review and has no source.',
+  args: {
+    ...common,
+    source: null,
+    quote: '',
+    verdict: 'insufficient',
+    publishedAt: null,
+  },
+}
+
 export const Outdated: Story = {
   name: 'the source may be out of date.',
   args: { ...common, verdict: 'outdated' },

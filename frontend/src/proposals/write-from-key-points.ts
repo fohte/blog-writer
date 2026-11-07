@@ -1,5 +1,12 @@
 import type { EditorView } from '@codemirror/view'
-import { errAsync, okAsync, type ResultAsync } from 'neverthrow'
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from 'neverthrow'
 import * as Y from 'yjs'
 
 import {
@@ -248,27 +255,36 @@ export function persistAcceptedEvidence(
   doc: Y.Doc,
   metadata: WriteFromKeyPointsMetadata | undefined,
   acceptedRange: { current(): Range | undefined; dispose(): void } | undefined,
-): void {
-  if (!acceptedRange) return
+): Result<void, Error> {
+  if (!acceptedRange) return ok(undefined)
   const range = acceptedRange.current()
   acceptedRange.dispose()
-  if (!metadata || !range) return
+  if (!metadata || !range) return ok(undefined)
 
+  let error: Error | undefined
   doc.transact(() => {
     for (const sentence of metadata.sentences) {
-      addEvidence(doc, {
+      const sourceExists =
+        sentence.sourceId === null ||
+        doc.getMap('sources').has(sentence.sourceId)
+      const saved = addEvidence(doc, {
         id: crypto.randomUUID(),
         from: range.from + sentence.from,
         to: range.from + sentence.to,
         claim: sentence.claim,
-        sourceId: sentence.sourceId,
-        quote: sentence.quote,
-        verdict: sentence.verdict,
+        sourceId: sourceExists ? sentence.sourceId : null,
+        quote: sourceExists ? sentence.quote : '',
+        verdict: sourceExists ? sentence.verdict : 'insufficient',
         checkedAt: new Date().toISOString(),
-      }).match(
+      })
+      saved.match(
         () => undefined,
-        () => undefined,
+        (cause) => {
+          error ??= cause
+        },
       )
     }
   })
+
+  return error ? err(error) : ok(undefined)
 }

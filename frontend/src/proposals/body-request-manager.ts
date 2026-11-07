@@ -29,6 +29,7 @@ class BodyRequestManager {
   private activeRequest: AbortController | null = null
   private readonly listeners = new Set<(preserveInput: boolean) => void>()
   private readonly openListeners = new Set<() => void>()
+  private readonly evidenceErrorListeners = new Set<() => void>()
 
   constructor(private readonly doc: Y.Doc) {
     this.layer = createSuggestionLayer<WriteFromKeyPointsMetadata>({
@@ -38,7 +39,18 @@ class BodyRequestManager {
           acceptedRange?.dispose()
           return
         }
-        persistAcceptedEvidence(this.doc, suggestion.metadata, acceptedRange)
+        persistAcceptedEvidence(
+          this.doc,
+          suggestion.metadata,
+          acceptedRange,
+        ).match(
+          () => undefined,
+          () => {
+            this.evidenceErrorListeners.forEach((listener) => {
+              listener()
+            })
+          },
+        )
       },
       onCancelInFlight: () => {
         this.cancelRequest()
@@ -57,6 +69,11 @@ class BodyRequestManager {
   subscribeOpen(listener: () => void): () => void {
     this.openListeners.add(listener)
     return () => this.openListeners.delete(listener)
+  }
+
+  subscribeEvidenceError(listener: () => void): () => void {
+    this.evidenceErrorListeners.add(listener)
+    return () => this.evidenceErrorListeners.delete(listener)
   }
 
   openRequest(): void {
