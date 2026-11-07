@@ -238,18 +238,27 @@ export function BodyRequestAccessory({
     [manager],
   )
 
-  const startRequest = () => {
+  const readRequestTarget = () => {
     if (!view) {
       setError('本文エディターを準備できませんでした。')
       setPhase('error')
       setOpen(true)
-      return
+      return undefined
     }
     const selection = view.state.selection.main
-    const context = getBodyRequestContext(view.state.doc.toString(), {
-      from: selection.from,
-      to: selection.to,
-    })
+    return {
+      context: getBodyRequestContext(view.state.doc.toString(), {
+        from: selection.from,
+        to: selection.to,
+      }),
+      view,
+    }
+  }
+
+  const startRequest = () => {
+    const requestTarget = readRequestTarget()
+    if (!requestTarget) return
+    const { context, view } = requestTarget
     const premise = getPremise(doc)
     const body: BodyRequestInput = {
       instruction,
@@ -380,26 +389,16 @@ export function BodyRequestAccessory({
       onPresetSelect={(id) => {
         const preset = presets?.find((item) => item.id === id)
         if (!preset) return
-        if (!view) {
-          setError('本文エディターを準備できませんでした。')
-          setPhase('error')
-          setOpen(true)
-          return
-        }
-        const selection = view.state.selection.main
-        const context = getBodyRequestContext(view.state.doc.toString(), {
-          from: selection.from,
-          to: selection.to,
-        })
+        const requestTarget = readRequestTarget()
+        if (!requestTarget) return
         const selectedInstruction = instruction
         setOpen(false)
         setError(undefined)
         setInstruction('')
         setPhase('input')
         preset.onSelect({
-          context,
+          ...requestTarget,
           instruction: selectedInstruction,
-          view,
         })
       }}
       onSubmit={startRequest}
