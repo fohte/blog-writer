@@ -54,7 +54,8 @@ export default mergeConfig(
           extends: true,
           test: {
             name: 'browser-unit-webkit',
-            include: ['src/App.browser.test.tsx'],
+            include: ['src/**/*.browser.test.tsx'],
+            exclude: ['src/**/*.ime.browser.test.tsx'],
             browser: {
               enabled: true,
               provider: playwright(),
