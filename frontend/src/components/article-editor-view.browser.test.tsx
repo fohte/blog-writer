@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
-import { getBody, listMemos, moveBlock, setBody } from '#article/index'
+import { addMemo, getBody, listMemos, moveBlock, setBody } from '#article/index'
 import type { ArticleEditorIntegrationProps } from '#components/article-editor-view'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 import { ArticleEditorPage } from '#pages/article-editor-page'
@@ -666,6 +666,72 @@ First paragraph.
       selectedTab: 'Article',
       articleVisible: true,
       sourcesTabCount: 3,
+    })
+  })
+
+  it('adds a memo as a heading from the article editor', async () => {
+    const article: Article = {
+      id: 'article-m',
+      title: 'A draft to explore',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    const initialBody = '# Starting point'
+    setBody(articleDoc, initialBody)
+    const addedMemo = addMemo(articleDoc, {
+      id: 'memo-a',
+      text: 'Add a summary',
+      order: 0,
+    })
+    if (addedMemo.isErr()) throw addedMemo.error
+    const editorRef: { current: EditorView | null } = { current: null }
+    renderWorkspace(article, articleDoc, {
+      onViewChange: (view) => {
+        editorRef.current = view
+      },
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '採用先を選ぶ' }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
+    })
+
+    const readMemoHeadingInsertionOutput = () => ({
+      body: getBody(articleDoc).toJSON(),
+      editor: editorRef.current?.state.doc.toString() ?? null,
+      memos: listMemos(articleDoc).map(({ id, state }) => ({
+        id,
+        state:
+          state.kind === 'adopted'
+            ? {
+                kind: 'adopted',
+                heading: {
+                  from: state.heading.from,
+                  level: state.heading.level,
+                  text: state.heading.text,
+                },
+              }
+            : { kind: state.kind },
+      })),
+    })
+    expect(readMemoHeadingInsertionOutput()).toEqual({
+      body: `${initialBody}\n\n# Add a summary\n\n`,
+      editor: `${initialBody}\n\n# Add a summary\n\n`,
+      memos: [
+        {
+          id: 'memo-a',
+          state: {
+            kind: 'adopted',
+            heading: { from: 18, level: 1, text: 'Add a summary' },
+          },
+        },
+      ],
     })
   })
 
