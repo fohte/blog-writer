@@ -57,6 +57,15 @@ function readInitialFocusState() {
   }
 }
 
+function readDestinationState() {
+  return {
+    publishSection: document.querySelector('[aria-label="PR を作成"]') !== null,
+    alerts: [...document.querySelectorAll('[role="alert"]')].map(
+      ({ textContent }) => textContent,
+    ),
+  }
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   blob = undefined
@@ -92,6 +101,45 @@ afterEach(() => {
 })
 
 describe('ArticleExportPopover', () => {
+  it.each([
+    {
+      name: 'publishing is disabled',
+      destinationError: undefined,
+      expected: { publishSection: false, alerts: [] },
+    },
+    {
+      name: 'destination loading failed',
+      destinationError: '公開先を読み込めませんでした。',
+      expected: {
+        publishSection: false,
+        alerts: ['公開先を読み込めませんでした。'],
+      },
+    },
+  ])(
+    'shows the destination state when $name',
+    ({ destinationError, expected }) => {
+      host = document.createElement('div')
+      document.body.append(host)
+      const testDoc = new Y.Doc()
+      doc = testDoc
+      root = createRoot(host)
+
+      act(() => {
+        root?.render(
+          <ArticleExportPopover
+            articleId="sample-article"
+            articleTitle="Sample article"
+            defaultOpen
+            destinationError={destinationError}
+            doc={testDoc}
+          />,
+        )
+      })
+
+      expect(readDestinationState()).toEqual(expected)
+    },
+  )
+
   it('focuses the download button when the options open', async () => {
     host = document.createElement('div')
     document.body.append(host)

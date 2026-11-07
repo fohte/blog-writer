@@ -60,6 +60,7 @@ function renderWorkspace(
         })
         return ok(undefined)
       },
+      updateArticleExportSettings: () => ok(undefined),
       listArticles: () => articlesRef.current,
       getStatus: () => syncStatus,
       getError: () => undefined,
@@ -1001,6 +1002,7 @@ First paragraph.
       openDocument: (id) => ok(documents.get(id) ?? firstDoc),
       createArticle: () => ok(firstArticle),
       updateArticleTitle: () => ok(undefined),
+      updateArticleExportSettings: () => ok(undefined),
       listArticles: () => [firstArticle, secondArticle],
       getStatus: () => 'synced',
       getError: () => undefined,

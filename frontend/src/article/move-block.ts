@@ -9,6 +9,7 @@ import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
 import { InvalidBlockMoveError } from '#article/errors'
+import { prepareEvidenceAnchorMove } from '#article/evidence'
 import { prepareMemoAnchorMove } from '#article/memos'
 import {
   changeSetForMove,
@@ -55,6 +56,7 @@ export type MovePositionMapping = {
   newFrom: number
   newTo: number
   mapPosition: (position: number) => number | undefined
+  mapRangeEnd: (position: number) => number | undefined
 }
 
 /** Resolve old anchors before deletion and return the write to run after insertion. */
@@ -256,16 +258,18 @@ function applyMoveBlock(
       })
     : undefined
   if (structureError) return err(structureError)
+  const mapPosition = (position: number) => {
+    const withinRange = mapWithinRange(position, range, replacements)
+    return withinRange === undefined ? undefined : newFrom + withinRange
+  }
   const mapping: MovePositionMapping = {
     from: range.from,
     to: range.to,
     newFrom,
     newTo,
-    mapPosition: (position) => {
-      if (position === range.to) return newTo
-      const withinRange = mapWithinRange(position, range, replacements)
-      return withinRange === undefined ? undefined : newFrom + withinRange
-    },
+    mapPosition,
+    mapRangeEnd: (position) =>
+      position === range.to ? newTo : mapPosition(position),
   }
   const mapDocumentPosition = (position: number, assoc: number) => {
     if (position === range.from && assoc < 0) return undefined
@@ -283,6 +287,7 @@ function applyMoveBlock(
 
   doc.transact(() => {
     const finishMemoAnchorMove = prepareMemoAnchorMove(doc, mapping)
+    const finishEvidenceAnchorMove = prepareEvidenceAnchorMove(doc, mapping)
     const finishUpdaterMoves = [...(updatersByDoc.get(doc) ?? [])]
       .map((updater) => updater(mapping))
       .filter((finishMove) => finishMove !== undefined)
@@ -306,6 +311,7 @@ function applyMoveBlock(
     })
     if (moveRecord) getMoveRecords(doc).push([moveRecord])
     finishMemoAnchorMove()
+    finishEvidenceAnchorMove()
     for (const finishMove of finishUpdaterMoves) finishMove()
   }, origin)
 

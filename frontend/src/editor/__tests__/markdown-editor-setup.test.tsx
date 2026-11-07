@@ -6,15 +6,23 @@ import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
 import { MarkdownEditor, type MarkdownEditorHandle } from '#editor/index'
-import { createMoveHistory } from '#outline/index'
+import { createMoveHistory, type MoveHistory } from '#outline/index'
 
 interface MountedMarkdownEditor {
   body: Y.Text
   content: HTMLElement | null
   doc: Y.Doc
   editor: RefObject<MarkdownEditorHandle | null>
+  history: MoveHistory
   host: HTMLDivElement
   updateExtensions: (extensions: Extension[]) => void
+}
+
+type MarkdownEditorMountOptions = {
+  articleId?: string
+  className?: string
+  onEvidenceError?: (message: string) => void
+  prepareDoc?: (doc: Y.Doc) => void
 }
 
 const cleanups: (() => void)[] = []
@@ -32,6 +40,8 @@ afterEach(() => {
 export function mountMarkdownEditor(
   value: string,
   extensions: Extension[] = [],
+  extensionFactory?: (doc: Y.Doc) => Extension[],
+  options: MarkdownEditorMountOptions = {},
 ): MountedMarkdownEditor {
   const host = document.createElement('div')
   document.body.append(host)
@@ -39,13 +49,24 @@ export function mountMarkdownEditor(
   const doc = new Y.Doc()
   const body = getBody(doc)
   body.insert(0, value)
+  options.prepareDoc?.(doc)
+  const mountedExtensions = [...extensions, ...(extensionFactory?.(doc) ?? [])]
   const editor = createRef<MarkdownEditorHandle>()
   const history = createMoveHistory(doc)
 
   act(() => {
     root.render(
       <MarkdownEditor
-        extensions={extensions}
+        {...(options.articleId !== undefined
+          ? { articleId: options.articleId }
+          : {})}
+        extensions={mountedExtensions}
+        {...(options.className !== undefined
+          ? { className: options.className }
+          : {})}
+        {...(options.onEvidenceError !== undefined
+          ? { onEvidenceError: options.onEvidenceError }
+          : {})}
         history={history}
         ref={editor}
         text={body}
@@ -67,12 +88,22 @@ export function mountMarkdownEditor(
     content: host.querySelector<HTMLElement>('.cm-content'),
     doc,
     editor,
+    history,
     host,
     updateExtensions: (extensions) => {
       act(() => {
         root.render(
           <MarkdownEditor
+            {...(options.articleId !== undefined
+              ? { articleId: options.articleId }
+              : {})}
             extensions={extensions}
+            {...(options.className !== undefined
+              ? { className: options.className }
+              : {})}
+            {...(options.onEvidenceError !== undefined
+              ? { onEvidenceError: options.onEvidenceError }
+              : {})}
             history={history}
             ref={editor}
             text={body}
