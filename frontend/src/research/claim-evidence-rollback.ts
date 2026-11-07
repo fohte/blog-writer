@@ -9,6 +9,10 @@ import {
 } from '#article/index'
 import type { EvidenceVerdict } from '#article/types'
 import type { SavedResearchJobResult } from '#research/research-from-heading'
+import {
+  ResearchJobInterruptedError,
+  ResearchJobInterruptedWithSavedSourcesError,
+} from '#research/research-job'
 
 type ClaimEvidenceSnapshot = {
   id: string
@@ -84,9 +88,13 @@ export function rollbackClaimEvidenceResult(
           evidence.currentEvidenceId,
           evidence.previousEvidence,
         )
-  return savedResult
-    .rollback()
-    .andThen(() =>
-      evidenceResult.isErr() ? errAsync(evidenceResult.error) : errAsync(error),
+  return savedResult.rollback().andThen((preservedSourceIds) => {
+    if (evidenceResult.isErr()) return errAsync(evidenceResult.error)
+    if (
+      error instanceof ResearchJobInterruptedError &&
+      preservedSourceIds.length > 0
     )
+      return errAsync(new ResearchJobInterruptedWithSavedSourcesError(error))
+    return errAsync(error)
+  })
 }

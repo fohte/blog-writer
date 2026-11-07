@@ -29,6 +29,16 @@ export const Interrupted: Story = {
   },
 }
 
+export const InterruptedWithPreservedSources: Story = {
+  name: '共同編集で使われた資料を保持したことを示す',
+  args: {
+    status: 'interrupted',
+    interruptedMessage:
+      '調査を中断しました。共同編集の情報を守るため、関連する資料を保持しました。',
+    defaultOpen: true,
+  },
+}
+
 export const ConnectionInterrupted: Story = {
   name: '接続中断の理由も表示する',
   args: {

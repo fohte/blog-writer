@@ -64,7 +64,7 @@ export type SavedResearchSource = {
 
 export type SavedResearchJobResult = {
   sources: SavedResearchSource[]
-  rollback: () => ResultAsync<void, Error>
+  rollback: () => ResultAsync<string[], Error>
 }
 
 class ResearchBodyRollbackError extends Error {
@@ -431,7 +431,7 @@ export function saveResearchJobResult(
             savedSourceRollbacks.filter(
               ({ sourceId }) => !preservedSourceIds.has(sourceId),
             ),
-          )
+          ).map(() => documentRollback.value)
         },
       })
     },

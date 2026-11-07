@@ -2042,7 +2042,8 @@ describe('the application research and evidence integrations', () => {
     await renderApp()
     await openArticle()
     await openBodyRequestPreset(claim, '根拠を確かめる')
-    const interruptedText = '調査を中断しました。資料は保存されていません。'
+    const interruptedText =
+      '調査を中断しました。共同編集の情報を守るため、関連する資料を保持しました。'
     await waitFor(() => {
       if (exactRoleText('status', interruptedText) !== interruptedText)
         throw new Error('The post-save cancellation was not shown')

@@ -30,6 +30,7 @@ import {
   snapshotClaimEvidence,
 } from '#research/claim-evidence-rollback'
 import {
+  claimEvidenceFailureProgress,
   type ClaimEvidenceTarget,
   selectedResearchJobSource,
   selectedSavedSource,
@@ -46,6 +47,7 @@ type ClaimEvidenceProgressState = {
   status: ResearchProgressStatus
   queries: string[]
   error?: string
+  interruptedMessage?: string
 }
 
 export function useClaimEvidence() {
@@ -448,13 +450,10 @@ export function useClaimEvidence() {
           releaseResearchLock(articleId, controller)
           isFinishing = true
           clearClaimEvidenceInFlight(doc, resolveSuggestion, onRangeEdited)
-          const interrupted = error instanceof ResearchJobInterruptedError
-          patchProgress(articleId, {
-            status: interrupted ? 'interrupted' : 'failed',
-            ...(interrupted && controller.signal.aborted
-              ? {}
-              : { error: error.message }),
-          })
+          patchProgress(
+            articleId,
+            claimEvidenceFailureProgress(error, controller.signal),
+          )
         },
       )
     },

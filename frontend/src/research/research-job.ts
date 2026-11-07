@@ -28,6 +28,16 @@ export class ResearchJobInterruptedError extends Error {
   }
 }
 
+export class ResearchJobInterruptedWithSavedSourcesError extends ResearchJobInterruptedError {
+  constructor(cause: ResearchJobInterruptedError) {
+    super(
+      '調査を中断しました。共同編集の情報を守るため、関連する資料を保持しました。',
+      cause,
+    )
+    this.name = 'ResearchJobInterruptedWithSavedSourcesError'
+  }
+}
+
 function isResearchJobResult(value: unknown): value is ResearchJobResult {
   if (!isRecord(value) || !Array.isArray(value['sources'])) return false
   const analysis = value['analysis']

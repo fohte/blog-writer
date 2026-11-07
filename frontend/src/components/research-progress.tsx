@@ -10,6 +10,7 @@ export type ResearchProgressProps = {
   status: ResearchProgressStatus
   queries: string[]
   error?: string | undefined
+  interruptedMessage?: string | undefined
   defaultOpen?: boolean | undefined
   onCancel?: (() => void) | undefined
 }
@@ -27,6 +28,7 @@ export function ResearchProgress({
   status,
   queries,
   error,
+  interruptedMessage,
   defaultOpen = false,
   onCancel,
 }: ResearchProgressProps) {
@@ -71,7 +73,10 @@ export function ResearchProgress({
         )}
         {status === 'interrupted' ? (
           <>
-            <p role="status">調査を中断しました。資料は保存されていません。</p>
+            <p role="status">
+              {interruptedMessage ??
+                '調査を中断しました。資料は保存されていません。'}
+            </p>
             {error !== undefined ? <p role="alert">{error}</p> : null}
           </>
         ) : null}
