@@ -62,7 +62,10 @@ export const AfterDropTarget: Story = {
 
 export const MemoHeadingDropTarget: Story = {
   name: 'the outline highlights a heading that will adopt a memo.',
-  args: { dropTarget: { kind: 'memo-heading', from: 13 } },
+  args: {
+    activeFrom: 0,
+    dropTarget: { kind: 'memo-heading', from: 13 },
+  },
 }
 
 export const MemoGapDropTarget: Story = {
