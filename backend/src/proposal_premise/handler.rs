@@ -128,5 +128,6 @@ pub(crate) async fn propose_premise(
 }
 
 fn changed_value(value: String, current: &str) -> Option<String> {
-    (value.trim() != UNCHANGED && value != current).then_some(value)
+    let trimmed = value.trim();
+    (!trimmed.is_empty() && trimmed != UNCHANGED && value != current).then_some(value)
 }

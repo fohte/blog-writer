@@ -175,6 +175,55 @@ async fn includes_the_conversation_and_omits_unchanged_fields()
     Ok(())
 }
 
+#[tokio::test]
+async fn omits_empty_and_whitespace_only_field_suggestions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let prompt = Arc::new(Mutex::new(None));
+    let schema = Arc::new(Mutex::new(None));
+    let state = LlmState::with_provider(
+        FixedProvider {
+            output: json!({
+                "reply": "どのような主張にしますか?",
+                "audience": "",
+                "purpose": "  \n  ",
+                "thesis": "変更を早めに確認すると手戻りを防げる"
+            }),
+            prompt,
+            schema,
+        },
+        ProviderName::ClaudeCode,
+        Duration::from_secs(1),
+    );
+    let actual = post_request(
+        json!({
+            "premise": {
+                "audience": "変更を担当する開発者",
+                "purpose": "手戻りを防ぐ",
+                "thesis": "変更を早めに確認する"
+            },
+            "headings": [],
+            "messages": [{"role": "user", "content": "変更前の確認について書く"}]
+        }),
+        state,
+    )
+    .await?;
+
+    assert_eq!(
+        actual,
+        (
+            200,
+            json!({
+                "data": {
+                    "reply": "どのような主張にしますか?",
+                    "thesis": "変更を早めに確認すると手戻りを防げる"
+                },
+                "event": "result"
+            })
+        )
+    );
+    Ok(())
+}
+
 #[rstest]
 #[case::whitespace_only_user_message(json!([{"role": "user", "content": "   "}]))]
 #[case::assistant_only(json!([{"role": "assistant", "content": "A previous question."}]))]
