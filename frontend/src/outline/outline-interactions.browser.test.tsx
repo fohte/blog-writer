@@ -309,10 +309,17 @@ describe('outline interactions', () => {
     await act(async () => {
       await userEvent.click(makeChild)
     })
+    const afterMove = body.toJSON()
+    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    await act(async () => {
+      view.focus()
+      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+    })
 
     const readOutput = () => ({
       menuItems,
-      afterMove: body.toJSON(),
+      afterMove,
+      afterUndo: body.toJSON(),
       editor: view.state.doc.toString(),
     })
     expect(readOutput()).toEqual({
@@ -331,16 +338,8 @@ describe('outline interactions', () => {
         'Beta section.',
         '',
       ),
-      editor: asMarkdown(
-        '# Alpha',
-        '',
-        'Alpha section.',
-        '',
-        '## Beta',
-        '',
-        'Beta section.',
-        '',
-      ),
+      afterUndo: markdownText,
+      editor: markdownText,
     })
   })
 

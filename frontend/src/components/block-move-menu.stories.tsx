@@ -6,9 +6,10 @@ import { BlockMoveMenu } from '#components/block-move-menu'
 interface StoryArgs {
   open: boolean
   firstBlock: boolean
+  heading: boolean
 }
 
-function BlockMoveMenuPreview({ firstBlock, open }: StoryArgs) {
+function BlockMoveMenuPreview({ firstBlock, heading, open }: StoryArgs) {
   const anchor = useRef<HTMLButtonElement>(null)
 
   return (
@@ -16,7 +17,7 @@ function BlockMoveMenuPreview({ firstBlock, open }: StoryArgs) {
       <button
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label="Move paragraph"
+        aria-label={heading ? 'Move heading' : 'Move paragraph'}
         className="rounded p-2 text-muted-foreground hover:bg-accent"
         ref={anchor}
         type="button"
@@ -30,6 +31,14 @@ function BlockMoveMenuPreview({ firstBlock, open }: StoryArgs) {
             input: firstBlock ? undefined : { from: 20, destination: 0 },
           },
           { label: 'Move down', input: { from: 20, destination: 40 } },
+          ...(heading
+            ? [
+                {
+                  label: 'Make child',
+                  input: { from: 20, destination: 20, childOf: 0 },
+                },
+              ]
+            : []),
         ]}
         anchor={anchor}
         onMove={() => {}}
@@ -43,7 +52,7 @@ function BlockMoveMenuPreview({ firstBlock, open }: StoryArgs) {
 const meta = {
   title: 'Editor/BlockMoveMenu',
   component: BlockMoveMenuPreview,
-  args: { firstBlock: false, open: true },
+  args: { firstBlock: false, heading: false, open: true },
 } satisfies Meta<typeof BlockMoveMenuPreview>
 
 export default meta
@@ -56,4 +65,9 @@ export const Open: Story = {
 export const FirstBlock: Story = {
   args: { firstBlock: true },
   name: 'the first block cannot move up.',
+}
+
+export const Heading: Story = {
+  args: { heading: true },
+  name: 'a heading menu includes Make child.',
 }
