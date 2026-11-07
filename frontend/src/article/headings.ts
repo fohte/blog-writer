@@ -6,6 +6,24 @@ const markdownParser = parser.configure(GFM)
 
 type FlatHeading = Omit<Heading, 'children'>
 
+export type HeadingWithDepth = { heading: Heading; depth: number }
+
+export function flattenHeadingTreeWithDepth(
+  headings: readonly Heading[],
+): HeadingWithDepth[] {
+  return headings.flatMap((heading) => [
+    { heading, depth: 0 },
+    ...flattenHeadingTreeWithDepth(heading.children).map((nested) => ({
+      ...nested,
+      depth: nested.depth + 1,
+    })),
+  ])
+}
+
+export function flattenHeadingTree(headings: readonly Heading[]): Heading[] {
+  return flattenHeadingTreeWithDepth(headings).map(({ heading }) => heading)
+}
+
 function extractHeadingText(
   markdown: string,
   from: number,

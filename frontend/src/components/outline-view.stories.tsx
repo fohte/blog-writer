@@ -47,17 +47,30 @@ export const OpenMoveMenu: Story = {
 
 export const ChildDropTarget: Story = {
   name: 'the outline shows where a heading will become a child.',
-  args: { dropTarget: { from: 13, placement: 'child' } },
+  args: { dropTarget: { kind: 'move', from: 13, placement: 'child' } },
 }
 
 export const BeforeDropTarget: Story = {
   name: 'the outline shows where a heading will move before another heading.',
-  args: { dropTarget: { from: 13, placement: 'before' } },
+  args: { dropTarget: { kind: 'move', from: 13, placement: 'before' } },
 }
 
 export const AfterDropTarget: Story = {
   name: 'the outline shows where a heading will move after another heading.',
-  args: { dropTarget: { from: 13, placement: 'after' } },
+  args: { dropTarget: { kind: 'move', from: 13, placement: 'after' } },
+}
+
+export const MemoHeadingDropTarget: Story = {
+  name: 'the outline highlights a heading that will adopt a memo.',
+  args: {
+    activeFrom: 0,
+    dropTarget: { kind: 'memo-heading', from: 13 },
+  },
+}
+
+export const MemoGapDropTarget: Story = {
+  name: 'the outline highlights where a memo will become a new heading.',
+  args: { dropTarget: { kind: 'memo-gap', beforeFrom: 23 } },
 }
 
 export const EmptyOutline: Story = {
@@ -67,7 +80,7 @@ export const EmptyOutline: Story = {
 
 export const MoveError: Story = {
   name: 'the outline explains why a move could not be completed.',
-  args: { error: 'The destination is inside a Markdown block.' },
+  args: { error: 'この位置には移動できません。' },
 }
 
 export const HeadingSuggestions: Story = {

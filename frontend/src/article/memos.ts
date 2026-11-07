@@ -8,7 +8,7 @@ import {
   MemoAlreadyExistsError,
   MemoNotFoundError,
 } from '#article/errors'
-import { deriveHeadingTree } from '#article/headings'
+import { deriveHeadingTree, flattenHeadingTree } from '#article/headings'
 import type { MovePositionMapping } from '#article/move-block'
 import type { Heading, Memo, MemoData, MemoState } from '#article/types'
 
@@ -40,6 +40,10 @@ export function observeMemos(doc: Y.Doc, listener: () => void): () => void {
   return () => {
     memos.unobserveDeep(listener)
   }
+}
+
+export function getMemoAdoptedTo(doc: Y.Doc, id: string): unknown {
+  return getMemoMap(doc, id)?.get('adoptedTo')
 }
 
 function getMemoMap(doc: Y.Doc, id: string): MemoData | undefined {
@@ -140,13 +144,6 @@ export function listMemos(doc: Y.Doc): Memo[] {
     )
 }
 
-function flattenHeadings(headings: Heading[]): Heading[] {
-  return headings.flatMap((heading) => [
-    heading,
-    ...flattenHeadings(heading.children),
-  ])
-}
-
 export function captureDeletedMemoAdoptions(
   doc: Y.Doc,
   getPreviousMarkdown: () => string,
@@ -190,7 +187,7 @@ export function captureDeletedMemoAdoptions(
 
   if (adoptedMemos.length === 0) return []
 
-  const deletedHeadings = flattenHeadings(
+  const deletedHeadings = flattenHeadingTree(
     deriveHeadingTree(getPreviousMarkdown()),
   ).filter((heading) =>
     deletedRanges.some(
@@ -226,7 +223,7 @@ export function restoreMemoAdoptions(
   if (snapshots.length === 0 || insertedRanges.length === 0) return
 
   const body = getBody(doc)
-  const headings = flattenHeadings(deriveHeadingTree(body.toJSON()))
+  const headings = flattenHeadingTree(deriveHeadingTree(body.toJSON()))
   for (const snapshot of snapshots) {
     const markerOffset = snapshot.markerOffset ?? 0
     const insertion = insertedRanges.find(
@@ -261,6 +258,29 @@ export function restoreMemoAdoptions(
       -1,
     )
     memo.set('adoptedTo', Y.relativePositionToJSON(relativePosition))
+  }
+}
+
+export function restoreMemoAdoptionHistory(
+  doc: Y.Doc,
+  changes: readonly { id: string; previousAdoptedTo: unknown }[],
+  expectedAdoptions: readonly MemoAdoptionSnapshot[],
+): void {
+  for (const change of changes) {
+    const memo = getMemoMap(doc, change.id)
+    const expected = expectedAdoptions.find(({ id }) => id === change.id)
+    if (
+      !memo ||
+      memo.get('dismissed') === true ||
+      expected === undefined ||
+      JSON.stringify(memo.get('adoptedTo')) !==
+        JSON.stringify(expected.adoptedTo)
+    ) {
+      continue
+    }
+
+    if (change.previousAdoptedTo === undefined) memo.delete('adoptedTo')
+    else memo.set('adoptedTo', change.previousAdoptedTo)
   }
 }
 
@@ -366,6 +386,7 @@ export function prepareMemoAnchorMove(
     if (Y.getItem(doc.store, itemId).deleted) continue
 
     const oldIndex = absolutePosition.index - 1
+    if (oldIndex === mapping.to) continue
     const newIndex = mapping.mapPosition(oldIndex)
     if (newIndex === undefined) continue
     relocations.push({ memo, index: newIndex })
