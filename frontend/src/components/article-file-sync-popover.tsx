@@ -28,9 +28,15 @@ type ArticleFileSyncPopoverProps = {
 
 type FileSyncRequestOptions = {
   clearError?: boolean | undefined
-  clearResponse?: boolean
-  beforeRequest?: () => Error | undefined
+  clearResponse?: boolean | undefined
+  beforeRequest?: (() => Error | undefined) | undefined
 }
+
+type FileSyncRequestOutcome =
+  | { kind: 'success' }
+  | { kind: 'precheck-failed'; error: Error }
+  | { kind: 'request-failed'; error: Error }
+  | { kind: 'superseded'; error?: Error }
 
 export function ArticleFileSyncPopover({
   articleId,
@@ -50,42 +56,51 @@ export function ArticleFileSyncPopover({
   const [body, setBody] = useState(() => readBody(doc))
   const status = response?.status ?? initialStatus
   const lastIndexState = useRef({ path: initialPath, status: initialStatus })
+  const requestSequence = useRef(0)
 
   const runRequest = useCallback(
     async (
       makeRequest: () => ResultAsync<ArticleFileSyncResponse, Error>,
       options: FileSyncRequestOptions = {},
-    ): Promise<Error | undefined> => {
+    ): Promise<FileSyncRequestOutcome> => {
+      const requestId = requestSequence.current + 1
+      requestSequence.current = requestId
       setBusy(true)
       if (options.clearError !== false) setError(undefined)
       if (options.clearResponse === true) setResponse(undefined)
 
       const beforeRequestError = options.beforeRequest?.()
       if (beforeRequestError) {
-        setError(beforeRequestError.message)
-        setBusy(false)
-        return undefined
+        if (requestId === requestSequence.current) {
+          setError(beforeRequestError.message)
+          setBusy(false)
+        }
+        return { kind: 'precheck-failed', error: beforeRequestError }
       }
 
-      const requestError = await makeRequest().match(
+      const outcome = await makeRequest().match(
         (nextResponse) => {
+          if (requestId !== requestSequence.current)
+            return { kind: 'superseded' } as const
           setResponse(nextResponse)
           setPath(nextResponse.path ?? '')
-          return undefined
+          return { kind: 'success' } as const
         },
         (error) => {
+          if (requestId !== requestSequence.current)
+            return { kind: 'superseded', error } as const
           setError(error.message)
-          return error
+          return { kind: 'request-failed', error } as const
         },
       )
-      setBusy(false)
-      return requestError
+      if (requestId === requestSequence.current) setBusy(false)
+      return outcome
     },
     [],
   )
 
   const loadFileState = useCallback(
-    (options: { clearError?: boolean } = {}) =>
+    (options: Pick<FileSyncRequestOptions, 'clearError'> = {}) =>
       runRequest(() => getArticleFileSync(fetch, articleId), {
         clearError: options.clearError,
         clearResponse: true,
@@ -112,17 +127,14 @@ export function ArticleFileSyncPopover({
   useEffect(() => {
     const previous = lastIndexState.current
     if (previous.path !== initialPath || previous.status !== initialStatus) {
-      setResponse((current) =>
-        current !== undefined &&
-        current.path === initialPath &&
-        current.status === initialStatus
-          ? current
-          : undefined,
-      )
+      const responseMatchesIndex =
+        (response?.path ?? undefined) === initialPath &&
+        response?.status === initialStatus
+      if (!responseMatchesIndex) setResponse(undefined)
       lastIndexState.current = { path: initialPath, status: initialStatus }
-      if (open) void loadFileState()
+      if (open && !responseMatchesIndex) void loadFileState()
     }
-  }, [initialPath, initialStatus, loadFileState, open])
+  }, [initialPath, initialStatus, loadFileState, open, response])
 
   function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen)
@@ -141,7 +153,7 @@ export function ArticleFileSyncPopover({
     const contentHash = currentResponse?.content_hash
     if (content == null || contentHash == null) return
 
-    const requestError = await runRequest(
+    const outcome = await runRequest(
       () => resumeArticleFileSync(fetch, articleId, contentHash),
       {
         beforeRequest: () => {
@@ -150,7 +162,14 @@ export function ArticleFileSyncPopover({
         },
       },
     )
-    if (requestError) await loadFileState({ clearError: false })
+    if (
+      outcome.kind === 'request-failed' ||
+      (outcome.kind === 'superseded' && outcome.error !== undefined)
+    ) {
+      if (outcome.kind === 'superseded' && outcome.error)
+        setError(outcome.error.message)
+      await loadFileState({ clearError: false })
+    }
   }
 
   function handleOverwrite() {

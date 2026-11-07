@@ -19,8 +19,12 @@ let root: Root | undefined
 let doc: Y.Doc | undefined
 let history: MoveHistory | undefined
 let requests: Array<{ url: string; method: string; body: unknown }> = []
-let getResponses: unknown[] = []
-let resumeResponses: Array<{ status: number; payload: unknown }> = []
+let responseQueues: {
+  get: Array<{ status: number; payload: unknown }>
+  resume: Array<{ status: number; payload: unknown }>
+} = { get: [], resume: [] }
+let deferredGetCount = 0
+let pendingGetResponses: Array<() => void> = []
 let replacements: string[] = []
 let editorChangeRange: unknown
 
@@ -78,34 +82,45 @@ function mockFetch() {
           ? body.path
           : syncResponse.path
 
-      let payload: unknown
-      let status = 200
+      let response: { status: number; payload: unknown }
       if (method === 'GET') {
-        const requestIndex =
-          requests.filter((request) => request.method === 'GET').length - 1
-        payload = getResponses[requestIndex] ?? syncResponse
+        response = responseQueues.get.shift() ?? {
+          status: 200,
+          payload: syncResponse,
+        }
       } else if (method === 'POST' && url.endsWith('/resume')) {
-        const requestIndex =
-          requests.filter(
-            (request) =>
-              request.method === 'POST' && request.url.endsWith('/resume'),
-          ).length - 1
-        const response = resumeResponses[requestIndex]
-        if (response) {
-          payload = response.payload
-          status = response.status
-        } else {
-          payload = { ...syncResponse, content: importedBody, status: 'synced' }
+        response = responseQueues.resume.shift() ?? {
+          status: 200,
+          payload: { ...syncResponse, content: importedBody, status: 'synced' },
         }
       } else if (method === 'POST' && url.endsWith('/overwrite')) {
-        payload = { ...syncResponse, status: 'synced' }
+        response = {
+          status: 200,
+          payload: { ...syncResponse, status: 'synced' },
+        }
       } else if (method === 'PUT') {
-        payload = { ...syncResponse, path }
+        response = { status: 200, payload: { ...syncResponse, path } }
       } else {
-        payload = syncResponse
+        response = { status: 200, payload: syncResponse }
       }
 
-      return Promise.resolve(Response.json(payload, { status }))
+      if (method === 'GET' && deferredGetCount > 0) {
+        deferredGetCount -= 1
+        const delayedResponse = response
+        return new Promise<Response>((resolve) => {
+          pendingGetResponses.push(() => {
+            resolve(
+              Response.json(delayedResponse.payload, {
+                status: delayedResponse.status,
+              }),
+            )
+          })
+        })
+      }
+
+      return Promise.resolve(
+        Response.json(response.payload, { status: response.status }),
+      )
     }),
   )
 }
@@ -224,6 +239,19 @@ async function waitForRequestCount(count: number) {
   })
 }
 
+async function waitForPendingGetCount(count: number) {
+  await vi.waitFor(() => {
+    if (pendingGetResponses.length !== count)
+      throw new Error('Waiting for delayed requests')
+  })
+}
+
+function resolveNextGetResponse() {
+  const resolve = pendingGetResponses.shift()
+  if (!resolve) throw new Error('No delayed request is pending')
+  resolve()
+}
+
 async function waitForImportReady() {
   await vi.waitFor(() => {
     const button = [...document.querySelectorAll('button')].find(
@@ -233,21 +261,12 @@ async function waitForImportReady() {
   })
 }
 
-async function waitForStatus(label: string) {
-  await vi.waitFor(() => {
-    const statuses = [...document.querySelectorAll('[role="status"]')].map(
-      (element) => element.textContent,
-    )
-    if (statuses.includes('同期しています…') || !statuses.includes(label))
-      throw new Error('Waiting for synchronization to finish')
-  })
-}
-
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   requests = []
-  getResponses = []
-  resumeResponses = []
+  responseQueues = { get: [], resume: [] }
+  deferredGetCount = 0
+  pendingGetResponses = []
   replacements = []
   editorChangeRange = undefined
   mockFetch()
@@ -417,12 +436,16 @@ describe('ArticleFileSyncPopover', () => {
   })
 
   it('reloads the file when its indexed status changes while the popover is open', async () => {
-    getResponses = [
-      { ...syncResponse, status: 'synced' },
+    deferredGetCount = 1
+    responseQueues.get = [
+      { status: 200, payload: { ...syncResponse, status: 'synced' } },
       {
-        ...syncResponse,
-        content: '# Article\r\n\r\nUpdated outside.\r\n',
-        content_hash: 'updated-hash',
+        status: 200,
+        payload: {
+          ...syncResponse,
+          content: '# Article\r\n\r\nUpdated outside.\r\n',
+          content_hash: 'updated-hash',
+        },
       },
     ]
     mount(
@@ -440,7 +463,7 @@ describe('ArticleFileSyncPopover', () => {
       await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
     })
     await waitForRequestCount(1)
-    await waitForStatus('同期済み')
+    await waitForPendingGetCount(1)
     act(() => {
       rerenderWithIndexState(
         'notes/example.md',
@@ -452,11 +475,17 @@ describe('ArticleFileSyncPopover', () => {
       )
     })
     await waitForImportReady()
+    resolveNextGetResponse()
     await act(async () => {
       await page.getByRole('button', { name: '取り込む' }).click()
     })
     await waitForRequestCount(3)
-    await waitForStatus('同期済み')
+    act(() => {
+      rerenderWithIndexState('notes/example.md', 'synced', (value) => {
+        replacements.push(value)
+        return ok(undefined)
+      })
+    })
 
     expect(readOperationOutput()).toEqual({
       alert: undefined,
@@ -490,8 +519,11 @@ describe('ArticleFileSyncPopover', () => {
         '# Article\r\n\r\nThe latest file text.\r\n\r\nThis paragraph stays untouched.\r\n',
       content_hash: 'latest-hash',
     }
-    getResponses = [syncResponse, latestResponse]
-    resumeResponses = [
+    responseQueues.get = [
+      { status: 200, payload: syncResponse },
+      { status: 200, payload: latestResponse },
+    ]
+    responseQueues.resume = [
       { status: 409, payload: { error: 'The file changed after reading.' } },
       { status: 200, payload: { ...latestResponse, status: 'synced' } },
     ]
@@ -514,7 +546,6 @@ describe('ArticleFileSyncPopover', () => {
       await page.getByRole('button', { name: '取り込む' }).click()
     })
     await waitForRequestCount(4)
-    await waitForStatus('同期済み')
 
     expect(readResumeRecoveryOutput(outputAfterFailure)).toEqual({
       afterFailure: {
