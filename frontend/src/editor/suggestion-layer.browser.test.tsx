@@ -1498,6 +1498,65 @@ describe('suggestion layer', () => {
     })
   })
 
+  it('moves from an accepted body request to a transition proposal on Tab', () => {
+    const transitionLayer = createSuggestionLayer()
+    const { body, host, layer, view } = createEditor(initialText, undefined, [
+      transitionLayer.extension,
+    ])
+    const bodyFrom = initialText.indexOf('selected')
+    const transitionFrom = initialText.indexOf('closing')
+    const bodyProposal = layer.setSuggestions([
+      {
+        id: 'body-request-proposal',
+        from: bodyFrom,
+        to: bodyFrom + 'selected sentence'.length,
+        replacement: 'revised sentence',
+      },
+    ])
+    const transitionProposal = transitionLayer.setSuggestions([
+      {
+        id: 'transition-proposal',
+        from: transitionFrom,
+        to: initialText.length,
+        replacement: 'closing transition',
+      },
+    ])
+    if (bodyProposal.isErr() || transitionProposal.isErr()) {
+      throw new Error('Could not set proposals in both layers')
+    }
+
+    act(() => {
+      view.dispatch({ selection: { anchor: bodyFrom } })
+      dispatchKey(view, 'Tab')
+      dispatchKey(view, 'Tab')
+    })
+
+    const expectedBody = initialText.replace(
+      'selected sentence',
+      'revised sentence',
+    )
+    const expectedTransitionFrom = expectedBody.indexOf('closing sentence')
+    const readOutput = () => ({
+      body: body.toJSON(),
+      cursor: view.state.selection.main.head,
+      focusedProposalCount: host.querySelectorAll(
+        '.suggestion-diff[data-focused="true"]',
+      ).length,
+      focusedAddedText: Array.from(
+        host.querySelectorAll(
+          '.suggestion-diff[data-focused="true"] .suggestion-diff-added',
+        ),
+        (node) => node.textContent,
+      ),
+    })
+    expect(readOutput()).toEqual({
+      body: expectedBody,
+      cursor: expectedTransitionFrom,
+      focusedProposalCount: 1,
+      focusedAddedText: ['transition'],
+    })
+  })
+
   it('passes Tab to the next keymap when no suggestion or list item is active', () => {
     let fallbackRuns = 0
     const { body, view } = createEditor(initialText, undefined, [
