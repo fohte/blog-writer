@@ -7,7 +7,7 @@ type AppHeaderProps = {
   articleTitle?: string | undefined
   actions?: ReactNode
   onHome?: (() => void) | undefined
-  onOpenSettings: () => void
+  onOpenSettings?: (() => void) | undefined
 }
 
 export function AppHeader({
@@ -51,15 +51,17 @@ export function AppHeader({
       <div className="ml-auto flex items-center gap-x-5">
         {status}
         {actions}
-        <Button
-          aria-label="設定"
-          onClick={onOpenSettings}
-          size="icon"
-          type="button"
-          variant="outline"
-        >
-          <SettingsIcon />
-        </Button>
+        {onOpenSettings ? (
+          <Button
+            aria-label="設定"
+            onClick={onOpenSettings}
+            size="icon"
+            type="button"
+            variant="outline"
+          >
+            <SettingsIcon />
+          </Button>
+        ) : null}
       </div>
     </header>
   )
