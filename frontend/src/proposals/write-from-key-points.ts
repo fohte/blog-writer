@@ -29,7 +29,7 @@ import {
 
 type Range = { from: number; to: number }
 
-export type AcceptedSentenceEvidence = {
+type AcceptedSentenceEvidence = {
   from: number
   to: number
   claim: string
@@ -48,7 +48,7 @@ export type WriteFromKeyPointsProposal = {
   replacementMarks: SuggestionReplacementMark[]
 }
 
-export type WriteFromKeyPointsSelection = {
+type WriteFromKeyPointsSelection = {
   context: { range: Range }
   instruction: string
   view: EditorView
