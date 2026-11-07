@@ -190,6 +190,47 @@ describe('LlmSettingsScreen', () => {
     })
   })
 
+  it('ignores a slow failed check after a newer check of the same URL succeeds', async () => {
+    stubMemoryStorage({
+      [routeKey]: 'local',
+      [bridgeUrlKey]: 'http://127.0.0.1:4000',
+    })
+    let failFirstCheck: (error: Error) => void = () => {}
+    const bridgeResponses = [
+      new Promise<Response>((_, reject) => {
+        failFirstCheck = reject
+      }),
+      Promise.resolve(statusResponse(false)),
+      Promise.resolve(statusResponse(false)),
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>((input) =>
+        input === '/api/llm/status'
+          ? Promise.resolve(statusResponse(false))
+          : (bridgeResponses.shift() ??
+            Promise.reject(new Error('unexpected bridge check'))),
+      ),
+    )
+    await mountSettingsScreen()
+
+    await fillBridgeUrl('http://127.0.0.1:5000')
+    await clickButton('保存')
+    await settle()
+    await fillBridgeUrl('http://127.0.0.1:4000')
+    await clickButton('保存')
+    await settle()
+    failFirstCheck(new TypeError('Failed to fetch'))
+    await settle()
+
+    expect(readScreenOutput()).toEqual({
+      routes: ['サーバー (既定)', 'ローカル (この PC の中継) (selected)'],
+      bridgeUrl: 'http://127.0.0.1:4000',
+      messages: ['保存済み'],
+      stored: { [routeKey]: 'local', [bridgeUrlKey]: 'http://127.0.0.1:4000' },
+    })
+  })
+
   it('hides the route controls when the environment fixes the route', async () => {
     stubMemoryStorage()
     stubFetch({ locked: true })

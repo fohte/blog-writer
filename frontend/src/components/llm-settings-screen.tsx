@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useEffect, useState } from 'react'
+import { type RefObject, useEffect, useRef, useState } from 'react'
 
 import { LlmSettingsView } from '#components/llm-settings-view'
 import {
@@ -15,22 +15,23 @@ type LlmSettingsScreenProps = {
   fileSyncConfigurationError?: string | undefined
 }
 
-// The unreachable URL is stored instead of a flag so a late response for an
-// older URL cannot mark the URL being edited.
 const checkBridge = (
   target: LlmSettings,
-  setUnreachableBridgeUrl: Dispatch<SetStateAction<string | undefined>>,
+  latestProbe: RefObject<number>,
+  setUnreachableBridgeUrl: (url: string | undefined) => void,
 ) => {
   if (target.route !== 'local' || target.bridgeUrl.trim().length === 0) return
 
+  // A slow response from an earlier probe must not override a newer one.
+  latestProbe.current += 1
+  const probe = latestProbe.current
   void fetchLlmStatus(fetch, target.bridgeUrl).match(
     () => {
-      setUnreachableBridgeUrl((current) =>
-        current === target.bridgeUrl ? undefined : current,
-      )
+      if (probe === latestProbe.current) setUnreachableBridgeUrl(undefined)
     },
     () => {
-      setUnreachableBridgeUrl(target.bridgeUrl)
+      if (probe === latestProbe.current)
+        setUnreachableBridgeUrl(target.bridgeUrl)
     },
   )
 }
@@ -53,7 +54,9 @@ export function LlmSettingsScreen({
   )
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [locked, setLocked] = useState(false)
+  // Stored as the URL so the error hides while another URL is being edited.
   const [unreachableBridgeUrl, setUnreachableBridgeUrl] = useState<string>()
+  const latestBridgeProbe = useRef(0)
 
   useEffect(() => {
     let active = true
@@ -64,7 +67,11 @@ export function LlmSettingsScreen({
         setLocked(response.locked)
         setStatus('ready')
         if (!response.locked)
-          checkBridge(initialSettings.settings, setUnreachableBridgeUrl)
+          checkBridge(
+            initialSettings.settings,
+            latestBridgeProbe,
+            setUnreachableBridgeUrl,
+          )
       },
       () => {
         if (active) setStatus('error')
@@ -97,7 +104,7 @@ export function LlmSettingsScreen({
           () => {
             setStorageError(undefined)
             setSavedSettings(settings)
-            checkBridge(settings, setUnreachableBridgeUrl)
+            checkBridge(settings, latestBridgeProbe, setUnreachableBridgeUrl)
           },
           () => {
             setStorageError('save')
