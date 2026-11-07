@@ -4,6 +4,10 @@ import { DEFAULT_ARTICLE_TITLE } from '#article/constants'
 
 export type ExportFormat = 'markdown' | 'mdx'
 
+export function isValidArticleSlug(slug: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)
+}
+
 export function prependArticleFrontmatter(
   frontmatter: string,
   body: string,

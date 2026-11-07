@@ -30,7 +30,7 @@ type Story = StoryObj<typeof meta>
 
 export const FeatureDisabled: Story = {
   name: 'the PR section is hidden when publishing is disabled',
-  args: { enabled: false },
+  args: { destinations: [], selectedDestinationId: undefined },
 }
 
 export const Incomplete: Story = {

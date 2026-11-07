@@ -31,6 +31,7 @@ type ArticleExportPopoverProps = {
   article?: Article | undefined
   destinations?: ExportDestination[] | undefined
   client?: SyncClientApi | undefined
+  destinationError?: string | undefined
 }
 
 export function ArticleExportPopover({
@@ -43,6 +44,7 @@ export function ArticleExportPopover({
   article,
   destinations,
   client,
+  destinationError,
 }: ArticleExportPopoverProps) {
   const [open, setOpen] = useState(defaultOpen)
   const [format, setFormat] = useState(defaultFormat)
@@ -53,7 +55,10 @@ export function ArticleExportPopover({
 
   function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen)
-    if (!nextOpen) clearError()
+    if (!nextOpen) {
+      clearError()
+      setShowingPublishDiff(false)
+    }
   }
 
   function handleFormatChange(nextFormat: string) {
@@ -125,6 +130,16 @@ export function ArticleExportPopover({
         <Button onClick={handleDownload} ref={downloadButtonRef} type="button">
           ダウンロード
         </Button>
+        {destinationError !== undefined ? (
+          <Panel
+            aria-live="assertive"
+            className="rounded-md border-destructive/40 bg-destructive/10 text-sm text-destructive"
+            padding="sm"
+            role="alert"
+          >
+            {destinationError}
+          </Panel>
+        ) : null}
         {article !== undefined &&
         client !== undefined &&
         destinations !== undefined &&

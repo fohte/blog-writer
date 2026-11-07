@@ -1,13 +1,20 @@
 import { Button } from '@fohte/ui/button'
 import { Input } from '@fohte/ui/input'
 import { Panel } from '@fohte/ui/panel'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@fohte/ui/select'
 import { Textarea } from '@fohte/ui/textarea'
 
+import { isValidArticleSlug } from '#article/export'
 import { TextDiffView } from '#components/text-diff-view'
 import type { ExportDestination } from '#lib/article-export-api'
 
 export type ArticlePublishViewProps = {
-  enabled?: boolean | undefined
   destinations?: ExportDestination[] | undefined
   selectedDestinationId?: string | undefined
   slug: string
@@ -24,10 +31,7 @@ export type ArticlePublishViewProps = {
   onPublish: () => void
 }
 
-const validSlugPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-
 export function ArticlePublishView({
-  enabled = true,
   destinations = [],
   selectedDestinationId,
   slug,
@@ -43,31 +47,46 @@ export function ArticlePublishView({
   onShowDiff,
   onPublish,
 }: ArticlePublishViewProps) {
-  if (!enabled || destinations.length === 0) return null
+  if (destinations.length === 0) {
+    if (error === undefined) return null
+    return (
+      <section aria-label="PR を作成" className="flex flex-col gap-3">
+        <h2 className="font-semibold">PR を作成</h2>
+        <Panel
+          aria-live="assertive"
+          className="rounded-md border-destructive/40 bg-destructive/10 text-sm text-destructive"
+          padding="sm"
+          role="alert"
+        >
+          {error}
+        </Panel>
+      </section>
+    )
+  }
 
   return (
     <section aria-label="PR を作成" className="flex flex-col gap-3">
       <h2 className="font-semibold">PR を作成</h2>
       <label className="flex flex-col gap-1 text-sm">
         公開先
-        <select
-          aria-label="公開先"
-          className="h-9 rounded-md border border-input bg-background px-3"
+        <Select
           disabled={busy}
-          onChange={(event) => {
-            onDestinationChange(event.currentTarget.value)
+          onValueChange={(value) => {
+            if (value !== null) onDestinationChange(value)
           }}
-          value={selectedDestinationId ?? ''}
+          value={selectedDestinationId ?? null}
         >
-          <option disabled value="">
-            公開先を選択
-          </option>
-          {destinations.map(({ id }) => (
-            <option key={id} value={id}>
-              {id}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger aria-label="公開先">
+            <SelectValue placeholder="公開先を選択" />
+          </SelectTrigger>
+          <SelectContent>
+            {destinations.map(({ id }) => (
+              <SelectItem key={id} value={id}>
+                {id}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </label>
       <Input
         aria-label="公開 slug"
@@ -91,9 +110,7 @@ export function ArticlePublishView({
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={
-            busy ||
-            selectedDestinationId == null ||
-            !validSlugPattern.test(slug)
+            busy || selectedDestinationId == null || !isValidArticleSlug(slug)
           }
           onClick={onShowDiff}
           type="button"

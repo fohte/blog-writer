@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
 import { moveBlock, readBody, setBody } from '#article/index'
-import type { SyncClientOptions } from '#lib/sync-client'
+import type { Article, SyncClientOptions } from '#lib/sync-client'
 import { createSyncClient } from '#lib/sync-client'
 
 class FakePersistence {
@@ -76,6 +76,13 @@ class FakeWebsocketProvider {
   }
 
   destroy() {}
+}
+
+function combineArticleListSnapshots(
+  beforeRestart: Article[],
+  afterRestart: Article[],
+) {
+  return [beforeRestart, afterRestart]
 }
 
 const createFixture = (
@@ -252,8 +259,8 @@ describe('createSyncClient', () => {
       })
       ._unsafeUnwrap()
 
-    const readSettings = () => client.listArticles()
-    expect(readSettings()).toEqual([
+    const beforeRestart = client.listArticles()
+    const expectedArticles = [
       {
         id: article.id,
         createdAt: article.createdAt,
@@ -262,20 +269,15 @@ describe('createSyncClient', () => {
         exportSlug: 'sample-post',
         exportFrontmatter: 'title: "Sample article"',
       },
-    ])
+    ]
     client.destroy()
 
     const restored = createFixture(savedDocuments)
     await restored.client.start()
-    expect(restored.client.listArticles()).toEqual([
-      {
-        id: article.id,
-        createdAt: article.createdAt,
-        title: article.title,
-        exportDestinationId: 'sample-site',
-        exportSlug: 'sample-post',
-        exportFrontmatter: 'title: "Sample article"',
-      },
+    const afterRestart = restored.client.listArticles()
+    expect(combineArticleListSnapshots(beforeRestart, afterRestart)).toEqual([
+      expectedArticles,
+      expectedArticles,
     ])
     restored.client.destroy()
   })

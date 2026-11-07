@@ -10,9 +10,25 @@ import { ArticlePublishContainer } from '#components/article-publish-container'
 import type { ExportDestination } from '#lib/article-export-api'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
+vi.mock('#components/text-diff-view', () => ({
+  TextDiffView: ({
+    original,
+    modified,
+  }: {
+    original: string
+    modified: string
+  }) => (
+    <div data-testid="text-diff">
+      <output data-testid="diff-original">{original}</output>
+      <output data-testid="diff-modified">{modified}</output>
+    </div>
+  ),
+}))
+
 let root: Root | undefined
 let doc: Y.Doc | undefined
 let requests: Array<{ method: string; url: string; body: unknown }> = []
+let getResponses: Array<{ status: number; payload: unknown }> = []
 let postResponses: Array<{ status: number; payload: unknown }> = []
 
 const article: Article = {
@@ -71,6 +87,48 @@ function isButtonDisabled(label: string) {
   )?.disabled
 }
 
+function hasButton(label: string) {
+  return [...document.querySelectorAll('button')].some(
+    (button) => button.textContent === label,
+  )
+}
+
+function readDiffContents() {
+  return [
+    document.querySelector('[data-testid="diff-original"]')?.textContent ?? '',
+    document.querySelector('[data-testid="diff-modified"]')?.textContent ?? '',
+  ]
+}
+
+async function waitForDiff() {
+  await vi.waitFor(() => {
+    if (!document.querySelector('[data-testid="text-diff"]'))
+      throw new Error('Waiting for the prepared diff')
+  })
+}
+
+async function clickAndWait(label: string, waitForState: () => Promise<void>) {
+  await page.getByRole('button', { name: label }).click()
+  await waitForState()
+}
+
+async function fillTextbox(label: string, value: string) {
+  await act(async () => {
+    await userEvent.fill(page.getByRole('textbox', { name: label }), value)
+  })
+}
+
+async function waitForPublishedLink() {
+  await vi.waitFor(() => {
+    if (
+      !document.querySelector(
+        'a[href="https://github.com/example/site/pull/12"]',
+      )
+    )
+      throw new Error('Waiting for the pull request link')
+  })
+}
+
 function readPublishActionState(
   disabledAfterSlugChange: boolean | undefined,
   disabledAfterFrontmatterChange: boolean | undefined,
@@ -88,9 +146,21 @@ function readInvalidSlugState(disabled: boolean | undefined) {
   return { disabled, requests }
 }
 
+function readPublishedState(
+  diffContents: string[],
+  publishedHref: string | null | undefined,
+) {
+  return { diffContents, publishedHref, requests }
+}
+
+function readConflictState(publishButtonAfterConflict: boolean) {
+  return { publishButtonAfterConflict, requests }
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   requests = []
+  getResponses = []
   postResponses = []
   vi.stubGlobal(
     'fetch',
@@ -109,7 +179,10 @@ beforeEach(() => {
       requests.push({ method, url, body })
       const response =
         method === 'GET'
-          ? { status: 200, payload: { content: 'Old body', sha: 'base-sha' } }
+          ? (getResponses.shift() ?? {
+              status: 200,
+              payload: { content: 'Old body', sha: 'base-sha' },
+            })
           : (postResponses.shift() ?? {
               status: 200,
               payload: { url: 'https://github.com/example/site/pull/12' },
@@ -132,43 +205,83 @@ afterEach(() => {
 describe('ArticlePublishContainer', () => {
   it('posts the exact content and sha shown in the diff', async () => {
     renderPublish()
-    await page.getByRole('button', { name: '差分を見る' }).click()
-    await page.getByRole('button', { name: 'PR を作成' }).click()
+    await clickAndWait('差分を見る', waitForDiff)
+    const diffContents = readDiffContents()
+    await clickAndWait('PR を作成', waitForPublishedLink)
+    const publishedHref = document.querySelector('a')?.getAttribute('href')
 
-    expect(requests).toEqual([
-      {
-        method: 'GET',
-        url: '/api/export/sample-site/articles/article-one?slug=sample-post',
-        body: null,
-      },
-      {
-        method: 'POST',
-        url: '/api/export/sample-site/articles/article-one',
-        body: {
-          slug: 'sample-post',
-          content:
-            '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
-          sha: 'base-sha',
+    expect(readPublishedState(diffContents, publishedHref)).toEqual({
+      diffContents: [
+        'Old body',
+        '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
+      ],
+      publishedHref: 'https://github.com/example/site/pull/12',
+      requests: [
+        {
+          method: 'GET',
+          url: '/api/export/sample-site/articles/article-one?slug=sample-post',
+          body: null,
         },
-      },
-    ])
+        {
+          method: 'POST',
+          url: '/api/export/sample-site/articles/article-one',
+          body: {
+            slug: 'sample-post',
+            content:
+              '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
+            sha: 'base-sha',
+          },
+        },
+      ],
+    })
+  })
+
+  it('publishes a new file with a null sha', async () => {
+    renderPublish()
+    getResponses.push({
+      status: 200,
+      payload: { content: null, sha: null },
+    })
+    await clickAndWait('差分を見る', waitForDiff)
+    const diffContents = readDiffContents()
+    await clickAndWait('PR を作成', waitForPublishedLink)
+    const publishedHref = document.querySelector('a')?.getAttribute('href')
+
+    expect(readPublishedState(diffContents, publishedHref)).toEqual({
+      diffContents: [
+        '',
+        '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
+      ],
+      publishedHref: 'https://github.com/example/site/pull/12',
+      requests: [
+        {
+          method: 'GET',
+          url: '/api/export/sample-site/articles/article-one?slug=sample-post',
+          body: null,
+        },
+        {
+          method: 'POST',
+          url: '/api/export/sample-site/articles/article-one',
+          body: {
+            slug: 'sample-post',
+            content:
+              '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
+            sha: null,
+          },
+        },
+      ],
+    })
   })
 
   it('requires a new diff after the slug or article body changes', async () => {
     renderPublish()
-    await page.getByRole('button', { name: '差分を見る' }).click()
-    await userEvent.fill(
-      page.getByRole('textbox', { name: '公開 slug' }),
-      'changed-post',
-    )
+    await clickAndWait('差分を見る', waitForDiff)
+    await fillTextbox('公開 slug', 'changed-post')
     const disabledAfterSlugChange = isButtonDisabled('PR を作成')
-    await page.getByRole('button', { name: '差分を見る' }).click()
-    await userEvent.fill(
-      page.getByRole('textbox', { name: 'frontmatter' }),
-      'title: "Changed article"',
-    )
+    await clickAndWait('差分を見る', waitForDiff)
+    await fillTextbox('frontmatter', 'title: "Changed article"')
     const disabledAfterFrontmatterChange = isButtonDisabled('PR を作成')
-    await page.getByRole('button', { name: '差分を見る' }).click()
+    await clickAndWait('差分を見る', waitForDiff)
     act(() => doc?.getText('body').insert(0, 'Changed '))
     const disabledAfterBodyChange = isButtonDisabled('PR を作成')
 
@@ -205,32 +318,41 @@ describe('ArticlePublishContainer', () => {
   it('requires a new diff after a conflict', async () => {
     renderPublish()
     postResponses.push({ status: 409, payload: { error: 'The file changed.' } })
-    await page.getByRole('button', { name: '差分を見る' }).click()
-    await page.getByRole('button', { name: 'PR を作成' }).click()
-    await page.getByRole('button', { name: '差分を見る' }).click()
+    await clickAndWait('差分を見る', waitForDiff)
+    await clickAndWait('PR を作成', async () => {
+      await vi.waitFor(() => {
+        if (!document.querySelector('[role="alert"]'))
+          throw new Error('Waiting for the conflict message')
+      })
+    })
+    const publishButtonAfterConflict = hasButton('PR を作成')
+    await clickAndWait('差分を見る', waitForDiff)
 
-    expect(requests).toEqual([
-      {
-        method: 'GET',
-        url: '/api/export/sample-site/articles/article-one?slug=sample-post',
-        body: null,
-      },
-      {
-        method: 'POST',
-        url: '/api/export/sample-site/articles/article-one',
-        body: {
-          slug: 'sample-post',
-          content:
-            '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
-          sha: 'base-sha',
+    expect(readConflictState(publishButtonAfterConflict)).toEqual({
+      publishButtonAfterConflict: false,
+      requests: [
+        {
+          method: 'GET',
+          url: '/api/export/sample-site/articles/article-one?slug=sample-post',
+          body: null,
         },
-      },
-      {
-        method: 'GET',
-        url: '/api/export/sample-site/articles/article-one?slug=sample-post',
-        body: null,
-      },
-    ])
+        {
+          method: 'POST',
+          url: '/api/export/sample-site/articles/article-one',
+          body: {
+            slug: 'sample-post',
+            content:
+              '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
+            sha: 'base-sha',
+          },
+        },
+        {
+          method: 'GET',
+          url: '/api/export/sample-site/articles/article-one?slug=sample-post',
+          body: null,
+        },
+      ],
+    })
   })
 
   it('does not request a file for an invalid slug', () => {

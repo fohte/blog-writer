@@ -6,6 +6,23 @@ import { isRecord } from '#lib/guards'
 export type ExportDestination = components['schemas']['DestinationResponse']
 export type ArticleFileResponse = components['schemas']['ArticleFileResponse']
 
+export class ExportApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+    this.name = 'ExportApiError'
+  }
+}
+
+export class ExportConflictError extends ExportApiError {
+  constructor(message: string) {
+    super(message, 409)
+    this.name = 'ExportConflictError'
+  }
+}
+
 function isDestinationList(
   value: unknown,
 ): value is components['schemas']['DestinationListResponse'] {
@@ -53,12 +70,14 @@ function parseResponse<T>(
           : `HTTP ${String(response.status)}`
       if (response.status === 409) {
         return errAsync(
-          new Error(
+          new ExportConflictError(
             `公開先のファイルが変更されています。差分を取り直してください。${message.length > 0 ? ` ${message}` : ''}`,
           ),
         )
       }
-      return errAsync(new Error(`${label}: ${message}`))
+      return errAsync(
+        new ExportApiError(`${label}: ${message}`, response.status),
+      )
     }
     return isExpected(value)
       ? okAsync(value)

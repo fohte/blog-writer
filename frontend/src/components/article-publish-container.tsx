@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type * as Y from 'yjs'
 
 import { readBody } from '#article/body'
 import {
   createArticleFrontmatter,
   exportArticleBody,
+  isValidArticleSlug,
   prependArticleFrontmatter,
 } from '#article/export'
 import { ArticlePublishView } from '#components/article-publish-view'
 import {
+  ExportConflictError,
   type ExportDestination,
   getExportArticleFile,
   publishArticle,
@@ -33,8 +35,6 @@ type PreparedPublish = {
   original: string
 }
 
-const slugPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-
 function publishFingerprint(
   destinationId: string,
   slug: string,
@@ -42,6 +42,14 @@ function publishFingerprint(
   body: string,
 ) {
   return JSON.stringify([destinationId, slug, frontmatter, body])
+}
+
+function defaultFrontmatter(destination: ExportDestination, article: Article) {
+  return createArticleFrontmatter(
+    destination.frontmatter_template,
+    article.title,
+    article.createdAt,
+  )
 }
 
 export function ArticlePublishContainer({
@@ -61,11 +69,11 @@ export function ArticlePublishContainer({
     article.exportFrontmatter ??
       (initialDestination === undefined
         ? ''
-        : createArticleFrontmatter(
-            initialDestination.frontmatter_template,
-            article.title,
-            article.createdAt,
-          )),
+        : defaultFrontmatter(initialDestination, article)),
+  )
+  const frontmatterPersisted = useRef(article.exportFrontmatter !== undefined)
+  const initialFrontmatterNeedsPersistence = useRef(
+    article.exportFrontmatter === undefined && initialDestination !== undefined,
   )
   const [body, setBody] = useState(() => readBody(doc))
   const [prepared, setPrepared] = useState<PreparedPublish>()
@@ -86,31 +94,20 @@ export function ArticlePublishContainer({
   }, [doc])
 
   useEffect(() => {
-    if (
-      article.exportFrontmatter !== undefined ||
-      initialDestination === undefined
-    )
-      return
-    setFrontmatter((current) => {
-      if (current.length > 0) return current
-      const value = createArticleFrontmatter(
-        initialDestination.frontmatter_template,
-        article.title,
-        article.createdAt,
+    if (!initialFrontmatterNeedsPersistence.current) return
+    initialFrontmatterNeedsPersistence.current = false
+    frontmatterPersisted.current = true
+    client
+      .updateArticleExportSettings(article.id, {
+        exportFrontmatter: frontmatter,
+      })
+      .match(
+        () => {},
+        (updateError) => {
+          setError(updateError.message)
+        },
       )
-      client
-        .updateArticleExportSettings(article.id, {
-          exportFrontmatter: value,
-        })
-        .match(
-          () => {},
-          (updateError) => {
-            setError(updateError.message)
-          },
-        )
-      return value
-    })
-  }, [article, client, initialDestination])
+  }, [article.id, client, frontmatter])
 
   const currentFingerprint = publishFingerprint(
     destinationId,
@@ -153,22 +150,23 @@ export function ArticlePublishContainer({
   function handleDestinationChange(nextId: string) {
     const nextDestination = destinations.find(({ id }) => id === nextId)
     if (!nextDestination) return
-    const nextFrontmatter = createArticleFrontmatter(
-      nextDestination.frontmatter_template,
-      article.title,
-      article.createdAt,
-    )
     setDestinationId(nextId)
-    setFrontmatter(nextFrontmatter)
     setPrepared(undefined)
     setPublishedUrl(undefined)
-    updateSettings({ destinationId: nextId, frontmatter: nextFrontmatter })
+    if (frontmatterPersisted.current) {
+      updateSettings({ destinationId: nextId })
+    } else {
+      const nextFrontmatter = defaultFrontmatter(nextDestination, article)
+      setFrontmatter(nextFrontmatter)
+      frontmatterPersisted.current = true
+      updateSettings({ destinationId: nextId, frontmatter: nextFrontmatter })
+    }
     onDiffChange(false)
   }
 
   async function handleShowDiff() {
     const destination = destinations.find(({ id }) => id === destinationId)
-    if (!destination || !slugPattern.test(slug)) return
+    if (!destination || !isValidArticleSlug(slug)) return
     setBusy(true)
     setError(undefined)
     setPublishedUrl(undefined)
@@ -222,19 +220,18 @@ export function ArticlePublishContainer({
       sha: prepared.sha,
     }).match(
       (response) => ({ url: response.url }) as const,
-      (requestError) => ({ error: requestError.message }) as const,
+      (requestError) => ({ error: requestError }) as const,
     )
     if ('error' in result) {
-      setError(result.error)
-      if (
-        result.error.includes('409') ||
-        result.error.includes('変更されています')
-      ) {
+      setError(result.error.message)
+      if (result.error instanceof ExportConflictError) {
         setPrepared(undefined)
         onDiffChange(false)
       }
     } else {
+      setPrepared(undefined)
       setPublishedUrl(result.url)
+      onDiffChange(false)
     }
     setBusy(false)
   }
@@ -253,6 +250,7 @@ export function ArticlePublishContainer({
       onDestinationChange={handleDestinationChange}
       onFrontmatterChange={(value) => {
         setFrontmatter(value)
+        frontmatterPersisted.current = true
         updateSettings({ frontmatter: value })
       }}
       onPublish={() => {
