@@ -5,9 +5,10 @@ import { BlockMoveMenu } from '#components/block-move-menu'
 
 interface StoryArgs {
   open: boolean
+  firstBlock: boolean
 }
 
-function BlockMoveMenuPreview({ open }: StoryArgs) {
+function BlockMoveMenuPreview({ firstBlock, open }: StoryArgs) {
   const anchor = useRef<HTMLButtonElement>(null)
 
   return (
@@ -24,7 +25,10 @@ function BlockMoveMenuPreview({ open }: StoryArgs) {
       </button>
       <BlockMoveMenu
         actions={[
-          { label: 'Move up', input: { from: 20, destination: 0 } },
+          {
+            label: 'Move up',
+            input: firstBlock ? undefined : { from: 20, destination: 0 },
+          },
           { label: 'Move down', input: { from: 20, destination: 40 } },
         ]}
         anchor={anchor}
@@ -39,7 +43,7 @@ function BlockMoveMenuPreview({ open }: StoryArgs) {
 const meta = {
   title: 'Editor/BlockMoveMenu',
   component: BlockMoveMenuPreview,
-  args: { open: true },
+  args: { firstBlock: false, open: true },
 } satisfies Meta<typeof BlockMoveMenuPreview>
 
 export default meta
@@ -47,4 +51,9 @@ type Story = StoryObj<typeof meta>
 
 export const Open: Story = {
   name: 'the block handle shows the available moves.',
+}
+
+export const FirstBlock: Story = {
+  args: { firstBlock: true },
+  name: 'the first block cannot move up.',
 }

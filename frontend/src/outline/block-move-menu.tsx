@@ -4,9 +4,10 @@ import { createElement, type RefObject } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { type MoveBlockInput, topLevelBlocks } from '#article/index'
 import type { BlockMoveMenuAction } from '#components/block-move-menu'
 import { BlockMoveMenu } from '#components/block-move-menu'
-import { adjacentMove } from '#outline/block-ranges'
+import { adjacentMove, headingChildMove } from '#outline/block-ranges'
 import type { MoveHistory } from '#outline/move-history'
 
 export function mountBlockMoveMenu({
@@ -27,17 +28,42 @@ export function mountBlockMoveMenu({
   const anchor: RefObject<HTMLButtonElement | null> = { current: button }
   let root: Root | undefined
   let menuOpen = false
-  let dragStarted = false
-  const actions = (): BlockMoveMenuAction[] => [
-    {
-      label: 'Move up',
-      input: adjacentMove(view.state, from, 'up'),
-    },
-    {
-      label: 'Move down',
-      input: adjacentMove(view.state, from, 'down'),
-    },
-  ]
+  const currentFrom = () =>
+    view.contentDOM.contains(button) ? view.posAtDOM(button) : undefined
+  const actions = (): BlockMoveMenuAction[] => {
+    const currentPosition = currentFrom() ?? from
+    const markdown = view.state.doc.toString()
+    const block = topLevelBlocks(markdown).find(
+      ({ from: blockFrom, to }) =>
+        blockFrom <= currentPosition && currentPosition < to,
+    )
+    const isHeading = block?.name.startsWith('ATXHeading') ?? false
+    const action = (
+      label: string,
+      getInput: (position: number) => MoveBlockInput | undefined,
+    ): BlockMoveMenuAction => ({
+      label,
+      input: getInput(currentPosition),
+      resolveInput: () => {
+        const position = currentFrom()
+        return position === undefined ? undefined : getInput(position)
+      },
+    })
+
+    return [
+      action('Move up', (position) => adjacentMove(view.state, position, 'up')),
+      action('Move down', (position) =>
+        adjacentMove(view.state, position, 'down'),
+      ),
+      ...(isHeading
+        ? [
+            action('Make child', (position) =>
+              headingChildMove(view.state, position),
+            ),
+          ]
+        : []),
+    ]
+  }
   const renderMenu = (open: boolean, sync = false) => {
     menuOpen = open
     button.setAttribute('aria-expanded', String(open))
@@ -66,10 +92,6 @@ export function mountBlockMoveMenu({
   const handleClick = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    if (dragStarted) {
-      dragStarted = false
-      return
-    }
     if (view.composing || composingViews.has(view)) return
     renderMenu(!menuOpen, true)
   }
@@ -81,14 +103,6 @@ export function mountBlockMoveMenu({
   const cleanupDraggable = draggable({
     element: button,
     getInitialData: () => ({ kind: 'block', from }),
-    onDragStart: () => {
-      dragStarted = true
-    },
-    onDrop: () => {
-      window.setTimeout(() => {
-        dragStarted = false
-      }, 0)
-    },
   })
 
   return () => {

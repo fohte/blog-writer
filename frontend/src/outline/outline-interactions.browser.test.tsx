@@ -24,6 +24,62 @@ import {
 
 const cleanups: (() => void)[] = []
 
+function createBodyMenuEditor(markdownText: string) {
+  const doc = new Y.Doc()
+  setBody(doc, markdownText)
+  const body = getBody(doc)
+  const history = createMoveHistory(doc)
+  const editorHost = document.createElement('div')
+  document.body.append(editorHost)
+  const root: Root = createRoot(editorHost)
+  const viewRef: { current: EditorView | null } = { current: null }
+  act(() => {
+    root.render(
+      createElement(MarkdownEditor, {
+        extensions: [createOutlineEditorExtension(history)],
+        history,
+        onViewChange: (view: EditorView | null) => {
+          viewRef.current = view
+        },
+        text: body,
+      }),
+    )
+  })
+  const view = viewRef.current
+  if (!view) throw new Error('The markdown editor did not mount')
+  cleanups.push(() => {
+    act(() => {
+      root.unmount()
+    })
+    history.destroy()
+    doc.destroy()
+    editorHost.remove()
+  })
+  return { body, doc, view }
+}
+
+async function tapBodyHandle(button: HTMLButtonElement) {
+  if (navigator.userAgent.includes('Chrome')) {
+    const rect = button.getBoundingClientRect()
+    await cdp().send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [
+        {
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2,
+          id: 1,
+        },
+      ],
+    })
+    await cdp().send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: [],
+    })
+  } else {
+    await userEvent.click(button)
+  }
+}
+
 function dispatchDrag(
   source: HTMLElement,
   target: HTMLElement,
@@ -57,36 +113,7 @@ afterEach(() => {
 describe('outline interactions', () => {
   it('opens a body handle menu by touch or click and moves the block with one undo', async () => {
     const markdownText = 'First paragraph.\n\nSecond paragraph.\n'
-    const doc = new Y.Doc()
-    setBody(doc, markdownText)
-    const body = getBody(doc)
-    const history = createMoveHistory(doc)
-    const editorHost = document.createElement('div')
-    document.body.append(editorHost)
-    const root: Root = createRoot(editorHost)
-    const viewRef: { current: EditorView | null } = { current: null }
-    act(() => {
-      root.render(
-        createElement(MarkdownEditor, {
-          extensions: [createOutlineEditorExtension(history)],
-          history,
-          onViewChange: (view: EditorView | null) => {
-            viewRef.current = view
-          },
-          text: body,
-        }),
-      )
-    })
-    const view = viewRef.current
-    if (!view) throw new Error('The markdown editor did not mount')
-    cleanups.push(() => {
-      act(() => {
-        root.unmount()
-      })
-      history.destroy()
-      doc.destroy()
-      editorHost.remove()
-    })
+    const { body, view } = createBodyMenuEditor(markdownText)
 
     const handle = view.dom.querySelector<HTMLButtonElement>(
       '.cm-block-drag-handle',
@@ -107,29 +134,9 @@ describe('outline interactions', () => {
       }),
     )
 
-    if (navigator.userAgent.includes('Chrome')) {
-      const rect = handle.getBoundingClientRect()
-      await act(async () => {
-        await cdp().send('Input.dispatchTouchEvent', {
-          type: 'touchStart',
-          touchPoints: [
-            {
-              x: rect.left + rect.width / 2,
-              y: rect.top + rect.height / 2,
-              id: 1,
-            },
-          ],
-        })
-        await cdp().send('Input.dispatchTouchEvent', {
-          type: 'touchEnd',
-          touchPoints: [],
-        })
-      })
-    } else {
-      await act(async () => {
-        await userEvent.click(handle)
-      })
-    }
+    await act(async () => {
+      await tapBodyHandle(handle)
+    })
 
     const menuButtons = [
       ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
@@ -168,6 +175,173 @@ describe('outline interactions', () => {
       afterMove: 'Second paragraph.\n\nFirst paragraph.\n',
       afterUndo: markdownText,
       editor: markdownText,
+    })
+  })
+
+  it('closes a body handle menu when the handle is tapped again', async () => {
+    const { view } = createBodyMenuEditor(
+      'First paragraph.\n\nSecond paragraph.\n',
+    )
+    const handle = view.dom.querySelector<HTMLButtonElement>(
+      '.cm-block-drag-handle',
+    )
+    if (!handle) throw new Error('The body move handle is missing')
+
+    await act(async () => {
+      await tapBodyHandle(handle)
+      await tapBodyHandle(handle)
+    })
+
+    const readOutput = () => ({
+      expanded: handle.getAttribute('aria-expanded'),
+      menuOpen:
+        document.querySelector('[role="menu"]')?.hasAttribute('data-open') ??
+        false,
+    })
+    expect(readOutput()).toEqual({
+      expanded: 'false',
+      menuOpen: false,
+    })
+  })
+
+  it('recomputes a body move after a remote edit changes the neighboring blocks', async () => {
+    const markdownText = 'A\n\nBBBBBB\n\nC\n'
+    const { body, doc, view } = createBodyMenuEditor(markdownText)
+    const handle = view.dom.querySelector<HTMLButtonElement>(
+      '.cm-block-drag-handle',
+    )
+    if (!handle) throw new Error('The body move handle is missing')
+    await act(async () => {
+      await userEvent.click(handle)
+    })
+
+    const peer = new Y.Doc()
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc))
+    cleanups.push(() => {
+      peer.destroy()
+    })
+    const peerBody = getBody(peer)
+    const replacedFrom = markdownText.indexOf('BBBBBB')
+    peerBody.delete(replacedFrom, 'BBBBBB'.length)
+    peerBody.insert(
+      replacedFrom,
+      'Replacement block one is longer\n\nReplacement block two is longer',
+    )
+    await act(async () => {
+      Y.applyUpdate(
+        doc,
+        Y.encodeStateAsUpdate(peer, Y.encodeStateVector(doc)),
+        'remote',
+      )
+      await Promise.resolve()
+    })
+
+    const moveDown = page.getByRole('menuitem', { name: 'Move down' })
+    await act(async () => {
+      await userEvent.click(moveDown)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      editor: view.state.doc.toString(),
+      menuOpen:
+        document.querySelector('[role="menu"]')?.hasAttribute('data-open') ??
+        false,
+    })
+    expect(readOutput()).toEqual({
+      body: 'Replacement block one is longer\n\nA\n\nReplacement block two is longer\n\nC\n',
+      editor:
+        'Replacement block one is longer\n\nA\n\nReplacement block two is longer\n\nC\n',
+      menuOpen: false,
+    })
+  })
+
+  it('offers Make child from a body heading handle', async () => {
+    const markdownText =
+      '# Alpha\n\nAlpha section.\n\n# Beta\n\nBeta section.\n'
+    const { body, view } = createBodyMenuEditor(markdownText)
+    const handles = [
+      ...view.dom.querySelectorAll<HTMLButtonElement>('.cm-block-drag-handle'),
+    ]
+    const betaHandle = handles[2]
+    if (!betaHandle) throw new Error('The Beta body move handle is missing')
+
+    await act(async () => {
+      await userEvent.click(betaHandle)
+    })
+    const menuItems = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].map((item) => ({ label: item.textContent, disabled: item.disabled }))
+    const makeChild = page.getByRole('menuitem', { name: 'Make child' })
+    await act(async () => {
+      await userEvent.click(makeChild)
+    })
+
+    const readOutput = () => ({
+      menuItems,
+      afterMove: body.toJSON(),
+      editor: view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      menuItems: [
+        { label: 'Move up', disabled: false },
+        { label: 'Move down', disabled: true },
+        { label: 'Make child', disabled: false },
+      ],
+      afterMove: '# Alpha\n\nAlpha section.\n\n## Beta\n\nBeta section.\n',
+      editor: '# Alpha\n\nAlpha section.\n\n## Beta\n\nBeta section.\n',
+    })
+  })
+
+  it('offers Make child only from a heading handle', async () => {
+    const markdownText =
+      '# Alpha\n\nAlpha section.\n\n# Beta\n\nBeta section.\n'
+    const { body, view } = createBodyMenuEditor(markdownText)
+    const handles = [
+      ...view.dom.querySelectorAll<HTMLButtonElement>('.cm-block-drag-handle'),
+    ]
+    const alphaParagraphHandle = handles[1]
+    const betaHandle = handles[2]
+    if (!alphaParagraphHandle || !betaHandle)
+      throw new Error('The body move handles are missing')
+
+    const readMenuItems = () =>
+      [
+        ...document.querySelectorAll<HTMLButtonElement>(
+          '[role="menu"][data-open] [role="menuitem"]',
+        ),
+      ].map((item) => ({ label: item.textContent, disabled: item.disabled }))
+
+    await act(async () => {
+      await userEvent.click(alphaParagraphHandle)
+    })
+    const paragraphMenuItems = readMenuItems()
+    await act(async () => {
+      await userEvent.click(alphaParagraphHandle)
+      await userEvent.click(betaHandle)
+    })
+    const headingMenuItems = readMenuItems()
+    const makeChild = page.getByRole('menuitem', { name: 'Make child' })
+    await act(async () => {
+      await userEvent.click(makeChild)
+    })
+
+    const readOutput = () => ({
+      paragraphMenuItems,
+      headingMenuItems,
+      afterMove: body.toJSON(),
+    })
+    expect(readOutput()).toEqual({
+      paragraphMenuItems: [
+        { label: 'Move up', disabled: false },
+        { label: 'Move down', disabled: false },
+      ],
+      headingMenuItems: [
+        { label: 'Move up', disabled: false },
+        { label: 'Move down', disabled: true },
+        { label: 'Make child', disabled: false },
+      ],
+      afterMove: '# Alpha\n\nAlpha section.\n\n## Beta\n\nBeta section.\n',
     })
   })
 
