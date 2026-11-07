@@ -175,6 +175,55 @@ function readEvidenceUndoRedoOutput(
   return { afterMove, afterUndo, afterRedo }
 }
 
+async function mountFootnoteEditor() {
+  const body = 'First claim. Second claim. Third claim. Fourth claim.'
+  const { doc, host } = mountMarkdownEditor(body)
+  const checkedAt = '2026-02-01T00:00:00.000Z'
+  const sentences = [
+    { claim: 'First claim.', sourceId: 'source-b', verdict: 'supported' },
+    { claim: 'Second claim.', sourceId: 'source-b', verdict: 'outdated' },
+    { claim: 'Third claim.', sourceId: 'source-a', verdict: 'supported' },
+    { claim: 'Fourth claim.', sourceId: 'source-b', verdict: 'supported' },
+  ] as const
+  act(() => {
+    for (const id of ['source-a', 'source-b'])
+      addSource(doc, {
+        id,
+        kind: 'url',
+        title: id,
+        url: `https://example.invalid/${id}`,
+        fileName: null,
+        checkedAt,
+      })._unsafeUnwrap()
+    sentences.forEach(({ claim, sourceId, verdict }, index) => {
+      const from = body.indexOf(claim)
+      addEvidence(doc, {
+        id: `evidence-${index.toString()}`,
+        from,
+        to: from + claim.length,
+        claim,
+        sourceId,
+        quote: 'A quoted sentence.',
+        verdict,
+        checkedAt,
+      })._unsafeUnwrap()
+    })
+  })
+  const readFootnotes = () => ({
+    markers: [...host.querySelectorAll('.cm-evidence-marker')].map(
+      (marker) => marker.textContent,
+    ),
+    needsReview: [
+      ...host.querySelectorAll('.cm-evidence-text-needs-review'),
+    ].map((text) => text.textContent),
+  })
+  await vi.waitFor(() => {
+    if (readFootnotes().markers.length !== 4)
+      throw new Error('Footnotes were not rendered')
+  })
+  return { doc, readFootnotes }
+}
+
 describe('MarkdownEditor', () => {
   it.each([
     {
@@ -896,55 +945,16 @@ describe('MarkdownEditor', () => {
   })
 
   it('numbers footnotes per source in reading order and marks sentences that need review', async () => {
-    const body = 'First claim. Second claim. Third claim. Fourth claim.'
-    const { doc, host } = mountMarkdownEditor(body)
-    const checkedAt = '2026-02-01T00:00:00.000Z'
-    const sentences = [
-      { claim: 'First claim.', sourceId: 'source-b', verdict: 'supported' },
-      { claim: 'Second claim.', sourceId: 'source-b', verdict: 'outdated' },
-      { claim: 'Third claim.', sourceId: 'source-a', verdict: 'supported' },
-      { claim: 'Fourth claim.', sourceId: 'source-b', verdict: 'supported' },
-    ] as const
-    act(() => {
-      for (const id of ['source-a', 'source-b'])
-        addSource(doc, {
-          id,
-          kind: 'url',
-          title: id,
-          url: `https://example.invalid/${id}`,
-          fileName: null,
-          checkedAt,
-        })._unsafeUnwrap()
-      sentences.forEach(({ claim, sourceId, verdict }, index) => {
-        const from = body.indexOf(claim)
-        addEvidence(doc, {
-          id: `evidence-${index.toString()}`,
-          from,
-          to: from + claim.length,
-          claim,
-          sourceId,
-          quote: 'A quoted sentence.',
-          verdict,
-          checkedAt,
-        })._unsafeUnwrap()
-      })
-    })
-    const readFootnotes = () => ({
-      markers: [...host.querySelectorAll('.cm-evidence-marker')].map(
-        (marker) => marker.textContent,
-      ),
-      needsReview: [
-        ...host.querySelectorAll('.cm-evidence-text-needs-review'),
-      ].map((text) => text.textContent),
-    })
-    await vi.waitFor(() => {
-      if (readFootnotes().markers.length !== 4)
-        throw new Error('Footnotes were not rendered')
-    })
+    const { readFootnotes } = await mountFootnoteEditor()
+
     expect(readFootnotes()).toEqual({
       markers: ['[1]', '[?]', '[2]', '[1]'],
       needsReview: ['Second claim.'],
     })
+  })
+
+  it('marks a sentence edited after its check for review and renumbers the remaining footnotes', async () => {
+    const { doc, readFootnotes } = await mountFootnoteEditor()
     act(() => {
       getBody(doc).insert('First'.length, ' edited')
     })

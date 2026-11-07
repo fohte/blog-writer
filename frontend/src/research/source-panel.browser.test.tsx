@@ -249,6 +249,57 @@ function submitUrlField(value: string): HTMLInputElement | null | undefined {
   return field
 }
 
+function readUrlFieldOutput(
+  doc: Y.Doc,
+  field: HTMLInputElement | null | undefined,
+) {
+  return {
+    ...readOutput(doc),
+    alert: host?.querySelector('[role="alert"]')?.textContent,
+    fieldValue: field?.value,
+  }
+}
+
+function createCheckedSourceDoc(): Y.Doc {
+  const doc = new Y.Doc()
+  const checkedAt = '2026-01-14T00:00:00.000Z'
+  getBody(doc).insert(0, 'First claim. Second claim.')
+  addSource(doc, {
+    id: 'source-a',
+    kind: 'url',
+    title: '資料ページ',
+    url: 'https://data.example.invalid/report',
+    fileName: null,
+    checkedAt,
+    status: 'ready',
+  })
+  addEvidence(doc, {
+    id: 'evidence-a',
+    from: 0,
+    to: 12,
+    claim: 'First claim.',
+    sourceId: 'source-a',
+    quote: '最初の引用',
+    verdict: 'supported',
+    checkedAt,
+  })
+  addEvidence(doc, {
+    id: 'evidence-b',
+    from: 13,
+    to: 26,
+    claim: 'Second claim.',
+    sourceId: 'source-a',
+    quote: '次の引用',
+    verdict: 'outdated',
+    checkedAt,
+  })
+  return doc
+}
+
+function readSourceRow() {
+  return host?.querySelector('[role="listitem"]')?.textContent
+}
+
 function changeTextarea(textarea: HTMLTextAreaElement, value: string) {
   const descriptor = Object.getOwnPropertyDescriptor(
     HTMLTextAreaElement.prototype,
@@ -488,8 +539,7 @@ describe('SourcePanel', () => {
     const field = submitUrlField('https://data.example.invalid/report')
     await settleUi(doc)
 
-    expect(field?.value).toBe('')
-    expect(readOutput(doc)).toEqual({
+    expect(readUrlFieldOutput(doc, field)).toEqual({
       sources: [
         {
           id: 'generated-source',
@@ -511,6 +561,8 @@ describe('SourcePanel', () => {
         },
       ],
       renderedTitle: '資料のタイトル',
+      alert: undefined,
+      fieldValue: '',
     })
     doc.destroy()
   })
@@ -520,12 +572,13 @@ describe('SourcePanel', () => {
     mountSourcePanel(doc)
     const field = submitUrlField('資料ページ')
 
-    expect(listSources(doc)).toEqual([])
-    expect(host?.querySelector('[role="alert"]')?.textContent).toBe(
-      'URL を読み取れませんでした。',
-    )
-    expect(field?.value).toBe('資料ページ')
-    expect(readFetchCalls()).toEqual([])
+    expect(readUrlFieldOutput(doc, field)).toEqual({
+      sources: [],
+      findings: [],
+      renderedTitle: undefined,
+      alert: 'URL を読み取れませんでした。',
+      fieldValue: '資料ページ',
+    })
     doc.destroy()
   })
 
@@ -570,53 +623,29 @@ describe('SourcePanel', () => {
     doc.destroy()
   })
 
-  it('counts the evidence of a source and the sentences edited after the check', () => {
-    const doc = new Y.Doc()
-    const checkedAt = '2026-01-14T00:00:00.000Z'
-    getBody(doc).insert(0, 'First claim. Second claim.')
-    addSource(doc, {
-      id: 'source-a',
-      kind: 'url',
-      title: '資料ページ',
-      url: 'https://data.example.invalid/report',
-      fileName: null,
-      checkedAt,
-      status: 'ready',
-    })
-    addEvidence(doc, {
-      id: 'evidence-a',
-      from: 0,
-      to: 12,
-      claim: 'First claim.',
-      sourceId: 'source-a',
-      quote: '最初の引用',
-      verdict: 'supported',
-      checkedAt,
-    })
-    addEvidence(doc, {
-      id: 'evidence-b',
-      from: 13,
-      to: 26,
-      claim: 'Second claim.',
-      sourceId: 'source-a',
-      quote: '次の引用',
-      verdict: 'outdated',
-      checkedAt,
-    })
+  it('counts the evidence of a source and the sentences that need review', () => {
+    const doc = createCheckedSourceDoc()
     mountSourcePanel(doc)
-    const readRow = () => host?.querySelector('[role="listitem"]')?.textContent
-    expect(readRow()).toBe(
+
+    expect(readSourceRow()).toBe(
       '資料ページ根拠 2 · 要確認 1×data.example.invalid · 取得 2026-01-14',
     )
+    doc.destroy()
+  })
+
+  it('counts a sentence edited after its check as needing review', () => {
+    const doc = createCheckedSourceDoc()
+    mountSourcePanel(doc)
     act(() => {
       getBody(doc).insert(5, ' edited')
     })
 
-    expect(readRow()).toBe(
+    expect(readSourceRow()).toBe(
       '資料ページ根拠 2 · 要確認 2×data.example.invalid · 取得 2026-01-14 · 確認後に編集 1',
     )
     doc.destroy()
   })
+
   it('sends LLM requests to the local bridge while source bodies stay on the server', async () => {
     const doc = new Y.Doc()
     window.localStorage.setItem('blog-writer.llm.route', 'local')

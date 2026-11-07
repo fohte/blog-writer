@@ -336,6 +336,18 @@ describe('the application research and evidence integrations', () => {
       )
     })
     await researchWasStarted
+    const readResearchView = () => ({
+      selectedTab: host?.querySelector('[role="tab"][aria-selected="true"]')
+        ?.textContent,
+      progressTitle: host?.querySelector(
+        '[aria-labelledby="source-panel-heading"] h3',
+      )?.textContent,
+    })
+    await waitFor(() => {
+      if (readResearchView().progressTitle === undefined)
+        throw new Error('The research progress did not render')
+    })
+    const researchView = readResearchView()
     const editorLine = host?.querySelectorAll<HTMLElement>('.cm-line').item(1)
     if (!editorLine) throw new Error('The article editor did not render')
     const editorView = EditorView.findFromDOM(editorLine)
@@ -393,6 +405,7 @@ describe('the application research and evidence integrations', () => {
     })
 
     const readResult = () => ({
+      researchView,
       requestQuestion,
       articleBody: getBody(doc).toJSON(),
       savedBodies,
@@ -413,6 +426,10 @@ describe('the application research and evidence integrations', () => {
       ),
     })
     expect(readResult()).toEqual({
+      researchView: {
+        selectedTab: '資料',
+        progressTitle: '調べています · Research topic',
+      },
       requestQuestion: {
         task: 'key_points',
         question: 'Custom research question',

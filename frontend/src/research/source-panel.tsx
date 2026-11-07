@@ -43,15 +43,31 @@ type SourceSnapshot = {
   evidence: SourceEvidence[]
 }
 
+function getSourceEvidence(doc: Y.Doc): SourceEvidence[] {
+  return listEvidence(doc).map(({ sourceId, verdict, edited }) => ({
+    sourceId,
+    needsReview: edited || verdict !== 'supported',
+    edited,
+  }))
+}
+
+function isSameEvidence(left: SourceEvidence[], right: SourceEvidence[]) {
+  return (
+    left.length === right.length &&
+    left.every(
+      (item, index) =>
+        item.sourceId === right[index]?.sourceId &&
+        item.needsReview === right[index].needsReview &&
+        item.edited === right[index].edited,
+    )
+  )
+}
+
 function getSnapshot(doc: Y.Doc): SourceSnapshot {
   return {
     sources: listSources(doc),
     findings: listFindings(doc),
-    evidence: listEvidence(doc).map(({ sourceId, verdict, edited }) => ({
-      sourceId,
-      needsReview: edited || verdict !== 'supported',
-      edited,
-    })),
+    evidence: getSourceEvidence(doc),
   }
 }
 
@@ -105,11 +121,20 @@ export function SourcePanel({
       refresh()
     })
     // Editing a checked sentence turns its evidence into "edited after check".
-    body.observe(refresh)
+    // Body edits arrive per keystroke, so keep the state when the counts stay the same.
+    const refreshEvidence = () => {
+      const evidence = getSourceEvidence(doc)
+      setSnapshot((current) =>
+        isSameEvidence(current.evidence, evidence)
+          ? current
+          : { ...current, evidence },
+      )
+    }
+    body.observe(refreshEvidence)
     return () => {
       unobserveSources()
       unobserveEvidence()
-      body.unobserve(refresh)
+      body.unobserve(refreshEvidence)
     }
   }, [doc])
 

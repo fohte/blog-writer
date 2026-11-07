@@ -9,11 +9,17 @@ import type { EvidenceVerdict } from '#article/types'
 import { MarkdownEditor } from '#editor/index'
 import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
 
+interface StoryEvidence {
+  claim: string
+  source: 0 | 1
+  verdict: EvidenceVerdict
+}
+
 interface StoryArgs {
   content: string
   className?: string
   initialSelection?: { anchor: number; head?: number }
-  evidenceVerdict?: EvidenceVerdict
+  evidence?: StoryEvidence[]
   showMoveHandles?: boolean
 }
 
@@ -43,36 +49,44 @@ const otherSyntaxContent = [
   '> The blockquote stays as source text.',
 ].join('\n')
 
+const noEvidence: StoryEvidence[] = []
+const storySourceTitles = ['Example research report', 'Example survey']
+
 function MarkdownEditorPreview({
   content,
   className,
   initialSelection,
-  evidenceVerdict,
+  evidence = noEvidence,
   showMoveHandles = false,
 }: StoryArgs) {
   const { body, doc, history, extensions } = useMemo(() => {
     const doc = new Y.Doc()
     const body = getBody(doc)
     body.insert(0, content)
-    if (evidenceVerdict !== undefined) {
-      const checkedAt = '2026-02-01T00:00:00.000Z'
-      addSource(doc, {
-        id: 'source-example',
-        kind: 'url',
-        title: 'Example research report',
-        url: 'https://example.invalid/report',
-        fileName: null,
-        checkedAt,
-        summary: 'The report describes a measured change over time.',
-      })._unsafeUnwrap()
+    const checkedAt = '2026-02-01T00:00:00.000Z'
+    if (evidence.length > 0) {
+      for (const [index, title] of storySourceTitles.entries()) {
+        addSource(doc, {
+          id: `source-${index.toString()}`,
+          kind: 'url',
+          title,
+          url: `https://example.invalid/report-${index.toString()}`,
+          fileName: null,
+          checkedAt,
+          summary: 'The report describes a measured change over time.',
+        })._unsafeUnwrap()
+      }
+    }
+    for (const [index, { claim, source, verdict }] of evidence.entries()) {
+      const from = content.indexOf(claim)
       addEvidence(doc, {
-        id: 'evidence-example',
-        from: 0,
-        to: content.length,
-        claim: content,
-        sourceId: 'source-example',
+        id: `evidence-${index.toString()}`,
+        from,
+        to: from + claim.length,
+        claim,
+        sourceId: `source-${source.toString()}`,
         quote: 'The measured value changed during the study period.',
-        verdict: evidenceVerdict,
+        verdict,
         checkedAt,
       })._unsafeUnwrap()
     }
@@ -81,7 +95,7 @@ function MarkdownEditorPreview({
       ? [createOutlineEditorExtension(history)]
       : []
     return { body, doc, history, extensions }
-  }, [content, evidenceVerdict, showMoveHandles])
+  }, [content, evidence, showMoveHandles])
 
   useEffect(() => {
     return () => {
@@ -147,12 +161,34 @@ const evidenceContent = 'A research sentence.'
 
 export const SupportedEvidenceMarker: Story = {
   name: 'the supported sentence ends with the footnote number of its source.',
-  args: { content: evidenceContent, evidenceVerdict: 'supported' },
+  args: {
+    content: evidenceContent,
+    evidence: [{ claim: evidenceContent, source: 0, verdict: 'supported' }],
+  },
 }
 
 export const NeedsReviewEvidenceMarker: Story = {
   name: 'the contradicted sentence is underlined and ends with a boxed question-mark footnote.',
-  args: { content: evidenceContent, evidenceVerdict: 'contradicted' },
+  args: {
+    content: evidenceContent,
+    evidence: [{ claim: evidenceContent, source: 0, verdict: 'contradicted' }],
+  },
+}
+
+const multiSourceContent =
+  'First claim. Second claim. Third claim. Fourth claim.'
+
+export const MultiSourceEvidenceMarkers: Story = {
+  name: 'footnotes number each source in reading order, reuse a number for the same source, and skip sentences that need review.',
+  args: {
+    content: multiSourceContent,
+    evidence: [
+      { claim: 'First claim.', source: 0, verdict: 'supported' },
+      { claim: 'Second claim.', source: 0, verdict: 'outdated' },
+      { claim: 'Third claim.', source: 1, verdict: 'supported' },
+      { claim: 'Fourth claim.', source: 0, verdict: 'supported' },
+    ],
+  },
 }
 
 export const BlockMoveHandles: Story = {
