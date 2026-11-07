@@ -1,12 +1,20 @@
 import { errAsync } from 'neverthrow'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import { setBody } from '#article/body'
-import { downloadArticleFile } from '#article/export'
+import { downloadArticleFile, exportArticleBody } from '#article/export'
 import { ArticleExportPopover } from '#components/article-export-popover'
 
 const exportFailure = vi.hoisted(() => ({ active: false }))
@@ -65,6 +73,11 @@ function readDestinationState() {
     ),
   }
 }
+
+beforeAll(async () => {
+  // The MDX converter downloads its parser modules on first use, which can outlast vi.waitFor's timeout.
+  ;(await exportArticleBody('', 'mdx'))._unsafeUnwrap()
+})
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
