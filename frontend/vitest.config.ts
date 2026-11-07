@@ -53,20 +53,6 @@ export default mergeConfig(
         {
           extends: true,
           test: {
-            name: 'browser-unit-webkit',
-            include: ['src/**/*.browser.test.tsx'],
-            exclude: ['src/**/*.ime.browser.test.tsx'],
-            browser: {
-              enabled: true,
-              provider: playwright(),
-              headless: true,
-              instances: [{ browser: 'webkit' }],
-            },
-          },
-        },
-        {
-          extends: true,
-          test: {
             name: 'browser-ime-chromium',
             include: ['src/editor/markdown-editor.ime.browser.test.tsx'],
             browser: {
