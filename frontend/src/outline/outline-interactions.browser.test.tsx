@@ -14,8 +14,9 @@ import { cdp, page, userEvent } from 'vitest/browser'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
-import { getBody, setBody } from '#article/index'
+import { addMemo, getBody, setBody } from '#article/index'
 import { MarkdownEditor } from '#components/markdown-editor'
+import { adoptMemoToHeading } from '#memos/adoption'
 import {
   ArticleOutline,
   createMoveHistory,
@@ -486,6 +487,62 @@ describe('outline interactions', () => {
     })
   })
 
+  it('counts the memos adopted to each heading as they are adopted', () => {
+    const markdownText =
+      '# Overview\n\nFirst section.\n\n# Details\n\nSecond section.\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    for (const [order, id] of ['memo-a', 'memo-b', 'memo-c'].entries()) {
+      const added = addMemo(doc, { id, text: `Thought ${id}`, order })
+      if (added.isErr()) throw added.error
+    }
+    const adopt = (id: string, heading: string) => {
+      const adopted = adoptMemoToHeading(doc, id, markdownText.indexOf(heading))
+      if (adopted.isErr()) throw adopted.error
+    }
+    adopt('memo-a', '# Overview')
+    adopt('memo-b', '# Overview')
+    const history = createMoveHistory(doc)
+    const outlineHost = document.createElement('div')
+    document.body.append(outlineHost)
+    const view = new EditorView({
+      state: EditorState.create({ doc: markdownText }),
+    })
+    const root: Root = createRoot(outlineHost)
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      view.destroy()
+      history.destroy()
+      doc.destroy()
+      outlineHost.remove()
+    })
+
+    act(() => {
+      root.render(createElement(ArticleOutline, { doc, history, view }))
+    })
+    const readCounts = () =>
+      [...outlineHost.querySelectorAll('[role="option"]')].map((option) => ({
+        heading: option.getAttribute('aria-label'),
+        memos:
+          option.querySelector('[title="採用済みのメモ"]')?.textContent ?? null,
+      }))
+    expect(readCounts()).toEqual([
+      { heading: 'Overview', memos: 'メモ 2' },
+      { heading: 'Details', memos: null },
+    ])
+
+    act(() => {
+      adopt('memo-c', '# Details')
+    })
+
+    expect(readCounts()).toEqual([
+      { heading: 'Overview', memos: 'メモ 2' },
+      { heading: 'Details', memos: 'メモ 1' },
+    ])
+  })
+
   it('renders outline proposals and reports accept and reject actions', async () => {
     const markdownText = '# Overview\n\nFirst section.\n'
     const doc = new Y.Doc()
@@ -533,8 +590,8 @@ describe('outline interactions', () => {
     })
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
-      await userEvent.click(page.getByRole('button', { name: '× 却下' }))
+      await userEvent.click(page.getByRole('button', { name: '追加案を採用' }))
+      await userEvent.click(page.getByRole('button', { name: '追加案を却下' }))
     })
 
     const readProposalOutput = () => ({
@@ -545,7 +602,7 @@ describe('outline interactions', () => {
       rejectedIds,
     })
     expect(readProposalOutput()).toEqual({
-      proposalText: 'Proposed section✓ 採用× 却下',
+      proposalText: '+##Proposed section✓✕',
       acceptedIds: ['suggested-heading'],
       rejectedIds: ['suggested-heading'],
     })
@@ -1390,7 +1447,12 @@ describe('outline interactions', () => {
     })
   })
 
-  it('moves headings up, down, and under another heading from the move menu', async () => {
+  it('moves headings up, down, and under another heading from the move menu on a touch device', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(pointer: coarse)',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
     const markdownText =
       '# Alpha\n\nFirst section.\n\n# Beta\n\nSecond section.\n\n# Gamma\n\nThird section.\n'
     const doc = new Y.Doc()

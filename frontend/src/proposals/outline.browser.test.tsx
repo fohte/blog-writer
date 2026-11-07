@@ -116,8 +116,15 @@ function responseWithSuggestions(
 
 function proposalButtons(outlineHost: HTMLElement): string[] {
   return [...outlineHost.querySelectorAll('button')]
-    .map((button) => button.textContent.trim())
-    .filter((text) => text === '✓ 採用' || text === '× 却下')
+    .map((button) => button.getAttribute('aria-label') ?? '')
+    .filter((label) => /を(採用|却下)$/u.test(label))
+}
+
+function proposalButton(outlineHost: HTMLElement, action: '採用' | '却下') {
+  return [...outlineHost.querySelectorAll('button')].find(
+    (button) =>
+      button.getAttribute('aria-label')?.endsWith(`を${action}`) === true,
+  )
 }
 
 function alertText(outlineHost: HTMLElement): string | null {
@@ -299,9 +306,7 @@ describe('outline proposal integration', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve()
     })
 
-    const adoptButton = [...outlineHost.querySelectorAll('button')].find(
-      (button) => button.textContent.includes('採用'),
-    )
+    const adoptButton = proposalButton(outlineHost, '採用')
     if (!adoptButton) throw new Error('The outline suggestion is missing')
     await act(async () => {
       await userEvent.click(adoptButton)
@@ -386,9 +391,7 @@ describe('outline proposal integration', () => {
       await vi.advanceTimersByTimeAsync(30_000)
       for (let index = 0; index < 8; index += 1) await Promise.resolve()
     })
-    const acceptButton = [...outlineHost.querySelectorAll('button')].find(
-      (button) => button.textContent.includes('採用'),
-    )
+    const acceptButton = proposalButton(outlineHost, '採用')
     if (!acceptButton) throw new Error('The heading rename is missing')
     await act(async () => {
       await userEvent.click(acceptButton)
@@ -478,9 +481,7 @@ describe('outline proposal integration', () => {
         await vi.advanceTimersByTimeAsync(30_000)
         for (let index = 0; index < 8; index += 1) await Promise.resolve()
       })
-      const rejectButton = [...outlineHost.querySelectorAll('button')].find(
-        (button) => button.textContent.includes('却下'),
-      )
+      const rejectButton = proposalButton(outlineHost, '却下')
       if (!rejectButton) throw new Error('The outline suggestion is missing')
       const paragraph = paragraphFrom(requestBody)
       await act(async () => {
@@ -580,9 +581,7 @@ describe('outline proposal integration', () => {
         await vi.advanceTimersByTimeAsync(30_000)
         for (let index = 0; index < 8; index += 1) await Promise.resolve()
       })
-      const acceptButton = [...outlineHost.querySelectorAll('button')].find(
-        (button) => button.textContent.includes('採用'),
-      )
+      const acceptButton = proposalButton(outlineHost, '採用')
       if (!acceptButton) throw new Error('The heading deletion is missing')
       await act(async () => {
         await userEvent.click(acceptButton)
@@ -616,9 +615,7 @@ describe('outline proposal integration', () => {
       await vi.advanceTimersByTimeAsync(30_000)
       for (let index = 0; index < 8; index += 1) await Promise.resolve()
     })
-    const acceptButton = [...outlineHost.querySelectorAll('button')].find(
-      (button) => button.textContent.includes('採用'),
-    )
+    const acceptButton = proposalButton(outlineHost, '採用')
     if (!acceptButton) throw new Error('The heading deletion is missing')
     await act(async () => {
       await userEvent.click(acceptButton)
@@ -719,9 +716,7 @@ describe('outline proposal integration', () => {
       )
       for (let index = 0; index < 8; index += 1) await Promise.resolve()
     })
-    const acceptButton = [...outlineHost.querySelectorAll('button')].find(
-      (button) => button.textContent.includes('採用'),
-    )
+    const acceptButton = proposalButton(outlineHost, '採用')
     if (!acceptButton)
       throw new Error('The mapped outline suggestion is missing')
     await act(async () => {

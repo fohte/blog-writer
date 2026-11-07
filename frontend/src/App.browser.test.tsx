@@ -3084,8 +3084,8 @@ describe('the application research and evidence integrations', () => {
       outlineCount: host?.querySelectorAll('[aria-label="Article outline"]')
         .length,
       proposalButtons: [...(host?.querySelectorAll('button') ?? [])]
-        .map((button) => button.textContent.trim())
-        .filter((text) => text === '✓ 採用' || text === '× 却下'),
+        .map((button) => button.getAttribute('aria-label') ?? '')
+        .filter((label) => /を(採用|却下)$/u.test(label)),
       researchEntryVisible:
         [...(host?.querySelectorAll('button') ?? [])].some(
           (button) => button.textContent.trim() === 'この見出しについて調べる',
@@ -3113,7 +3113,7 @@ describe('the application research and evidence integrations', () => {
     expect(actual()).toEqual({
       proposalState: {
         outlineCount: 1,
-        proposalButtons: ['✓ 採用', '× 却下'],
+        proposalButtons: ['改名案を採用', '改名案を却下'],
         researchEntryVisible: true,
       },
       selectedTab: '本文',

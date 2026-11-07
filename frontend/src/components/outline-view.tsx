@@ -2,7 +2,7 @@ import {
   draggable,
   dropTargetForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
-import { List, ListItem } from '@fohte/ui/list'
+import { List } from '@fohte/ui/list'
 import {
   Fragment,
   useCallback,
@@ -21,19 +21,19 @@ import {
   type OutlineGapDropTarget,
 } from '#components/outline-drop-gap'
 import {
-  headingText,
+  headingLevel,
+  outlineIndent,
   OutlineProposalRow,
-  proposalDiffActions,
   proposalHandlers,
 } from '#components/outline-proposal-row'
-import { stopButtonClickPropagation } from '#components/outline-view/stop-button-click-propagation'
 import {
   type FlatHeading,
   outlineViewEntries,
   sectionEnd,
   siblingHeading,
 } from '#components/outline-view-utils'
-import { SuggestionDiff } from '#components/suggestion-diff'
+import { useCoarsePointer } from '#hooks/use-coarse-pointer'
+import { cn } from '#lib/utils'
 import { memoIdFrom } from '#outline/memo-drag'
 import type {
   OutlineProposalState,
@@ -53,6 +53,8 @@ export interface OutlineViewProps {
   openMenuFrom?: number
   dropTarget?: OutlineDropTarget
   error?: string
+  /** Adopted memo counts keyed by the heading's `from`. */
+  memoCounts?: Readonly<Record<number, number>> | undefined
   onAdoptMemo?: ((memoId: string, markerIndex: number) => void) | undefined
   onInsertMemo?: (memoId: string, beforeFrom?: number) => void
   proposalState?: OutlineProposalState
@@ -75,6 +77,7 @@ function OutlineRow({
   bodyLength,
   allHeadings,
   active,
+  memoCount,
   dropTarget,
   onMemoDropTargetChange,
   openMenu,
@@ -90,6 +93,7 @@ function OutlineRow({
   bodyLength: number
   allHeadings: FlatHeading[]
   active: boolean
+  memoCount: number
   dropTarget: OutlineDropTarget | undefined
   onMemoDropTargetChange: (target: OutlineDropTarget | undefined) => void
   openMenu: boolean
@@ -105,6 +109,7 @@ function OutlineRow({
   const [localDrop, setLocalDrop] =
     useState<Extract<OutlineDropTarget, { kind: 'move' }>>()
   const [menuOpen, setMenuOpen] = useState(openMenu)
+  const handleSize = useCoarsePointer() ? '44px' : '24px'
   const previousHeading = siblingHeading(allHeadings, heading.from, 'previous')
   const nextHeading = siblingHeading(allHeadings, heading.from, 'next')
 
@@ -215,104 +220,123 @@ function OutlineRow({
   const isTarget = target?.from === heading.from
   const isMemoTarget =
     dropTarget?.kind === 'memo-heading' && dropTarget.from === heading.from
+  const text = heading.text || '無題の見出し'
+  const handle = (
+    <>
+      <button
+        aria-expanded={menuOpen}
+        aria-haspopup="menu"
+        aria-label={`Move ${heading.text || 'heading'}`}
+        className="flex shrink-0 cursor-grab touch-none items-center justify-center text-xs text-muted-foreground select-none hover:text-foreground active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
+        onClick={(event) => {
+          event.stopPropagation()
+          setMenuOpen((isOpen) => !isOpen)
+        }}
+        onMouseDown={(event) => {
+          event.stopPropagation()
+        }}
+        ref={handleRef}
+        style={{ height: handleSize, width: handleSize }}
+        type="button"
+      >
+        ⋮⋮
+      </button>
+      <BlockMoveMenu
+        actions={[
+          {
+            label: 'Move up',
+            input: previousHeading
+              ? { from: heading.from, destination: previousHeading.from }
+              : undefined,
+          },
+          {
+            label: 'Move down',
+            input: nextHeading
+              ? {
+                  from: heading.from,
+                  destination: sectionEnd(
+                    allHeadings,
+                    nextHeading.from,
+                    bodyLength,
+                  ),
+                }
+              : undefined,
+          },
+          {
+            label: 'Make child',
+            input: previousHeading
+              ? {
+                  from: heading.from,
+                  destination: heading.from,
+                  childOf: previousHeading.from,
+                }
+              : undefined,
+          },
+        ]}
+        anchor={handleRef}
+        onMove={submitMove}
+        onOpenChange={setMenuOpen}
+        open={menuOpen}
+      />
+    </>
+  )
+
   return (
     <div
-      className={`relative ${
-        isTarget && target.placement === 'before'
-          ? 'border-t-2 border-primary'
-          : isTarget && target.placement === 'after'
-            ? 'border-b-2 border-primary'
-            : isTarget || isMemoTarget
-              ? 'rounded bg-accent/50'
-              : ''
-      }`}
+      className={cn(
+        'relative',
+        isTarget &&
+          target.placement === 'before' &&
+          'border-t-2 border-primary',
+        isTarget && target.placement === 'after' && 'border-b-2 border-primary',
+        ((isTarget && target.placement === 'child') || isMemoTarget) &&
+          'bg-accent/50',
+      )}
       data-drop-placement={isTarget ? target.placement : undefined}
       data-memo-drop-target={isMemoTarget ? 'heading' : undefined}
       ref={rowRef}
     >
-      <ListItem
-        aria-label={heading.text}
-        indent={0}
-        onSelect={onSelect}
-        selected={active}
-      >
-        <span
-          className="min-w-0 flex-1 truncate"
-          onClick={stopButtonClickPropagation}
-          style={{ paddingInlineStart: `${String(depth)}rem` }}
-        >
-          {proposal ? (
-            <SuggestionDiff
-              focused
-              inline
-              original={heading.text || 'Untitled heading'}
-              replacement={headingText(proposal.replacement)}
-              {...proposalDiffActions(
-                proposal,
-                onProposalAccept,
-                onProposalReject,
-              )}
-            />
-          ) : (
-            heading.text || 'Untitled heading'
-          )}
-        </span>
-        <button
-          aria-expanded={menuOpen}
-          aria-haspopup="menu"
-          aria-label={`Move ${heading.text || 'heading'}`}
-          className="cursor-grab touch-none select-none rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
-          onClick={(event) => {
-            event.stopPropagation()
-            setMenuOpen((isOpen) => !isOpen)
-          }}
-          onMouseDown={(event) => {
-            event.stopPropagation()
-          }}
-          ref={handleRef}
-          style={{ height: '44px', minWidth: '44px', width: '44px' }}
-          type="button"
-        >
-          ⠿
-        </button>
-        <BlockMoveMenu
-          actions={[
-            {
-              label: 'Move up',
-              input: previousHeading
-                ? { from: heading.from, destination: previousHeading.from }
-                : undefined,
-            },
-            {
-              label: 'Move down',
-              input: nextHeading
-                ? {
-                    from: heading.from,
-                    destination: sectionEnd(
-                      allHeadings,
-                      nextHeading.from,
-                      bodyLength,
-                    ),
-                  }
-                : undefined,
-            },
-            {
-              label: 'Make child',
-              input: previousHeading
-                ? {
-                    from: heading.from,
-                    destination: heading.from,
-                    childOf: previousHeading.from,
-                  }
-                : undefined,
-            },
-          ]}
-          anchor={handleRef}
-          onMove={submitMove}
-          onOpenChange={setMenuOpen}
-          open={menuOpen}
+      {proposal ? (
+        <OutlineProposalRow
+          depth={depth}
+          leading={handle}
+          level={heading.level}
+          onSelect={onSelect}
+          original={text}
+          proposal={proposal}
+          selected={active}
+          {...proposalHandlers(onProposalAccept, onProposalReject)}
         />
-      </ListItem>
+      ) : (
+        <div
+          aria-label={heading.text}
+          aria-selected={active}
+          className={cn(
+            'flex min-h-8 w-full items-center gap-2 py-1 pe-2 text-left text-sm hover:bg-accent/50 pointer-coarse:min-h-11',
+            active && 'bg-accent hover:bg-accent',
+          )}
+          onClick={onSelect}
+          onMouseDown={(event) => {
+            event.preventDefault()
+          }}
+          role="option"
+          style={{ paddingInlineStart: outlineIndent(depth) }}
+        >
+          {handle}
+          <span aria-hidden="true" className="font-mono text-xs text-primary">
+            {'#'.repeat(heading.level)}
+          </span>
+          <span className="min-w-0 flex-1 truncate">{text}</span>
+          {memoCount > 0 ? (
+            <span
+              className="font-mono text-xs text-muted-foreground"
+              title="採用済みのメモ"
+            >
+              メモ {memoCount}
+            </span>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }
@@ -324,6 +348,7 @@ export function OutlineView({
   openMenuFrom,
   dropTarget,
   error,
+  memoCounts,
   onAdoptMemo,
   onInsertMemo,
   proposalState,
@@ -372,16 +397,28 @@ export function OutlineView({
       aria-label="Article outline"
       className="flex min-w-0 flex-col gap-2"
     >
-      <h2 className="text-sm font-semibold">Outline</h2>
+      <h2 className="px-2 text-xs font-bold tracking-wide text-muted-foreground">
+        構成
+      </h2>
       {error !== undefined && error.length > 0 ? (
-        <p role="alert">{error}</p>
+        <p className="px-2 text-xs text-destructive" role="alert">
+          {error}
+        </p>
       ) : null}
       {proposalState?.generating === true ? (
-        <SuggestionDiff generating original="" replacement="" />
+        <p
+          aria-live="polite"
+          className="px-2 text-xs text-muted-foreground"
+          role="status"
+        >
+          構成の修正案を作成中…
+        </p>
       ) : null}
       {entries.length === 0 ? (
         <>
-          <p className="text-sm text-muted-foreground">No headings yet.</p>
+          <p className="px-2 text-sm text-muted-foreground">
+            本文に見出しを書くと、ここに並びます。
+          </p>
           <OutlineDropGap
             active={isGapActive()}
             bodyLength={bodyLength}
@@ -412,6 +449,7 @@ export function OutlineView({
                     dropTarget?.kind === 'move' ? dropTarget : gapDropTarget
                   }
                   heading={entry.heading}
+                  memoCount={memoCounts?.[entry.heading.from] ?? 0}
                   onAdoptMemo={onAdoptMemo}
                   onMemoDropTargetChange={setLocalGapDropTarget}
                   onMove={onMove}
@@ -429,6 +467,7 @@ export function OutlineView({
               <OutlineProposalRow
                 depth={entry.depth}
                 key={entry.proposal.id}
+                level={headingLevel(entry.proposal.replacement)}
                 {...handlers}
                 proposal={entry.proposal}
               />
@@ -443,6 +482,11 @@ export function OutlineView({
           />
         </List>
       )}
+      {suggestions.length > 0 ? (
+        <p className="px-2 text-xs leading-relaxed text-muted-foreground">
+          緑の破線は構成の修正案です。本文には入っていません。入力が止まったときだけ更新されます。
+        </p>
+      ) : null}
     </section>
   )
 }

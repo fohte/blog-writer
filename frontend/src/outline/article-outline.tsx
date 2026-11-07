@@ -13,6 +13,7 @@ import {
   insertMemoAsHeading,
   memoAdoptionErrorMessage,
 } from '#memos/adoption'
+import { useMemos } from '#memos/use-memos'
 import type { MoveHistory } from '#outline/move-history'
 import type { OutlineProposalState } from '#proposals/outline'
 
@@ -58,6 +59,15 @@ export function ArticleOutline({
   onProposalReject,
 }: ArticleOutlineProps) {
   const { headings, markdown } = useArticleHeadings(doc)
+  const { memos } = useMemos(doc)
+  const memoCounts = useMemo(() => {
+    const counts: Record<number, number> = {}
+    for (const { state } of memos) {
+      if (state.kind !== 'adopted') continue
+      counts[state.heading.from] = (counts[state.heading.from] ?? 0) + 1
+    }
+    return counts
+  }, [memos])
   const [error, setError] = useState<string>()
   const activeHeadingCompartment = useMemo(() => new Compartment(), [])
   const headingsRef = useRef(headings)
@@ -176,6 +186,7 @@ export function ArticleOutline({
         : { activeFrom: selectedHeadingFrom })}
       {...(error === undefined ? {} : { error })}
       {...(proposalState === undefined ? {} : { proposalState })}
+      memoCounts={memoCounts}
       onMove={handleMove}
       onAdoptMemo={handleAdoptMemo}
       onInsertMemo={handleInsertMemo}

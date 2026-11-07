@@ -40,6 +40,11 @@ export const SelectedHeading: Story = {
   args: { activeFrom: 13 },
 }
 
+export const AdoptedMemoCounts: Story = {
+  name: 'the outline shows how many memos each heading has adopted.',
+  args: { memoCounts: { 0: 2, 23: 1 } },
+}
+
 export const OpenMoveMenu: Story = {
   name: 'the outline shows the available moves for a heading.',
   args: { openMenuFrom: 13 },
