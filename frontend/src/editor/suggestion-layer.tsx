@@ -1,6 +1,5 @@
 import { indentMore, isolateHistory } from '@codemirror/commands'
 import {
-  type ChangeSet,
   type Extension,
   Prec,
   StateEffect,
@@ -10,160 +9,53 @@ import {
 import { EditorView, keymap, ViewPlugin } from '@codemirror/view'
 import { err, ok, type Result } from 'neverthrow'
 
+import {
+  focusForSelection,
+  hasOverlappingRange,
+  isRangeValid,
+  mapRange,
+  rangesOverlap,
+  type SuggestionDecision,
+  type SuggestionLayerError,
+  type SuggestionLayerState,
+  type SuggestionPosition,
+  type TextSuggestion,
+  validateSuggestions,
+} from '#editor/suggestion-layer-range'
 import { createSuggestionDecorations } from '#editor/suggestion-layer-view'
 
-export interface TextSuggestion {
-  id: string
-  from: number
-  to: number
-  replacement: string
-}
+export type {
+  SuggestionDecision,
+  SuggestionLayerError,
+  SuggestionLayerState,
+  SuggestionPosition,
+  TextSuggestion,
+} from '#editor/suggestion-layer-range'
 
-export interface SuggestionPosition {
-  from: number
-  to: number
-}
+type ScopedEffect<Value> = { scope: symbol; value: Value }
 
-export type SuggestionDecision = 'accept' | 'reject'
+const mountedSuggestionLayers = new WeakMap<
+  EditorView,
+  Set<SuggestionLayerController>
+>()
 
-export type SuggestionLayerError =
-  | { type: 'invalid-range'; id: string }
-  | { type: 'overlapping-ranges' }
-  | { type: 'not-mounted' }
-
-export interface SuggestionLayerState {
-  suggestions: readonly TextSuggestion[]
-  inFlight: SuggestionPosition | null
-  focusedId: string | null
-}
-
-const replaceSuggestions = StateEffect.define<readonly TextSuggestion[]>()
-const replaceInFlight = StateEffect.define<SuggestionPosition | null>()
-const removeSuggestion = StateEffect.define<string>()
-
-function changedRangeTouchesSuggestion(
-  from: number,
-  to: number,
-  changedFrom: number,
-  changedTo: number,
-): boolean {
-  if (changedFrom === changedTo) {
-    return from === to
-      ? changedFrom === from
-      : changedFrom > from && changedFrom < to
-  }
-  if (from === to) {
-    return changedFrom === changedTo
-      ? changedFrom === from
-      : changedFrom < from && changedTo > from
-  }
-  return changedFrom < to && changedTo > from
-}
-
-function mapRange(
-  range: SuggestionPosition,
-  changes: ChangeSet,
-  changedRanges: readonly [number, number][],
-): SuggestionPosition | null {
-  if (
-    changedRanges.some(([from, to]) =>
-      changedRangeTouchesSuggestion(range.from, range.to, from, to),
-    )
-  ) {
-    return null
-  }
-  return {
-    from: changes.mapPos(range.from, 1),
-    to: changes.mapPos(range.to, -1),
-  }
-}
-
-function isRangeValid(from: number, to: number, docLength: number): boolean {
-  return (
-    Number.isInteger(from) &&
-    Number.isInteger(to) &&
-    from >= 0 &&
-    to >= from &&
-    to <= docLength
-  )
-}
-
-function orderSuggestions(
-  suggestions: readonly TextSuggestion[],
-): TextSuggestion[] {
-  return [...suggestions].sort((a, b) => a.from - b.from || a.to - b.to)
-}
-
-function rangesOverlap(
-  first: SuggestionPosition,
-  second: SuggestionPosition,
-): boolean {
-  if (first.from === first.to) {
-    return second.from === second.to
-      ? first.from === second.from
-      : first.from >= second.from && first.from < second.to
-  }
-  if (second.from === second.to) {
-    return second.from >= first.from && second.from < first.to
-  }
-  return first.from < second.to && second.from < first.to
-}
-
-function hasOverlappingRange(
-  suggestions: readonly SuggestionPosition[],
-  position: SuggestionPosition | null | undefined,
-): boolean {
-  return (
-    position != null &&
-    suggestions.some((range) => rangesOverlap(range, position))
-  )
-}
-
-function validateSuggestions(
-  suggestions: readonly TextSuggestion[],
-  docLength: number,
-): Result<TextSuggestion[], SuggestionLayerError> {
-  const ids = new Set<string>()
-  for (const suggestion of suggestions) {
-    if (
-      !isRangeValid(suggestion.from, suggestion.to, docLength) ||
-      ids.has(suggestion.id)
-    ) {
-      return err({ type: 'invalid-range', id: suggestion.id })
-    }
-    ids.add(suggestion.id)
-  }
-
-  const ordered = orderSuggestions(suggestions)
-  for (const [index, current] of ordered.slice(1).entries()) {
-    const previous = ordered[index]
-    if (previous && rangesOverlap(previous, current)) {
-      return err({ type: 'overlapping-ranges' })
-    }
-  }
-  return ok(ordered)
-}
-
-function focusForSelection(
-  suggestions: readonly TextSuggestion[],
-  head: number,
-): string | null {
-  return (
-    suggestions.find(
-      (suggestion) => head >= suggestion.from && head <= suggestion.to,
-    )?.id ?? null
-  )
-}
+const replaceSuggestions =
+  StateEffect.define<ScopedEffect<readonly TextSuggestion[]>>()
+const replaceInFlight =
+  StateEffect.define<ScopedEffect<SuggestionPosition | null>>()
+const removeSuggestion = StateEffect.define<ScopedEffect<string>>()
 
 export interface SuggestionLayerOptions {
   initialSuggestions?: readonly TextSuggestion[]
   initialInFlight?: SuggestionPosition
   onResolve?: (suggestion: TextSuggestion, decision: SuggestionDecision) => void
   onCancelInFlight?: () => void
+  onInFlightRangeEdited?: () => void
 }
 
 export class SuggestionLayerController {
   readonly extension: Extension
+  private readonly effectScope = Symbol()
   private view: EditorView | null = null
   private readonly stateField: StateField<SuggestionLayerState>
   private nextGeneratedId = 0
@@ -202,16 +94,27 @@ export class SuggestionLayerController {
         let hasEffects = false
 
         for (const effect of transaction.effects) {
-          if (effect.is(replaceSuggestions)) {
-            suggestions = effect.value
+          if (
+            effect.is(replaceSuggestions) &&
+            effect.value.scope === this.effectScope
+          ) {
+            suggestions = effect.value.value
             hasEffects = true
           }
-          if (effect.is(replaceInFlight)) {
-            inFlight = effect.value
+          if (
+            effect.is(replaceInFlight) &&
+            effect.value.scope === this.effectScope
+          ) {
+            inFlight = effect.value.value
             hasEffects = true
           }
-          if (effect.is(removeSuggestion)) {
-            suggestions = suggestions.filter(({ id }) => id !== effect.value)
+          if (
+            effect.is(removeSuggestion) &&
+            effect.value.scope === this.effectScope
+          ) {
+            suggestions = suggestions.filter(
+              ({ id }) => id !== effect.value.value,
+            )
             hasEffects = true
           }
         }
@@ -265,10 +168,38 @@ export class SuggestionLayerController {
       this.stateField,
       ViewPlugin.define((view) => {
         this.view = view
+        const viewLayers = mountedSuggestionLayers.get(view)
+        if (viewLayers) {
+          viewLayers.add(this)
+        } else {
+          mountedSuggestionLayers.set(view, new Set([this]))
+        }
         return {
           destroy: () => {
-            if (this.view === view) this.view = null
+            const viewLayers = mountedSuggestionLayers.get(view)
+            viewLayers?.delete(this)
+            if (viewLayers?.size === 0) mountedSuggestionLayers.delete(view)
+            if (this.view === view) {
+              this.view = null
+            }
           },
+        }
+      }),
+      EditorView.updateListener.of((update) => {
+        const previousInFlight = update.startState.field(
+          this.stateField,
+          false,
+        )?.inFlight
+        const nextInFlight = update.state.field(
+          this.stateField,
+          false,
+        )?.inFlight
+        if (
+          update.docChanged &&
+          previousInFlight != null &&
+          nextInFlight === null
+        ) {
+          this.options.onInFlightRangeEdited?.()
         }
       }),
       Prec.highest(
@@ -303,26 +234,43 @@ export class SuggestionLayerController {
       return err({ type: 'overlapping-ranges' })
     }
 
-    view.dispatch({ effects: replaceSuggestions.of(validation.value) })
+    view.dispatch({
+      effects: replaceSuggestions.of({
+        scope: this.effectScope,
+        value: validation.value,
+      }),
+    })
     return ok(undefined)
   }
 
-  resolveInFlight(replacement: string): Result<void, SuggestionLayerError> {
+  resolveInFlight(
+    replacement: string | ((position: SuggestionPosition) => string),
+  ): Result<void, SuggestionLayerError> {
     const view = this.view
     const state = view?.state.field(this.stateField, false)
     if (!view || !state?.inFlight) return ok(undefined)
 
     const id = this.createSuggestionId(state.suggestions)
+    const replacementText =
+      typeof replacement === 'string'
+        ? replacement
+        : replacement(state.inFlight)
     // The pending range is itself the replacement, so it is not a conflict.
     const validation = validateSuggestions(
-      [...state.suggestions, { ...state.inFlight, id, replacement }],
+      [
+        ...state.suggestions,
+        { ...state.inFlight, id, replacement: replacementText },
+      ],
       view.state.doc.length,
     )
     if (validation.isErr()) return err(validation.error)
     view.dispatch({
       effects: [
-        replaceSuggestions.of(validation.value),
-        replaceInFlight.of(null),
+        replaceSuggestions.of({
+          scope: this.effectScope,
+          value: validation.value,
+        }),
+        replaceInFlight.of({ scope: this.effectScope, value: null }),
       ],
     })
     return ok(undefined)
@@ -344,8 +292,31 @@ export class SuggestionLayerController {
     if (hasOverlappingRange(suggestions, position)) {
       return err({ type: 'overlapping-ranges' })
     }
-    view.dispatch({ effects: replaceInFlight.of(position) })
+    view.dispatch({
+      effects: replaceInFlight.of({ scope: this.effectScope, value: position }),
+    })
     return ok(undefined)
+  }
+
+  overlapsOtherLayer(position: SuggestionPosition): boolean {
+    const view = this.view
+    if (!view) return false
+
+    for (const layer of mountedSuggestionLayers.get(view) ?? []) {
+      if (layer === this) continue
+      const state = view.state.field(layer.stateField, false)
+      if (!state) continue
+      if (
+        state.suggestions.some((suggestion) =>
+          rangesOverlap(suggestion, position),
+        ) ||
+        (state.inFlight !== null && rangesOverlap(state.inFlight, position))
+      ) {
+        return true
+      }
+    }
+
+    return false
   }
 
   accept(id: string): void {
@@ -359,7 +330,7 @@ export class SuggestionLayerController {
         to: suggestion.to,
         insert: suggestion.replacement,
       },
-      effects: removeSuggestion.of(id),
+      effects: removeSuggestion.of({ scope: this.effectScope, value: id }),
       annotations: [
         Transaction.userEvent.of('input.type'),
         isolateHistory.of('full'),
@@ -373,7 +344,9 @@ export class SuggestionLayerController {
     const view = this.view
     const suggestion = this.findSuggestion(id)
     if (!view || !suggestion) return
-    view.dispatch({ effects: removeSuggestion.of(id) })
+    view.dispatch({
+      effects: removeSuggestion.of({ scope: this.effectScope, value: id }),
+    })
     view.focus()
     this.options.onResolve?.(suggestion, 'reject')
   }

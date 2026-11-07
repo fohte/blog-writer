@@ -3,6 +3,7 @@ import { Input } from '@fohte/ui/input'
 import { Panel } from '@fohte/ui/panel'
 import { SegmentedControl } from '@fohte/ui/segmented-control'
 
+import { FileSyncSettingsSection } from '#components/file-sync-settings-section'
 import type { LlmRoute, LlmSettings } from '#lib/llm-settings'
 
 type LlmSettingsViewProps = {
@@ -14,6 +15,8 @@ type LlmSettingsViewProps = {
   onBack: () => void
   onRouteChange: (route: LlmRoute) => void
   onBridgeUrlChange: (url: string) => void
+  fileSyncDirectory?: string | undefined
+  fileSyncConfigurationError?: string | undefined
 }
 
 const routeOptions = [
@@ -30,6 +33,8 @@ export function LlmSettingsView({
   onBack,
   onRouteChange,
   onBridgeUrlChange,
+  fileSyncDirectory,
+  fileSyncConfigurationError,
 }: LlmSettingsViewProps) {
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
@@ -100,6 +105,10 @@ export function LlmSettingsView({
           <p role="alert">Settings could not be saved on this device.</p>
         ) : null}
       </section>
+      <FileSyncSettingsSection
+        directory={fileSyncDirectory}
+        error={fileSyncConfigurationError}
+      />
     </main>
   )
 }

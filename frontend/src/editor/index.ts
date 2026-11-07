@@ -14,6 +14,12 @@ export {
   type TextSuggestion,
 } from '#editor/suggestion-layer'
 export {
+  BodyRequestAccessory,
+  type BodyRequestAccessoryContext,
+  type BodyRequestEditorContext,
+  bodyRequestExtensions,
+} from '#proposals/body-request'
+export {
   createOutlineProposalExtension,
   OutlineProposalAccessory,
   type OutlineProposalAccessoryContext,
