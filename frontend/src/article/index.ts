@@ -11,7 +11,7 @@ export {
   SourceAlreadyExistsError,
   SourceNotFoundError,
 } from '#article/errors'
-export type { AddEvidenceInput, SetEvidenceInput } from '#article/evidence'
+export type { AddEvidenceInput } from '#article/evidence'
 export {
   addEvidence,
   listEvidence,

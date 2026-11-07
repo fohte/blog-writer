@@ -15,10 +15,7 @@ import type {
   TrackedSuggestionRange,
 } from '#editor/suggestion-layer'
 import { loadLlmSettings } from '#lib/llm-settings'
-import {
-  type ClaimEvidenceResult,
-  judgeClaimEvidenceFromSources,
-} from '#research/claim-evidence'
+import { judgeClaimEvidenceFromSources } from '#research/claim-evidence'
 import {
   claimEvidenceExtension,
   claimEvidenceLayerOverlaps,
@@ -29,9 +26,14 @@ import {
   setClaimEvidenceSuggestion,
 } from '#research/claim-evidence-layer'
 import {
-  type SavedResearchSource,
-  saveResearchJobResult,
-} from '#research/research-from-heading'
+  rollbackClaimEvidenceResult,
+  snapshotClaimEvidence,
+} from '#research/claim-evidence-rollback'
+import {
+  type ClaimEvidenceTarget,
+  selectedSource,
+} from '#research/claim-evidence-utils'
+import { saveResearchJobResult } from '#research/research-from-heading'
 import {
   acquireResearchLock,
   releaseResearchLock,
@@ -39,32 +41,10 @@ import {
   runResearchJob,
 } from '#research/research-job'
 
-export type ClaimEvidenceProgressState = {
+type ClaimEvidenceProgressState = {
   status: ResearchProgressStatus
   queries: string[]
   error?: string
-}
-
-type ClaimEvidenceTarget = {
-  articleId: string
-  doc: Y.Doc
-  claim: string
-  range: { from: number; to: number }
-  before?: string
-  after?: string
-}
-
-function selectedSource(
-  result: ClaimEvidenceResult,
-  sources: SavedResearchSource[],
-) {
-  if (result.quote)
-    return sources.find(
-      ({ id, researchId }) =>
-        id === result.quote?.source_id ||
-        researchId === result.quote?.source_id,
-    )
-  return sources[0]
 }
 
 export function useClaimEvidence() {
@@ -162,7 +142,7 @@ export function useClaimEvidence() {
       void judgeClaimEvidenceFromSources(
         fetch,
         adoptedClaim,
-        metadata.sourceBodies,
+        metadata.sourceBodies.filter(({ id }) => id === metadata.sourceId),
         settings.value,
         controller.signal,
         metadata.before,
@@ -182,7 +162,10 @@ export function useClaimEvidence() {
             const latestClaim = getBody(metadata.doc)
               .toJSON()
               .slice(latestRange.from, latestRange.to)
-            const source = selectedSource(result, metadata.sources)
+            const source = selectedSource(
+              result,
+              metadata.sources.filter(({ id }) => id === metadata.sourceId),
+            )
             if (latestClaim === adoptedClaim && (source || !result.quote))
               setEvidence(metadata.doc, {
                 from: latestRange.from,
@@ -338,24 +321,26 @@ export function useClaimEvidence() {
             onRangeEdited,
           )
           if (!savedRange || controller.signal.aborted)
-            return errAsync(
+            return rollbackClaimEvidenceResult(
+              sources,
               new ResearchJobInterruptedError('調査を中断しました。'),
             )
           const currentClaim = getBody(doc)
             .toJSON()
             .slice(savedRange.from, savedRange.to)
           if (currentClaim !== claim)
-            return errAsync(
+            return rollbackClaimEvidenceResult(
+              sources,
               new ResearchJobInterruptedError('調査を中断しました。'),
             )
-          const source = selectedSource(judgment, sources)
+          const source = selectedSource(judgment, sources.sources)
           if (!source && judgment.verdict !== 'insufficient')
-            return errAsync(new Error('判定に使える資料がありません。'))
+            return rollbackClaimEvidenceResult(
+              sources,
+              new Error('判定に使える資料がありません。'),
+            )
           const checkedAt = new Date().toISOString()
-          const existing = listEvidenceOverlapping(doc, savedRange).filter(
-            ({ currentClaim: evidenceClaim }) => evidenceClaim === claim,
-          )
-          for (const item of existing) removeEvidence(doc, item.id)
+          const previousEvidence = snapshotClaimEvidence(doc, savedRange, claim)
           const evidenceResult = setEvidence(doc, {
             from: savedRange.from,
             to: savedRange.to,
@@ -365,7 +350,12 @@ export function useClaimEvidence() {
             verdict: judgment.verdict,
             checkedAt,
           })
-          if (evidenceResult.isErr()) return errAsync(evidenceResult.error)
+          if (evidenceResult.isErr())
+            return rollbackClaimEvidenceResult(sources, evidenceResult.error)
+          for (const item of previousEvidence) {
+            if (item.id !== evidenceResult.value.id)
+              removeEvidence(doc, item.id)
+          }
 
           isFinishing = true
           clearClaimEvidenceInFlight(doc, resolveSuggestion, onRangeEdited)
@@ -383,12 +373,12 @@ export function useClaimEvidence() {
               checkedAt,
               ...(before === undefined ? {} : { before }),
               ...(after === undefined ? {} : { after }),
-              sourceBodies: sources.flatMap((saved) =>
+              sourceBodies: sources.sources.flatMap((saved) =>
                 saved.body === undefined
                   ? []
                   : [{ id: saved.id, body: saved.body }],
               ),
-              sources,
+              sources: sources.sources,
               evidenceIds: listEvidenceOverlapping(doc, savedRange).map(
                 ({ id }) => id,
               ),
@@ -407,7 +397,15 @@ export function useClaimEvidence() {
               resolveSuggestion,
             )
             if (suggestionResult.isErr())
-              return errAsync(new Error('修正案を本文に表示できませんでした。'))
+              return rollbackClaimEvidenceResult(
+                sources,
+                new Error('修正案を本文に表示できませんでした。'),
+                {
+                  doc,
+                  currentEvidenceId: evidenceResult.value.id,
+                  previousEvidence,
+                },
+              )
           }
           return okAsync(undefined)
         })
@@ -434,9 +432,7 @@ export function useClaimEvidence() {
           releaseResearchLock(articleId, controller)
           isFinishing = true
           clearClaimEvidenceInFlight(doc, resolveSuggestion, onRangeEdited)
-          const interrupted =
-            error instanceof ResearchJobInterruptedError ||
-            controller.signal.aborted
+          const interrupted = error instanceof ResearchJobInterruptedError
           patchProgress(articleId, {
             status: interrupted ? 'interrupted' : 'failed',
             ...(interrupted && controller.signal.aborted

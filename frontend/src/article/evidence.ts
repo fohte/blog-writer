@@ -16,7 +16,7 @@ export type AddEvidenceInput = Omit<Evidence, 'from' | 'to'> & {
   to: number
 }
 
-export type SetEvidenceInput = Omit<AddEvidenceInput, 'id'>
+type SetEvidenceInput = Omit<AddEvidenceInput, 'id'>
 
 function getEvidenceMap(doc: Y.Doc): Y.Map<EvidenceData> {
   return doc.getMap('evidence')

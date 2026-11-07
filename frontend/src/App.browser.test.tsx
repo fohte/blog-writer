@@ -877,7 +877,7 @@ describe('the application research and evidence integrations', () => {
       doc,
       `# Research topic\n\n${beforeContext}${claim}${afterContext}\n`,
     )
-    const sourceId = 'source-research-a'
+    const sourceId = 'source-main'
     const savedSourceId = 'source-existing'
     addSource(doc, {
       id: savedSourceId,
@@ -888,6 +888,18 @@ describe('the application research and evidence integrations', () => {
       checkedAt: null,
       status: 'unavailable',
       summary: '',
+    })._unsafeUnwrap()
+    const originalEvidenceId = 'evidence-original'
+    const originalCheckedAt = '2026-01-01T00:00:00.000Z'
+    addEvidence(doc, {
+      id: originalEvidenceId,
+      from: getBody(doc).toJSON().indexOf(claim),
+      to: getBody(doc).toJSON().indexOf(claim) + claim.length,
+      claim,
+      sourceId: savedSourceId,
+      quote: 'An earlier quote.',
+      verdict: 'outdated',
+      checkedAt: originalCheckedAt,
     })._unsafeUnwrap()
     let researchRequest: unknown
     let judgedRequest: unknown
@@ -915,6 +927,13 @@ describe('the application research and evidence integrations', () => {
               },
               sources: [
                 {
+                  id: 'source-other',
+                  url: 'https://example.invalid/other',
+                  title: 'Other source',
+                  body: 'An unrelated source quote.',
+                  status: 'available',
+                },
+                {
                   id: sourceId,
                   url: 'https://example.invalid/research',
                   final_url: 'https://example.invalid/research',
@@ -927,7 +946,7 @@ describe('the application research and evidence integrations', () => {
           },
         ])
       }
-      if (url.includes('/source-bodies/' + savedSourceId)) {
+      if (url.includes('/source-bodies/')) {
         if (url.endsWith('/save-if-unchanged'))
           return new Response(null, { status: 204 })
         return new Response('', { status: 404 })
@@ -941,8 +960,8 @@ describe('the application research and evidence integrations', () => {
                 {
                   event: 'result',
                   data: {
-                    verdict: 'supported',
-                    quote: { source_id: savedSourceId, text: replacement },
+                    verdict: 'insufficient',
+                    quote: null,
                     suggestion: null,
                   },
                 },
@@ -961,16 +980,16 @@ describe('the application research and evidence integrations', () => {
         throw new Error('The source note did not render')
     })
     const sourceNote = host?.querySelector('.suggestion-diff-note')?.textContent
-    const originalCheckedAt = listEvidence(doc)[0]?.checkedAt
+    const checkedAtBeforeAcceptance = listEvidence(doc)[0]?.checkedAt
 
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
     })
     await waitFor(() => {
       if (
-        listEvidence(doc)[0]?.verdict !== 'supported' ||
+        listEvidence(doc)[0]?.verdict !== 'insufficient' ||
         host?.querySelector('.cm-evidence-marker')?.className !==
-          'cm-evidence-marker cm-evidence-supported'
+          'cm-evidence-marker cm-evidence-needs-review'
       )
         throw new Error('The adopted claim was not rechecked')
     })
@@ -986,7 +1005,8 @@ describe('the application research and evidence integrations', () => {
         status,
       })),
       evidence: listEvidence(doc).map(
-        ({ currentClaim, edited, quote, sourceId, verdict }) => ({
+        ({ id, currentClaim, edited, quote, sourceId, verdict }) => ({
+          id: id === originalEvidenceId ? 'original' : 'adopted',
           currentClaim,
           edited,
           quote,
@@ -997,7 +1017,8 @@ describe('the application research and evidence integrations', () => {
       markers: [...(host?.querySelectorAll('.cm-evidence-marker') ?? [])].map(
         ({ className }) => className,
       ),
-      checkedAtUpdated: listEvidence(doc)[0]?.checkedAt !== originalCheckedAt,
+      checkedAtUpdated:
+        listEvidence(doc)[0]?.checkedAt !== checkedAtBeforeAcceptance,
     })
     expect(readResult()).toEqual({
       body: `# Research topic\n\n${beforeContext}${replacement}${afterContext}\n`,
@@ -1020,18 +1041,124 @@ describe('the application research and evidence integrations', () => {
           url: 'https://example.invalid/research',
           status: 'ready',
         },
+        {
+          title: 'Other source',
+          url: 'https://example.invalid/other',
+          status: 'ready',
+        },
       ],
       evidence: [
         {
+          id: 'adopted',
           currentClaim: replacement,
           edited: false,
-          quote: replacement,
+          quote: '',
           sourceId: savedSourceId,
+          verdict: 'insufficient',
+        },
+      ],
+      markers: ['cm-evidence-marker cm-evidence-needs-review'],
+      checkedAtUpdated: true,
+    })
+  })
+
+  it('updates existing evidence when checking a claim again', async () => {
+    const claim = 'A sentence to edit.'
+    const sourceId = 'source-existing'
+    const evidenceId = 'evidence-original'
+    const checkedAt = '2026-01-01T00:00:00.000Z'
+    addSource(doc, {
+      id: sourceId,
+      kind: 'url',
+      title: 'Existing source',
+      url: 'https://example.invalid/research',
+      fileName: null,
+      checkedAt: null,
+      status: 'ready',
+      summary: '',
+    })._unsafeUnwrap()
+    const from = getBody(doc).toJSON().indexOf(claim)
+    addEvidence(doc, {
+      id: evidenceId,
+      from,
+      to: from + claim.length,
+      claim,
+      sourceId,
+      quote: 'An earlier quote.',
+      verdict: 'outdated',
+      checkedAt,
+    })._unsafeUnwrap()
+    installFetch((url) => {
+      if (url === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'supported',
+                  quote: { source_id: sourceId, text: 'A verified quote.' },
+                  suggestion: null,
+                },
+              },
+              sources: [
+                {
+                  id: sourceId,
+                  url: 'https://example.invalid/research',
+                  title: 'Existing source',
+                  status: 'available',
+                  body: 'A verified quote.',
+                },
+              ],
+            },
+          },
+        ])
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openBodyRequestPreset(claim, '根拠を確かめる')
+    await waitFor(() => {
+      if (
+        host?.querySelector('.cm-evidence-marker')?.className !==
+        'cm-evidence-marker cm-evidence-supported'
+      )
+        throw new Error('The existing evidence was not updated')
+    })
+
+    const readResult = () => ({
+      body: getBody(doc).toJSON(),
+      evidence: listEvidence(doc).map(
+        ({ id, currentClaim, sourceId: evidenceSourceId, quote, verdict }) => ({
+          id: id === evidenceId ? 'original' : 'new',
+          currentClaim,
+          sourceId: evidenceSourceId,
+          quote,
+          verdict,
+          checkedAt:
+            listEvidence(doc)[0]?.checkedAt === checkedAt
+              ? 'unchanged'
+              : 'updated',
+        }),
+      ),
+      markers: [...(host?.querySelectorAll('.cm-evidence-marker') ?? [])].map(
+        ({ className }) => className,
+      ),
+    })
+    expect(readResult()).toEqual({
+      body: '# Research topic\n\nA sentence to edit.\n',
+      evidence: [
+        {
+          id: 'original',
+          currentClaim: claim,
+          sourceId,
+          quote: 'A verified quote.',
           verdict: 'supported',
+          checkedAt: 'updated',
         },
       ],
       markers: ['cm-evidence-marker cm-evidence-supported'],
-      checkedAtUpdated: true,
     })
   })
 
@@ -1544,6 +1671,97 @@ describe('the application research and evidence integrations', () => {
           body: { expected_body: 'Second source body.', restore_body: null },
         },
       ],
+      sources: [],
+      evidence: [],
+      interruptedMessage: interruptedText,
+    })
+  })
+
+  it('rolls back saved sources when cancelled after the document save', async () => {
+    const claim = 'A sentence to edit.'
+    const sourceId = 'source-saved-before-cancel'
+    const rollbackRequests: Array<{ id: string; body: unknown }> = []
+    let requestSignal: AbortSignal | undefined
+    let cancellationSent = false
+    const sources = doc.getMap('sources')
+    const cancelAfterSourceSave = () => {
+      if (cancellationSent || !sources.has(sourceId)) return
+      cancellationSent = true
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      )
+    }
+    sources.observeDeep(cancelAfterSourceSave)
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs') {
+        requestSignal = init.signal ?? undefined
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'supported',
+                  quote: { source_id: sourceId, text: 'A verified quote.' },
+                  suggestion: null,
+                },
+              },
+              sources: [
+                {
+                  id: sourceId,
+                  url: 'https://example.invalid/research',
+                  title: 'Research source',
+                  body: 'A verified quote.',
+                  status: 'available',
+                },
+              ],
+            },
+          },
+        ])
+      }
+      if (url.includes('/source-bodies/' + sourceId)) {
+        if (url.endsWith('/save-if-unchanged'))
+          return new Response(null, { status: 204 })
+        if (url.endsWith('/restore')) {
+          rollbackRequests.push({
+            id: sourceId,
+            body:
+              typeof init.body === 'string'
+                ? (JSON.parse(init.body) as unknown)
+                : init.body,
+          })
+          return new Response(null, { status: 204 })
+        }
+        return new Response('', { status: 404 })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openBodyRequestPreset(claim, '根拠を確かめる')
+    const interruptedText = '調査を中断しました。資料は保存されていません。'
+    await waitFor(() => {
+      if (exactRoleText('status', interruptedText) !== interruptedText)
+        throw new Error('The post-save cancellation was not shown')
+    })
+    sources.unobserveDeep(cancelAfterSourceSave)
+
+    const readResult = () => ({
+      rollbackRequests,
+      requestAborted: requestSignal?.aborted,
+      sources: listSources(doc),
+      evidence: listEvidence(doc),
+      interruptedMessage: exactRoleText('status', interruptedText),
+    })
+    expect(readResult()).toEqual({
+      rollbackRequests: [
+        {
+          id: sourceId,
+          body: { expected_body: 'A verified quote.', restore_body: null },
+        },
+      ],
+      requestAborted: true,
       sources: [],
       evidence: [],
       interruptedMessage: interruptedText,
