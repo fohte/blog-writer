@@ -53,3 +53,11 @@ export const ConversionError: Story = {
     initialError: 'MDX 形式に変換できませんでした。',
   },
 }
+
+export const DestinationListError: Story = {
+  name: 'the export options show a destination loading error',
+  args: {
+    defaultOpen: true,
+    destinationError: '公開先を読み込めませんでした。',
+  },
+}

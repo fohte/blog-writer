@@ -59,27 +59,68 @@ export function ArticlePublishContainer({
   client,
   onDiffChange,
 }: ArticlePublishContainerProps) {
-  const initialDestinationId = article.exportDestinationId
-  const initialDestination = destinations.find(
-    ({ id }) => id === initialDestinationId,
+  const savedDestinationExists = destinations.some(
+    ({ id }) => id === article.exportDestinationId,
   )
-  const [destinationId, setDestinationId] = useState(initialDestinationId ?? '')
-  const [slug, setSlug] = useState(article.exportSlug ?? '')
-  const [frontmatter, setFrontmatter] = useState(
+  const onlyDestination =
+    destinations.length === 1 ? destinations[0] : undefined
+  const autoSelectDestination =
+    article.exportDestinationId === undefined ? onlyDestination : undefined
+  const initialDestination =
+    destinations.find(({ id }) => id === article.exportDestinationId) ??
+    autoSelectDestination
+  const initialDestinationId = initialDestination?.id
+  const initialFrontmatter =
     article.exportFrontmatter ??
-      (initialDestination === undefined
-        ? ''
-        : defaultFrontmatter(initialDestination, article)),
+    (initialDestination === undefined
+      ? ''
+      : defaultFrontmatter(initialDestination, article))
+  const [destinationId, setDestinationId] = useState<string | undefined>(
+    initialDestinationId,
   )
-  const frontmatterPersisted = useRef(article.exportFrontmatter !== undefined)
-  const initialFrontmatterNeedsPersistence = useRef(
-    article.exportFrontmatter === undefined && initialDestination !== undefined,
+  const [slug, setSlug] = useState(article.exportSlug ?? '')
+  const [frontmatter, setFrontmatter] = useState(initialFrontmatter)
+  const frontmatterPersisted = useRef(
+    article.exportFrontmatter !== undefined || initialDestination !== undefined,
+  )
+  const initialSettings = {
+    ...(autoSelectDestination === undefined
+      ? {}
+      : { exportDestinationId: autoSelectDestination.id }),
+    ...(article.exportFrontmatter !== undefined ||
+    initialDestination === undefined
+      ? {}
+      : { exportFrontmatter: initialFrontmatter }),
+  }
+  const initialSettingsToPersist = useRef(
+    Object.keys(initialSettings).length === 0 ? undefined : initialSettings,
   )
   const [body, setBody] = useState(() => readBody(doc))
   const [prepared, setPrepared] = useState<PreparedPublish>()
-  const [busy, setBusy] = useState(false)
+  const [busyAction, setBusyAction] = useState<'diff' | 'publish'>()
   const [error, setError] = useState<string>()
   const [publishedUrl, setPublishedUrl] = useState<string>()
+  const mounted = useRef(false)
+  const requestId = useRef(0)
+
+  const selectedDestination = destinations.find(
+    ({ id }) => id === destinationId,
+  )
+  const selectedDestinationId = selectedDestination?.id
+  const destinationUnavailable =
+    article.exportDestinationId !== undefined && !savedDestinationExists
+
+  function isCurrentRequest(id: number) {
+    return mounted.current && requestId.current === id
+  }
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      requestId.current += 1
+    }
+  }, [])
 
   useEffect(() => {
     const articleBody = doc.getText('body')
@@ -94,23 +135,19 @@ export function ArticlePublishContainer({
   }, [doc])
 
   useEffect(() => {
-    if (!initialFrontmatterNeedsPersistence.current) return
-    initialFrontmatterNeedsPersistence.current = false
-    frontmatterPersisted.current = true
-    client
-      .updateArticleExportSettings(article.id, {
-        exportFrontmatter: frontmatter,
-      })
-      .match(
-        () => {},
-        (updateError) => {
-          setError(updateError.message)
-        },
-      )
-  }, [article.id, client, frontmatter])
+    const settings = initialSettingsToPersist.current
+    if (settings === undefined) return
+    initialSettingsToPersist.current = undefined
+    client.updateArticleExportSettings(article.id, settings).match(
+      () => {},
+      (updateError) => {
+        setError(updateError.message)
+      },
+    )
+  }, [article.id, client])
 
   const currentFingerprint = publishFingerprint(
-    destinationId,
+    selectedDestinationId ?? '',
     slug,
     frontmatter,
     body,
@@ -164,11 +201,20 @@ export function ArticlePublishContainer({
     onDiffChange(false)
   }
 
-  async function handleShowDiff() {
-    const destination = destinations.find(({ id }) => id === destinationId)
-    if (!destination || !isValidArticleSlug(slug)) return
-    setBusy(true)
-    setError(undefined)
+  async function loadDiff(preserveError: boolean) {
+    const destination = selectedDestination
+    const destinationId = selectedDestinationId
+    if (
+      destination === undefined ||
+      destinationId === undefined ||
+      !isValidArticleSlug(slug)
+    ) {
+      return
+    }
+    const currentRequestId = requestId.current + 1
+    requestId.current = currentRequestId
+    setBusyAction('diff')
+    if (!preserveError) setError(undefined)
     setPublishedUrl(undefined)
     const exportResult = await exportArticleBody(
       body,
@@ -177,9 +223,10 @@ export function ArticlePublishContainer({
       (value) => ({ content: value }) as const,
       (exportError) => ({ error: exportError.message }) as const,
     )
+    if (!isCurrentRequest(currentRequestId)) return
     if ('error' in exportResult) {
       setError(exportResult.error)
-      setBusy(false)
+      setBusyAction(undefined)
       return
     }
     const content = prependArticleFrontmatter(frontmatter, exportResult.content)
@@ -192,9 +239,10 @@ export function ArticlePublishContainer({
       (value) => ({ file: value }) as const,
       (requestError) => ({ error: requestError.message }) as const,
     )
+    if (!isCurrentRequest(currentRequestId)) return
     if ('error' in fileResult) {
       setError(fileResult.error)
-      setBusy(false)
+      setBusyAction(undefined)
       return
     }
     setPrepared({
@@ -207,39 +255,56 @@ export function ArticlePublishContainer({
       original: fileResult.file.content ?? '',
     })
     onDiffChange(true)
-    setBusy(false)
+    setBusyAction(undefined)
+  }
+
+  function handleShowDiff() {
+    void loadDiff(false)
   }
 
   async function handlePublish() {
     if (!prepared || preparedFingerprint !== currentFingerprint) return
-    setBusy(true)
+    const currentRequestId = requestId.current + 1
+    requestId.current = currentRequestId
+    setBusyAction('publish')
     setError(undefined)
-    const result = await publishArticle(fetch, destinationId, article.id, {
-      slug: prepared.slug,
-      content: prepared.content,
-      sha: prepared.sha,
-    }).match(
+    const result = await publishArticle(
+      fetch,
+      prepared.destinationId,
+      article.id,
+      {
+        slug: prepared.slug,
+        content: prepared.content,
+        sha: prepared.sha,
+      },
+    ).match(
       (response) => ({ url: response.url }) as const,
       (requestError) => ({ error: requestError }) as const,
     )
+    if (!isCurrentRequest(currentRequestId)) return
     if ('error' in result) {
       setError(result.error.message)
       if (result.error instanceof ExportConflictError) {
         setPrepared(undefined)
         onDiffChange(false)
+        await loadDiff(true)
+        return
       }
     } else {
       setPrepared(undefined)
       setPublishedUrl(result.url)
       onDiffChange(false)
     }
-    setBusy(false)
+    setBusyAction(undefined)
   }
 
   return (
     <ArticlePublishView
       canPublish={preparedFingerprint === currentFingerprint}
       destinations={destinations}
+      destinationUnavailable={
+        destinationUnavailable && selectedDestinationId === undefined
+      }
       diff={
         prepared === undefined
           ? undefined
@@ -256,18 +321,16 @@ export function ArticlePublishContainer({
       onPublish={() => {
         void handlePublish()
       }}
-      onShowDiff={() => {
-        void handleShowDiff()
-      }}
+      onShowDiff={handleShowDiff}
       onSlugChange={(value) => {
         setSlug(value)
         setPublishedUrl(undefined)
         updateSettings({ slug: value })
       }}
       publishedUrl={publishedUrl}
-      selectedDestinationId={destinationId}
+      selectedDestinationId={selectedDestinationId}
       slug={slug}
-      busy={busy}
+      busyAction={busyAction}
     />
   )
 }

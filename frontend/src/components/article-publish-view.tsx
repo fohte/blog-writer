@@ -15,12 +15,13 @@ import { TextDiffView } from '#components/text-diff-view'
 import type { ExportDestination } from '#lib/article-export-api'
 
 export type ArticlePublishViewProps = {
-  destinations?: ExportDestination[] | undefined
+  destinations: ExportDestination[]
   selectedDestinationId?: string | undefined
+  destinationUnavailable?: boolean | undefined
   slug: string
   frontmatter: string
   diff?: { original: string; modified: string } | undefined
-  busy?: boolean | undefined
+  busyAction?: 'diff' | 'publish' | undefined
   canPublish?: boolean | undefined
   error?: string | undefined
   publishedUrl?: string | undefined
@@ -32,12 +33,13 @@ export type ArticlePublishViewProps = {
 }
 
 export function ArticlePublishView({
-  destinations = [],
+  destinations,
   selectedDestinationId,
+  destinationUnavailable = false,
   slug,
   frontmatter,
   diff,
-  busy = false,
+  busyAction,
   canPublish = false,
   error,
   publishedUrl,
@@ -47,26 +49,16 @@ export function ArticlePublishView({
   onShowDiff,
   onPublish,
 }: ArticlePublishViewProps) {
-  if (destinations.length === 0) {
-    if (error === undefined) return null
-    return (
-      <section aria-label="PR を作成" className="flex flex-col gap-3">
-        <h2 className="font-semibold">PR を作成</h2>
-        <Panel
-          aria-live="assertive"
-          className="rounded-md border-destructive/40 bg-destructive/10 text-sm text-destructive"
-          padding="sm"
-          role="alert"
-        >
-          {error}
-        </Panel>
-      </section>
-    )
-  }
+  const busy = busyAction !== undefined
 
   return (
     <section aria-label="PR を作成" className="flex flex-col gap-3">
       <h2 className="font-semibold">PR を作成</h2>
+      {destinationUnavailable ? (
+        <p className="text-sm text-muted-foreground" role="status">
+          保存済みの公開先は利用できません。公開先を選び直してください。
+        </p>
+      ) : null}
       <label className="flex flex-col gap-1 text-sm">
         公開先
         <Select
@@ -138,7 +130,9 @@ export function ArticlePublishView({
       ) : null}
       {busy ? (
         <p aria-live="polite" className="text-muted-foreground" role="status">
-          公開先を確認しています…
+          {busyAction === 'publish'
+            ? 'PR を作成しています…'
+            : '公開先を確認しています…'}
         </p>
       ) : null}
       {publishedUrl !== undefined ? (

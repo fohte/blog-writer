@@ -20,10 +20,15 @@ export function createArticleFrontmatter(
   title: string,
   createdAt: number,
 ): string {
-  const date = new Date(createdAt).toISOString().slice(0, 10)
+  const createdDate = new Date(createdAt)
+  const date = [
+    createdDate.getFullYear(),
+    String(createdDate.getMonth() + 1).padStart(2, '0'),
+    String(createdDate.getDate()).padStart(2, '0'),
+  ].join('-')
   return template
-    .replaceAll('{{ title }}', JSON.stringify(title))
-    .replaceAll('{{ date }}', JSON.stringify(date))
+    .replaceAll('{{ title }}', () => JSON.stringify(title))
+    .replaceAll('{{ date }}', () => JSON.stringify(date))
 }
 
 const editorComponents = new Set([

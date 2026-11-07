@@ -49,6 +49,7 @@ const articleBody = [
 
 afterEach(() => {
   vi.doUnmock('remark')
+  vi.unstubAllEnvs()
 })
 
 describe('exportArticleBody', () => {
@@ -160,11 +161,26 @@ describe('article frontmatter', () => {
     const frontmatter = createArticleFrontmatter(
       'title: {{ title }}\ndate: {{ date }}',
       'A title: with punctuation',
-      Date.UTC(2026, 0, 15, 23),
+      Date.UTC(2026, 0, 15, 12),
     )
 
     expect(prependArticleFrontmatter(frontmatter, 'Article body')).toEqual(
       '---\ntitle: "A title: with punctuation"\ndate: "2026-01-15"\n---\n\nArticle body',
+    )
+  })
+
+  it('escapes title replacement characters and formats the local date', () => {
+    vi.stubEnv('TZ', 'Pacific/Auckland')
+
+    const frontmatter = createArticleFrontmatter(
+      'title: {{ title }}\ndate: {{ date }}',
+      ['Cost $& more: "quoted"', 'second line'].join('\n'),
+      Date.UTC(2026, 0, 15, 12),
+    )
+
+    expect(frontmatter).toEqual(
+      String.raw`title: "Cost $& more: \"quoted\"\nsecond line"
+date: "2026-01-16"`,
     )
   })
 })
