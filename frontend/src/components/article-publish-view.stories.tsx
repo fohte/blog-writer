@@ -94,7 +94,7 @@ export const Published: Story = {
 export const Error: Story = {
   name: 'the publish request shows an error',
   args: {
-    error: '公開先のファイルが変更されました。最新の差分を取り直しました。',
+    error: 'PR を作成できませんでした: HTTP 500',
   },
 }
 
@@ -106,6 +106,6 @@ export const Conflict: Story = {
       modified: 'title: "Sample article"\n\nUpdated body',
     },
     error:
-      '公開先のファイルが変更されました。最新の差分を取り直しました。 The file changed.',
+      '公開先のファイルが変更されています。 The file changed. 最新の差分を取り直しました。',
   },
 }

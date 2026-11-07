@@ -177,11 +177,60 @@ function readConflictState(publishButtonAfterConflict: boolean) {
   return {
     publishButtonAfterConflict,
     error: document.querySelector('[role="alert"]')?.textContent ?? null,
+    status: document.querySelector('[role="status"]')?.textContent ?? null,
     diffContents: document.querySelector('[data-testid="text-diff"]')
       ? readDiffContents()
       : null,
     publishButtonDisabled: isButtonDisabled('PR を作成') ?? null,
     requests,
+  }
+}
+
+async function exerciseConflictRefresh() {
+  renderPublish()
+  getResponses.push({
+    status: 200,
+    payload: { content: 'Old body', sha: 'base-sha' },
+  })
+  postResponses.push({ status: 409, payload: { error: 'The file changed.' } })
+  await clickAndWait('差分を見る', waitForDiff)
+  let resolvePendingGet: ((response: Response) => void) | undefined
+  const pendingRefresh = new Promise<Response>((resolve) => {
+    resolvePendingGet = resolve
+  })
+  pendingGetResponse = pendingRefresh
+  await clickAndWait('PR を作成', async () => {
+    await vi.waitFor(() => {
+      if (
+        requests.length !== 3 ||
+        document.querySelector('[role="status"]')?.textContent !==
+          '公開先を確認しています…' ||
+        document.querySelector('[role="alert"]')?.textContent !==
+          '公開先のファイルが変更されています。 The file changed.'
+      )
+        throw new Error('Waiting for the automatic diff refresh')
+    })
+  })
+  const refreshingState = readConflictState(hasButton('PR を作成'))
+  await act(async () => {
+    resolvePendingGet?.(
+      Response.json({ content: 'Latest body', sha: 'latest-sha' }),
+    )
+    await pendingRefresh
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  })
+  await vi.waitFor(() => {
+    if (
+      document.querySelector('[role="status"]') ||
+      document.querySelector('[role="alert"]')?.textContent !==
+        '公開先のファイルが変更されています。 The file changed. 最新の差分を取り直しました。'
+    )
+      throw new Error('Waiting for the refreshed diff')
+  })
+
+  return {
+    refreshingState,
+    refreshedState: readConflictState(hasButton('PR を作成')),
   }
 }
 
@@ -507,49 +556,70 @@ describe('ArticlePublishContainer', () => {
     })
   })
 
-  it('keeps the conflict error while automatically refreshing the diff', async () => {
-    renderPublish()
-    getResponses.push(
-      { status: 200, payload: { content: 'Old body', sha: 'base-sha' } },
-      { status: 200, payload: { content: 'Latest body', sha: 'latest-sha' } },
-    )
-    postResponses.push({ status: 409, payload: { error: 'The file changed.' } })
-    await clickAndWait('差分を見る', waitForDiff)
-    await clickAndWait('PR を作成', async () => {
-      await vi.waitFor(() => {
-        expect(readConflictState(hasButton('PR を作成'))).toEqual({
-          publishButtonAfterConflict: true,
-          error:
-            '公開先のファイルが変更されました。最新の差分を取り直しました。 The file changed.',
-          diffContents: [
-            'Latest body',
-            '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
-          ],
-          publishButtonDisabled: false,
-          requests: [
-            {
-              method: 'GET',
-              url: '/api/export/sample-site/articles/article-one?slug=sample-post',
-              body: null,
+  it('reports the automatic refresh only after the latest diff is ready', async () => {
+    expect(await exerciseConflictRefresh()).toEqual({
+      refreshingState: {
+        publishButtonAfterConflict: false,
+        error: '公開先のファイルが変更されています。 The file changed.',
+        status: '公開先を確認しています…',
+        diffContents: null,
+        publishButtonDisabled: null,
+        requests: [
+          {
+            method: 'GET',
+            url: '/api/export/sample-site/articles/article-one?slug=sample-post',
+            body: null,
+          },
+          {
+            method: 'POST',
+            url: '/api/export/sample-site/articles/article-one',
+            body: {
+              slug: 'sample-post',
+              content:
+                '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
+              sha: 'base-sha',
             },
-            {
-              method: 'POST',
-              url: '/api/export/sample-site/articles/article-one',
-              body: {
-                slug: 'sample-post',
-                content:
-                  '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
-                sha: 'base-sha',
-              },
+          },
+          {
+            method: 'GET',
+            url: '/api/export/sample-site/articles/article-one?slug=sample-post',
+            body: null,
+          },
+        ],
+      },
+      refreshedState: {
+        publishButtonAfterConflict: true,
+        error:
+          '公開先のファイルが変更されています。 The file changed. 最新の差分を取り直しました。',
+        status: null,
+        diffContents: [
+          'Latest body',
+          '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
+        ],
+        publishButtonDisabled: false,
+        requests: [
+          {
+            method: 'GET',
+            url: '/api/export/sample-site/articles/article-one?slug=sample-post',
+            body: null,
+          },
+          {
+            method: 'POST',
+            url: '/api/export/sample-site/articles/article-one',
+            body: {
+              slug: 'sample-post',
+              content:
+                '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
+              sha: 'base-sha',
             },
-            {
-              method: 'GET',
-              url: '/api/export/sample-site/articles/article-one?slug=sample-post',
-              body: null,
-            },
-          ],
-        })
-      })
+          },
+          {
+            method: 'GET',
+            url: '/api/export/sample-site/articles/article-one?slug=sample-post',
+            body: null,
+          },
+        ],
+      },
     })
   })
 

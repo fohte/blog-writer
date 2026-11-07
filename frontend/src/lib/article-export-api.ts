@@ -71,7 +71,7 @@ function parseResponse<T>(
       if (response.status === 409) {
         return errAsync(
           new ExportConflictError(
-            `公開先のファイルが変更されました。最新の差分を取り直しました。${message.length > 0 ? ` ${message}` : ''}`,
+            `公開先のファイルが変更されています。${message.length > 0 ? ` ${message}` : ''}`,
           ),
         )
       }

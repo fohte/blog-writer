@@ -201,7 +201,7 @@ export function ArticlePublishContainer({
     onDiffChange(false)
   }
 
-  async function loadDiff(preserveError: boolean) {
+  async function loadDiff(preserveError: boolean): Promise<number | undefined> {
     const destination = selectedDestination
     const destinationId = selectedDestinationId
     if (
@@ -209,7 +209,7 @@ export function ArticlePublishContainer({
       destinationId === undefined ||
       !isValidArticleSlug(slug)
     ) {
-      return
+      return undefined
     }
     const currentRequestId = requestId.current + 1
     requestId.current = currentRequestId
@@ -223,11 +223,11 @@ export function ArticlePublishContainer({
       (value) => ({ content: value }) as const,
       (exportError) => ({ error: exportError.message }) as const,
     )
-    if (!isCurrentRequest(currentRequestId)) return
+    if (!isCurrentRequest(currentRequestId)) return undefined
     if ('error' in exportResult) {
       setError(exportResult.error)
       setBusyAction(undefined)
-      return
+      return undefined
     }
     const content = prependArticleFrontmatter(frontmatter, exportResult.content)
     const fileResult = await getExportArticleFile(
@@ -239,11 +239,11 @@ export function ArticlePublishContainer({
       (value) => ({ file: value }) as const,
       (requestError) => ({ error: requestError.message }) as const,
     )
-    if (!isCurrentRequest(currentRequestId)) return
+    if (!isCurrentRequest(currentRequestId)) return undefined
     if ('error' in fileResult) {
       setError(fileResult.error)
       setBusyAction(undefined)
-      return
+      return undefined
     }
     setPrepared({
       destinationId,
@@ -256,6 +256,7 @@ export function ArticlePublishContainer({
     })
     onDiffChange(true)
     setBusyAction(undefined)
+    return currentRequestId
   }
 
   function handleShowDiff() {
@@ -285,9 +286,16 @@ export function ArticlePublishContainer({
     if ('error' in result) {
       setError(result.error.message)
       if (result.error instanceof ExportConflictError) {
+        const conflictMessage = result.error.message
         setPrepared(undefined)
         onDiffChange(false)
-        await loadDiff(true)
+        const refreshRequestId = await loadDiff(true)
+        if (
+          refreshRequestId !== undefined &&
+          isCurrentRequest(refreshRequestId)
+        ) {
+          setError(`${conflictMessage} 最新の差分を取り直しました。`)
+        }
         return
       }
     } else {
