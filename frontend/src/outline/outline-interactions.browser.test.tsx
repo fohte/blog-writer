@@ -408,14 +408,16 @@ describe('outline interactions', () => {
       const firstHandle = handles[0]
       if (firstHandle === undefined)
         throw new Error('The body drag source or target is missing')
-      const secondParagraph = [
+      const targetLine = [
         ...view.dom.querySelectorAll<HTMLElement>('.cm-line'),
       ].find((line) => line.textContent.endsWith(targetText))
-      if (!secondParagraph)
-        throw new Error('The second paragraph is missing from the editor')
-      const bounds = secondParagraph.getBoundingClientRect()
+      if (!targetLine)
+        throw new Error(
+          `The drop target "${targetText}" is missing from the editor`,
+        )
+      const bounds = targetLine.getBoundingClientRect()
       await act(async () => {
-        await userEvent.dragAndDrop(firstHandle, secondParagraph, {
+        await userEvent.dragAndDrop(firstHandle, targetLine, {
           targetPosition: { x: bounds.width / 2, y: bounds.height * 0.75 },
         })
       })
