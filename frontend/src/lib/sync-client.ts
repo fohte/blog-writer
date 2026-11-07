@@ -2,6 +2,7 @@ import { err, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 import { v7 } from 'uuid'
 import * as Y from 'yjs'
 
+import { DEFAULT_ARTICLE_TITLE } from '#article/constants'
 import {
   buildSyncDocument,
   createLocalPersistence,
@@ -13,7 +14,6 @@ import {
 import { SyncClientError, toSyncClientError } from '#lib/sync-client-errors'
 
 const ARTICLE_INDEX_DOC_ID = 'article-index'
-const DEFAULT_ARTICLE_TITLE = 'Untitled article'
 
 export type SyncState = 'saved' | 'unsynced' | 'syncing' | 'synced'
 type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'

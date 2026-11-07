@@ -34,7 +34,7 @@ import {
 
 export type ArticleEditorPanel = 'memo' | 'outline' | 'body' | 'sources'
 export type ArticleEditorLayout = 'responsive' | 'mobile' | 'desktop'
-type ArticleEditorContext = {
+export type ArticleEditorContext = {
   articleId: string
   doc: Y.Doc
   history: MoveHistory
