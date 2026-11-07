@@ -377,7 +377,7 @@ export interface components {
       instruction: string
       premise: components['schemas']['ArticlePremise']
       section: string
-      source_summaries?: string[] | null
+      sources?: components['schemas']['BodyRequestSource'][] | null
       target: string
     }
     BodyRequestError: {
@@ -396,6 +396,12 @@ export interface components {
         }
     BodyRequestResult: {
       replacement: string
+    }
+    BodyRequestSource: {
+      checked_at?: string | null
+      summary: string
+      title: string
+      url?: string | null
     }
     ClaimEvidenceQuote: {
       source_id: string

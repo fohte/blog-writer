@@ -270,13 +270,18 @@ export function BodyRequestAccessory({
       section: context.section,
       target: context.target,
     }
-    const sourceSummaries = listSources(doc)
-      .map(({ summary }) => summary)
-      .filter((summary) => summary.trim().length > 0)
+    const sources = listSources(doc).map(
+      ({ checkedAt, summary, title, url }) => ({
+        title,
+        url,
+        summary,
+        checked_at: checkedAt,
+      }),
+    )
     const evidenceQuotes = listEvidenceOverlapping(doc, context.range)
       .map(({ quote }) => quote)
       .filter((quote) => quote.trim().length > 0)
-    if (sourceSummaries.length > 0) body.source_summaries = sourceSummaries
+    if (sources.length > 0) body.sources = sources
     if (evidenceQuotes.length > 0) body.evidence_quotes = evidenceQuotes
     if (manager.layer.overlapsOtherLayer(context.range)) {
       setError(overlappingSuggestionError)

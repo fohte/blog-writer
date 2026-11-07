@@ -121,9 +121,9 @@ describe('App outline proposal integration', () => {
       id: sourceId,
       kind: 'pasted',
       title: 'A source',
-      url: null,
+      url: 'https://example.invalid/reference',
       fileName: null,
-      checkedAt: null,
+      checkedAt: '2026-01-01T00:00:00Z',
       summary: 'A concise source summary.',
     })._unsafeUnwrap()
     for (const { claim, text, quote } of [
@@ -213,7 +213,14 @@ describe('App outline proposal integration', () => {
       section:
         '# Starting point\n\n⟪依頼範囲の開始⟫Target claim.⟪依頼範囲の終了⟫\n\nUnrelated claim.',
       target: 'Target claim.',
-      source_summaries: ['A concise source summary.'],
+      sources: [
+        {
+          title: 'A source',
+          url: 'https://example.invalid/reference',
+          summary: 'A concise source summary.',
+          checked_at: '2026-01-01T00:00:00Z',
+        },
+      ],
       evidence_quotes: ['Evidence for the target claim.'],
     })
   })

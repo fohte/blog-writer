@@ -1367,10 +1367,10 @@
           "section": {
             "type": "string"
           },
-          "source_summaries": {
+          "sources": {
             "type": ["array", "null"],
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/BodyRequestSource"
             }
           },
           "target": {
@@ -1423,6 +1423,24 @@
         "properties": {
           "replacement": {
             "type": "string"
+          }
+        }
+      },
+      "BodyRequestSource": {
+        "type": "object",
+        "required": ["title", "summary"],
+        "properties": {
+          "checked_at": {
+            "type": ["string", "null"]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": ["string", "null"]
           }
         }
       },
