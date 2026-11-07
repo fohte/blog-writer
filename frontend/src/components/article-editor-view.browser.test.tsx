@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
-import { getBody, listMemos, moveBlock, setBody } from '#article/index'
+import { addMemo, getBody, listMemos, moveBlock, setBody } from '#article/index'
 import type { ArticleEditorIntegrationProps } from '#components/article-editor-view'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 import { ArticleEditorPage } from '#pages/article-editor-page'
@@ -91,6 +91,10 @@ function renderWorkspace(
   })
 }
 
+function modifierKey() {
+  return navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+}
+
 beforeEach(async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   await page.viewport(1280, 800)
@@ -140,7 +144,7 @@ describe('article editor screen', () => {
     })
     const bodyAfterMove = body.toJSON()
 
-    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    const modifier = modifierKey()
     await act(async () => {
       await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
     })
@@ -549,7 +553,7 @@ First paragraph.
     const bodyAfterOutlineMove = getBody(articleDoc).toJSON()
     const editor = host?.querySelector<HTMLElement>('.cm-content')
     if (!editor) throw new Error('The article editor did not render')
-    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    const modifier = modifierKey()
     await act(async () => {
       await userEvent.click(editor)
       await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
@@ -668,6 +672,127 @@ First paragraph.
       articleVisible: true,
       sourcesTabCount: 3,
     })
+  })
+
+  it('adds a memo as a heading from the article editor and restores it with undo and redo', async () => {
+    const article: Article = {
+      id: 'article-m',
+      title: 'A draft to explore',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    const initialBody = '# Starting point'
+    setBody(articleDoc, initialBody)
+    const addedMemo = addMemo(articleDoc, {
+      id: 'memo-a',
+      text: 'Add a summary',
+      order: 0,
+    })
+    if (addedMemo.isErr()) throw addedMemo.error
+    const editorRef: { current: EditorView | null } = { current: null }
+    renderWorkspace(article, articleDoc, {
+      onViewChange: (view) => {
+        editorRef.current = view
+      },
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '採用先を選ぶ' }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
+    })
+    const readMemoHeadingInsertionOutput = () => ({
+      body: getBody(articleDoc).toJSON(),
+      editor: editorRef.current?.state.doc.toString() ?? null,
+      memos: listMemos(articleDoc).map(({ id, state }) => ({
+        id,
+        state:
+          state.kind === 'adopted'
+            ? {
+                kind: 'adopted',
+                heading: {
+                  from: state.heading.from,
+                  level: state.heading.level,
+                  text: state.heading.text,
+                },
+              }
+            : { kind: state.kind },
+      })),
+    })
+    const historyOutput: {
+      action: 'insert' | 'undo' | 'redo'
+      state: ReturnType<typeof readMemoHeadingInsertionOutput>
+    }[] = []
+    historyOutput.push({
+      action: 'insert',
+      state: readMemoHeadingInsertionOutput(),
+    })
+    const editor = host?.querySelector<HTMLElement>('.cm-content')
+    if (!editor) throw new Error('The article editor did not render')
+    const modifier = modifierKey()
+    await act(async () => {
+      await userEvent.click(editor)
+      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+    })
+    historyOutput.push({
+      action: 'undo',
+      state: readMemoHeadingInsertionOutput(),
+    })
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}{Shift>}Z{/Shift}{/${modifier}}`)
+    })
+    historyOutput.push({
+      action: 'redo',
+      state: readMemoHeadingInsertionOutput(),
+    })
+    const expectedOutput = [
+      {
+        action: 'insert',
+        state: {
+          body: `${initialBody}\n\n# Add a summary\n\n`,
+          editor: `${initialBody}\n\n# Add a summary\n\n`,
+          memos: [
+            {
+              id: 'memo-a',
+              state: {
+                kind: 'adopted',
+                heading: { from: 18, level: 1, text: 'Add a summary' },
+              },
+            },
+          ],
+        },
+      },
+      {
+        action: 'undo',
+        state: {
+          body: initialBody,
+          editor: initialBody,
+          memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        },
+      },
+      {
+        action: 'redo',
+        state: {
+          body: `${initialBody}\n\n# Add a summary\n\n`,
+          editor: `${initialBody}\n\n# Add a summary\n\n`,
+          memos: [
+            {
+              id: 'memo-a',
+              state: {
+                kind: 'adopted',
+                heading: { from: 18, level: 1, text: 'Add a summary' },
+              },
+            },
+          ],
+        },
+      },
+    ]
+    expect(historyOutput).toEqual(expectedOutput)
   })
 
   it('passes article context and persists premise changes', async () => {
@@ -858,7 +983,7 @@ First paragraph.
     expect(readMoveErrorOutput()).toEqual({
       initialOutlineError: null,
       invalidMoveResult: 'No Markdown block at position',
-      outlineErrorAfterMove: 'No Markdown block at position',
+      outlineErrorAfterMove: 'この位置には移動できません。',
       outlineErrorAfterReopen: null,
     })
   })

@@ -1,7 +1,7 @@
 import { GFM, parser } from '@lezer/markdown'
 
 import { InvalidBlockMoveError } from '#article/errors'
-import { deriveHeadingTree } from '#article/headings'
+import { deriveHeadingTree, flattenHeadingTree } from '#article/headings'
 import type { Heading } from '#article/types'
 
 export type MarkdownBlockRange = {
@@ -32,15 +32,8 @@ export function topLevelBlocks(markdown: string): MarkdownBlockRange[] {
   return blocks
 }
 
-function flattenHeadings(headings: Heading[]): Heading[] {
-  return headings.flatMap((heading) => [
-    heading,
-    ...flattenHeadings(heading.children),
-  ])
-}
-
 export function collectHeadings(markdown: string): Heading[] {
-  return flattenHeadings(deriveHeadingTree(markdown))
+  return flattenHeadingTree(deriveHeadingTree(markdown))
 }
 
 export function findHeadingSection(

@@ -2,24 +2,49 @@ import {
   draggable,
   dropTargetForElements,
 } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
-import { Button } from '@fohte/ui/button'
 import { List, ListItem } from '@fohte/ui/list'
-import { Popover, PopoverContent } from '@fohte/ui/popover'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 
 import type { MoveBlockInput } from '#article/index'
+import { flattenHeadingTreeWithDepth } from '#article/index'
 import type { Heading } from '#article/types'
+import { BlockMoveMenu } from '#components/block-move-menu'
+import {
+  OutlineDropGap,
+  type OutlineGapDropTarget,
+} from '#components/outline-drop-gap'
+import {
+  headingText,
+  OutlineProposalRow,
+  proposalDiffActions,
+  proposalHandlers,
+} from '#components/outline-proposal-row'
 import { stopButtonClickPropagation } from '#components/outline-view/stop-button-click-propagation'
+import {
+  type FlatHeading,
+  outlineViewEntries,
+  sectionEnd,
+  siblingHeading,
+} from '#components/outline-view-utils'
 import { SuggestionDiff } from '#components/suggestion-diff'
+import { memoIdFrom } from '#outline/memo-drag'
 import type {
   OutlineProposalState,
   OutlineSuggestion,
 } from '#proposals/outline'
 
-type OutlineDropTarget = {
-  from: number
-  placement: 'before' | 'after' | 'child'
-}
+type OutlineDropTarget =
+  | { kind: 'move'; from: number; placement: 'before' | 'after' | 'child' }
+  | { kind: 'memo-heading'; from: number }
+  | { kind: 'memo-gap'; beforeFrom?: number }
+  | { kind: 'block-gap'; beforeFrom?: number }
 
 export interface OutlineViewProps {
   headings: Heading[]
@@ -28,6 +53,8 @@ export interface OutlineViewProps {
   openMenuFrom?: number
   dropTarget?: OutlineDropTarget
   error?: string
+  onAdoptMemo?: ((memoId: string, markerIndex: number) => void) | undefined
+  onInsertMemo?: (memoId: string, beforeFrom?: number) => void
   proposalState?: OutlineProposalState
   onSelect: (from: number) => void
   onMove: (input: MoveBlockInput) => void
@@ -35,86 +62,11 @@ export interface OutlineViewProps {
   onProposalReject?: (id: string) => void
 }
 
-type FlatHeading = { heading: Heading; depth: number }
-
-function flattenHeadings(headings: Heading[], depth = 0): FlatHeading[] {
-  return headings.flatMap((heading) => [
-    { heading, depth },
-    ...flattenHeadings(heading.children, depth + 1),
-  ])
-}
-
-function sectionEnd(headings: FlatHeading[], from: number, bodyLength: number) {
-  const index = headings.findIndex(({ heading }) => heading.from === from)
-  const current = headings[index]?.heading
-  if (!current) return bodyLength
-  return (
-    headings
-      .slice(index + 1)
-      .find(({ heading }) => heading.level <= current.level)?.heading.from ??
-    bodyLength
-  )
-}
-
-function siblingHeading(
-  headings: FlatHeading[],
-  from: number,
-  direction: 'previous' | 'next',
-): Heading | undefined {
-  const index = headings.findIndex(({ heading }) => heading.from === from)
-  const current = headings[index]
-  if (!current) return undefined
-  const step = direction === 'previous' ? -1 : 1
-  for (
-    let candidateIndex = index + step;
-    candidateIndex >= 0;
-    candidateIndex += step
-  ) {
-    const candidate = headings[candidateIndex]
-    if (!candidate || candidate.depth < current.depth) return undefined
-    if (candidate.depth === current.depth) return candidate.heading
-  }
-  return undefined
-}
-
-function sourceFrom(source: { data: Record<string, unknown> }) {
+function blockFrom(source: { data: Record<string, unknown> }) {
   return source.data['kind'] === 'block' &&
     typeof source.data['from'] === 'number'
     ? source.data['from']
     : undefined
-}
-
-function proposalHandlers(
-  onProposalAccept?: (id: string) => void,
-  onProposalReject?: (id: string) => void,
-) {
-  return {
-    ...(onProposalAccept === undefined ? {} : { onProposalAccept }),
-    ...(onProposalReject === undefined ? {} : { onProposalReject }),
-  }
-}
-
-function proposalDiffActions(
-  proposal: OutlineSuggestion,
-  onProposalAccept?: (id: string) => void,
-  onProposalReject?: (id: string) => void,
-) {
-  return {
-    ...(onProposalAccept === undefined
-      ? {}
-      : {
-          onAccept: () => {
-            onProposalAccept(proposal.id)
-          },
-        }),
-    ...(onProposalReject === undefined
-      ? {}
-      : {
-          onReject: () => {
-            onProposalReject(proposal.id)
-          },
-        }),
-  }
 }
 
 function OutlineRow({
@@ -124,9 +76,11 @@ function OutlineRow({
   allHeadings,
   active,
   dropTarget,
+  onMemoDropTargetChange,
   openMenu,
   onSelect,
   onMove,
+  onAdoptMemo,
   proposal,
   onProposalAccept,
   onProposalReject,
@@ -137,16 +91,19 @@ function OutlineRow({
   allHeadings: FlatHeading[]
   active: boolean
   dropTarget: OutlineDropTarget | undefined
+  onMemoDropTargetChange: (target: OutlineDropTarget | undefined) => void
   openMenu: boolean
   onSelect: () => void
   onMove: (input: MoveBlockInput) => void
+  onAdoptMemo?: ((memoId: string, markerIndex: number) => void) | undefined
   proposal?: OutlineSuggestion
   onProposalAccept?: (id: string) => void
   onProposalReject?: (id: string) => void
 }) {
   const rowRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<HTMLButtonElement>(null)
-  const [localDrop, setLocalDrop] = useState<OutlineDropTarget>()
+  const [localDrop, setLocalDrop] =
+    useState<Extract<OutlineDropTarget, { kind: 'move' }>>()
   const [menuOpen, setMenuOpen] = useState(openMenu)
   const previousHeading = siblingHeading(allHeadings, heading.from, 'previous')
   const nextHeading = siblingHeading(allHeadings, heading.from, 'next')
@@ -165,10 +122,39 @@ function OutlineRow({
       element: handle,
       getInitialData: () => ({ kind: 'block', from: heading.from }),
     })
+    const updateDropTarget = ({
+      self,
+    }: {
+      self: { data: Record<string, unknown> }
+    }) => {
+      if (
+        self.data['kind'] === 'memo-heading-target' &&
+        typeof self.data['from'] === 'number'
+      ) {
+        onMemoDropTargetChange({
+          kind: 'memo-heading',
+          from: self.data['from'],
+        })
+        return
+      }
+      const placement = self.data['placement']
+      if (
+        placement === 'before' ||
+        placement === 'after' ||
+        placement === 'child'
+      ) {
+        setLocalDrop({ kind: 'move', from: heading.from, placement })
+      }
+    }
     const cleanupDropTarget = dropTargetForElements({
       element: row,
-      canDrop: ({ source }) => sourceFrom(source) !== undefined,
-      getData: ({ input, element }) => {
+      canDrop: ({ source }) =>
+        (memoIdFrom(source) !== undefined && onAdoptMemo !== undefined) ||
+        blockFrom(source) !== undefined,
+      getData: ({ input, element, source }) => {
+        if (memoIdFrom(source) !== undefined) {
+          return { kind: 'memo-heading-target', from: heading.from }
+        }
         const bounds = element.getBoundingClientRect()
         const ratio = (input.clientY - bounds.top) / bounds.height
         const placement =
@@ -182,32 +168,24 @@ function OutlineRow({
           ...(placement === 'child' ? { childOf: heading.from } : {}),
         }
       },
-      onDragEnter: ({ self }) => {
-        const placement = self.data['placement']
-        if (
-          placement === 'before' ||
-          placement === 'after' ||
-          placement === 'child'
-        ) {
-          setLocalDrop({ from: heading.from, placement })
-        }
-      },
-      onDrag: ({ self }) => {
-        const placement = self.data['placement']
-        if (
-          placement === 'before' ||
-          placement === 'after' ||
-          placement === 'child'
-        ) {
-          setLocalDrop({ from: heading.from, placement })
-        }
-      },
+      onDragEnter: updateDropTarget,
+      onDrag: updateDropTarget,
       onDragLeave: () => {
         setLocalDrop(undefined)
+        onMemoDropTargetChange(undefined)
       },
       onDrop: ({ self, source }) => {
         setLocalDrop(undefined)
-        const from = sourceFrom(source)
+        onMemoDropTargetChange(undefined)
+        const memoId = memoIdFrom(source)
+        if (
+          memoId !== undefined &&
+          self.data['kind'] === 'memo-heading-target'
+        ) {
+          onAdoptMemo?.(memoId, heading.from)
+          return
+        }
+        const from = blockFrom(source)
         const destination = self.data['destination']
         const childOf = self.data['childOf']
         if (from === undefined || typeof destination !== 'number') return
@@ -224,10 +202,19 @@ function OutlineRow({
       cleanupDropTarget()
       cleanupDraggable()
     }
-  }, [allHeadings, bodyLength, heading.from, onMove])
+  }, [
+    allHeadings,
+    bodyLength,
+    heading.from,
+    onAdoptMemo,
+    onMemoDropTargetChange,
+    onMove,
+  ])
 
-  const target = dropTarget ?? localDrop
+  const target = dropTarget?.kind === 'move' ? dropTarget : localDrop
   const isTarget = target?.from === heading.from
+  const isMemoTarget =
+    dropTarget?.kind === 'memo-heading' && dropTarget.from === heading.from
   return (
     <div
       className={`relative ${
@@ -235,11 +222,12 @@ function OutlineRow({
           ? 'border-t-2 border-primary'
           : isTarget && target.placement === 'after'
             ? 'border-b-2 border-primary'
-            : isTarget
+            : isTarget || isMemoTarget
               ? 'rounded bg-accent/50'
               : ''
       }`}
       data-drop-placement={isTarget ? target.placement : undefined}
+      data-memo-drop-target={isMemoTarget ? 'heading' : undefined}
       ref={rowRef}
     >
       <ListItem
@@ -269,90 +257,61 @@ function OutlineRow({
             heading.text || 'Untitled heading'
           )}
         </span>
-        <Popover anchor={handleRef} onOpenChange={setMenuOpen} open={menuOpen}>
-          <button
-            aria-expanded={menuOpen}
-            aria-haspopup="menu"
-            aria-label={`Move ${heading.text || 'heading'}`}
-            className="cursor-grab touch-none select-none rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
-            onClick={(event) => {
-              event.stopPropagation()
-              setMenuOpen((isOpen) => !isOpen)
-            }}
-            onMouseDown={(event) => {
-              event.stopPropagation()
-            }}
-            ref={handleRef}
-            style={{ height: '44px', minWidth: '44px', width: '44px' }}
-            type="button"
-          >
-            ⠿
-          </button>
-          <PopoverContent
-            className="flex min-w-36 flex-col gap-1 p-1"
-            onClick={(event) => {
-              event.stopPropagation()
-            }}
-            role="menu"
-          >
-            <Button
-              className="w-full justify-start"
-              disabled={!previousHeading}
-              onClick={() => {
-                if (previousHeading) {
-                  submitMove({
-                    from: heading.from,
-                    destination: previousHeading.from,
-                  })
-                }
-              }}
-              role="menuitem"
-              size="sm"
-              variant="ghost"
-            >
-              Move up
-            </Button>
-            <Button
-              className="w-full justify-start"
-              disabled={!nextHeading}
-              onClick={() => {
-                if (nextHeading) {
-                  submitMove({
+        <button
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          aria-label={`Move ${heading.text || 'heading'}`}
+          className="cursor-grab touch-none select-none rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
+          onClick={(event) => {
+            event.stopPropagation()
+            setMenuOpen((isOpen) => !isOpen)
+          }}
+          onMouseDown={(event) => {
+            event.stopPropagation()
+          }}
+          ref={handleRef}
+          style={{ height: '44px', minWidth: '44px', width: '44px' }}
+          type="button"
+        >
+          ⠿
+        </button>
+        <BlockMoveMenu
+          actions={[
+            {
+              label: 'Move up',
+              input: previousHeading
+                ? { from: heading.from, destination: previousHeading.from }
+                : undefined,
+            },
+            {
+              label: 'Move down',
+              input: nextHeading
+                ? {
                     from: heading.from,
                     destination: sectionEnd(
                       allHeadings,
                       nextHeading.from,
                       bodyLength,
                     ),
-                  })
-                }
-              }}
-              role="menuitem"
-              size="sm"
-              variant="ghost"
-            >
-              Move down
-            </Button>
-            <Button
-              className="w-full justify-start"
-              disabled={!previousHeading}
-              onClick={() => {
-                if (previousHeading) {
-                  submitMove({
+                  }
+                : undefined,
+            },
+            {
+              label: 'Make child',
+              input: previousHeading
+                ? {
                     from: heading.from,
                     destination: heading.from,
                     childOf: previousHeading.from,
-                  })
-                }
-              }}
-              role="menuitem"
-              size="sm"
-              variant="ghost"
-            >
-              Make child
-            </Button>
-          </PopoverContent>
-        </Popover>
+                  }
+                : undefined,
+            },
+          ]}
+          anchor={handleRef}
+          onMove={submitMove}
+          onOpenChange={setMenuOpen}
+          open={menuOpen}
+        />
       </ListItem>
     </div>
   )
@@ -365,41 +324,48 @@ export function OutlineView({
   openMenuFrom,
   dropTarget,
   error,
+  onAdoptMemo,
+  onInsertMemo,
   proposalState,
   onSelect,
   onMove,
   onProposalAccept,
   onProposalReject,
 }: OutlineViewProps) {
-  const flattened = useMemo(() => flattenHeadings(headings), [headings])
+  const flattened = useMemo(
+    () => flattenHeadingTreeWithDepth(headings),
+    [headings],
+  )
+  const [localGapDropTarget, setLocalGapDropTarget] =
+    useState<OutlineDropTarget>()
+  const gapDropTarget =
+    dropTarget?.kind === 'memo-heading' ||
+    dropTarget?.kind === 'memo-gap' ||
+    dropTarget?.kind === 'block-gap'
+      ? dropTarget
+      : localGapDropTarget
+  const handleGapDragChange = useCallback(
+    (target: OutlineGapDropTarget | undefined) => {
+      setLocalGapDropTarget(
+        target === undefined
+          ? undefined
+          : {
+              kind: target.kind === 'memo' ? 'memo-gap' : 'block-gap',
+              ...(target.beforeFrom === undefined
+                ? {}
+                : { beforeFrom: target.beforeFrom }),
+            },
+      )
+    },
+    [],
+  )
+  const isGapActive = (beforeFrom?: number) =>
+    (gapDropTarget?.kind === 'memo-gap' ||
+      gapDropTarget?.kind === 'block-gap') &&
+    gapDropTarget.beforeFrom === beforeFrom
   const suggestions = proposalState?.suggestions ?? []
-  const headingProposals = new Map(
-    suggestions
-      .filter((proposal) => proposal.from !== proposal.to)
-      .map((proposal) => [proposal.anchorFrom ?? proposal.from, proposal]),
-  )
-  const additions = suggestions.filter(
-    (proposal) => proposal.from === proposal.to,
-  )
   const handlers = proposalHandlers(onProposalAccept, onProposalReject)
-  const entries = [
-    ...flattened.map(({ heading, depth }) => {
-      const proposal = headingProposals.get(heading.from)
-      return {
-        kind: 'heading' as const,
-        from: heading.from,
-        heading,
-        depth,
-        ...(proposal === undefined ? {} : { proposal }),
-      }
-    }),
-    ...additions.map((proposal) => ({
-      kind: 'addition' as const,
-      from: proposal.from,
-      proposal,
-      depth: headingLevel(proposal.replacement) - 1,
-    })),
-  ].sort((left, right) => left.from - right.from)
+  const entries = outlineViewEntries(flattened, suggestions)
 
   return (
     <section
@@ -414,29 +380,51 @@ export function OutlineView({
         <SuggestionDiff generating original="" replacement="" />
       ) : null}
       {entries.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No headings yet.</p>
+        <>
+          <p className="text-sm text-muted-foreground">No headings yet.</p>
+          <OutlineDropGap
+            active={isGapActive()}
+            bodyLength={bodyLength}
+            onDragChange={handleGapDragChange}
+            onInsertMemo={onInsertMemo}
+            onMove={onMove}
+          />
+        </>
       ) : (
         <List aria-label="Headings" role="listbox">
           {entries.map((entry) =>
             entry.kind === 'heading' ? (
-              <OutlineRow
-                active={entry.heading.from === activeFrom}
-                allHeadings={flattened}
-                bodyLength={bodyLength}
-                depth={entry.depth}
-                dropTarget={dropTarget}
-                heading={entry.heading}
-                key={`heading-${String(entry.from)}`}
-                onMove={onMove}
-                {...handlers}
-                onSelect={() => {
-                  onSelect(entry.heading.from)
-                }}
-                openMenu={openMenuFrom === entry.heading.from}
-                {...(entry.proposal === undefined
-                  ? {}
-                  : { proposal: entry.proposal })}
-              />
+              <Fragment key={`heading-${String(entry.from)}`}>
+                <OutlineDropGap
+                  active={isGapActive(entry.heading.from)}
+                  beforeFrom={entry.heading.from}
+                  bodyLength={bodyLength}
+                  onDragChange={handleGapDragChange}
+                  onInsertMemo={onInsertMemo}
+                  onMove={onMove}
+                />
+                <OutlineRow
+                  active={entry.heading.from === activeFrom}
+                  allHeadings={flattened}
+                  bodyLength={bodyLength}
+                  depth={entry.depth}
+                  dropTarget={
+                    dropTarget?.kind === 'move' ? dropTarget : gapDropTarget
+                  }
+                  heading={entry.heading}
+                  onAdoptMemo={onAdoptMemo}
+                  onMemoDropTargetChange={setLocalGapDropTarget}
+                  onMove={onMove}
+                  {...handlers}
+                  onSelect={() => {
+                    onSelect(entry.heading.from)
+                  }}
+                  openMenu={openMenuFrom === entry.heading.from}
+                  {...(entry.proposal === undefined
+                    ? {}
+                    : { proposal: entry.proposal })}
+                />
+              </Fragment>
             ) : (
               <OutlineProposalRow
                 depth={entry.depth}
@@ -446,53 +434,15 @@ export function OutlineView({
               />
             ),
           )}
+          <OutlineDropGap
+            active={isGapActive()}
+            bodyLength={bodyLength}
+            onDragChange={handleGapDragChange}
+            onInsertMemo={onInsertMemo}
+            onMove={onMove}
+          />
         </List>
       )}
     </section>
-  )
-}
-
-function headingLevel(markdown: string): number {
-  const prefix = /^#{1,6}(?=[ \t]|$)/u.exec(markdown)?.[0]
-  return prefix?.length ?? 1
-}
-
-function headingText(markdown: string): string {
-  return markdown
-    .replace(/^#{1,6}[ \t]*/u, '')
-    .replace(/[ \t]+#+[ \t]*$/u, '')
-    .trim()
-}
-
-function OutlineProposalRow({
-  depth,
-  proposal,
-  onProposalAccept,
-  onProposalReject,
-}: {
-  depth: number
-  proposal: OutlineSuggestion
-  onProposalAccept?: (id: string) => void
-  onProposalReject?: (id: string) => void
-}) {
-  return (
-    <ListItem
-      aria-label={headingText(proposal.replacement)}
-      indent={0}
-      selected={false}
-    >
-      <span
-        className="min-w-0 flex-1 truncate"
-        style={{ paddingInlineStart: `${String(depth)}rem` }}
-      >
-        <SuggestionDiff
-          focused
-          inline
-          original=""
-          replacement={headingText(proposal.replacement)}
-          {...proposalDiffActions(proposal, onProposalAccept, onProposalReject)}
-        />
-      </span>
-    </ListItem>
   )
 }

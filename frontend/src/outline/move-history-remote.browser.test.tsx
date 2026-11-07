@@ -86,8 +86,8 @@ second
 `
     const editor = createHistoryEditor(initial)
     const errors: string[] = []
-    editor.history.onError((error) => {
-      if (error) errors.push(error.message)
+    editor.history.onError((failure) => {
+      if (failure) errors.push(failure.error.message)
     })
     const firstEnd = initial.indexOf('first') + 'first'.length
     edit(editor, firstEnd, firstEnd, ' typed', 'input.type')

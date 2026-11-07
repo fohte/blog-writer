@@ -1,16 +1,23 @@
 import type { ChangeSet } from '@codemirror/state'
 import { err, ok, type Result } from 'neverthrow'
 
-export interface TextSuggestion {
+export interface TextSuggestion<Metadata = unknown> {
   id: string
   from: number
   to: number
   replacement: string
+  metadata?: Metadata
+  note?: string
 }
 
 export interface SuggestionPosition {
   from: number
   to: number
+}
+
+export interface TrackedSuggestionRange {
+  current(): SuggestionPosition | undefined
+  dispose(): void
 }
 
 export type SuggestionDecision = 'accept' | 'reject'
@@ -20,8 +27,8 @@ export type SuggestionLayerError =
   | { type: 'overlapping-ranges' }
   | { type: 'not-mounted' }
 
-export interface SuggestionLayerState {
-  suggestions: readonly TextSuggestion[]
+export interface SuggestionLayerState<Metadata = unknown> {
+  suggestions: readonly TextSuggestion<Metadata>[]
   inFlight: SuggestionPosition | null
   focusedId: string | null
 }
@@ -77,9 +84,9 @@ export function isRangeValid(
   )
 }
 
-function orderSuggestions(
-  suggestions: readonly TextSuggestion[],
-): TextSuggestion[] {
+function orderSuggestions<Metadata>(
+  suggestions: readonly TextSuggestion<Metadata>[],
+): TextSuggestion<Metadata>[] {
   return [...suggestions].sort((a, b) => a.from - b.from || a.to - b.to)
 }
 
@@ -108,10 +115,10 @@ export function hasOverlappingRange(
   )
 }
 
-export function validateSuggestions(
-  suggestions: readonly TextSuggestion[],
+export function validateSuggestions<Metadata = unknown>(
+  suggestions: readonly TextSuggestion<Metadata>[],
   docLength: number,
-): Result<TextSuggestion[], SuggestionLayerError> {
+): Result<TextSuggestion<Metadata>[], SuggestionLayerError> {
   const ids = new Set<string>()
   for (const suggestion of suggestions) {
     if (
@@ -133,8 +140,8 @@ export function validateSuggestions(
   return ok(ordered)
 }
 
-export function focusForSelection(
-  suggestions: readonly TextSuggestion[],
+export function focusForSelection<Metadata = unknown>(
+  suggestions: readonly TextSuggestion<Metadata>[],
   head: number,
 ): string | null {
   return (

@@ -42,9 +42,9 @@ export const AssistantAsksAndSuggestsAClaim: Story = {
 }
 
 export const InitialInputWaiting: Story = {
-  name: 'the author has entered the first prompt before sending it.',
+  name: 'the author is waiting to enter the first prompt.',
   args: {
-    draft: 'Help me clarify who this article is for.',
+    draft: '',
     messages: [],
     proposals: [],
   },
@@ -91,8 +91,49 @@ export const AssistantIsThinking: Story = {
   name: 'the assistant is preparing a response.',
   args: {
     generating: true,
-    messages: [],
     proposals: [],
+    messages: [
+      {
+        role: 'user',
+        content: 'Make the claim more specific for first-time maintainers.',
+      },
+      {
+        role: 'assistant',
+        content:
+          'Which maintenance decision should the article help them make?',
+      },
+    ],
+  },
+}
+
+export const PriorProposalWhileAssistantIsThinking: Story = {
+  name: 'the previous proposal remains visible while the assistant prepares a response.',
+  args: {
+    generating: true,
+    messages: [
+      {
+        role: 'user',
+        content: 'Make the claim more specific for first-time maintainers.',
+      },
+      {
+        role: 'assistant',
+        content:
+          'Which maintenance decision should the article help them make?',
+      },
+      {
+        role: 'user',
+        content: 'Focus on which changes need review.',
+      },
+    ],
+    proposals: [
+      {
+        field: 'claim',
+        label: 'Claim',
+        original: 'A clear process helps teams.',
+        replacement:
+          'A short review checklist helps new maintainers catch risky changes.',
+      },
+    ],
   },
 }
 

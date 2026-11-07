@@ -8,7 +8,8 @@ import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import { App } from '#App'
-import { setBody } from '#article/body'
+import { getBody, setBody } from '#article/body'
+import { listMemos } from '#article/memos'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
 const { mockUseSyncClient } = vi.hoisted(() => ({
@@ -165,6 +166,69 @@ describe('App outline proposal integration', () => {
         proposalButtons: ['✓ 採用', '× 却下'],
       },
       selectedTab: 'Article',
+    })
+  })
+
+  it('inserts a memo as a heading from the article workspace', async () => {
+    await page.viewport(1280, 800)
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n\nA useful paragraph.\n')
+    renderApp(articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const memoText = 'A useful thought'
+    await act(async () => {
+      await userEvent.fill(
+        page.getByRole('textbox', { name: '新しいメモ' }),
+        memoText,
+      )
+      await userEvent.click(page.getByRole('button', { name: '追加' }))
+      await userEvent.click(page.getByRole('button', { name: '採用先を選ぶ' }))
+      await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
+    })
+
+    const readOutput = () => ({
+      body: getBody(articleDoc).toJSON(),
+      memos: listMemos(articleDoc).map(({ text, state }) => ({
+        text,
+        state: state.kind,
+      })),
+    })
+    expect(readOutput()).toEqual({
+      body: '# Starting point\n\nA useful paragraph.\n\n# A useful thought\n\n',
+      memos: [{ text: memoText, state: 'adopted' }],
+    })
+  })
+
+  it('moves a body block from the editor menu', async () => {
+    await page.viewport(1280, 800)
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# First section\n\none\n\n# Second section\n\ntwo\n')
+    renderApp(articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const moveHandle = page.getByRole('button', { name: 'Move block' }).first()
+    await act(async () => {
+      await userEvent.click(moveHandle)
+    })
+    const menuOpened = document.body.querySelector('[role="menu"]') !== null
+    await act(async () => {
+      await userEvent.click(page.getByRole('menuitem', { name: 'Move down' }))
+    })
+
+    const readOutput = () => ({
+      body: getBody(articleDoc).toJSON(),
+      menuOpened,
+    })
+    expect(readOutput()).toEqual({
+      body: '# Second section\n\ntwo\n\n# First section\n\none\n',
+      menuOpened: true,
     })
   })
 })

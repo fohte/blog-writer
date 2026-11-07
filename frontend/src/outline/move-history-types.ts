@@ -10,6 +10,7 @@ export type TextHistoryEntry = {
   kind: 'text'
   inverse: ChangeSet
   memoAdoptions: MemoAdoptionSnapshot[]
+  memoAdoptionChanges: MemoAdoptionHistoryChange[]
   selectionBefore: EditorSelection
   selectionAfter: EditorSelection
   userEvent: string | undefined
@@ -17,6 +18,16 @@ export type TextHistoryEntry = {
   isolateBefore: boolean
   isolateAfter: boolean
   failure?: string
+}
+
+type MemoAdoptionHistoryChange = {
+  id: string
+  previousAdoptedTo: unknown
+}
+
+export type MemoAdoptionHistoryRecord = {
+  change: MemoAdoptionHistoryChange
+  redoSnapshot: MemoAdoptionSnapshot
 }
 
 type MoveHistoryEntry = {
@@ -41,6 +52,11 @@ export type TextHistoryStep = {
   beforeState: ReadonlyMap<number, number>
 }
 
+export type MoveHistoryFailure = {
+  operation: 'move' | 'undo' | 'redo'
+  error: InvalidBlockMoveError
+}
+
 export type MoveHistoryStep = {
   direction: 'undo' | 'redo'
   move: MoveBlockResult
@@ -50,7 +66,7 @@ export type MoveHistoryStep = {
 export interface MoveHistory {
   extension: Extension
   onError(
-    listener: (error: InvalidBlockMoveError | undefined) => void,
+    listener: (failure: MoveHistoryFailure | undefined) => void,
   ): () => void
   move(
     input: MoveBlockInput,
