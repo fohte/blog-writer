@@ -24,7 +24,7 @@ export function flattenHeadingTree(headings: readonly Heading[]): Heading[] {
   return flattenHeadingTreeWithDepth(headings).map(({ heading }) => heading)
 }
 
-function extractHeadingText(
+export function extractAtxHeadingText(
   markdown: string,
   from: number,
   to: number,
@@ -48,7 +48,7 @@ function collectAtxHeadings(markdown: string): FlatHeading[] {
 
     headings.push({
       level: Number(match[1]),
-      text: extractHeadingText(markdown, cursor.from, cursor.to),
+      text: extractAtxHeadingText(markdown, cursor.from, cursor.to),
       from: cursor.from,
       to: cursor.to,
     })

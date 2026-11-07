@@ -55,6 +55,16 @@ fn source_named(title: &str, points: Vec<Value>) -> Value {
     })
 }
 
+fn source_without_url(points: Vec<Value>) -> Value {
+    json!({
+        "title": "架空のテキスト資料",
+        "url": null,
+        "fetched_at": "2026-10-01",
+        "summary": "架空の概要",
+        "key_points": points
+    })
+}
+
 fn point(id: String, heading_id: &str) -> Value {
     json!({
         "id": id,
@@ -370,6 +380,68 @@ async fn groups_prioritized_key_points_by_source_in_the_prompt()
                 取得日: 2026-10-01
                 要点:
                 - [s3] 架空の要点
+                  調査対象見出し: ## 架空の見出し
+
+                執筆指示
+                「## 架空の見出し」の下に置く文を書いてください。
+                文を分けて返し、各文が事実を述べるなら is_factual を true にしてください。
+                参考要点に基づく事実の文では、根拠にした要点の別名を key_point_aliases に列挙してください。
+                つなぎや意見の文は is_factual を false にし、key_point_aliases は空にしてください。
+            "}.to_owned())
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn includes_key_points_from_sources_without_urls_in_the_prompt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let prompt = Arc::new(Mutex::new(None));
+    let state = LlmState::with_provider(
+        FixedProvider {
+            output: json!({"sentences": []}),
+            prompt: prompt.clone(),
+        },
+        ProviderName::ClaudeCode,
+        Duration::from_secs(1),
+    );
+    let actual = post_request(
+        request_with_sources(vec![source_without_url(vec![point(
+            "point-no-url".to_owned(),
+            "heading-target",
+        )])]),
+        state,
+    )
+    .await?;
+    let captured_prompt = prompt.lock().expect("prompt lock").clone();
+
+    assert_eq!(
+        (actual, captured_prompt),
+        (
+            (200, json!({"data": {"sentences": []}, "event": "result"})),
+            Some(indoc! {"
+                記事の前提
+                - 読者: 架空の読者
+                - 目的: 説明する
+                - 主張: 架空の主張
+
+                見出し一覧
+                - ## 架空の見出し
+                - ## 次の架空見出し
+
+                対象と前後の本文ブロック
+
+                [b1] 対象 (種類: paragraph)
+                架空の既存文です。
+
+                参考資料
+
+                資料 1
+                タイトル: 架空のテキスト資料
+                要約: 架空の概要
+                取得日: 2026-10-01
+                要点:
+                - [s1] 架空の要点
                   調査対象見出し: ## 架空の見出し
 
                 執筆指示

@@ -19,6 +19,7 @@ import {
   type SuggestionLayerError,
   type SuggestionLayerState,
   type SuggestionPosition,
+  type SuggestionReplacementMark,
   type TextSuggestion,
   type TrackedSuggestionRange,
   validateSuggestions,
@@ -31,6 +32,7 @@ export type {
   SuggestionLayerError,
   SuggestionLayerState,
   SuggestionPosition,
+  SuggestionReplacementMark,
   TextSuggestion,
   TrackedSuggestionRange,
 } from '#editor/suggestion-layer-range'
@@ -276,6 +278,10 @@ export class SuggestionLayerController<Metadata = unknown> {
 
   resolveInFlight(
     replacement: string | ((position: SuggestionPosition) => string),
+    details?: {
+      metadata?: Metadata
+      replacementMarks?: readonly SuggestionReplacementMark[]
+    },
   ): Result<void, SuggestionLayerError> {
     const view = this.view
     const state = view?.state.field(this.stateField, false)
@@ -290,7 +296,17 @@ export class SuggestionLayerController<Metadata = unknown> {
     const validation = validateSuggestions(
       [
         ...state.suggestions,
-        { ...state.inFlight, id, replacement: replacementText },
+        {
+          ...state.inFlight,
+          id,
+          replacement: replacementText,
+          ...(details?.metadata === undefined
+            ? {}
+            : { metadata: details.metadata }),
+          ...(details?.replacementMarks === undefined
+            ? {}
+            : { replacementMarks: details.replacementMarks }),
+        },
       ],
       view.state.doc.length,
     )
