@@ -191,7 +191,10 @@ describe('body request', () => {
         onSelect: () => selectedPresets.push('research-section'),
       },
     ])
-    pressModK(view)
+    await act(async () => {
+      pressModK(view)
+      await Promise.resolve()
+    })
     const presetButton = await vi.waitFor(() => {
       const button = Array.from(
         document.querySelectorAll<HTMLButtonElement>('button'),
@@ -201,9 +204,21 @@ describe('body request', () => {
       if (!button) throw new Error('The preset request was not rendered')
       return button
     })
-    await userEvent.click(presetButton)
+    await act(async () => {
+      await userEvent.click(presetButton)
+    })
 
-    expect(selectedPresets).toEqual(['research-section'])
+    const readOutput = () => ({
+      chooserOpen:
+        document
+          .querySelector<HTMLElement>('[data-slot="popover-content"]')
+          ?.hasAttribute('data-open') ?? false,
+      selectedPresets,
+    })
+    expect(readOutput()).toEqual({
+      chooserOpen: false,
+      selectedPresets: ['research-section'],
+    })
   })
 
   it('opens only for the platform Mod-K shortcut', async () => {

@@ -51,6 +51,7 @@ const removeSuggestion = StateEffect.define<ScopedEffect<string>>()
 export interface SuggestionLayerOptions {
   initialSuggestions?: readonly TextSuggestion[]
   initialInFlight?: SuggestionPosition
+  trackAcceptedRanges?: boolean
   onResolve?: (
     suggestion: TextSuggestion,
     decision: SuggestionDecision,
@@ -349,10 +350,13 @@ export class SuggestionLayerController {
       ],
     })
     view.focus()
-    const acceptedRange = this.trackedRanges.track({
-      from: suggestion.from,
-      to: suggestion.from + suggestion.replacement.length,
-    })
+    const acceptedRange =
+      this.options.trackAcceptedRanges === true
+        ? this.trackedRanges.track({
+            from: suggestion.from,
+            to: suggestion.from + suggestion.replacement.length,
+          })
+        : undefined
     this.options.onResolve?.(suggestion, 'accept', acceptedRange)
   }
 

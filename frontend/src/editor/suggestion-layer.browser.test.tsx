@@ -377,6 +377,7 @@ describe('suggestion layer', () => {
       [],
       {
         layerOptions: {
+          trackAcceptedRanges: true,
           onResolve: (suggestion, decision, acceptedRange) => {
             resolution = {
               decision,
@@ -413,8 +414,15 @@ describe('suggestion layer', () => {
         changes: { from: range.from + 9, insert: 'revised ' },
       })
     })
-    const currentRange = resolution?.acceptedRange?.current()
-    if (!currentRange) throw new Error('The accepted range was lost')
+    const rangeBeforeReplacement = resolution?.acceptedRange?.current()
+    if (!rangeBeforeReplacement) throw new Error('The accepted range was lost')
+    act(() => {
+      view.dispatch({
+        changes: { ...rangeBeforeReplacement, insert: 'updated sentence' },
+      })
+    })
+    const replacementRange = resolution?.acceptedRange?.current()
+    if (!replacementRange) throw new Error('The accepted range was lost')
 
     const readOutput = () => ({
       body: body.toJSON(),
@@ -422,11 +430,14 @@ describe('suggestion layer', () => {
       initialRange,
       metadata: resolution?.suggestion.metadata,
       rangeAfterPrefix,
-      trackedText: body.toJSON().slice(currentRange.from, currentRange.to),
-      currentRange,
+      rangeBeforeReplacement,
+      replacementRange,
+      replacedText: body
+        .toJSON()
+        .slice(replacementRange.from, replacementRange.to),
     })
     expect(readOutput()).toEqual({
-      body: 'new\nopening sentence\naccepted revised sentence\nclosing sentence',
+      body: 'new\nopening sentence\nupdated sentence\nclosing sentence',
       decision: 'accept',
       initialRange: { from, to: from + 'accepted sentence'.length },
       metadata: { sourceIds: ['source-a'] },
@@ -434,11 +445,15 @@ describe('suggestion layer', () => {
         from: from + 'new\n'.length,
         to: from + 'new\n'.length + 'accepted sentence'.length,
       },
-      trackedText: 'accepted revised sentence',
-      currentRange: {
+      rangeBeforeReplacement: {
         from: from + 'new\n'.length,
         to: from + 'new\n'.length + 'accepted revised sentence'.length,
       },
+      replacementRange: {
+        from: from + 'new\n'.length,
+        to: from + 'new\n'.length + 'updated sentence'.length,
+      },
+      replacedText: 'updated sentence',
     })
   })
 
