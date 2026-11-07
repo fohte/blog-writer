@@ -18,7 +18,6 @@ export interface ArticleListViewProps {
   onLoginAgain: () => void
 }
 
-// Synced and locally saved rows stay quiet so that rows needing attention stand out.
 const rowStatusLabels: Partial<Record<SyncState, string>> = {
   unsynced: '未同期',
   syncing: '同期中',
