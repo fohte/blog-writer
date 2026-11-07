@@ -4,7 +4,7 @@ import type { components } from '#lib/api/schema.gen.d.ts'
 import { isRecord } from '#lib/guards'
 
 export type ExportDestination = components['schemas']['DestinationResponse']
-export type ArticleFileResponse = components['schemas']['ArticleFileResponse']
+type ArticleFileResponse = components['schemas']['ArticleFileResponse']
 
 export class ExportApiError extends Error {
   constructor(
