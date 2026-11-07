@@ -3,6 +3,8 @@ import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
 
+import { editorTheme } from '#editor/theme'
+
 type TextDiffViewProps = {
   original: string
   modified: string
@@ -26,6 +28,7 @@ export function TextDiffView({
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),
       EditorView.lineWrapping,
+      editorTheme,
     ]
     const view = new MergeView({
       a: { doc: original, extensions: readOnlyExtensions },
