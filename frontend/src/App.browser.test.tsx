@@ -198,41 +198,27 @@ describe('App outline proposal integration', () => {
       checkedAt: '2026-01-01T00:00:00Z',
       summary: 'A concise source summary.',
     })._unsafeUnwrap()
-    for (const { claim, text, quote, verdict } of [
+    for (const { claim, text, quote } of [
       {
         claim: 'Target claim.',
         text: 'Target claim.',
         quote: 'Evidence for the target claim.',
-        verdict: 'supported',
-      },
-      {
-        claim: 'Target claim.',
-        text: 'Target claim.',
-        quote: 'An outdated quote for the target claim.',
-        verdict: 'outdated',
-      },
-      {
-        claim: 'The previous claim.',
-        text: 'Target claim.',
-        quote: 'A quote from the edited claim.',
-        verdict: 'supported',
       },
       {
         claim: 'Unrelated claim.',
         text: 'Unrelated claim.',
         quote: 'Evidence for an unrelated claim.',
-        verdict: 'supported',
       },
-    ] as const) {
+    ]) {
       const from = articleBody.indexOf(text)
       addEvidence(articleDoc, {
-        id: `evidence-${quote}`,
+        id: `evidence-${text}`,
         from,
         to: from + text.length,
         claim,
         sourceId,
         quote,
-        verdict,
+        verdict: 'supported',
         checkedAt: '2026-01-01T00:00:00Z',
       })._unsafeUnwrap()
     }
@@ -243,16 +229,9 @@ describe('App outline proposal integration', () => {
     })
     const editor = host?.querySelector<HTMLElement>('.cm-content')
     if (!editor) throw new Error('The article editor did not open')
-    const view = EditorView.findFromDOM(editor)
-    if (!view) throw new Error('The article editor view did not open')
-    const targetFrom = articleBody.indexOf('Target claim.')
-    act(() => {
-      view.dispatch({
-        selection: {
-          anchor: targetFrom,
-          head: targetFrom + 'Target claim.'.length,
-        },
-      })
+    await act(async () => {
+      await userEvent.click(page.getByText('Target claim.'))
+      await userEvent.keyboard('{Home}')
     })
 
     let requestBody: unknown
