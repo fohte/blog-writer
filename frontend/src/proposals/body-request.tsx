@@ -2,9 +2,9 @@ import { type Extension, Prec } from '@codemirror/state'
 import { type EditorView, keymap } from '@codemirror/view'
 import { errAsync } from 'neverthrow'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import * as Y from 'yjs'
+import type * as Y from 'yjs'
 
-import { getBody, listEvidence, listSources } from '#article/index'
+import { listEvidenceOverlapping, listSources } from '#article/index'
 import { getPremise } from '#article/premise'
 import {
   type BodyRequestPhase,
@@ -273,24 +273,7 @@ export function BodyRequestAccessory({
     const sourceSummaries = listSources(doc)
       .map(({ summary }) => summary)
       .filter((summary) => summary.trim().length > 0)
-    const bodyText = getBody(doc)
-    const evidenceQuotes = listEvidence(doc)
-      .filter((evidence) => {
-        const from = Y.createAbsolutePositionFromRelativePosition(
-          evidence.from,
-          doc,
-        )
-        const to = Y.createAbsolutePositionFromRelativePosition(
-          evidence.to,
-          doc,
-        )
-        return (
-          from?.type === bodyText &&
-          to?.type === bodyText &&
-          from.index < context.range.to &&
-          to.index > context.range.from
-        )
-      })
+    const evidenceQuotes = listEvidenceOverlapping(doc, context.range)
       .map(({ quote }) => quote)
       .filter((quote) => quote.trim().length > 0)
     if (sourceSummaries.length > 0) body.source_summaries = sourceSummaries
