@@ -59,6 +59,20 @@ export const WithArticles: Story = {
   },
 }
 
+export const LongTitle: Story = {
+  name: 'the list wraps a long unbroken title inside its row.',
+  args: {
+    articles: [
+      {
+        id: 'article-a',
+        title: 'Unbroken'.repeat(16),
+        createdAt: Date.UTC(2026, 0, 15, 9),
+      },
+    ],
+    statuses: { 'article-a': 'unsynced' },
+  },
+}
+
 export const Offline: Story = {
   name: 'the list shows the offline status and a banner explaining that edits stay on this device.',
   args: {

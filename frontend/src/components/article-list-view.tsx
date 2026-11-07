@@ -99,7 +99,7 @@ export function ArticleListView({
                   >
                     {/* The pseudo-element stretches the button over the row so the whole row opens the article. */}
                     <button
-                      className="grow basis-88 text-left text-base font-bold outline-none after:absolute after:inset-0 focus-visible:after:outline-2 focus-visible:after:outline-ring"
+                      className="min-w-0 grow basis-88 text-left text-base font-bold wrap-anywhere outline-none after:absolute after:inset-0 focus-visible:after:outline-2 focus-visible:after:outline-ring"
                       onClick={() => {
                         onOpenArticle(id)
                       }}
