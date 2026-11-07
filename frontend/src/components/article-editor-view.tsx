@@ -77,7 +77,8 @@ export interface ArticleEditorViewProps {
     ((context: ArticleOutlineRenderContext) => ReactNode) | undefined
   premiseAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
   headerActions?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  sourcesPanel?: ReactNode | undefined
+  sourcesPanel?:
+    ReactNode | ((context: ArticleEditorContext) => ReactNode) | undefined
   onViewChange?: ((view: EditorView | null) => void) | undefined
   syncStatus?: SyncState | undefined
   syncError?: string | undefined
@@ -261,12 +262,18 @@ export function ArticleEditorView({
         />
       ) : null
     }
-    if (panel === 'sources') return sourcesPanel ?? null
+    if (panel === 'sources')
+      return typeof sourcesPanel === 'function'
+        ? context
+          ? sourcesPanel(context)
+          : null
+        : (sourcesPanel ?? null)
     return doc && body && history ? (
       <Panel className="min-h-96 overflow-auto rounded-lg p-4">
         <div className="relative">
           <MarkdownEditor
             ariaLabel="Article body"
+            articleId={articleId}
             className="min-h-96"
             extensions={extensions}
             history={history}

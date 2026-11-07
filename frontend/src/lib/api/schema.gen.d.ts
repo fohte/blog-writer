@@ -84,6 +84,38 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/articles/{article_id}/source-bodies/{source_id}/restore': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['restore_body']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/articles/{article_id}/source-bodies/{source_id}/save-if-unchanged': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['save_body_if_unchanged']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/articles/{article_id}/source-bodies/{source_id}/url': {
     parameters: {
       query?: never
@@ -694,8 +726,16 @@ export interface components {
       key_points: components['schemas']['ResearchKeyPoint'][]
       summary: string
     }
+    RestoreSourceBodyRequest: {
+      expected_body: string
+      restore_body?: string | null
+    }
     ResumeArticleFileSyncRequest: {
       hash: string
+    }
+    SaveSourceBodyIfUnchangedRequest: {
+      body: string
+      expected_body?: string | null
     }
     SaveSourceBodyRequest: {
       body: string
@@ -1222,6 +1262,114 @@ export interface operations {
       }
       /** @description The file text could not be extracted */
       422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body storage is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  restore_body: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+        /** @description Source ID */
+        source_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RestoreSourceBodyRequest']
+      }
+    }
+    responses: {
+      /** @description Source body restored */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body changed before it could be restored */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body storage is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  save_body_if_unchanged: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+        /** @description Source ID */
+        source_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SaveSourceBodyIfUnchangedRequest']
+      }
+    }
+    responses: {
+      /** @description Source body stored */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body changed before it could be stored */
+      409: {
         headers: {
           [name: string]: unknown
         }
