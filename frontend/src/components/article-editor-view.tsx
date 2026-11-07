@@ -236,7 +236,7 @@ export function ArticleEditorView({
 
   const renderPanel = (panel: ArticleEditorPanel) => {
     if (panel === 'memo')
-      return doc ? <MemoPanel doc={doc} view={view ?? undefined} /> : null
+      return doc ? <MemoPanel doc={doc} {...(view ? { view } : {})} /> : null
     if (panel === 'outline') {
       if (!context || (!view && !outlineAccessory)) return null
       const outline = view ? (
