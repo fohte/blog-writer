@@ -30,6 +30,7 @@ export function ArticleWorkspace({
   headerActions,
   onViewChange,
   outlineAccessory,
+  outlineRenderer,
   premiseAccessory,
   sourcesPanel,
 }: ArticleWorkspaceProps) {
@@ -54,6 +55,7 @@ export function ArticleWorkspace({
         }}
         onViewChange={onViewChange}
         outlineAccessory={outlineAccessory}
+        outlineRenderer={outlineRenderer}
         premiseAccessory={premiseAccessory}
         requiresAuthentication={requiresAuthentication}
         sourcesPanel={sourcesPanel}

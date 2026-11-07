@@ -41,6 +41,9 @@ export type ArticleEditorContext = {
   view: EditorView | null
   replaceBody: (value: string) => Result<void, EditorNotReadyError>
 }
+type ArticleOutlineRenderContext = ArticleEditorContext & {
+  onHeadingSelected: () => void
+}
 
 class EditorNotReadyError extends Error {
   constructor() {
@@ -71,6 +74,8 @@ export interface ArticleEditorViewProps {
     ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
   bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
   outlineAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  outlineRenderer?:
+    ((context: ArticleOutlineRenderContext) => ReactNode) | undefined
   premiseAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
   headerActions?: ((context: ArticleEditorContext) => ReactNode) | undefined
   sourcesPanel?: ReactNode | undefined
@@ -90,6 +95,7 @@ export type ArticleEditorIntegrationProps = Pick<
   | 'headerActions'
   | 'onViewChange'
   | 'outlineAccessory'
+  | 'outlineRenderer'
   | 'premiseAccessory'
   | 'sourcesPanel'
 >
@@ -157,6 +163,7 @@ export function ArticleEditorView({
   editorExtensions,
   bodyAccessory,
   outlineAccessory,
+  outlineRenderer,
   premiseAccessory,
   headerActions,
   sourcesPanel,
@@ -240,14 +247,19 @@ export function ArticleEditorView({
   const renderPanel = (panel: ArticleEditorPanel) => {
     if (panel === 'memo') return doc ? <MemoPanel doc={doc} /> : null
     if (panel === 'outline') {
-      if (!context || (!view && !outlineAccessory)) return null
-      const outline = view ? (
+      if (!context || (!view && !outlineAccessory && !outlineRenderer))
+        return null
+      const onHeadingSelected = () => {
+        if (isMobile) setMobilePanel('body')
+      }
+      const outlineContext = { ...context, onHeadingSelected }
+      const outline = outlineRenderer ? (
+        outlineRenderer(outlineContext)
+      ) : view ? (
         <ArticleOutline
           doc={context.doc}
           history={context.history}
-          onHeadingSelected={() => {
-            if (isMobile) setMobilePanel('body')
-          }}
+          onHeadingSelected={onHeadingSelected}
           view={view}
         />
       ) : null

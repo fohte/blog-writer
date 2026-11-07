@@ -52,6 +52,7 @@ export type OutlineProposalEditorContext = {
 
 export type OutlineProposalAccessoryContext = OutlineProposalEditorContext & {
   view: EditorView | null
+  onHeadingSelected: () => void
 }
 
 export interface OutlineProposalOptions {
@@ -448,6 +449,7 @@ export function OutlineProposalAccessory({
   doc,
   history,
   view,
+  onHeadingSelected,
 }: OutlineProposalAccessoryContext) {
   const controller = view?.state.facet(outlineProposalControllerFacet) ?? null
   const [state, setState] = useState<OutlineProposalState>(
@@ -469,6 +471,7 @@ export function OutlineProposalAccessory({
       doc={doc}
       history={history}
       view={view}
+      onHeadingSelected={onHeadingSelected}
       proposalState={state}
       onProposalAccept={(id) => {
         controller.accept(id)

@@ -236,6 +236,7 @@ function createFixture(
         doc,
         history,
         view,
+        onHeadingSelected: () => {},
       }),
     )
   })

@@ -30,6 +30,7 @@ export function ArticleEditorPage({
   headerActions,
   onViewChange,
   outlineAccessory,
+  outlineRenderer,
   premiseAccessory,
   sourcesPanel,
 }: ArticleEditorPageProps) {
@@ -61,6 +62,7 @@ export function ArticleEditorPage({
       onViewChange={onViewChange}
       onLoginAgain={onLoginAgain}
       outlineAccessory={outlineAccessory}
+      outlineRenderer={outlineRenderer}
       premiseAccessory={premiseAccessory}
       onTitleChange={(title) => {
         client.updateArticleTitle(article.id, title).match(

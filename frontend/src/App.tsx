@@ -148,11 +148,12 @@ export function App() {
       onOpenSettings={() => {
         setShowSettings(true)
       }}
-      outlineAccessory={(context) => (
+      outlineRenderer={(context) => (
         <OutlineProposalAccessory
           doc={context.doc}
           history={context.history}
           view={context.view}
+          onHeadingSelected={context.onHeadingSelected}
         />
       )}
       premiseAccessory={(context) => (
