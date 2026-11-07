@@ -213,6 +213,7 @@ export function BodyRequestAccessory({
       }),
     )
     const evidenceQuotes = listEvidenceOverlapping(doc, context.range)
+      .filter(({ edited, verdict }) => verdict === 'supported' && !edited)
       .map(({ quote }) => quote)
       .filter((quote) => quote.trim().length > 0)
     if (sources.length > 0) body.sources = sources

@@ -61,11 +61,14 @@ type PointReference = {
 type CandidatePoint = {
   sourceId: string
   id: string
-  researchedHeadingId: string
+  researchedHeading: string
+  requestHeadingId: string
   text: string
   quote: string
   targetMatch: boolean
 }
+
+type RequestHeading = { id: string; text: string; from: number }
 
 const maximumKeyPoints = 50
 
@@ -73,49 +76,95 @@ function isHeadingBlock(name: string): boolean {
   return name.startsWith('ATXHeading') || name.startsWith('SetextHeading')
 }
 
-function requestBlocks(markdown: string) {
-  return topLevelBlocks(markdown).map((block, index) => ({
-    id: `block-${String(index)}`,
-    kind: isHeadingBlock(block.name)
-      ? 'heading'
-      : block.name === 'Paragraph'
-        ? 'paragraph'
-        : 'other',
-    markdown: markdown.slice(block.from, block.contentTo),
-  }))
+function headingText(
+  markdown: string,
+  block: ReturnType<typeof topLevelBlocks>[number],
+) {
+  const blockMarkdown = markdown.slice(block.from, block.contentTo)
+  const lineEnd = blockMarkdown.indexOf('\n')
+  const firstLine = blockMarkdown.slice(
+    0,
+    lineEnd === -1 ? blockMarkdown.length : lineEnd,
+  )
+  if (!block.name.startsWith('ATXHeading')) return firstLine.trim()
+
+  const match = /^#{1,6}(?:[ \t]+|$)(.*)$/.exec(firstLine)
+  return match?.[1]?.replace(/[ \t]+#+[ \t]*$/, '').trim() ?? ''
 }
 
-function targetHeadingId(markdown: string, range: Range): string | undefined {
+function requestBlocks(markdown: string) {
   const blocks = topLevelBlocks(markdown)
-  const index = blocks.findLastIndex(
-    (block) => isHeadingBlock(block.name) && block.from <= range.from,
-  )
-  return index === -1 ? undefined : `block-${String(index)}`
+  return {
+    blocks: blocks.map((block, index) => ({
+      id: `block-${String(index)}`,
+      kind: isHeadingBlock(block.name)
+        ? 'heading'
+        : block.name === 'Paragraph'
+          ? 'paragraph'
+          : 'other',
+      markdown: markdown.slice(block.from, block.contentTo),
+    })),
+    headings: blocks.flatMap((block, index) =>
+      isHeadingBlock(block.name)
+        ? [
+            {
+              id: `block-${String(index)}`,
+              text: headingText(markdown, block),
+              from: block.from,
+            },
+          ]
+        : [],
+    ),
+  }
+}
+
+function targetHeading(
+  headings: RequestHeading[],
+  range: Range,
+): RequestHeading | undefined {
+  const index = headings.findLastIndex(({ from }) => from <= range.from)
+  return headings[index]
 }
 
 function requestSources(
   doc: Y.Doc,
-  targetId: string,
+  target: RequestHeading,
+  headings: RequestHeading[],
 ): {
   sources: WriteFromKeyPointsRequest['sources']
   points: Map<string, PointReference>
 } {
+  const headingIdsByText = new Map<string, string[]>()
+  for (const heading of headings) {
+    const ids = headingIdsByText.get(heading.text) ?? []
+    ids.push(heading.id)
+    headingIdsByText.set(heading.text, ids)
+  }
   const availableSources = new Map(
     listSources(doc)
-      .filter((source) => source.status === 'ready' && source.url !== null)
+      .filter((source) => source.status === 'ready')
       .map((source) => [source.id, source]),
   )
   const pointsBySource = new Map<string, CandidatePoint[]>()
   for (const finding of listFindings(doc)) {
     if (!availableSources.has(finding.sourceId)) continue
     const sourcePoints = pointsBySource.get(finding.sourceId) ?? []
+    const researchedHeading = finding.researchedHeading ?? ''
+    const matchingHeadingIds =
+      researchedHeading.length === 0
+        ? []
+        : (headingIdsByText.get(researchedHeading) ?? [])
     sourcePoints.push({
       sourceId: finding.sourceId,
       id: finding.id,
-      researchedHeadingId: finding.researchedHeadingId ?? '',
+      researchedHeading,
+      requestHeadingId:
+        matchingHeadingIds.find((id) => id === target.id) ??
+        matchingHeadingIds[0] ??
+        '',
       text: finding.text,
       quote: finding.quote,
-      targetMatch: finding.researchedHeadingId === targetId,
+      targetMatch: target.text.length > 0 && researchedHeading === target.text,
     })
     pointsBySource.set(finding.sourceId, sourcePoints)
   }
@@ -142,11 +191,11 @@ function requestSources(
         )
         .map((point) => ({
           id: point.id,
-          researched_heading_id: point.researchedHeadingId,
+          researched_heading_id: point.requestHeadingId,
           text: point.text,
           quote: point.quote.length === 0 ? null : point.quote,
         }))
-      if (keyPoints.length === 0 || source.url === null) return []
+      if (keyPoints.length === 0) return []
       return [
         {
           title: source.title,
@@ -214,20 +263,21 @@ export function writeFromKeyPoints(
   signal: AbortSignal,
 ): ResultAsync<WriteFromKeyPointsProposal, Error> {
   const markdown = selection.view.state.doc.toString()
-  const targetId = targetHeadingId(markdown, selection.context.range)
-  if (targetId === undefined) {
+  const { blocks, headings } = requestBlocks(markdown)
+  const target = targetHeading(headings, selection.context.range)
+  if (target === undefined) {
     return errAsync(new Error('対象の見出しを特定できませんでした。'))
   }
   const premise = getPremise(doc)
-  const { sources, points } = requestSources(doc, targetId)
+  const { sources, points } = requestSources(doc, target, headings)
   const body: WriteFromKeyPointsRequest = {
     premise: {
       audience: premise.audience ?? '',
       purpose: premise.purpose ?? '',
       thesis: premise.claim ?? '',
     },
-    target_heading_id: targetId,
-    blocks: requestBlocks(markdown),
+    target_heading_id: target.id,
+    blocks,
     sources,
   }
 

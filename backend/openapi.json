@@ -2047,7 +2047,7 @@
       },
       "ReferenceSourceRequest": {
         "type": "object",
-        "required": ["title", "url", "fetched_at", "summary", "key_points"],
+        "required": ["title", "fetched_at", "summary", "key_points"],
         "properties": {
           "fetched_at": {
             "type": "string"
@@ -2065,7 +2065,7 @@
             "type": "string"
           },
           "url": {
-            "type": "string"
+            "type": ["string", "null"]
           }
         }
       },

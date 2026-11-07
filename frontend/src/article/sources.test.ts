@@ -84,6 +84,7 @@ describe('article sources', () => {
     const findings = setFindings(doc, 'source-a', [
       {
         id: 'finding-a',
+        researchedHeading: 'Research topic',
         text: '利用者数は増加しました。',
         quote: '利用者数は 12% 増加しました。',
       },
@@ -111,6 +112,7 @@ describe('article sources', () => {
         {
           id: 'finding-a',
           sourceId: 'source-a',
+          researchedHeading: 'Research topic',
           text: '利用者数は増加しました。',
           quote: '利用者数は 12% 増加しました。',
         },
@@ -132,6 +134,7 @@ describe('article sources', () => {
         {
           id: 'finding-a',
           sourceId: 'source-a',
+          researchedHeading: 'Research topic',
           text: '利用者数は増加しました。',
           quote: '利用者数は 12% 増加しました。',
         },

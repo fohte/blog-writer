@@ -1,5 +1,6 @@
 import '#index.css'
 
+import { EditorView } from '@codemirror/view'
 import { ok, okAsync } from 'neverthrow'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -73,6 +74,11 @@ function writeFromKeyPointsResponse(): Response {
             text: 'The plan stayed ahead of schedule.',
             is_factual: true,
             key_point_ids: ['finding-other-50'],
+          },
+          {
+            text: 'The notes include a local observation.',
+            is_factual: true,
+            key_point_ids: ['finding-notes'],
           },
           {
             text: 'This may encourage more participation.',
@@ -192,27 +198,41 @@ describe('App outline proposal integration', () => {
       checkedAt: '2026-01-01T00:00:00Z',
       summary: 'A concise source summary.',
     })._unsafeUnwrap()
-    for (const { claim, text, quote } of [
+    for (const { claim, text, quote, verdict } of [
       {
         claim: 'Target claim.',
         text: 'Target claim.',
         quote: 'Evidence for the target claim.',
+        verdict: 'supported',
+      },
+      {
+        claim: 'Target claim.',
+        text: 'Target claim.',
+        quote: 'An outdated quote for the target claim.',
+        verdict: 'outdated',
+      },
+      {
+        claim: 'The previous claim.',
+        text: 'Target claim.',
+        quote: 'A quote from the edited claim.',
+        verdict: 'supported',
       },
       {
         claim: 'Unrelated claim.',
         text: 'Unrelated claim.',
         quote: 'Evidence for an unrelated claim.',
+        verdict: 'supported',
       },
-    ]) {
+    ] as const) {
       const from = articleBody.indexOf(text)
       addEvidence(articleDoc, {
-        id: `evidence-${text}`,
+        id: `evidence-${quote}`,
         from,
         to: from + text.length,
         claim,
         sourceId,
         quote,
-        verdict: 'supported',
+        verdict,
         checkedAt: '2026-01-01T00:00:00Z',
       })._unsafeUnwrap()
     }
@@ -223,9 +243,16 @@ describe('App outline proposal integration', () => {
     })
     const editor = host?.querySelector<HTMLElement>('.cm-content')
     if (!editor) throw new Error('The article editor did not open')
-    await act(async () => {
-      await userEvent.click(page.getByText('Target claim.'))
-      await userEvent.keyboard('{Home}')
+    const view = EditorView.findFromDOM(editor)
+    if (!view) throw new Error('The article editor view did not open')
+    const targetFrom = articleBody.indexOf('Target claim.')
+    act(() => {
+      view.dispatch({
+        selection: {
+          anchor: targetFrom,
+          head: targetFrom + 'Target claim.'.length,
+        },
+      })
     })
 
     let requestBody: unknown
@@ -419,7 +446,8 @@ describe('App write from key points integration', () => {
     holdWriteResponse = true
     const articleDoc = new Y.Doc()
     doc = articleDoc
-    setBody(articleDoc, '# Target section\n\nA starter paragraph.')
+    const articleBody = '# Target section\n\nA starter paragraph.'
+    setBody(articleDoc, articleBody)
     renderApp(articleDoc)
 
     await act(async () => {
@@ -432,11 +460,15 @@ describe('App write from key points integration', () => {
         throw new Error('The article editor did not open')
       }
     })
-    await act(async () => {
-      await userEvent.click(page.getByText('A starter paragraph.'))
-    })
     const editorContent = appHost.querySelector<HTMLElement>('.cm-content')
     if (!editorContent) throw new Error('The article editor did not render')
+    const view = EditorView.findFromDOM(editorContent)
+    if (!view) throw new Error('The article editor view did not render')
+    act(() => {
+      view.dispatch({
+        selection: { anchor: articleBody.indexOf('A starter paragraph.') },
+      })
+    })
     const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
     await act(async () => {
       editorContent.dispatchEvent(
@@ -477,7 +509,7 @@ describe('App write from key points integration', () => {
       aborted: writeRequestSignal?.aborted,
     })
     expect(readOutput()).toEqual({
-      body: '# Target section\n\nA starter paragraph.',
+      body: articleBody,
       evidenceIds: [],
       requestCount: 1,
       aborted: true,
@@ -487,7 +519,9 @@ describe('App write from key points integration', () => {
   it('saves evidence only after accepting generated factual sentences', async () => {
     const articleDoc = new Y.Doc()
     doc = articleDoc
-    setBody(articleDoc, '# Target section\n\nA starter paragraph.')
+    const articleBody =
+      'Intro paragraph.\n\n# Intro\n\nBefore target.\n\n# Target section\n\n# Target section\n\nA starter paragraph.'
+    setBody(articleDoc, articleBody)
     addSource(articleDoc, {
       id: 'source-sample',
       kind: 'url',
@@ -497,9 +531,18 @@ describe('App write from key points integration', () => {
       checkedAt: '2026-03-01T00:00:00.000Z',
       summary: 'A sample summary.',
     })._unsafeUnwrap()
+    addSource(articleDoc, {
+      id: 'source-notes',
+      kind: 'pasted',
+      title: 'Text notes',
+      url: null,
+      fileName: null,
+      checkedAt: '2026-03-02T00:00:00.000Z',
+      summary: 'Notes captured from a local document.',
+    })._unsafeUnwrap()
     const otherFindings = Array.from({ length: 51 }, (_, index) => ({
       id: `finding-other-${String(index)}`,
-      researchedHeadingId: 'block-9',
+      researchedHeading: 'Removed section',
       text: `A note from another section ${String(index)}.`,
       quote: `A quotation from another section ${String(index)}.`,
     }))
@@ -507,9 +550,17 @@ describe('App write from key points integration', () => {
       ...otherFindings,
       {
         id: 'finding-sample',
-        researchedHeadingId: 'block-0',
+        researchedHeading: 'Target section',
         text: 'The measure increased each year.',
         quote: 'The recorded value increased each year.',
+      },
+    ])._unsafeUnwrap()
+    setFindings(articleDoc, 'source-notes', [
+      {
+        id: 'finding-notes',
+        researchedHeading: 'Target section',
+        text: 'The note records a local observation.',
+        quote: 'A note documented this observation.',
       },
     ])._unsafeUnwrap()
     renderApp(articleDoc)
@@ -524,11 +575,15 @@ describe('App write from key points integration', () => {
         throw new Error('The article editor did not open')
       }
     })
-    await act(async () => {
-      await userEvent.click(page.getByText('A starter paragraph.'))
-    })
     const editorContent = appHost.querySelector<HTMLElement>('.cm-content')
     if (!editorContent) throw new Error('The article editor did not render')
+    const view = EditorView.findFromDOM(editorContent)
+    if (!view) throw new Error('The article editor view did not render')
+    act(() => {
+      view.dispatch({
+        selection: { anchor: articleBody.indexOf('A starter paragraph.') },
+      })
+    })
     const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
     await act(async () => {
       editorContent.dispatchEvent(
@@ -563,6 +618,9 @@ describe('App write from key points integration', () => {
     }
 
     await act(async () => {
+      view.dispatch({
+        selection: { anchor: articleBody.indexOf('A starter paragraph.') },
+      })
       editorContent.dispatchEvent(
         new KeyboardEvent('keydown', {
           bubbles: true,
@@ -594,7 +652,7 @@ describe('App write from key points integration', () => {
         ...(host?.querySelectorAll<HTMLButtonElement>('.cm-evidence-marker') ??
           []),
       ]
-      if (rendered.length !== 3) {
+      if (rendered.length !== 4) {
         throw new Error(
           'The accepted factual sentences did not receive markers',
         )
@@ -631,17 +689,21 @@ describe('App write from key points integration', () => {
     })
     expect(readOutput()).toEqual({
       rejectedProposal: {
-        body: '# Target section\n\nA starter paragraph.',
+        body: articleBody,
         evidenceIds: [],
       },
-      body: '# Target section\n\nThe report records an annual increase. The program reached a national record. The plan stayed ahead of schedule. This may encourage more participation.',
+      body: 'Intro paragraph.\n\n# Intro\n\nBefore target.\n\n# Target section\n\n# Target section\n\nThe report records an annual increase. The program reached a national record. The plan stayed ahead of schedule. The notes include a local observation. This may encourage more participation.',
       request: {
         premise: { audience: '', purpose: '', thesis: '' },
-        target_heading_id: 'block-0',
+        target_heading_id: 'block-4',
         blocks: [
-          { id: 'block-0', kind: 'heading', markdown: '# Target section' },
+          { id: 'block-0', kind: 'paragraph', markdown: 'Intro paragraph.' },
+          { id: 'block-1', kind: 'heading', markdown: '# Intro' },
+          { id: 'block-2', kind: 'paragraph', markdown: 'Before target.' },
+          { id: 'block-3', kind: 'heading', markdown: '# Target section' },
+          { id: 'block-4', kind: 'heading', markdown: '# Target section' },
           {
-            id: 'block-1',
+            id: 'block-5',
             kind: 'paragraph',
             markdown: 'A starter paragraph.',
           },
@@ -655,16 +717,30 @@ describe('App write from key points integration', () => {
             key_points: [
               {
                 id: 'finding-sample',
-                researched_heading_id: 'block-0',
+                researched_heading_id: 'block-4',
                 text: 'The measure increased each year.',
                 quote: 'The recorded value increased each year.',
               },
-              ...Array.from({ length: 49 }, (_, index) => ({
+              ...Array.from({ length: 48 }, (_, index) => ({
                 id: `finding-other-${String(index)}`,
-                researched_heading_id: 'block-9',
+                researched_heading_id: '',
                 text: `A note from another section ${String(index)}.`,
                 quote: `A quotation from another section ${String(index)}.`,
               })),
+            ],
+          },
+          {
+            title: 'Text notes',
+            url: null,
+            fetched_at: '2026-03-02T00:00:00.000Z',
+            summary: 'Notes captured from a local document.',
+            key_points: [
+              {
+                id: 'finding-notes',
+                researched_heading_id: 'block-4',
+                text: 'The note records a local observation.',
+                quote: 'A note documented this observation.',
+              },
             ],
           },
         ],
@@ -690,6 +766,13 @@ describe('App write from key points integration', () => {
           quote: '',
           sourceId: null,
           verdict: 'insufficient',
+        },
+        {
+          currentClaim: 'The notes include a local observation.',
+          edited: false,
+          quote: 'A note documented this observation.',
+          sourceId: 'source-notes',
+          verdict: 'supported',
         },
       ],
       card: '資料なし不足引用箇所はありません。確認日: date-placeholder公開日: 不明外す',

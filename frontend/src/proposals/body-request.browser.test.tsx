@@ -690,6 +690,44 @@ describe('body request', () => {
     })
   })
 
+  it('preserves blank lines when text is inserted before a pending request', async () => {
+    const article = '# Article\n\n## Section\n\nfollowing paragraph'
+    const { body, view } = createRequestEditor([], article)
+    const { fetcher, resolveResponse, signals } = createPendingFetch()
+    vi.stubGlobal('fetch', fetcher)
+    const position = article.indexOf('\n\n', article.indexOf('## Section')) + 1
+    act(() => {
+      view.dispatch({ selection: { anchor: position } })
+    })
+
+    await submitRequest(
+      view,
+      'insert a sentence here',
+      () => signals.length === 1,
+    )
+    view.dispatch({ changes: { from: 0, insert: 'Earlier paragraph xx\n\n' } })
+    await act(async () => {
+      await resolveResponse(0, 'NEW')
+    })
+    const acceptButton = view.dom.querySelector<HTMLButtonElement>(
+      '.cm-suggestion-widget button',
+    )
+    if (!acceptButton)
+      throw new Error('The insertion proposal has no accept action')
+    await act(async () => {
+      await userEvent.click(acceptButton)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      requestAborted: signals.map((signal) => signal.aborted),
+    })
+    expect(readOutput()).toEqual({
+      body: 'Earlier paragraph xx\n\n# Article\n\n## Section\n\nNEW\n\nfollowing paragraph',
+      requestAborted: [false],
+    })
+  })
+
   it('replaces an existing proposal when a new request targets the same range', async () => {
     const { body, view } = createRequestEditor()
     const { fetcher, resolveResponse, signals } = createPendingFetch()

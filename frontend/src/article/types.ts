@@ -44,7 +44,7 @@ export type Source = {
 export type Finding = {
   id: string
   sourceId: string
-  researchedHeadingId?: string | null
+  researchedHeading?: string
   text: string
   quote: string
 }

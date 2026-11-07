@@ -12,7 +12,6 @@ const replacement = [
 ].join(' ')
 
 const meta = {
-  title: 'Editor/SuggestionDiff',
   component: SuggestionDiff,
 } satisfies Meta<typeof SuggestionDiff>
 
@@ -23,20 +22,20 @@ export const Focused: Story = {
   name: 'the focused suggestion shows accept and reject actions.',
   args: {
     focused: true,
-    onAccept: () => undefined,
-    onReject: () => undefined,
+    onAccept: () => {},
+    onReject: () => {},
     original: 'A short draft sentence.',
     replacement: 'A clearer sentence for the draft.',
   },
 }
 
 export const Annotated: Story = {
-  name: 'the suggestion shows a one-line note with its diff.',
+  name: 'the suggestion shows a one-line note with its diff',
   args: {
     focused: true,
     note: 'The revision reflects the source listed in the article.',
-    onAccept: () => undefined,
-    onReject: () => undefined,
+    onAccept: () => {},
+    onReject: () => {},
     original: 'A short draft sentence.',
     replacement: 'A clearer sentence for the draft.',
   },
@@ -68,8 +67,8 @@ export const Narrow: Story = {
   ),
   args: {
     focused: true,
-    onAccept: () => undefined,
-    onReject: () => undefined,
+    onAccept: () => {},
+    onReject: () => {},
     original: 'A sentence with a longer phrase that wraps on a narrow screen.',
     replacement:
       'A more specific sentence that still reads clearly on a narrow screen.',
@@ -81,8 +80,8 @@ export const Inline: Story = {
   args: {
     focused: true,
     inline: true,
-    onAccept: () => undefined,
-    onReject: () => undefined,
+    onAccept: () => {},
+    onReject: () => {},
     original: 'a short phrase',
     replacement: 'a clearer phrase',
   },

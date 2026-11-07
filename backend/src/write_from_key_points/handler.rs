@@ -46,7 +46,7 @@ pub(crate) struct ArticleBlockRequest {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, ToSchema)]
 pub(crate) struct ReferenceSourceRequest {
     pub title: String,
-    pub url: String,
+    pub url: Option<String>,
     pub fetched_at: String,
     pub summary: String,
     pub key_points: Vec<ReferencePointRequest>,
@@ -291,7 +291,7 @@ fn ordered_sources(
             let source = &sources[source_index];
             ReferenceSource {
                 title: Some(source.title.clone()),
-                url: Some(source.url.clone()),
+                url: source.url.clone(),
                 summary: source.summary.clone(),
                 checked_at: source.fetched_at.clone(),
                 key_points: selected_points
