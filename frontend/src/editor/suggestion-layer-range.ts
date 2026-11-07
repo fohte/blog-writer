@@ -6,8 +6,15 @@ export interface TextSuggestion<Metadata = unknown> {
   from: number
   to: number
   replacement: string
+  replacementMarks?: readonly SuggestionReplacementMark[]
   metadata?: Metadata
   note?: string
+}
+
+export type SuggestionReplacementMark = {
+  from: number
+  to: number
+  verdict: 'supported' | 'insufficient'
 }
 
 export interface SuggestionPosition {

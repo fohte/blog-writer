@@ -2,6 +2,15 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 
 import { SuggestionDiff } from '#components/suggestion-diff'
 
+const supportedSentence = 'The report records a steady increase.'
+const unsupportedSentence = 'The program reached a national record.'
+const unmarkedSentence = 'This may encourage more readers.'
+const replacement = [
+  supportedSentence,
+  unsupportedSentence,
+  unmarkedSentence,
+].join(' ')
+
 const meta = {
   component: SuggestionDiff,
 } satisfies Meta<typeof SuggestionDiff>
@@ -75,5 +84,24 @@ export const Inline: Story = {
     onReject: () => {},
     original: 'a short phrase',
     replacement: 'a clearer phrase',
+  },
+}
+
+export const WritingFromSources: Story = {
+  name: 'the draft distinguishes supported and unsupported facts.',
+  args: {
+    original: 'The previous draft needs a clearer explanation.',
+    replacement,
+    focused: true,
+    replacementMarks: [
+      { from: 0, to: supportedSentence.length, verdict: 'supported' },
+      {
+        from: supportedSentence.length + 1,
+        to: supportedSentence.length + 1 + unsupportedSentence.length,
+        verdict: 'insufficient',
+      },
+    ],
+    onAccept: () => undefined,
+    onReject: () => undefined,
   },
 }
