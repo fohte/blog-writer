@@ -520,7 +520,7 @@ describe('ArticlePublishContainer', () => {
         expect(readConflictState(hasButton('PR を作成'))).toEqual({
           publishButtonAfterConflict: true,
           error:
-            '公開先のファイルが変更されています。差分を取り直してください。 The file changed.',
+            '公開先のファイルが変更されました。最新の差分を取り直しました。 The file changed.',
           diffContents: [
             'Latest body',
             '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\n# Sample body',
