@@ -31,7 +31,8 @@ import {
 } from '#research/claim-evidence-rollback'
 import {
   type ClaimEvidenceTarget,
-  selectedSource,
+  selectedResearchJobSource,
+  selectedSavedSource,
 } from '#research/claim-evidence-utils'
 import { saveResearchJobResult } from '#research/research-from-heading'
 import {
@@ -51,7 +52,20 @@ export function useClaimEvidence() {
   const [progress, setProgress] = useState<
     Record<string, ClaimEvidenceProgressState>
   >({})
+  const [recheckErrors, setRecheckErrors] = useState<Record<string, string>>({})
   const controllers = useRef(new Map<string, AbortController>())
+
+  const patchRecheckError = useCallback((articleId: string, error: string) => {
+    setRecheckErrors((current) => ({ ...current, [articleId]: error }))
+  }, [])
+
+  const clearRecheckError = useCallback((articleId: string) => {
+    setRecheckErrors((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([id]) => id !== articleId),
+      ),
+    )
+  }, [])
 
   const patchProgress = useCallback(
     (articleId: string, patch: Partial<ClaimEvidenceProgressState>) => {
@@ -83,6 +97,7 @@ export function useClaimEvidence() {
         acceptedRange.dispose()
         return
       }
+      clearRecheckError(metadata.articleId)
       const body = getBody(metadata.doc)
       const adoptedClaim = body.toJSON().slice(range.from, range.to)
       for (const id of metadata.evidenceIds) removeEvidence(metadata.doc, id)
@@ -102,19 +117,19 @@ export function useClaimEvidence() {
 
       const settings = loadLlmSettings(() => window.localStorage)
       if (settings.isErr()) {
-        patchProgress(metadata.articleId, {
-          status: 'failed',
-          error: 'LLM 設定を読み込めませんでした。',
-        })
+        patchRecheckError(
+          metadata.articleId,
+          'LLM 設定を読み込めませんでした。',
+        )
         acceptedRange.dispose()
         return
       }
       const controller = new AbortController()
       if (!acquireResearchLock(metadata.articleId, controller)) {
-        patchProgress(metadata.articleId, {
-          status: 'failed',
-          error: '別の調査が実行中のため、根拠を再判定できませんでした。',
-        })
+        patchRecheckError(
+          metadata.articleId,
+          '別の調査が実行中のため、根拠を再判定できませんでした。',
+        )
         acceptedRange.dispose()
         return
       }
@@ -162,7 +177,7 @@ export function useClaimEvidence() {
             const latestClaim = getBody(metadata.doc)
               .toJSON()
               .slice(latestRange.from, latestRange.to)
-            const source = selectedSource(
+            const source = selectedSavedSource(
               result,
               metadata.sources.filter(({ id }) => id === metadata.sourceId),
             )
@@ -198,7 +213,7 @@ export function useClaimEvidence() {
         },
       )
     },
-    [patchProgress],
+    [clearRecheckError, patchProgress, patchRecheckError],
   )
 
   const cancelResearch = useCallback(
@@ -216,6 +231,7 @@ export function useClaimEvidence() {
       const { articleId, doc, claim, range, before, after } = target
       if (controllers.current.has(articleId) || claim.trim().length === 0)
         return
+      clearRecheckError(articleId)
       if (claimEvidenceLayerOverlaps(doc, range, resolveSuggestion)) {
         patchProgress(articleId, {
           status: 'failed',
@@ -333,7 +349,7 @@ export function useClaimEvidence() {
               sources,
               new ResearchJobInterruptedError('調査を中断しました。'),
             )
-          const source = selectedSource(judgment, sources.sources)
+          const source = selectedResearchJobSource(judgment, sources.sources)
           if (!source && judgment.verdict !== 'insufficient')
             return rollbackClaimEvidenceResult(
               sources,
@@ -442,7 +458,7 @@ export function useClaimEvidence() {
         },
       )
     },
-    [patchProgress, resolveSuggestion],
+    [clearRecheckError, patchProgress, resolveSuggestion],
   )
 
   useEffect(() => {
@@ -474,6 +490,7 @@ export function useClaimEvidence() {
     editorExtension: (doc: Y.Doc) =>
       claimEvidenceExtension(doc, resolveSuggestion),
     progress,
+    recheckErrors,
     startResearch,
   }
 }

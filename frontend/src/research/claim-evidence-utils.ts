@@ -12,15 +12,22 @@ export type ClaimEvidenceTarget = {
   after?: string
 }
 
-export function selectedSource(
+export function selectedResearchJobSource(
   result: ClaimEvidenceResult,
   sources: SavedResearchSource[],
 ) {
   if (result.quote)
     return sources.find(
-      ({ id, researchId }) =>
-        id === result.quote?.source_id ||
-        researchId === result.quote?.source_id,
+      ({ researchId }) => researchId === result.quote?.source_id,
     )
+  return sources[0]
+}
+
+export function selectedSavedSource(
+  result: ClaimEvidenceResult,
+  sources: SavedResearchSource[],
+) {
+  if (result.quote)
+    return sources.find(({ id }) => id === result.quote?.source_id)
   return sources[0]
 }

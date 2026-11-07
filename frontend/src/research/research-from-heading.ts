@@ -10,8 +10,6 @@ import * as Y from 'yjs'
 
 import {
   addSource,
-  deleteSource,
-  type Finding,
   listFindings,
   listSources,
   setFindings,
@@ -30,6 +28,11 @@ import {
   ResearchJobInterruptedError,
   runResearchJob,
 } from '#research/research-job'
+import {
+  captureSavedResearchSources,
+  restoreResearchSources,
+  snapshotResearchSources,
+} from '#research/research-source-rollback'
 import { getSourceHost } from '#research/source-format'
 
 type ResearchJobSource = components['schemas']['ResearchJobSource']
@@ -62,12 +65,6 @@ export type SavedResearchSource = {
 export type SavedResearchJobResult = {
   sources: SavedResearchSource[]
   rollback: () => ResultAsync<void, Error>
-}
-
-type ResearchSourceSnapshot = {
-  id: string
-  source?: Source
-  findings: Finding[]
 }
 
 class ResearchBodyRollbackError extends Error {
@@ -339,40 +336,6 @@ function saveResultInDocument(
   })
 }
 
-function restoreResearchSources(
-  doc: Y.Doc,
-  snapshots: ResearchSourceSnapshot[],
-): Result<void, Error> {
-  return doc.transact(() => {
-    for (const snapshot of snapshots) {
-      if (snapshot.source === undefined) {
-        if (!doc.getMap('sources').has(snapshot.id)) continue
-        const deleteResult = deleteSource(doc, snapshot.id)
-        if (deleteResult.isErr()) return err(deleteResult.error)
-        continue
-      }
-
-      const { id, ...source } = snapshot.source
-      const sourceResult = updateSource(doc, id, source)
-      if (sourceResult.isErr()) return err(sourceResult.error)
-      const findingsResult = setFindings(
-        doc,
-        id,
-        snapshot.findings.map(
-          ({ id: findingId, text, quote, researchedHeading }) => ({
-            id: findingId,
-            text,
-            quote,
-            ...(researchedHeading === undefined ? {} : { researchedHeading }),
-          }),
-        ),
-      )
-      if (findingsResult.isErr()) return err(findingsResult.error)
-    }
-    return ok(undefined)
-  })
-}
-
 export function researchFromHeading(
   fetcher: typeof fetch,
   articleId: string,
@@ -413,11 +376,7 @@ export function saveResearchJobResult(
   onSaving: () => void,
 ): ResultAsync<SavedResearchJobResult, Error> {
   const plans = planSources(doc, result)
-  const sourceSnapshots = plans.map(({ id, existing }) => ({
-    id,
-    ...(existing === undefined ? {} : { source: existing }),
-    findings: existing === undefined ? [] : listFindings(doc, id),
-  }))
+  const sourceSnapshots = snapshotResearchSources(plans)
   const validationError = validateSourceChanges(doc, plans)
   if (validationError) return errAsync(validationError)
   onSaving()
@@ -445,6 +404,10 @@ export function saveResearchJobResult(
           articleId,
           savedSourceRollbacks,
         ).andThen(() => err(saveResult.error))
+      const savedSourceSnapshots = captureSavedResearchSources(
+        doc,
+        sourceSnapshots,
+      )
       const sources = plans.map(({ id, title, url, source }) => ({
         id,
         researchId: source.id,
@@ -456,15 +419,18 @@ export function saveResearchJobResult(
       return okAsync({
         sources,
         rollback: () => {
-          const documentRollback = restoreResearchSources(doc, sourceSnapshots)
+          const documentRollback = restoreResearchSources(
+            doc,
+            savedSourceSnapshots,
+          )
+          if (documentRollback.isErr()) return errAsync(documentRollback.error)
+          const preservedSourceIds = new Set(documentRollback.value)
           return rollbackSourceBodies(
             fetcher,
             articleId,
-            savedSourceRollbacks,
-          ).andThen(() =>
-            documentRollback.isErr()
-              ? errAsync(documentRollback.error)
-              : okAsync(undefined),
+            savedSourceRollbacks.filter(
+              ({ sourceId }) => !preservedSourceIds.has(sourceId),
+            ),
           )
         },
       })

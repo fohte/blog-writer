@@ -34,6 +34,7 @@ type SourcePanelViewProps = {
   onSavePastedBody: (source: Source) => void
   onRetrySource: (source: Source) => void
   researchProgress?: ResearchProgressProps | undefined
+  researchError?: string | undefined
 }
 
 function getSourceLocation(source: Source): string {
@@ -68,6 +69,7 @@ export function SourcePanelView({
   onSavePastedBody,
   onRetrySource,
   researchProgress,
+  researchError,
 }: SourcePanelViewProps) {
   return (
     <section
@@ -93,6 +95,9 @@ export function SourcePanelView({
         </p>
         {researchProgress === undefined ? null : (
           <ResearchProgress {...researchProgress} />
+        )}
+        {researchError === undefined ? null : (
+          <p role="alert">{researchError}</p>
         )}
         {error === undefined ? null : <p role="alert">{error}</p>}
         {sources.length === 0 && pending.length === 0 ? (

@@ -889,6 +889,16 @@ describe('the application research and evidence integrations', () => {
       status: 'unavailable',
       summary: '',
     })._unsafeUnwrap()
+    addSource(doc, {
+      id: sourceId,
+      kind: 'url',
+      title: 'Other source',
+      url: 'https://example.invalid/other',
+      fileName: null,
+      checkedAt: null,
+      status: 'ready',
+      summary: '',
+    })._unsafeUnwrap()
     const originalEvidenceId = 'evidence-original'
     const originalCheckedAt = '2026-01-01T00:00:00.000Z'
     addEvidence(doc, {
@@ -1554,6 +1564,181 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
+  it('keeps active claim cancellation when an adopted recheck hits a lock conflict', async () => {
+    const firstClaim = 'A first sentence.'
+    const secondClaim = 'A second sentence.'
+    const firstSourceId = 'source-first'
+    const replacement = 'A first sentence updated.'
+    setBody(doc, `# Research topic\n\n${firstClaim} ${secondClaim}\n`)
+    let requestCount = 0
+    let recheckCount = 0
+    let activeSignal: AbortSignal | undefined
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs') {
+        requestCount += 1
+        if (requestCount === 1)
+          return serverEvents([
+            {
+              event: 'result',
+              data: {
+                analysis: {
+                  task: 'claim_evidence',
+                  data: {
+                    verdict: 'outdated',
+                    quote: {
+                      source_id: firstSourceId,
+                      text: 'An earlier quote.',
+                    },
+                    suggestion: replacement,
+                  },
+                },
+                sources: [
+                  {
+                    id: firstSourceId,
+                    url: 'https://example.invalid/first',
+                    title: 'First source',
+                    body: 'A current quote.',
+                    status: 'available',
+                  },
+                ],
+              },
+            },
+          ])
+        activeSignal = init.signal ?? undefined
+        return new Promise<Response>((_resolve, reject) => {
+          activeSignal?.addEventListener(
+            'abort',
+            () => {
+              reject(new DOMException('Aborted', 'AbortError'))
+            },
+            { once: true },
+          )
+        })
+      }
+      if (url.includes('/source-bodies/' + firstSourceId)) {
+        if (url.endsWith('/save-if-unchanged'))
+          return new Response(null, { status: 204 })
+        return new Response('', { status: 404 })
+      }
+      if (url === '/api/research/claim-evidence') {
+        recheckCount += 1
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              verdict: 'supported',
+              quote: { source_id: firstSourceId, text: replacement },
+              suggestion: null,
+            },
+          },
+        ])
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openBodyRequestPreset(firstClaim, '根拠を確かめる')
+    await waitFor(() => {
+      if (!host?.querySelector('.suggestion-diff-note'))
+        throw new Error('The first claim proposal was not rendered')
+    })
+    await openBodyRequestPreset(secondClaim, '根拠を確かめる')
+    await waitFor(() => {
+      if (!activeSignal) throw new Error('The second claim check did not start')
+    })
+    const proposalWidget = host
+      ?.querySelector('.suggestion-diff-note')
+      ?.closest<HTMLElement>('.cm-suggestion-widget')
+    if (!proposalWidget) throw new Error('The first claim proposal is missing')
+    await act(async () => {
+      await userEvent.click(proposalWidget)
+    })
+    await waitFor(() => {
+      const focusedProposalWidget = host
+        ?.querySelector('.suggestion-diff-note')
+        ?.closest('.cm-suggestion-widget')
+      if (!focusedProposalWidget?.querySelector('[data-focused="true"]'))
+        throw new Error('The first claim proposal did not regain focus')
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+    })
+    const lockError = '別の調査が実行中のため、根拠を再判定できませんでした。'
+    await waitFor(() => {
+      if (exactRoleText('alert', lockError) !== lockError)
+        throw new Error('The recheck conflict was not shown separately')
+    })
+    const progressTrigger = [...document.body.querySelectorAll('button')].find(
+      (button) => button.textContent.trim() === '調査中',
+    )
+    if (!progressTrigger) throw new Error('The active progress is missing')
+    if (progressTrigger.getAttribute('aria-expanded') !== 'true')
+      await act(async () => {
+        await userEvent.click(progressTrigger)
+      })
+    const activeProgress = {
+      requestCount,
+      recheckCount,
+      statusLabel: progressTrigger.textContent.trim(),
+      cancelButtons: [...document.body.querySelectorAll('button')].filter(
+        (button) => button.textContent.trim() === '中止',
+      ).length,
+      error: exactRoleText('alert', lockError),
+      requestAborted: activeSignal?.aborted,
+    }
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '中止' }))
+    })
+    const interruptedText = '調査を中断しました。資料は保存されていません。'
+    await waitFor(() => {
+      if (exactRoleText('status', interruptedText) !== interruptedText)
+        throw new Error('The active claim check did not remain cancellable')
+    })
+
+    const readResult = () => ({
+      activeProgress,
+      requestAborted: activeSignal?.aborted,
+      sources: listSources(doc).map(({ id, title, status }) => ({
+        id,
+        title,
+        status,
+      })),
+      evidence: listEvidence(doc).map(
+        ({ currentClaim, quote, sourceId, verdict }) => ({
+          currentClaim,
+          quote,
+          sourceId,
+          verdict,
+        }),
+      ),
+      recheckError: exactRoleText('alert', lockError),
+      interruptedMessage: exactRoleText('status', interruptedText),
+    })
+    expect(readResult()).toEqual({
+      activeProgress: {
+        requestCount: 2,
+        recheckCount: 0,
+        statusLabel: '調査中',
+        cancelButtons: 1,
+        error: lockError,
+        requestAborted: false,
+      },
+      requestAborted: true,
+      sources: [{ id: firstSourceId, title: 'First source', status: 'ready' }],
+      evidence: [
+        {
+          currentClaim: replacement,
+          quote: '',
+          sourceId: firstSourceId,
+          verdict: 'insufficient',
+        },
+      ],
+      recheckError: lockError,
+      interruptedMessage: interruptedText,
+    })
+  })
+
   it('rolls back source bodies when cancelled while saving research results', async () => {
     const claim = 'A sentence to edit.'
     const rollbackRequests: Array<{ id: string; body: unknown }> = []
@@ -1763,6 +1948,148 @@ describe('the application research and evidence integrations', () => {
       ],
       requestAborted: true,
       sources: [],
+      evidence: [],
+      interruptedMessage: interruptedText,
+    })
+  })
+
+  it('restores an existing source without removing findings added during the check', async () => {
+    const claim = 'A sentence to edit.'
+    const sourceId = 'source-existing'
+    const researchId = 'source-research'
+    const rollbackRequests: Array<{ id: string; body: unknown }> = []
+    let requestSignal: AbortSignal | undefined
+    let cancellationSent = false
+    const sources = doc.getMap('sources')
+    const cancelAfterSourceUpdate = () => {
+      const source = listSources(doc).find(({ id }) => id === sourceId)
+      if (cancellationSent || source?.status !== 'ready') return
+      cancellationSent = true
+      setFindings(doc, sourceId, [
+        {
+          id: 'collaborative-finding',
+          text: 'A finding added during the check.',
+          quote: 'A quote from a collaborator.',
+        },
+      ])._unsafeUnwrap()
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      )
+    }
+    addSource(doc, {
+      id: sourceId,
+      kind: 'url',
+      title: 'Existing source',
+      url: 'https://example.invalid/research',
+      fileName: null,
+      checkedAt: null,
+      status: 'unavailable',
+      summary: 'Original summary.',
+    })._unsafeUnwrap()
+    sources.observeDeep(cancelAfterSourceUpdate)
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs') {
+        requestSignal = init.signal ?? undefined
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'supported',
+                  quote: { source_id: researchId, text: 'A verified quote.' },
+                  suggestion: null,
+                },
+              },
+              sources: [
+                {
+                  id: researchId,
+                  url: 'https://example.invalid/research',
+                  title: 'Existing source',
+                  body: 'A verified quote.',
+                  status: 'available',
+                },
+              ],
+            },
+          },
+        ])
+      }
+      if (url.includes('/source-bodies/' + sourceId)) {
+        if (url.endsWith('/save-if-unchanged'))
+          return new Response(null, { status: 204 })
+        if (url.endsWith('/restore')) {
+          rollbackRequests.push({
+            id: sourceId,
+            body:
+              typeof init.body === 'string'
+                ? (JSON.parse(init.body) as unknown)
+                : init.body,
+          })
+          return new Response(null, { status: 204 })
+        }
+        return new Response('', { status: 404 })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openBodyRequestPreset(claim, '根拠を確かめる')
+    const interruptedText = '調査を中断しました。資料は保存されていません。'
+    await waitFor(() => {
+      if (exactRoleText('status', interruptedText) !== interruptedText)
+        throw new Error('The existing source rollback was not shown')
+    })
+    sources.unobserveDeep(cancelAfterSourceUpdate)
+
+    const readResult = () => ({
+      rollbackRequests,
+      requestAborted: requestSignal?.aborted,
+      sources: listSources(doc).map(
+        ({ id, title, url, checkedAt, status, summary }) => ({
+          id,
+          title,
+          url,
+          checkedAt,
+          status,
+          summary,
+        }),
+      ),
+      findings: listFindings(doc).map(({ id, sourceId, text, quote }) => ({
+        id,
+        sourceId,
+        text,
+        quote,
+      })),
+      evidence: listEvidence(doc),
+      interruptedMessage: exactRoleText('status', interruptedText),
+    })
+    expect(readResult()).toEqual({
+      rollbackRequests: [
+        {
+          id: sourceId,
+          body: { expected_body: 'A verified quote.', restore_body: null },
+        },
+      ],
+      requestAborted: true,
+      sources: [
+        {
+          id: sourceId,
+          title: 'Existing source',
+          url: 'https://example.invalid/research',
+          checkedAt: null,
+          status: 'unavailable',
+          summary: 'Original summary.',
+        },
+      ],
+      findings: [
+        {
+          id: 'collaborative-finding',
+          sourceId,
+          text: 'A finding added during the check.',
+          quote: 'A quote from a collaborator.',
+        },
+      ],
       evidence: [],
       interruptedMessage: interruptedText,
     })

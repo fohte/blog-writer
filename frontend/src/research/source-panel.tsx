@@ -30,6 +30,7 @@ type SourcePanelProps = {
   articleId: string
   doc: Y.Doc
   researchProgress?: ResearchProgressProps | undefined
+  researchError?: string | undefined
 }
 
 type SourceSnapshot = { sources: Source[]; findings: Finding[] }
@@ -66,6 +67,7 @@ export function SourcePanel({
   articleId,
   doc,
   researchProgress,
+  researchError,
 }: SourcePanelProps) {
   const [snapshot, setSnapshot] = useState(() => getSnapshot(doc))
   const [pending, setPending] = useState<PendingSource[]>([])
@@ -313,6 +315,7 @@ export function SourcePanel({
       pastedBody={pastedBody}
       pending={pending}
       researchProgress={researchProgress}
+      researchError={researchError}
       sources={snapshot.sources}
     />
   )
