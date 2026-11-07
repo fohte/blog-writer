@@ -1680,6 +1680,9 @@ describe('the application research and evidence integrations', () => {
       if (exactRoleText('alert', lockError) !== lockError)
         throw new Error('The recheck conflict was not shown separately')
     })
+    await act(async () => {
+      await userEvent.click(page.getByRole('tab', { name: '資料' }))
+    })
     const progressTrigger = [...document.body.querySelectorAll('button')].find(
       (button) => button.textContent.trim() === '調査中',
     )
@@ -3061,7 +3064,7 @@ describe('the application research and evidence integrations', () => {
     await renderApp()
     await openArticle()
     await act(async () => {
-      await userEvent.click(page.getByRole('tab', { name: 'Outline' }))
+      await userEvent.click(page.getByRole('tab', { name: '構成' }))
     })
 
     vi.useFakeTimers()
@@ -3113,7 +3116,7 @@ describe('the application research and evidence integrations', () => {
         proposalButtons: ['✓ 採用', '× 却下'],
         researchEntryVisible: true,
       },
-      selectedTab: 'Article',
+      selectedTab: '本文',
     })
   })
 

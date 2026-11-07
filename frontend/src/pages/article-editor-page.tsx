@@ -11,6 +11,7 @@ type ArticleEditorPageProps = {
   article: Article
   client: SyncClientApi
   onBack: () => void
+  onOpenSettings: () => void
   error?: string | undefined
   syncStatus?: SyncState | undefined
   requiresAuthentication: boolean
@@ -21,6 +22,7 @@ export function ArticleEditorPage({
   article,
   client,
   onBack,
+  onOpenSettings,
   error: syncError,
   syncStatus,
   requiresAuthentication,
@@ -58,6 +60,7 @@ export function ArticleEditorPage({
       editorExtensions={editorExtensions}
       headerActions={headerActions}
       onBack={onBack}
+      onOpenSettings={onOpenSettings}
       onViewChange={onViewChange}
       onLoginAgain={onLoginAgain}
       outlineRenderer={outlineRenderer}
