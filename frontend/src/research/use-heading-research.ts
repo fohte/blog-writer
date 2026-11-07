@@ -114,7 +114,9 @@ export function useHeadingResearch() {
             researchError instanceof ResearchJobInterruptedError
           patchProgress(articleId, {
             status: interrupted ? 'interrupted' : 'failed',
-            ...(interrupted ? {} : { error: researchError.message }),
+            ...(interrupted && controller.signal.aborted
+              ? {}
+              : { error: researchError.message }),
           })
         },
       )

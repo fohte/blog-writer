@@ -18,6 +18,7 @@ import {
   listSources,
   setBody,
   setFindings,
+  updateSource,
 } from '#article/index'
 import { listMemos } from '#article/memos'
 import { isRecord } from '#lib/guards'
@@ -87,6 +88,12 @@ function installFetch(
     return Promise.resolve(handle(url, init))
   })
   vi.stubGlobal('fetch', fetchMock)
+}
+
+function exactRoleText(role: string, expectedText: string): string | undefined {
+  return [...document.body.querySelectorAll('[role="' + role + '"]')]
+    .map((element) => element.textContent.trim())
+    .find((text) => text === expectedText)
 }
 
 async function renderApp(articleDoc = doc) {
@@ -170,9 +177,9 @@ describe('the application research and evidence integrations', () => {
 
     const readRendered = () => ({
       heading: host?.querySelector('#source-panel-heading')?.textContent,
-      sourceRowVisible: [...(host?.querySelectorAll('button') ?? [])].some(
-        (button) => button.textContent.includes('Example source'),
-      ),
+      sourceRowVisible: [
+        ...(host?.querySelectorAll('button span.font-medium') ?? []),
+      ].some((title) => title.textContent.trim() === 'Example source'),
     })
     expect(readRendered()).toEqual({
       heading: '資料',
@@ -325,6 +332,7 @@ describe('the application research and evidence integrations', () => {
   })
 
   it('aborts a heading research request without saving results', async () => {
+    const interruptedText = '調査を中断しました。資料は保存されていません。'
     let researchStarted: (() => void) | undefined
     let requestQuestion: unknown
     const researchWasStarted = new Promise<void>((resolve) => {
@@ -363,11 +371,7 @@ describe('the application research and evidence integrations', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     })
     await waitFor(() => {
-      if (
-        !document.body.textContent.includes(
-          '調査を中断しました。資料は保存されていません。',
-        )
-      )
+      if (exactRoleText('status', interruptedText) !== interruptedText)
         throw new Error('The interrupted state was not shown')
     })
 
@@ -376,20 +380,19 @@ describe('the application research and evidence integrations', () => {
       sourceCount: listSources(doc).length,
       findingCount: listFindings(doc).length,
       bodySaveRequests: putCount,
-      interruptedMessageVisible: document.body.textContent.includes(
-        '調査を中断しました。資料は保存されていません。',
-      ),
+      interruptedMessage: exactRoleText('status', interruptedText),
     })
     expect(readResult()).toEqual({
       query: { task: 'key_points', question: 'Research topic' },
       sourceCount: 0,
       findingCount: 0,
       bodySaveRequests: 0,
-      interruptedMessageVisible: true,
+      interruptedMessage: interruptedText,
     })
   })
 
   it('shows an interrupted state when the research stream closes early', async () => {
+    const interruptedText = '調査を中断しました。資料は保存されていません。'
     let requestQuestion: unknown
     let bodySaveCount = 0
     installFetch((url, init) => {
@@ -414,11 +417,7 @@ describe('the application research and evidence integrations', () => {
       )
     })
     await waitFor(() => {
-      if (
-        !document.body.textContent.includes(
-          '調査を中断しました。資料は保存されていません。',
-        )
-      )
+      if (exactRoleText('status', interruptedText) !== interruptedText)
         throw new Error('The interrupted state was not shown')
     })
 
@@ -429,9 +428,8 @@ describe('the application research and evidence integrations', () => {
       sourceCount: listSources(doc).length,
       findingCount: listFindings(doc).length,
       bodySaveCount,
-      interruptedMessageVisible: document.body.textContent.includes(
-        '調査を中断しました。資料は保存されていません。',
-      ),
+      interruptedMessage: exactRoleText('status', interruptedText),
+      connectionMessage: exactRoleText('alert', '調査の接続が中断されました。'),
     })
     expect(readResult()).toEqual({
       query: { task: 'key_points', question: 'Research topic' },
@@ -439,7 +437,8 @@ describe('the application research and evidence integrations', () => {
       sourceCount: 0,
       findingCount: 0,
       bodySaveCount: 0,
-      interruptedMessageVisible: true,
+      interruptedMessage: interruptedText,
+      connectionMessage: '調査の接続が中断されました。',
     })
   })
 
@@ -504,6 +503,8 @@ describe('the application research and evidence integrations', () => {
               ? (JSON.parse(init.body) as unknown)
               : init.body,
         })
+      if (init.method === undefined || init.method === 'GET')
+        return new Response('', { status: 404 })
       return new Response(null, { status: 204 })
     })
     await renderApp()
@@ -751,6 +752,10 @@ describe('the application research and evidence integrations', () => {
   })
 
   it('starts heading research from a blank body request preset', async () => {
+    setBody(
+      doc,
+      '# Root\n\n## Research topic\n\nA sentence to edit.\n\n## Later section\n\nA later sentence.\n',
+    )
     let requestBody: unknown
     installFetch((url, init) => {
       if (url === '/api/research/jobs') {
@@ -776,7 +781,7 @@ describe('the application research and evidence integrations', () => {
     if (!editorView) throw new Error('The article editor view did not render')
     const articleBody = getBody(doc).toJSON()
     editorView.dispatch({
-      selection: { anchor: articleBody.indexOf('A sentence') + 2 },
+      selection: { anchor: articleBody.indexOf('## Research topic') + 4 },
     })
     editorView.focus()
     const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
@@ -895,8 +900,25 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
-  it('rolls back source bodies when a later body save fails', async () => {
-    const savedBodyIds: string[] = []
+  it('restores an existing source body when a later body save fails', async () => {
+    addSource(doc, {
+      id: 'source-one',
+      kind: 'url',
+      title: 'First source',
+      url: 'https://example.invalid/first',
+      fileName: null,
+      checkedAt: '2026-02-01T00:00:00.000Z',
+      status: 'unavailable',
+      summary: 'Earlier summary.',
+    })._unsafeUnwrap()
+    setFindings(doc, 'source-one', [
+      {
+        id: 'finding-existing',
+        text: 'Earlier finding.',
+        quote: 'Earlier quote.',
+      },
+    ])._unsafeUnwrap()
+    const savedBodies: Array<{ id: string; body: unknown }> = []
     const deletedBodyIds: string[] = []
     installFetch((url, init) => {
       if (url === '/api/research/jobs')
@@ -942,11 +964,25 @@ describe('the application research and evidence integrations', () => {
         ])
       const sourceId = url.split('/source-bodies/')[1] ?? ''
       if (init.method === 'PUT') {
-        savedBodyIds.push(sourceId)
+        savedBodies.push({
+          id: sourceId,
+          body:
+            typeof init.body === 'string'
+              ? (JSON.parse(init.body) as unknown)
+              : init.body,
+        })
         return sourceId === 'source-two'
           ? new Response('error', { status: 500 })
           : new Response(null, { status: 204 })
       }
+      if (init.method === undefined && sourceId === 'source-one')
+        return new Response(
+          JSON.stringify({
+            source_id: sourceId,
+            article_id: article.id,
+            body: 'Existing source body.',
+          }),
+        )
       if (init.method === 'DELETE') {
         deletedBodyIds.push(sourceId)
         return new Response(null, { status: 204 })
@@ -965,23 +1001,303 @@ describe('the application research and evidence integrations', () => {
     })
     const saveError = '資料本文を保存できませんでした: HTTP 500'
     await waitFor(() => {
-      if (!document.body.textContent.includes(saveError))
+      if (exactRoleText('alert', saveError) !== saveError)
         throw new Error('The source body save error was not shown')
     })
 
     const readResult = () => ({
-      savedBodyIds,
+      savedBodies,
+      deletedBodyIds,
+      sources: listSources(doc).map(({ id, status, summary }) => ({
+        id,
+        status,
+        summary,
+      })),
+      findings: listFindings(doc).map(({ sourceId, text, quote }) => ({
+        sourceId,
+        text,
+        quote,
+      })),
+      errorMessage: exactRoleText('alert', saveError),
+    })
+    expect(readResult()).toEqual({
+      savedBodies: [
+        { id: 'source-one', body: { body: 'First source body.' } },
+        { id: 'source-two', body: { body: 'Second source body.' } },
+        { id: 'source-one', body: { body: 'Existing source body.' } },
+      ],
+      deletedBodyIds: ['source-two'],
+      sources: [
+        {
+          id: 'source-one',
+          status: 'unavailable',
+          summary: 'Earlier summary.',
+        },
+      ],
+      findings: [
+        {
+          sourceId: 'source-one',
+          text: 'Earlier finding.',
+          quote: 'Earlier quote.',
+        },
+      ],
+      errorMessage: saveError,
+    })
+  })
+
+  it('cancels during body saving and leaves no research results', async () => {
+    const deletedBodyIds: string[] = []
+    let resolveSecondSave: (() => void) | undefined
+    const secondSaveStarted = new Promise<void>((resolve) => {
+      resolveSecondSave = resolve
+    })
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'key_points',
+                data: {
+                  sources: [
+                    {
+                      id: 'source-one',
+                      summary: 'First summary.',
+                      key_points: [
+                        { text: 'First finding.', quote: 'First quote.' },
+                      ],
+                    },
+                    {
+                      id: 'source-two',
+                      summary: 'Second summary.',
+                      key_points: [
+                        { text: 'Second finding.', quote: 'Second quote.' },
+                      ],
+                    },
+                  ],
+                },
+              },
+              sources: [
+                {
+                  id: 'source-one',
+                  url: 'https://example.invalid/first',
+                  title: 'First source',
+                  status: 'available',
+                  body: 'First source body.',
+                },
+                {
+                  id: 'source-two',
+                  url: 'https://example.invalid/second',
+                  title: 'Second source',
+                  status: 'available',
+                  body: 'Second source body.',
+                },
+              ],
+            },
+          },
+        ])
+      const sourceId = url.split('/source-bodies/')[1] ?? ''
+      if (init.method === undefined) return new Response('', { status: 404 })
+      if (init.method === 'PUT' && sourceId === 'source-one')
+        return new Response(null, { status: 204 })
+      if (init.method === 'PUT' && sourceId === 'source-two') {
+        resolveSecondSave?.()
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(new DOMException('Aborted', 'AbortError'))
+            },
+            { once: true },
+          )
+        })
+      }
+      if (init.method === 'DELETE') {
+        deletedBodyIds.push(sourceId)
+        return new Response(null, { status: 204 })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Research topic' }),
+      )
+      await userEvent.click(
+        page.getByRole('button', { name: 'この見出しについて調べる' }),
+      )
+    })
+    await secondSaveStarted
+    await waitFor(() => {
+      if (
+        ![...document.body.querySelectorAll('button')].some(
+          (button) => button.textContent.trim() === '中止',
+        )
+      )
+        throw new Error('The body save could not be cancelled')
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '中止' }))
+    })
+    const interruptedText = '調査を中断しました。資料は保存されていません。'
+    await waitFor(() => {
+      if (exactRoleText('status', interruptedText) !== interruptedText)
+        throw new Error('The interrupted state was not shown')
+    })
+
+    const readResult = () => ({
       deletedBodyIds,
       sources: listSources(doc),
       findings: listFindings(doc),
-      errorVisible: document.body.textContent.includes(saveError),
+      interruptedMessage: exactRoleText('status', interruptedText),
     })
     expect(readResult()).toEqual({
-      savedBodyIds: ['source-one', 'source-two'],
       deletedBodyIds: ['source-one', 'source-two'],
       sources: [],
       findings: [],
-      errorVisible: true,
+      interruptedMessage: interruptedText,
+    })
+  })
+
+  it('keeps source updates made while research is saving its body', async () => {
+    const url = 'https://example.invalid/research'
+    const sourceId = 'source-existing'
+    addSource(doc, {
+      id: sourceId,
+      kind: 'url',
+      title: 'Existing source',
+      url,
+      fileName: null,
+      checkedAt: '2026-02-01T00:00:00.000Z',
+      status: 'unavailable',
+      summary: 'Earlier summary.',
+    })._unsafeUnwrap()
+    let resolveBodySave: ((response: Response) => void) | undefined
+    let resolveSaveStarted: (() => void) | undefined
+    const bodySaveStarted = new Promise<void>((resolve) => {
+      resolveSaveStarted = resolve
+    })
+    const savedBodies: unknown[] = []
+    installFetch((requestUrl, init) => {
+      if (requestUrl === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'key_points',
+                data: {
+                  sources: [
+                    {
+                      id: sourceId,
+                      summary: 'Research summary.',
+                      key_points: [
+                        { text: 'Research finding.', quote: 'Research quote.' },
+                      ],
+                    },
+                  ],
+                },
+              },
+              sources: [
+                {
+                  id: sourceId,
+                  url,
+                  final_url: url,
+                  title: 'Research source',
+                  status: 'available',
+                  body: 'New source body.',
+                },
+              ],
+            },
+          },
+        ])
+      if (init.method === undefined)
+        return new Response(
+          JSON.stringify({
+            source_id: sourceId,
+            article_id: article.id,
+            body: 'Existing source body.',
+          }),
+        )
+      if (init.method === 'PUT') {
+        savedBodies.push(
+          typeof init.body === 'string'
+            ? (JSON.parse(init.body) as unknown)
+            : init.body,
+        )
+        if (savedBodies.length === 1) {
+          resolveSaveStarted?.()
+          return new Promise<Response>((resolve) => {
+            resolveBodySave = resolve
+          })
+        }
+        return new Response(null, { status: 204 })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Research topic' }),
+      )
+      await userEvent.click(
+        page.getByRole('button', { name: 'この見出しについて調べる' }),
+      )
+    })
+    await bodySaveStarted
+    act(() => {
+      updateSource(doc, sourceId, {
+        status: 'ready',
+        summary: 'Concurrent summary.',
+        checkedAt: '2026-03-01T00:00:00.000Z',
+      })._unsafeUnwrap()
+    })
+    const finishBodySave = resolveBodySave
+    if (finishBodySave === undefined)
+      throw new Error('The source body save did not start')
+    act(() => {
+      finishBodySave(new Response(null, { status: 204 }))
+    })
+    await waitFor(() => {
+      if (savedBodies.length !== 2)
+        throw new Error('The original body was not restored')
+    })
+    const changeError =
+      '調査中に資料が変更されたため、結果を保存できませんでした。'
+    await waitFor(() => {
+      if (exactRoleText('alert', changeError) !== changeError)
+        throw new Error('The concurrent source update was not preserved')
+    })
+
+    const readResult = () => ({
+      savedBodies,
+      sources: listSources(doc).map(({ id, status, summary, checkedAt }) => ({
+        id,
+        status,
+        summary,
+        checkedAt,
+      })),
+      findings: listFindings(doc),
+      errorMessage: exactRoleText('alert', changeError),
+    })
+    expect(readResult()).toEqual({
+      savedBodies: [
+        { body: 'New source body.' },
+        { body: 'Existing source body.' },
+      ],
+      sources: [
+        {
+          id: sourceId,
+          status: 'ready',
+          summary: 'Concurrent summary.',
+          checkedAt: '2026-03-01T00:00:00.000Z',
+        },
+      ],
+      findings: [],
+      errorMessage: changeError,
     })
   })
 
@@ -1022,11 +1338,14 @@ describe('the application research and evidence integrations', () => {
         .map((button) => button.textContent.trim())
         .filter((text) => text === '✓ 採用' || text === '× 却下'),
       researchEntryVisible:
-        host !== undefined &&
-        (host.textContent.includes('この見出しについて調べる') ||
-          host.textContent.includes(
+        [...(host?.querySelectorAll('button') ?? [])].some(
+          (button) => button.textContent.trim() === 'この見出しについて調べる',
+        ) ||
+        [...(host?.querySelectorAll('p') ?? [])].some(
+          (paragraph) =>
+            paragraph.textContent.trim() ===
             '見出しを選ぶと、その内容を調べられます。',
-          )),
+        ),
     })
     const proposalState = readOutlineState()
 

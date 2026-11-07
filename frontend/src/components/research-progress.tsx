@@ -67,7 +67,10 @@ export function ResearchProgress({
           </List>
         )}
         {status === 'interrupted' ? (
-          <p role="status">調査を中断しました。資料は保存されていません。</p>
+          <>
+            <p role="status">調査を中断しました。資料は保存されていません。</p>
+            {error !== undefined ? <p role="alert">{error}</p> : null}
+          </>
         ) : null}
         {status === 'failed' && error !== undefined ? (
           <p role="alert">{error}</p>

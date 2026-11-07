@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 import type { Heading } from '#article/types'
-import { HeadingResearchAccessory } from '#components/heading-research-accessory'
+import { HeadingResearchOutlineView } from '#components/heading-research-outline-view'
 import {
   OutlineProposalAccessory,
   type OutlineProposalAccessoryContext,
@@ -20,18 +20,17 @@ export function HeadingResearchOutline({
   const [activeHeading, setActiveHeading] = useState<Heading>()
 
   return (
-    <div className="flex flex-col gap-4">
-      <HeadingResearchAccessory
-        busy={busy}
-        heading={activeHeading}
-        onResearch={(question) => {
-          if (activeHeading) onResearch(activeHeading.text, question)
-        }}
-      />
+    <HeadingResearchOutlineView
+      busy={busy}
+      heading={activeHeading}
+      onResearch={(question) => {
+        if (activeHeading) onResearch(activeHeading.text, question)
+      }}
+    >
       <OutlineProposalAccessory
         {...context}
         onActiveHeadingChange={setActiveHeading}
       />
-    </div>
+    </HeadingResearchOutlineView>
   )
 }

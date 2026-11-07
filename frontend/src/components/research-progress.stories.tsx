@@ -29,6 +29,15 @@ export const Interrupted: Story = {
   },
 }
 
+export const ConnectionInterrupted: Story = {
+  name: '接続中断の理由も表示する',
+  args: {
+    status: 'interrupted',
+    error: '調査の接続が中断されました。',
+    defaultOpen: true,
+  },
+}
+
 export const Cancelling: Story = {
   name: '調査の中止処理中であることを示す',
   args: {

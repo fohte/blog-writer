@@ -18,7 +18,11 @@ import {
 } from '#article/index'
 import type { components } from '#lib/api/schema.gen.d.ts'
 import type { LlmSettings } from '#lib/llm-settings'
-import { deleteSourceBody, saveSourceBody } from '#lib/source-api'
+import {
+  deleteSourceBody,
+  getOptionalSourceBody,
+  saveSourceBody,
+} from '#lib/source-api'
 import {
   ResearchJobInterruptedError,
   runResearchJob,
@@ -39,6 +43,8 @@ type SourcePlan = {
   analysis?: ResearchKeyPoints
   saveBody: boolean
 }
+
+type SourceBodySnapshot = { sourceId: string; body?: string }
 
 class ResearchBodyRollbackError extends Error {
   constructor(cause: Error) {
@@ -100,12 +106,21 @@ function planSources(doc: Y.Doc, result: ResearchJobResult): SourcePlan[] {
 function rollbackSourceBodies(
   fetcher: typeof fetch,
   articleId: string,
-  sourceIds: string[],
+  snapshots: SourceBodySnapshot[],
 ): ResultAsync<void, Error> {
   return ResultAsync.fromPromise(
     Promise.all(
-      sourceIds.map((sourceId) =>
-        deleteSourceBody(fetcher, articleId, sourceId).match(
+      snapshots.map(({ body, sourceId }) =>
+        (body === undefined
+          ? deleteSourceBody(fetcher, articleId, sourceId)
+          : saveSourceBody(
+              fetcher,
+              articleId,
+              sourceId,
+              body,
+              new AbortController().signal,
+            )
+        ).match(
           () => undefined,
           (error) => error,
         ),
@@ -125,45 +140,89 @@ function rollbackSourceBodies(
   })
 }
 
+function snapshotSourceBodies(
+  fetcher: typeof fetch,
+  articleId: string,
+  plans: SourcePlan[],
+  signal: AbortSignal,
+): ResultAsync<SourceBodySnapshot[], Error> {
+  const plansToSave = plans.filter(({ saveBody }) => saveBody)
+  const readNext = (
+    index: number,
+    snapshots: SourceBodySnapshot[],
+  ): ResultAsync<SourceBodySnapshot[], Error> => {
+    const plan = plansToSave[index]
+    if (plan === undefined) return okAsync(snapshots)
+    return getOptionalSourceBody(fetcher, articleId, plan.id, signal).andThen(
+      (stored) =>
+        readNext(index + 1, [
+          ...snapshots,
+          {
+            sourceId: plan.id,
+            ...(stored === undefined ? {} : { body: stored.body }),
+          },
+        ]),
+    )
+  }
+  return readNext(0, [])
+}
+
 function saveBodies(
   fetcher: typeof fetch,
   articleId: string,
   plans: SourcePlan[],
   signal: AbortSignal,
-): ResultAsync<string[], Error> {
-  const attemptedSourceIds: string[] = []
-  const saveNext = (
-    index: number,
-    savedSourceIds: string[],
-  ): ResultAsync<string[], Error> => {
-    const plan = plans[index]
-    if (plan === undefined) return okAsync(savedSourceIds)
-    if (
-      !plan.saveBody ||
-      plan.source.body === undefined ||
-      plan.source.body === null
+): ResultAsync<SourceBodySnapshot[], Error> {
+  return snapshotSourceBodies(fetcher, articleId, plans, signal)
+    .mapErr((error) =>
+      signal.aborted
+        ? new ResearchJobInterruptedError('調査を中断しました。', error)
+        : error,
     )
-      return saveNext(index + 1, savedSourceIds)
+    .andThen((snapshots) => {
+      const snapshotById = new Map(
+        snapshots.map((snapshot) => [snapshot.sourceId, snapshot]),
+      )
+      const attemptedSnapshots: SourceBodySnapshot[] = []
+      const saveNext = (index: number): ResultAsync<void, Error> => {
+        const plan = plans[index]
+        if (plan === undefined) return okAsync(undefined)
+        if (
+          !plan.saveBody ||
+          plan.source.body === undefined ||
+          plan.source.body === null
+        )
+          return saveNext(index + 1)
 
-    attemptedSourceIds.push(plan.id)
-    return saveSourceBody(
-      fetcher,
-      articleId,
-      plan.id,
-      plan.source.body,
-      signal,
-    ).andThen(() => saveNext(index + 1, [...savedSourceIds, plan.id]))
-  }
+        const snapshot = snapshotById.get(plan.id)
+        if (snapshot === undefined)
+          return errAsync(new Error('資料本文の保存前確認に失敗しました。'))
+        attemptedSnapshots.push(snapshot)
+        return saveSourceBody(
+          fetcher,
+          articleId,
+          plan.id,
+          plan.source.body,
+          signal,
+        ).andThen(() => saveNext(index + 1))
+      }
 
-  return saveNext(0, []).orElse((saveError) =>
-    rollbackSourceBodies(fetcher, articleId, attemptedSourceIds).andThen(() =>
-      errAsync(
-        signal.aborted
-          ? new ResearchJobInterruptedError('調査を中断しました。', saveError)
-          : saveError,
-      ),
-    ),
-  )
+      return saveNext(0)
+        .map(() => snapshots)
+        .orElse((saveError) =>
+          rollbackSourceBodies(fetcher, articleId, attemptedSnapshots).andThen(
+            () =>
+              errAsync(
+                signal.aborted
+                  ? new ResearchJobInterruptedError(
+                      '調査を中断しました。',
+                      saveError,
+                    )
+                  : saveError,
+              ),
+          ),
+        )
+    })
 }
 
 function validateSourceChanges(
@@ -184,7 +243,12 @@ function validateSourceChanges(
 
     const current = currentById.get(plan.id)
     if (plan.existing !== undefined) {
-      if (current?.url !== plan.url)
+      if (
+        current?.url !== plan.url ||
+        current.status !== plan.existing.status ||
+        current.summary !== plan.existing.summary ||
+        current.checkedAt !== plan.existing.checkedAt
+      )
         return new Error(
           '調査中に資料が変更されたため、結果を保存できませんでした。',
         )
@@ -268,12 +332,12 @@ export function researchFromHeading(
     if (validationError) return errAsync(validationError)
     onSaving()
     return saveBodies(fetcher, articleId, plans, signal).andThen(
-      (savedSourceIds) => {
+      (savedSourceSnapshots) => {
         if (signal.aborted)
           return rollbackSourceBodies(
             fetcher,
             articleId,
-            savedSourceIds,
+            savedSourceSnapshots,
           ).andThen(() =>
             errAsync(new ResearchJobInterruptedError('調査を中断しました。')),
           )
@@ -282,14 +346,14 @@ export function researchFromHeading(
           return rollbackSourceBodies(
             fetcher,
             articleId,
-            savedSourceIds,
+            savedSourceSnapshots,
           ).andThen(() => errAsync(error))
         const saveResult = saveResultInDocument(doc, plans)
         if (saveResult.isErr())
           return rollbackSourceBodies(
             fetcher,
             articleId,
-            savedSourceIds,
+            savedSourceSnapshots,
           ).andThen(() => err(saveResult.error))
         return ok(undefined)
       },

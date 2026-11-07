@@ -96,12 +96,31 @@ export function getSourceBody(
   sourceId: string,
   signal: AbortSignal,
 ): ResultAsync<SourceBody, Error> {
+  return getOptionalSourceBody(fetcher, articleId, sourceId, signal).andThen(
+    (source) =>
+      source === undefined
+        ? errAsync(new Error('資料本文を読み込めませんでした: HTTP 404'))
+        : okAsync(source),
+  )
+}
+
+export function getOptionalSourceBody(
+  fetcher: typeof fetch,
+  articleId: string,
+  sourceId: string,
+  signal: AbortSignal,
+): ResultAsync<SourceBody | undefined, Error> {
   return ResultAsync.fromPromise(
     fetcher(sourceBodyUrl(articleId, sourceId), { signal }),
     (cause) => new Error('資料本文を読み込めませんでした。', { cause }),
-  ).andThen((response) =>
-    responseJson(response, isSourceBody, '資料本文を読み込めませんでした'),
-  )
+  ).andThen((response) => {
+    if (response.status === 404) return okAsync(undefined)
+    return responseJson(
+      response,
+      isSourceBody,
+      '資料本文を読み込めませんでした',
+    )
+  })
 }
 
 export function saveSourceBody(

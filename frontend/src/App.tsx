@@ -123,11 +123,16 @@ export function App() {
               id: 'research-from-heading',
               label: 'この見出しについて調べる',
               onSelect: ({ context: requestContext, instruction }) => {
+                const sectionHeading = requestContext.section
+                  .split('\n', 1)[0]
+                  ?.replaceAll('⟪依頼範囲の開始⟫', '')
+                  .replaceAll('⟪依頼範囲の終了⟫', '')
+                  .trim()
                 const headingText =
-                  requestContext.headings
-                    .at(-1)
-                    ?.replace(/^#{1,6}(?:[ \t]+|$)/u, '')
-                    .trim() ?? ''
+                  sectionHeading !== undefined &&
+                  /^#{1,6}(?:[ \t]+|$)/u.test(sectionHeading)
+                    ? sectionHeading.replace(/^#{1,6}(?:[ \t]+|$)/u, '').trim()
+                    : ''
                 if (instruction.trim().length === 0 && headingText.length === 0)
                   return
                 startResearch(
