@@ -23,6 +23,23 @@ function siblingsAt(
   return undefined
 }
 
+function headingBlockAt(markdown: string, position: number) {
+  return topLevelBlocks(markdown).find(
+    ({ from, to }) => from <= position && position < to,
+  )
+}
+
+function isHeadingBlock(block: ReturnType<typeof headingBlockAt>): boolean {
+  return block?.name.startsWith('ATXHeading') === true
+}
+
+export function isHeadingBlockAt(
+  state: EditorState,
+  position: number,
+): boolean {
+  return isHeadingBlock(headingBlockAt(state.doc.toString(), position))
+}
+
 export function adjacentMove(
   state: EditorState,
   from: number,
@@ -70,10 +87,7 @@ export function headingChildMove(
   from: number,
 ): MoveBlockInput | undefined {
   const markdown = state.doc.toString()
-  const block = topLevelBlocks(markdown).find(
-    ({ from: blockFrom, to }) => blockFrom <= from && from < to,
-  )
-  if (block?.name.startsWith('ATXHeading') !== true) return undefined
+  if (!isHeadingBlock(headingBlockAt(markdown, from))) return undefined
 
   const range = findMoveBlockRange(markdown, from)
   if (range?.headingLevel === undefined) return undefined

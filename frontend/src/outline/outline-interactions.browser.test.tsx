@@ -24,6 +24,10 @@ import {
 
 const cleanups: (() => void)[] = []
 
+function asMarkdown(...lines: string[]): string {
+  return lines.join('\n')
+}
+
 function createBodyMenuEditor(markdownText: string) {
   const doc = new Y.Doc()
   setBody(doc, markdownText)
@@ -180,7 +184,7 @@ describe('outline interactions', () => {
 
   it('closes a body handle menu when the handle is tapped again', async () => {
     const { view } = createBodyMenuEditor(
-      'First paragraph.\n\nSecond paragraph.\n',
+      asMarkdown('First paragraph.', '', 'Second paragraph.', ''),
     )
     const handle = view.dom.querySelector<HTMLButtonElement>(
       '.cm-block-drag-handle',
@@ -205,7 +209,7 @@ describe('outline interactions', () => {
   })
 
   it('recomputes a body move after a remote edit changes the neighboring blocks', async () => {
-    const markdownText = 'A\n\nBBBBBB\n\nC\n'
+    const markdownText = asMarkdown('A', '', 'BBBBBB', '', 'C', '')
     const { body, doc, view } = createBodyMenuEditor(markdownText)
     const handle = view.dom.querySelector<HTMLButtonElement>(
       '.cm-block-drag-handle',
@@ -225,7 +229,11 @@ describe('outline interactions', () => {
     peerBody.delete(replacedFrom, 'BBBBBB'.length)
     peerBody.insert(
       replacedFrom,
-      'Replacement block one is longer\n\nReplacement block two is longer',
+      asMarkdown(
+        'Replacement block one is longer',
+        '',
+        'Replacement block two is longer',
+      ),
     )
     await act(async () => {
       Y.applyUpdate(
@@ -249,16 +257,41 @@ describe('outline interactions', () => {
         false,
     })
     expect(readOutput()).toEqual({
-      body: 'Replacement block one is longer\n\nA\n\nReplacement block two is longer\n\nC\n',
-      editor:
-        'Replacement block one is longer\n\nA\n\nReplacement block two is longer\n\nC\n',
+      body: asMarkdown(
+        'Replacement block one is longer',
+        '',
+        'A',
+        '',
+        'Replacement block two is longer',
+        '',
+        'C',
+        '',
+      ),
+      editor: asMarkdown(
+        'Replacement block one is longer',
+        '',
+        'A',
+        '',
+        'Replacement block two is longer',
+        '',
+        'C',
+        '',
+      ),
       menuOpen: false,
     })
   })
 
   it('offers Make child from a body heading handle', async () => {
-    const markdownText =
-      '# Alpha\n\nAlpha section.\n\n# Beta\n\nBeta section.\n'
+    const markdownText = asMarkdown(
+      '# Alpha',
+      '',
+      'Alpha section.',
+      '',
+      '# Beta',
+      '',
+      'Beta section.',
+      '',
+    )
     const { body, view } = createBodyMenuEditor(markdownText)
     const handles = [
       ...view.dom.querySelectorAll<HTMLButtonElement>('.cm-block-drag-handle'),
@@ -288,14 +321,40 @@ describe('outline interactions', () => {
         { label: 'Move down', disabled: true },
         { label: 'Make child', disabled: false },
       ],
-      afterMove: '# Alpha\n\nAlpha section.\n\n## Beta\n\nBeta section.\n',
-      editor: '# Alpha\n\nAlpha section.\n\n## Beta\n\nBeta section.\n',
+      afterMove: asMarkdown(
+        '# Alpha',
+        '',
+        'Alpha section.',
+        '',
+        '## Beta',
+        '',
+        'Beta section.',
+        '',
+      ),
+      editor: asMarkdown(
+        '# Alpha',
+        '',
+        'Alpha section.',
+        '',
+        '## Beta',
+        '',
+        'Beta section.',
+        '',
+      ),
     })
   })
 
   it('offers Make child only from a heading handle', async () => {
-    const markdownText =
-      '# Alpha\n\nAlpha section.\n\n# Beta\n\nBeta section.\n'
+    const markdownText = asMarkdown(
+      '# Alpha',
+      '',
+      'Alpha section.',
+      '',
+      '# Beta',
+      '',
+      'Beta section.',
+      '',
+    )
     const { body, view } = createBodyMenuEditor(markdownText)
     const handles = [
       ...view.dom.querySelectorAll<HTMLButtonElement>('.cm-block-drag-handle'),
@@ -341,8 +400,42 @@ describe('outline interactions', () => {
         { label: 'Move down', disabled: true },
         { label: 'Make child', disabled: false },
       ],
-      afterMove: '# Alpha\n\nAlpha section.\n\n## Beta\n\nBeta section.\n',
+      afterMove: asMarkdown(
+        '# Alpha',
+        '',
+        'Alpha section.',
+        '',
+        '## Beta',
+        '',
+        'Beta section.',
+        '',
+      ),
     })
+  })
+
+  it('disables Make child on the first heading', async () => {
+    const { view } = createBodyMenuEditor(
+      asMarkdown('# Alpha', '', 'Alpha section.', '', '# Beta', ''),
+    )
+    const handle = view.dom.querySelector<HTMLButtonElement>(
+      '.cm-block-drag-handle',
+    )
+    if (!handle) throw new Error('The first heading move handle is missing')
+
+    await act(async () => {
+      await userEvent.click(handle)
+    })
+
+    const menuItems = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][data-open] [role="menuitem"]',
+      ),
+    ].map((item) => ({ label: item.textContent, disabled: item.disabled }))
+    expect(menuItems).toEqual([
+      { label: 'Move up', disabled: true },
+      { label: 'Move down', disabled: false },
+      { label: 'Make child', disabled: true },
+    ])
   })
 
   it('moves the editor selection to the heading chosen in the outline', async () => {
