@@ -10,7 +10,7 @@ import {
   ArticleEditorView,
   type ArticleEditorViewProps,
 } from '#components/article-editor-view'
-import { PremiseProposalView } from '#components/premise-proposal-view'
+import { ArticlePremisePanel } from '#components/article-premise-panel'
 import { ArticleOutline } from '#outline/article-outline'
 
 type StoryArgs = {
@@ -119,34 +119,34 @@ function ArticleEditorPreview({
             : undefined
         }
         onTitleChange={() => {}}
-        premiseAccessory={
+        premisePanel={
           initialPanel === 'premise'
-            ? () => (
-                <PremiseProposalView
-                  draft=""
-                  messages={[
-                    {
-                      role: 'user',
-                      content: 'Make the claim more specific.',
-                    },
-                    {
-                      role: 'assistant',
-                      content: 'Which decision should the article clarify?',
-                    },
-                  ]}
-                  onAccept={() => {}}
-                  onDraftChange={() => {}}
-                  onReject={() => {}}
-                  onSubmit={() => {}}
-                  proposals={[
-                    {
-                      field: 'claim',
-                      label: 'Claim',
-                      original: 'A focused article is easier to follow',
-                      replacement:
+            ? ({ doc: articleDoc }) => (
+                <ArticlePremisePanel
+                  discussion={{
+                    draft: '',
+                    error: undefined,
+                    generating: false,
+                    messages: [
+                      {
+                        role: 'user',
+                        content: 'Make the claim more specific.',
+                      },
+                      {
+                        role: 'assistant',
+                        content: 'Which decision should the article clarify?',
+                      },
+                    ],
+                    onAccept: () => {},
+                    onDraftChange: () => {},
+                    onReject: () => {},
+                    onSubmit: () => {},
+                    proposals: {
+                      claim:
                         'A short checklist helps new maintainers catch risky changes.',
                     },
-                  ]}
+                  }}
+                  doc={articleDoc}
                 />
               )
             : undefined

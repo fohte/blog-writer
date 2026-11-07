@@ -31,7 +31,7 @@ export function ArticleWorkspace({
   headerActions,
   onViewChange,
   outlineRenderer,
-  premiseAccessory,
+  premisePanel,
   sourcesPanel,
 }: ArticleWorkspaceProps) {
   const [selectedArticleId, setSelectedArticleId] = useState<string>()
@@ -57,7 +57,7 @@ export function ArticleWorkspace({
         onOpenSettings={onOpenSettings}
         onViewChange={onViewChange}
         outlineRenderer={outlineRenderer}
-        premiseAccessory={premiseAccessory}
+        premisePanel={premisePanel}
         requiresAuthentication={requiresAuthentication}
         sourcesPanel={sourcesPanel}
         syncStatus={statuses[article.id] ?? client.getStatus(article.id)}

@@ -833,9 +833,6 @@ First paragraph.
       outlineRenderer: () => (
         <div data-testid="outline-renderer">Outline renderer</div>
       ),
-      premiseAccessory: () => (
-        <div data-testid="premise-accessory">Premise accessory</div>
-      ),
       sourcesPanel: <div data-testid="source-material">Source material</div>,
     })
 
@@ -861,8 +858,6 @@ First paragraph.
         ?.parentElement?.classList.contains('relative'),
       outlineRenderer: host?.querySelector('[data-testid="outline-renderer"]')
         ?.textContent,
-      premiseAccessory: host?.querySelector('[data-testid="premise-accessory"]')
-        ?.textContent,
       sourceMaterial: host?.querySelector('[data-testid="source-material"]')
         ?.textContent,
       savedPremise: articleDoc.getMap('premise').get('audience'),
@@ -878,13 +873,12 @@ First paragraph.
       bodyAccessory: 'Draft request',
       relativeBodyContainer: true,
       outlineRenderer: 'Outline renderer',
-      premiseAccessory: 'Premise accessory',
       sourceMaterial: 'Source material',
       savedPremise: 'Designers',
     })
   })
 
-  it('mounts premise discussion only while the premise tab is selected', async () => {
+  it('replaces the premise fields with the injected panel only while the premise tab is selected', async () => {
     const article: Article = {
       id: 'article-premise-toggle',
       title: 'A useful article',
@@ -894,9 +888,7 @@ First paragraph.
     doc = articleDoc
     setBody(articleDoc, '# Starting point\n')
     renderWorkspace(article, articleDoc, {
-      premiseAccessory: () => (
-        <div data-testid="premise-accessory">Discussion</div>
-      ),
+      premisePanel: () => <div data-testid="premise-panel">Discussion</div>,
     })
 
     await act(async () => {
@@ -907,8 +899,8 @@ First paragraph.
         ?.textContent,
       fieldCount:
         host?.querySelectorAll('textarea[id^="premise-"]').length ?? 0,
-      accessory:
-        host?.querySelector('[data-testid="premise-accessory"]')?.textContent ??
+      panel:
+        host?.querySelector('[data-testid="premise-panel"]')?.textContent ??
         null,
     })
     const states = [readPremiseState()]
@@ -923,9 +915,9 @@ First paragraph.
     states.push(readPremiseState())
 
     expect(states).toEqual([
-      { selectedTab: 'メモ', fieldCount: 0, accessory: null },
-      { selectedTab: '前提', fieldCount: 3, accessory: 'Discussion' },
-      { selectedTab: 'メモ', fieldCount: 0, accessory: null },
+      { selectedTab: 'メモ', fieldCount: 0, panel: null },
+      { selectedTab: '前提', fieldCount: 0, panel: 'Discussion' },
+      { selectedTab: 'メモ', fieldCount: 0, panel: null },
     ])
   })
 
