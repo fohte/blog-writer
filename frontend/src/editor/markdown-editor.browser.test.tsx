@@ -738,24 +738,35 @@ describe('MarkdownEditor', () => {
     })
   })
 
-  it('shows heading and inline-code markers while the cursor is in their ranges', () => {
+  it('shows heading and inline-code markers while the cursor is in their ranges', async () => {
     const markdownText = '## Heading **bold** and `code`'
     const cursorPosition = markdownText.indexOf('code') + 2
     const { content, host } = mountMarkdownEditor(markdownText)
+    host.style.width = '800px'
     const view = content ? EditorView.findFromDOM(content) : null
-    act(() => {
-      view?.dispatch({ selection: { anchor: cursorPosition } })
+    content?.focus()
+    await act(async () => {
+      await userEvent.keyboard('{End}{ArrowLeft}{ArrowLeft}')
     })
+    const line = host.querySelector<HTMLElement>('.cm-line')
+    const lineHeight = line
+      ? Number.parseFloat(getComputedStyle(line).lineHeight)
+      : Number.NaN
 
     const readOutput = () => ({
       text: content?.textContent,
       headingClass: host.querySelector('.cm-line')?.className,
+      wrapped:
+        !line ||
+        !Number.isFinite(lineHeight) ||
+        line.getBoundingClientRect().height > lineHeight * 1.5,
       selection: view?.state.selection.main.head,
     })
 
     expect(readOutput()).toEqual({
       text: '## Heading bold and `code`',
       headingClass: 'cm-line cm-md-heading cm-md-heading-2',
+      wrapped: false,
       selection: cursorPosition,
     })
   })
