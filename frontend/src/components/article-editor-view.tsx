@@ -17,7 +17,7 @@ import {
 import * as Y from 'yjs'
 
 import { getBody, getPremise, setPremise } from '#article/index'
-import type { PremiseField } from '#article/types'
+import type { Heading, PremiseField } from '#article/types'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
@@ -69,10 +69,13 @@ export interface ArticleEditorViewProps {
   editorExtensions?:
     ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
   bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  outlineAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  outlineAccessory?:
+    | ((context: ArticleEditorContext, heading?: Heading) => ReactNode)
+    | undefined
   premiseAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
   headerActions?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  sourcesPanel?: ReactNode | undefined
+  sourcesPanel?:
+    ReactNode | ((context: ArticleEditorContext) => ReactNode) | undefined
   onViewChange?: ((view: EditorView | null) => void) | undefined
   syncStatus?: SyncState | undefined
   syncError?: string | undefined
@@ -175,6 +178,7 @@ export function ArticleEditorView({
   const history = doc ? getMoveHistory(doc) : undefined
   const body = doc ? getBody(doc) : undefined
   const [view, setView] = useState<EditorView | null>(null)
+  const [activeHeading, setActiveHeading] = useState<Heading>()
   const editorRef = useRef<MarkdownEditorHandle>(null)
   const editorViewRef = useRef<EditorView | null>(null)
   const suppliedExtensions =
@@ -243,6 +247,7 @@ export function ArticleEditorView({
         <ArticleOutline
           doc={context.doc}
           history={context.history}
+          onActiveHeadingChange={setActiveHeading}
           onHeadingSelected={() => {
             if (isMobile) setMobilePanel('body')
           }}
@@ -252,17 +257,24 @@ export function ArticleEditorView({
       if (!outlineAccessory) return outline
       return (
         <div className="flex flex-col gap-4">
-          {outlineAccessory(context)}
+          {outlineAccessory(context, activeHeading)}
           {outline}
         </div>
       )
     }
-    if (panel === 'sources') return sourcesPanel ?? null
+    if (panel === 'sources') {
+      return typeof sourcesPanel === 'function'
+        ? context
+          ? sourcesPanel(context)
+          : null
+        : (sourcesPanel ?? null)
+    }
     return doc && body && history ? (
       <Panel className="min-h-96 overflow-auto rounded-lg p-4">
         <div className="relative">
           <MarkdownEditor
             ariaLabel="Article body"
+            articleId={articleId}
             className="min-h-96"
             extensions={extensions}
             history={history}

@@ -22,6 +22,7 @@ export interface ArticleOutlineProps {
   view: EditorView
   activeFrom?: number
   onHeadingSelected?: () => void
+  onActiveHeadingChange?: (heading: Heading | undefined) => void
   proposalState?: OutlineProposalState
   onProposalAccept?: (id: string) => void
   onProposalReject?: (id: string) => void
@@ -51,6 +52,7 @@ export function ArticleOutline({
   view,
   activeFrom,
   onHeadingSelected,
+  onActiveHeadingChange,
   proposalState,
   onProposalAccept,
   onProposalReject,
@@ -156,6 +158,14 @@ export function ArticleOutline({
     [doc, view],
   )
   const selectedHeadingFrom = activeFrom ?? selectedFrom
+
+  useEffect(() => {
+    onActiveHeadingChange?.(
+      flattenHeadingTree(headings).find(
+        (heading) => heading.from === selectedHeadingFrom,
+      ),
+    )
+  }, [headings, onActiveHeadingChange, selectedHeadingFrom])
 
   return (
     <OutlineView
