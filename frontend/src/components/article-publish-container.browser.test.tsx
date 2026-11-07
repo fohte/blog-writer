@@ -1,4 +1,4 @@
-import { ok, okAsync } from 'neverthrow'
+import { errAsync, ok, okAsync } from 'neverthrow'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,9 +6,12 @@ import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import { setBody } from '#article/body'
+import { exportArticleBody } from '#article/export'
 import { ArticlePublishContainer } from '#components/article-publish-container'
 import type { ExportDestination } from '#lib/article-export-api'
 import type { Article, SyncClientApi } from '#lib/sync-client'
+
+vi.mock('#article/export', { spy: true })
 
 vi.mock('#components/text-diff-view', () => ({
   TextDiffView: ({
@@ -320,7 +323,6 @@ afterEach(() => {
   root = undefined
   doc?.destroy()
   doc = undefined
-  vi.doUnmock('remark')
   vi.unstubAllGlobals()
 })
 
@@ -532,11 +534,10 @@ describe('ArticlePublishContainer', () => {
   })
 
   it('does not request a file or publish when MDX conversion fails', async () => {
-    vi.doMock('remark', () => ({
-      remark: () => {
-        throw new Error('parser failed')
-      },
-    }))
+    // The real converter downloads remark-mdx on demand, which can outlast vi.waitFor's timeout.
+    vi.mocked(exportArticleBody).mockReturnValueOnce(
+      errAsync(new Error('MDX 形式に変換できませんでした。')),
+    )
     renderPublish(
       {},
       {
