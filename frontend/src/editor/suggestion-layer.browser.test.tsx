@@ -17,6 +17,7 @@ import { getBody, setBody } from '#article/body'
 import { blockMoved } from '#article/index'
 import {
   MarkdownEditor,
+  suggestionActionsPresentation,
   transitionProposalEditorExtensions,
 } from '#editor/index'
 import {
@@ -1784,6 +1785,37 @@ describe('suggestion layer', () => {
       editorFocused: view.hasFocus,
     })
     expect(readOutput()).toEqual({
+      body: initialText.replace('selected sentence', 'revised sentence'),
+      editorFocused: true,
+    })
+  })
+
+  it('accepts a focused suggestion from the bottom sheet on a phone', async () => {
+    const { body, host, setSuggestion, view } = createEditor(
+      initialText,
+      undefined,
+      [suggestionActionsPresentation.of('sheet')],
+    )
+    const from = initialText.indexOf('selected')
+    setSuggestion({
+      id: 'suggestion-a',
+      from,
+      to: from + 'selected sentence'.length,
+      replacement: 'revised sentence',
+    })
+    act(() => {
+      view.dispatch({ selection: { anchor: from } })
+    })
+    const actionsBeforeAccept = readActions(host)
+    await userEvent.click(findButton(host, '採用'))
+
+    const readOutput = () => ({
+      actionsBeforeAccept,
+      body: body.toJSON(),
+      editorFocused: view.hasFocus,
+    })
+    expect(readOutput()).toEqual({
+      actionsBeforeAccept: ['却下', '採用'],
       body: initialText.replace('selected sentence', 'revised sentence'),
       editorFocused: true,
     })

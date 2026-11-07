@@ -463,7 +463,7 @@ Details.`,
     })
   })
 
-  it('shows the article panel after widening from the mobile outline tab', async () => {
+  it('shows the article panel after widening from the mobile outline screen', async () => {
     await page.viewport(375, 812)
     const article: Article = {
       id: 'article-mobile-resize',
@@ -485,16 +485,18 @@ First paragraph.
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('tab', { name: '構成' }))
+      await userEvent.click(
+        page
+          .getByRole('toolbar', { name: '入力補助' })
+          .getByRole('button', { name: '構成' }),
+      )
     })
     const editor = host?.querySelector('.cm-content')
     const readTabs = () =>
       [...(host?.querySelectorAll('[role="tab"]') ?? [])].map(
         (tab) => tab.textContent,
       )
-    const selectedMobileTab = host?.querySelector(
-      '[role="tab"][aria-selected="true"]',
-    )?.textContent
+    const mobileScreenTitle = host?.querySelector('header h2')?.textContent
 
     await act(async () => {
       await page.viewport(1280, 800)
@@ -512,7 +514,7 @@ First paragraph.
       await page.viewport(375, 812)
     })
     const readResizeOutput = () => ({
-      selectedMobileTab,
+      mobileScreenTitle,
       desktopBodyVisible,
       desktopOutlineVisible,
       desktopTabs,
@@ -520,11 +522,11 @@ First paragraph.
       editorRetained: host?.querySelector('.cm-content') === editor,
     })
     expect(readResizeOutput()).toEqual({
-      selectedMobileTab: '構成',
+      mobileScreenTitle: '構成',
       desktopBodyVisible: true,
       desktopOutlineVisible: true,
       desktopTabs: ['メモ', '前提'],
-      mobileTabs: ['メモ', '構成', '本文', '前提'],
+      mobileTabs: [],
       editorRetained: true,
     })
   })
@@ -629,7 +631,7 @@ First paragraph.
     mover.destroy()
   })
 
-  it('shows mobile memo and outline tabs and returns to the article after heading selection', async () => {
+  it('opens mobile memo and outline screens from the toolbar and returns to the article after heading selection', async () => {
     await page.viewport(375, 812)
     const article: Article = {
       id: 'article-f',
@@ -640,43 +642,163 @@ First paragraph.
     doc = articleDoc
     setBody(articleDoc, '# First section\n\nFirst paragraph.\n')
     renderWorkspace(article, articleDoc, { sourcesPanel: null })
+    const toolbarButton = (name: string) =>
+      page
+        .getByRole('toolbar', { name: '入力補助' })
+        .getByRole('button', { name })
+    const readScreen = () => ({
+      title: host?.querySelector('header h2')?.textContent ?? 'article',
+      toolbar: host?.querySelector('[role="toolbar"]') !== null,
+    })
 
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
     const editor = host?.querySelector('.cm-content')
     await act(async () => {
-      await userEvent.click(page.getByRole('tab', { name: 'メモ' }))
+      await userEvent.click(toolbarButton('メモ'))
     })
-    const memoPanelVisible = page.getByRole('textbox', { name: 'メモを足す' })
+    const memoScreen = readScreen()
     await act(async () => {
-      await userEvent.type(memoPanelVisible, 'A useful note')
+      await userEvent.type(
+        page.getByRole('textbox', { name: 'メモを足す' }),
+        'A useful note',
+      )
       await userEvent.keyboard('{Enter}')
-      await userEvent.click(page.getByRole('tab', { name: '構成' }))
+      await userEvent.click(page.getByRole('button', { name: '閉じる' }))
     })
-    const heading = page.getByRole('option', { name: /First section/u })
+    const screenAfterClose = readScreen()
     await act(async () => {
-      await userEvent.click(heading)
+      await userEvent.click(toolbarButton('構成'))
+    })
+    const outlineScreen = readScreen()
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('option', { name: /First section/u }),
+      )
     })
     const articleVisible =
       (host?.querySelector('.cm-content')?.getBoundingClientRect().width ?? 0) >
       0
-
-    const readMobileTabsOutput = () => ({
-      editorRetained: host?.querySelector('.cm-content') === editor,
-      memoText: listMemos(articleDoc).length,
-      selectedTab: host
-        ?.querySelector('[role="tab"][aria-selected="true"]')
-        ?.textContent.trim(),
-      articleVisible,
-      sourcesTabCount: host?.querySelectorAll('[role="tab"]').length,
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'その他' }))
     })
-    expect(readMobileTabsOutput()).toEqual({
+
+    const readMobileScreensOutput = () => ({
+      editorRetained: host?.querySelector('.cm-content') === editor,
+      memoCount: listMemos(articleDoc).length,
+      memoScreen,
+      screenAfterClose,
+      outlineScreen,
+      screenAfterHeading: readScreen(),
+      articleVisible,
+      menuItems: [...document.querySelectorAll('[role="menuitem"]')].map(
+        (item) => item.textContent,
+      ),
+    })
+    expect(readMobileScreensOutput()).toEqual({
       editorRetained: true,
-      memoText: 1,
-      selectedTab: '本文',
+      memoCount: 1,
+      memoScreen: { title: 'メモ', toolbar: false },
+      screenAfterClose: { title: 'article', toolbar: true },
+      outlineScreen: { title: '構成', toolbar: false },
+      screenAfterHeading: { title: 'article', toolbar: true },
       articleVisible: true,
-      sourcesTabCount: 4,
+      menuItems: ['前提', '設定'],
+    })
+  })
+
+  it('moves the block at the cursor, undoes, and redoes it from the mobile toolbar', async () => {
+    await page.viewport(375, 812)
+    const article: Article = {
+      id: 'article-mobile-move',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, 'First paragraph.\n\nSecond paragraph.\n')
+    let currentView: EditorView | null = null
+    renderWorkspace(article, articleDoc, {
+      onViewChange: (view) => {
+        if (view) currentView = view
+      },
+    })
+    const toolbarButton = (name: string) =>
+      page
+        .getByRole('toolbar', { name: '入力補助' })
+        .getByRole('button', { name })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const view = currentView as EditorView | null
+    if (!view) throw new Error('The article editor did not mount')
+    view.dispatch({
+      selection: EditorSelection.cursor('First paragraph.\n\nSec'.length),
+    })
+    await act(async () => {
+      await userEvent.click(toolbarButton('移動'))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('menuitem', { name: 'Move up' }))
+    })
+    const movedBody = getBody(articleDoc).toJSON()
+    await act(async () => {
+      await userEvent.click(toolbarButton('取り消す'))
+    })
+    const undoneBody = getBody(articleDoc).toJSON()
+    await act(async () => {
+      await userEvent.click(toolbarButton('やり直す'))
+    })
+
+    const readToolbarOutput = () => ({
+      movedBody,
+      undoneBody,
+      redoneBody: getBody(articleDoc).toJSON(),
+    })
+    expect(readToolbarOutput()).toEqual({
+      movedBody: 'Second paragraph.\n\nFirst paragraph.\n',
+      undoneBody: 'First paragraph.\n\nSecond paragraph.\n',
+      redoneBody: 'Second paragraph.\n\nFirst paragraph.\n',
+    })
+  })
+
+  it('fits the mobile editor to the visible area while the on-screen keyboard is open', async () => {
+    await page.viewport(375, 812)
+    const visualViewport = Object.assign(new EventTarget(), {
+      offsetTop: 0,
+      height: 812,
+    })
+    vi.stubGlobal('visualViewport', visualViewport)
+    const article: Article = {
+      id: 'article-mobile-keyboard',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    doc = new Y.Doc()
+    renderWorkspace(article, doc)
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const resizeVisualViewport = (offsetTop: number, height: number) => {
+      act(() => {
+        Object.assign(visualViewport, { offsetTop, height })
+        visualViewport.dispatchEvent(new Event('resize'))
+      })
+      const editorRoot = page
+        .getByRole('toolbar', { name: '入力補助' })
+        .element().parentElement
+      return { top: editorRoot?.style.top, height: editorRoot?.style.height }
+    }
+
+    const readAreas = () => ({
+      keyboardOpen: resizeVisualViewport(120, 400),
+      keyboardClosed: resizeVisualViewport(0, 812),
+    })
+    expect(readAreas()).toEqual({
+      keyboardOpen: { top: '120px', height: '400px' },
+      keyboardClosed: { top: '', height: '' },
     })
   })
 

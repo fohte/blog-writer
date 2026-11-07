@@ -1,4 +1,4 @@
-import type { EditorState, Range } from '@codemirror/state'
+import { type EditorState, Facet, type Range } from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -20,6 +20,13 @@ import type {
 
 /** `seam` collapses each unfocused suggestion into a divider after the line where it starts. */
 export type SuggestionDisplay = 'marker' | 'seam'
+
+type SuggestionActionsPresentation = 'inline' | 'sheet'
+
+export const suggestionActionsPresentation = Facet.define<
+  SuggestionActionsPresentation,
+  SuggestionActionsPresentation
+>({ combine: (values) => values[0] ?? 'inline' })
 
 const rootsByDOM = new WeakMap<HTMLElement, Root>()
 
@@ -129,7 +136,13 @@ export function createSuggestionDecorations<Metadata = unknown>(
     const { from, to } = suggestion
     if (suggestion.id === state.focusedId) {
       decorations.push(
-        ...focusedDecorations(suggestion, doc, controller, display),
+        ...focusedDecorations(
+          suggestion,
+          doc,
+          controller,
+          display,
+          editorState.facet(suggestionActionsPresentation),
+        ),
       )
     } else if (display === 'seam') {
       decorations.push(
@@ -183,6 +196,7 @@ function focusedDecorations(
   doc: EditorState['doc'],
   controller: SuggestionControllerActions,
   display: SuggestionDisplay,
+  presentation: SuggestionActionsPresentation,
 ): Range<Decoration>[] {
   const { from, to } = suggestion
   const block = isFullLineRange(doc, from, to)
@@ -210,6 +224,7 @@ function focusedDecorations(
         suggestion,
         target,
         display,
+        presentation,
         controller,
       ),
     }).range(actionsBeforeLine ? to : endLine.to),
@@ -340,6 +355,7 @@ class SuggestionActionsWidget extends ReactWidget {
     readonly suggestion: TextSuggestion,
     readonly target: string,
     readonly display: SuggestionDisplay,
+    readonly presentation: SuggestionActionsPresentation,
     private readonly controller: SuggestionControllerActions,
   ) {
     super()
@@ -353,7 +369,8 @@ class SuggestionActionsWidget extends ReactWidget {
       other.suggestion.note === this.suggestion.note &&
       other.suggestion.replacement === this.suggestion.replacement &&
       other.target === this.target &&
-      other.display === this.display
+      other.display === this.display &&
+      other.presentation === this.presentation
     )
   }
 
@@ -375,6 +392,7 @@ class SuggestionActionsWidget extends ReactWidget {
         onReject={() => {
           this.controller.reject(id)
         }}
+        presentation={this.presentation}
         showsMarkupAsText={/<[a-z/!]|\]\(/iu.test(replacement)}
         target={this.target}
         variant={this.display === 'seam' ? 'seam' : 'band'}

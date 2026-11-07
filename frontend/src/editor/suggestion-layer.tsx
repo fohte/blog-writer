@@ -33,6 +33,7 @@ import {
 import { SuggestionRangeTracker } from '#editor/suggestion-layer-tracking'
 import {
   createSuggestionDecorations,
+  suggestionActionsPresentation,
   type SuggestionDisplay,
   suggestionLayerTheme,
 } from '#editor/suggestion-layer-view'
@@ -185,13 +186,15 @@ export class SuggestionLayerController<Metadata = unknown> {
         }
       },
       provide: (field) => {
-        return EditorView.decorations.compute([field], (state) =>
-          createSuggestionDecorations(
-            state.field(field),
-            state,
-            this,
-            options.display ?? 'marker',
-          ),
+        return EditorView.decorations.compute(
+          [field, suggestionActionsPresentation],
+          (state) =>
+            createSuggestionDecorations(
+              state.field(field),
+              state,
+              this,
+              options.display ?? 'marker',
+            ),
         )
       },
     })

@@ -219,7 +219,7 @@ export function BodyRequestView({
       {touchDevice ? (
         <PopoverTrigger
           aria-label="本文を依頼"
-          className="absolute bottom-4 right-4 z-10"
+          className="absolute right-4 bottom-4 z-10"
           type="button"
         >
           依頼

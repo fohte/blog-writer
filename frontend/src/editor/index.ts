@@ -14,6 +14,7 @@ export {
   type TextSuggestion,
   type TrackedSuggestionRange,
 } from '#editor/suggestion-layer'
+export { suggestionActionsPresentation } from '#editor/suggestion-layer-view'
 export {
   BodyRequestAccessory,
   type BodyRequestAccessoryContext,
@@ -21,6 +22,7 @@ export {
   bodyRequestExtensions,
   type BodyRequestPreset,
   type BodyRequestPresetSelection,
+  openBodyRequest,
 } from '#proposals/body-request'
 export {
   createOutlineProposalExtension,

@@ -7,6 +7,7 @@ import {
   BodyRequestAccessory,
   bodyRequestExtensions,
   createOutlineProposalExtension,
+  openBodyRequest,
   transitionProposalEditorExtensions,
 } from '#editor/index'
 import {
@@ -118,6 +119,9 @@ export function App() {
       articles={articles}
       client={client}
       error={error}
+      onRequest={(context) => {
+        openBodyRequest(context.doc)
+      }}
       bodyAccessory={(context) => (
         <BodyRequestAccessory
           doc={context.doc}

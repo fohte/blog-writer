@@ -15,9 +15,10 @@ import { useMemos } from '#memos/use-memos'
 type MemoPanelProps = {
   doc: Y.Doc
   view?: EditorView
+  mobile?: boolean
 }
 
-export function MemoPanel({ doc, view }: MemoPanelProps) {
+export function MemoPanel({ doc, view, mobile = false }: MemoPanelProps) {
   const { memos, add, move, dismiss, restore } = useMemos(doc)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string>()
@@ -42,6 +43,7 @@ export function MemoPanel({ doc, view }: MemoPanelProps) {
 
   return (
     <MemoPanelView
+      adoptionPresentation={mobile ? 'sheet' : 'popover'}
       draft={draft}
       error={error}
       filter={filter}

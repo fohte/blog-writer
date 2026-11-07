@@ -462,8 +462,8 @@ describe('body request', () => {
   })
 
   it('explains when the proposal layer is not mounted', async () => {
-    vi.stubGlobal('matchMedia', () => ({
-      matches: true,
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query !== '(max-width: 767px)',
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     }))
@@ -1191,9 +1191,24 @@ describe('body request', () => {
     })
   })
 
-  it('clears the previous request when the touch request button reopens', async () => {
+  it('leaves the request button to the editor toolbar on a touch phone', () => {
     vi.stubGlobal('matchMedia', () => ({
       matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    createRequestEditor()
+
+    const readTrigger = () => ({
+      touchRequestButton:
+        document.querySelector('[aria-label="本文を依頼"]') !== null,
+    })
+    expect(readTrigger()).toEqual({ touchRequestButton: false })
+  })
+
+  it('clears the previous request when the touch request button reopens', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query !== '(max-width: 767px)',
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     }))
