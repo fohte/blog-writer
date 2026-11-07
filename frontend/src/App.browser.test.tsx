@@ -278,7 +278,8 @@ describe('the application research and evidence integrations', () => {
     const readRendered = () => ({
       heading: host?.querySelector('#source-panel-heading')?.textContent,
       sourceRowVisible: [
-        ...(host?.querySelectorAll('button span.font-medium') ?? []),
+        ...(host?.querySelectorAll('[aria-label="資料一覧"] button span') ??
+          []),
       ].some((title) => title.textContent.trim() === 'Example source'),
     })
     expect(readRendered()).toEqual({
@@ -335,6 +336,18 @@ describe('the application research and evidence integrations', () => {
       )
     })
     await researchWasStarted
+    const readResearchView = () => ({
+      selectedTab: host?.querySelector('[role="tab"][aria-selected="true"]')
+        ?.textContent,
+      progressTitle: host?.querySelector(
+        '[aria-labelledby="source-panel-heading"] h3',
+      )?.textContent,
+    })
+    await waitFor(() => {
+      if (readResearchView().progressTitle === undefined)
+        throw new Error('The research progress did not render')
+    })
+    const researchView = readResearchView()
     const editorLine = host?.querySelectorAll<HTMLElement>('.cm-line').item(1)
     if (!editorLine) throw new Error('The article editor did not render')
     const editorView = EditorView.findFromDOM(editorLine)
@@ -392,6 +405,7 @@ describe('the application research and evidence integrations', () => {
     })
 
     const readResult = () => ({
+      researchView,
       requestQuestion,
       articleBody: getBody(doc).toJSON(),
       savedBodies,
@@ -412,6 +426,10 @@ describe('the application research and evidence integrations', () => {
       ),
     })
     expect(readResult()).toEqual({
+      researchView: {
+        selectedTab: '資料',
+        progressTitle: '調べています · Research topic',
+      },
       requestQuestion: {
         task: 'key_points',
         question: 'Custom research question',
@@ -555,7 +573,7 @@ describe('the application research and evidence integrations', () => {
     })
     expect(readResult()).toEqual({
       query: { task: 'key_points', question: 'Research topic' },
-      progressQueries: 'Research topic',
+      progressQueries: '検索 “Research topic”',
       sourceCount: 0,
       findingCount: 0,
       bodySaveCount: 0,
@@ -1535,26 +1553,20 @@ describe('the application research and evidence integrations', () => {
     await openBodyRequestPreset(claim, 'この見出しについて調べる')
     const activeRequestSignal = requestSignal
     if (!activeRequestSignal) throw new Error('Research did not start')
-    const progressTrigger = [...document.body.querySelectorAll('button')].find(
-      (button) => button.textContent.trim() === '調査中',
-    )
-    if (!progressTrigger) throw new Error('The research progress is missing')
-    if (progressTrigger.getAttribute('aria-expanded') !== 'true')
-      await act(async () => {
-        await userEvent.click(progressTrigger)
-      })
     const activeProgress = {
       requestCount,
-      runningLabels: [...document.body.querySelectorAll('button')].filter(
-        (button) => button.textContent.trim() === '調査中',
-      ).length,
+      progressTitle: document.body.querySelector(
+        '[aria-labelledby="source-panel-heading"] h3',
+      )?.textContent,
       cancelButtons: [...document.body.querySelectorAll('button')].filter(
         (button) => button.textContent.trim() === '中止',
       ).length,
     }
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '中止' }))
+      await userEvent.click(
+        page.getByRole('button', { name: '中止', exact: true }),
+      )
     })
     const interruptedText = '調査を中断しました。資料は保存されていません。'
     await waitFor(() => {
@@ -1569,7 +1581,11 @@ describe('the application research and evidence integrations', () => {
       evidence: listEvidence(doc),
     })
     expect(readResult()).toEqual({
-      activeProgress: { requestCount: 1, runningLabels: 1, cancelButtons: 1 },
+      activeProgress: {
+        requestCount: 1,
+        progressTitle: '調べています',
+        cancelButtons: 1,
+      },
       requestAborted: true,
       sources: [],
       evidence: [],
@@ -1683,18 +1699,12 @@ describe('the application research and evidence integrations', () => {
     await act(async () => {
       await userEvent.click(page.getByRole('tab', { name: '資料' }))
     })
-    const progressTrigger = [...document.body.querySelectorAll('button')].find(
-      (button) => button.textContent.trim() === '調査中',
-    )
-    if (!progressTrigger) throw new Error('The active progress is missing')
-    if (progressTrigger.getAttribute('aria-expanded') !== 'true')
-      await act(async () => {
-        await userEvent.click(progressTrigger)
-      })
     const activeProgress = {
       requestCount,
       recheckCount,
-      statusLabel: progressTrigger.textContent.trim(),
+      progressTitle: document.body.querySelector(
+        '[aria-labelledby="source-panel-heading"] h3',
+      )?.textContent,
       cancelButtons: [...document.body.querySelectorAll('button')].filter(
         (button) => button.textContent.trim() === '中止',
       ).length,
@@ -1703,7 +1713,9 @@ describe('the application research and evidence integrations', () => {
     }
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '中止' }))
+      await userEvent.click(
+        page.getByRole('button', { name: '中止', exact: true }),
+      )
     })
     const interruptedText = '調査を中断しました。資料は保存されていません。'
     await waitFor(() => {
@@ -1734,7 +1746,7 @@ describe('the application research and evidence integrations', () => {
       activeProgress: {
         requestCount: 2,
         recheckCount: 0,
-        statusLabel: '調査中',
+        progressTitle: '調べています',
         cancelButtons: 1,
         error: lockError,
         requestAborted: false,
@@ -3551,10 +3563,10 @@ describe('App write from key points integration', () => {
       ),
       card:
         appHost
-          .querySelector('[aria-label="根拠"]')
+          .querySelector('[aria-label="この文の根拠"]')
           ?.textContent.replace(
-            /確認日: \d{4}-\d{2}-\d{2}/u,
-            '確認日: date-placeholder',
+            /確認 \d{4}-\d{2}-\d{2}/u,
+            '確認 date-placeholder',
           ) ?? null,
     })
     expect(readOutput()).toEqual({
@@ -3645,7 +3657,7 @@ describe('App write from key points integration', () => {
           verdict: 'supported',
         },
       ],
-      card: '資料なし不足引用箇所はありません。確認日: date-placeholder公開日: 不明外す',
+      card: '要確認 · 不足確認 date-placeholder資料なし引用箇所はありません。根拠を外す',
     })
   })
 })

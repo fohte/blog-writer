@@ -13,6 +13,7 @@ import {
 export type ResearchProgressState = {
   status: ResearchProgressStatus
   queries: string[]
+  target?: string
   error?: string
 }
 
@@ -58,7 +59,11 @@ export function useHeadingResearch() {
       controllers.current.set(articleId, controller)
       setProgress((current) => ({
         ...current,
-        [articleId]: { status: 'running', queries: [] },
+        [articleId]: {
+          status: 'running',
+          queries: [],
+          target: headingText || questionInput.trim(),
+        },
       }))
 
       const settings = loadLlmSettings(() => window.localStorage)

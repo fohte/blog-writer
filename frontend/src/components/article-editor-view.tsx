@@ -43,6 +43,7 @@ export type ArticleEditorContext = {
   history: MoveHistory
   view: EditorView | null
   replaceBody: (value: string) => Result<void, EditorNotReadyError>
+  showSources: () => void
 }
 type ArticleOutlineRenderContext = ArticleEditorContext & {
   onHeadingSelected: () => void
@@ -214,8 +215,13 @@ export function ArticleEditorView({
     return ok(undefined)
   }
 
+  const showSources = () => {
+    setPanel('sources')
+  }
   const context =
-    doc && history ? { articleId, doc, history, view, replaceBody } : undefined
+    doc && history
+      ? { articleId, doc, history, view, replaceBody, showSources }
+      : undefined
 
   const handleViewChange = (nextView: EditorView | null) => {
     editorViewRef.current = nextView

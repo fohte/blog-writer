@@ -46,6 +46,7 @@ import {
 type ClaimEvidenceProgressState = {
   status: ResearchProgressStatus
   queries: string[]
+  target?: string
   error?: string
   interruptedMessage?: string
 }
@@ -140,7 +141,8 @@ export function useClaimEvidence() {
         ...current,
         [metadata.articleId]: {
           status: 'running',
-          queries: ['保存済みの資料で再判定しています。'],
+          queries: [],
+          target: '保存済みの資料で再判定',
         },
       }))
       const finishRecheck = (error?: string) => {

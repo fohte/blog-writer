@@ -1,7 +1,4 @@
 import { Button } from '@fohte/ui/button'
-import { List } from '@fohte/ui/list'
-import { Popover, PopoverContent, PopoverTrigger } from '@fohte/ui/popover'
-import { useEffect, useState } from 'react'
 
 export type ResearchProgressStatus =
   'running' | 'saving' | 'cancelling' | 'complete' | 'interrupted' | 'failed'
@@ -9,14 +6,14 @@ export type ResearchProgressStatus =
 export type ResearchProgressProps = {
   status: ResearchProgressStatus
   queries: string[]
+  target?: string | undefined
   error?: string | undefined
   interruptedMessage?: string | undefined
-  defaultOpen?: boolean | undefined
   onCancel?: (() => void) | undefined
 }
 
 const statusLabels: Record<ResearchProgressStatus, string> = {
-  running: '調査中',
+  running: '調べています',
   saving: '資料を保存しています',
   cancelling: '調査を中断しています',
   complete: '調査が完了しました',
@@ -27,68 +24,48 @@ const statusLabels: Record<ResearchProgressStatus, string> = {
 export function ResearchProgress({
   status,
   queries,
+  target,
   error,
   interruptedMessage,
-  defaultOpen = false,
   onCancel,
 }: ResearchProgressProps) {
-  const [open, setOpen] = useState(defaultOpen)
-
-  useEffect(() => {
-    if (
-      status === 'running' ||
-      status === 'saving' ||
-      status === 'cancelling' ||
-      status === 'interrupted' ||
-      status === 'failed'
-    )
-      setOpen(true)
-    if (status === 'complete') setOpen(false)
-  }, [status])
-
+  const active = status === 'running' || status === 'saving'
   return (
-    <Popover onOpenChange={setOpen} open={open}>
-      <PopoverTrigger
-        render={<Button size="sm" type="button" variant="outline" />}
-      >
-        {statusLabels[status]}
-      </PopoverTrigger>
-      <PopoverContent className="flex w-80 max-w-full flex-col gap-3">
-        <h3 className="font-semibold">調査の進捗</h3>
-        {queries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            検索を準備しています。
-          </p>
-        ) : (
-          <List aria-label="検索の進捗">
-            {queries.map((query, index) => (
-              <li
-                className="list-inside py-1 text-sm"
-                key={`${index.toString()}-${query}`}
-              >
-                {query}
-              </li>
-            ))}
-          </List>
-        )}
-        {status === 'interrupted' ? (
-          <>
-            <p role="status">
-              {interruptedMessage ??
-                '調査を中断しました。資料は保存されていません。'}
-            </p>
-            {error !== undefined ? <p role="alert">{error}</p> : null}
-          </>
-        ) : null}
-        {status === 'failed' && error !== undefined ? (
-          <p role="alert">{error}</p>
-        ) : null}
-        {(status === 'running' || status === 'saving') && onCancel ? (
-          <Button onClick={onCancel} type="button" variant="outline">
+    <div className="flex flex-col gap-1.5 border border-border bg-card p-3 text-xs">
+      <div className="flex items-center gap-2">
+        <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">
+          {statusLabels[status]}
+          {target !== undefined && target.length > 0 ? ` · ${target}` : null}
+        </h3>
+        {active && onCancel ? (
+          <Button onClick={onCancel} size="xs" type="button" variant="outline">
             中止
           </Button>
         ) : null}
-      </PopoverContent>
-    </Popover>
+      </div>
+      {status === 'complete' || queries.length === 0 ? null : (
+        <ul
+          aria-label="検索の進捗"
+          className="flex flex-col gap-1.5 font-mono text-muted-foreground"
+        >
+          {queries.map((query, index) => (
+            <li key={`${index.toString()}-${query}`}>検索 “{query}”</li>
+          ))}
+        </ul>
+      )}
+      {status === 'interrupted' ? (
+        <p role="status">
+          {interruptedMessage ??
+            '調査を中断しました。資料は保存されていません。'}
+        </p>
+      ) : null}
+      {(status === 'interrupted' || status === 'failed') &&
+      error !== undefined ? (
+        <p role="alert">{error}</p>
+      ) : null}
+      {active ? (
+        <p className="text-muted-foreground">本文は書き続けられます</p>
+      ) : null}
+    </div>
   )
 }

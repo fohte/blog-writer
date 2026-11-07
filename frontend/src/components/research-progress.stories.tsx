@@ -5,7 +5,8 @@ import { ResearchProgress } from '#components/research-progress'
 const meta = {
   component: ResearchProgress,
   args: {
-    queries: ['利用状況の最新統計'],
+    queries: ['利用状況の最新統計', '利用状況 2026 調査'],
+    target: '利用状況',
     onCancel: () => {},
   },
 } satisfies Meta<typeof ResearchProgress>
@@ -14,10 +15,17 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const Running: Story = {
-  name: '検索と取得の進捗を表示する',
+  name: '調べている見出しと検索語を、中止ボタンと一緒に表示する',
   args: {
     status: 'running',
-    defaultOpen: true,
+  },
+}
+
+export const Starting: Story = {
+  name: '検索語がまだないときは、調べている見出しだけを表示する',
+  args: {
+    status: 'running',
+    queries: [],
   },
 }
 
@@ -25,7 +33,6 @@ export const Interrupted: Story = {
   name: '中止した調査に未保存であることを示す',
   args: {
     status: 'interrupted',
-    defaultOpen: true,
   },
 }
 
@@ -35,7 +42,6 @@ export const InterruptedWithPreservedSources: Story = {
     status: 'interrupted',
     interruptedMessage:
       '調査を中断しました。共同編集の情報を守るため、関連する資料を保持しました。',
-    defaultOpen: true,
   },
 }
 
@@ -44,7 +50,6 @@ export const ConnectionInterrupted: Story = {
   args: {
     status: 'interrupted',
     error: '調査の接続が中断されました。',
-    defaultOpen: true,
   },
 }
 
@@ -52,6 +57,12 @@ export const Cancelling: Story = {
   name: '調査の中止処理中であることを示す',
   args: {
     status: 'cancelling',
-    defaultOpen: true,
+  },
+}
+
+export const Complete: Story = {
+  name: '完了した調査は、検索語を隠して完了したことだけを示す',
+  args: {
+    status: 'complete',
   },
 }

@@ -90,23 +90,26 @@ export const editorTheme = EditorView.theme({
     color: 'var(--primary)',
     fontFamily: 'var(--font-code)',
   },
-  '.cm-evidence-text-supported': {
-    textDecoration: 'underline dotted var(--tint-green-foreground)',
+  '.cm-evidence-text-needs-review': {
+    backgroundColor: 'var(--card)',
+    textDecoration: 'underline dotted var(--foreground)',
+    textUnderlineOffset: '5px',
   },
-  '.cm-evidence-text-insufficient, .cm-evidence-text-outdated, .cm-evidence-text-contradicted, .cm-evidence-text-edited':
-    {
-      textDecoration: 'underline dotted var(--tint-yellow-foreground)',
-    },
   '.cm-evidence-marker': {
     border: '0',
     background: 'transparent',
+    color: 'var(--muted-foreground)',
     cursor: 'pointer',
-    fontSize: '0.72rem',
-    padding: '0 0.1rem',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '11px',
+    lineHeight: '1',
+    marginLeft: '2px',
+    padding: '0 2px',
+    verticalAlign: 'super',
   },
-  '.cm-evidence-supported': { color: 'var(--tint-green-foreground)' },
   '.cm-evidence-needs-review, .cm-evidence-edited': {
-    color: 'var(--tint-yellow-foreground)',
+    border: '1px solid var(--muted-foreground)',
+    color: 'var(--foreground)',
   },
 })
 
