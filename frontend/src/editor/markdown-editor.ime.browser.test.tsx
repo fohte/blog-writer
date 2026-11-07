@@ -67,7 +67,7 @@ const webkitDriver: ImeDriver = {
         inputType: 'insertCompositionText',
       }),
     )
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- The keyboard driver emits one insertText event per character.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- This inserts one composition string; WebKit keyboard input sends one insertText per character.
     document.execCommand('insertText', false, text)
     await Promise.resolve()
     const composingImmediately = content
