@@ -8,7 +8,7 @@ actionlint = "1.7.12"
 node = "24.22.2"
 pinact = "4.1.1"
 "github:fohte/basefmt" = "0.1.0"
-"github:k1LoW/tbls" = "1.95.0"
+"github:k1LoW/tbls" = "1.96.1"
 shellcheck = "0.11.0"
 shfmt = "3.14.1"
 
