@@ -66,12 +66,15 @@ function createBodyMenuEditor(markdownText: string) {
 async function tapBodyHandle(button: HTMLButtonElement) {
   if (navigator.userAgent.includes('Chrome')) {
     const rect = button.getBoundingClientRect()
+    // CDP touch points use top-level page coordinates, and the test iframe can be offset and scaled.
+    const frame = window.frameElement?.getBoundingClientRect()
+    const scale = frame ? frame.width / window.innerWidth : 1
     await cdp().send('Input.dispatchTouchEvent', {
       type: 'touchStart',
       touchPoints: [
         {
-          x: rect.left + rect.width / 2,
-          y: rect.top + rect.height / 2,
+          x: (frame?.left ?? 0) + (rect.left + rect.width / 2) * scale,
+          y: (frame?.top ?? 0) + (rect.top + rect.height / 2) * scale,
           id: 1,
         },
       ],
