@@ -14,6 +14,7 @@ import {
   type BodyRequestTarget,
   BodyRequestView,
 } from '#components/body-request-view'
+import { useMobileViewport } from '#hooks/use-mobile-viewport'
 import { loadLlmSettings } from '#lib/llm-settings'
 import type { MoveHistory } from '#outline/move-history'
 import {
@@ -144,6 +145,7 @@ export function BodyRequestAccessory({
   const [instruction, setInstruction] = useState('')
   const [failure, setFailure] = useState<BodyRequestFailure>()
   const [touchDevice, setTouchDevice] = useState(false)
+  const mobileViewport = useMobileViewport()
   // The editor keeps its selection while the request input has focus, so typing does not change the target.
   const target = useMemo(
     () => (open ? readTarget(view) : 'paragraph'),
@@ -424,7 +426,8 @@ export function BodyRequestAccessory({
       open={open}
       phase={phase}
       target={target}
-      touchDevice={touchDevice}
+      // Phone widths open the request from the editor toolbar instead.
+      touchDevice={touchDevice && !mobileViewport}
     />
   )
 }

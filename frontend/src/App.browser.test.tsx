@@ -3067,6 +3067,25 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
+  it('opens the body request from the mobile toolbar', async () => {
+    await page.viewport(375, 812)
+    setBody(doc, 'A useful paragraph.\n')
+    await renderApp()
+    await openArticle()
+    await act(async () => {
+      await userEvent.click(
+        page
+          .getByRole('toolbar', { name: '入力補助' })
+          .getByRole('button', { name: '依頼' }),
+      )
+    })
+
+    const readRequest = () => ({
+      requestOpen: document.querySelector('#body-request') !== null,
+    })
+    expect(readRequest()).toEqual({ requestOpen: true })
+  })
+
   it('keeps outline proposals when showing heading research controls', async () => {
     await page.viewport(375, 812)
     installFetch((url) =>
