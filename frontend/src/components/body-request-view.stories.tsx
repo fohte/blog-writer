@@ -45,6 +45,18 @@ export const ReadyToRequest: Story = {
   args: { instruction: 'この段落を短くしてください' },
 }
 
+export const WithPresets: Story = {
+  name: 'the writer can choose a preset request or enter one freely',
+  args: {
+    instruction: 'この段落を短くしてください',
+    presets: [
+      { id: 'research-section', label: 'この見出しについて調べる' },
+      { id: 'write-from-sources', label: '資料をもとに書く' },
+      { id: 'verify-claims', label: '根拠を確かめる' },
+    ],
+  },
+}
+
 export const TouchRequest: Story = {
   name: 'a touch device shows a request button',
   args: { touchDevice: true },

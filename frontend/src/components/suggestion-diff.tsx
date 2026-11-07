@@ -9,6 +9,7 @@ export interface SuggestionDiffProps {
   focused?: boolean
   inline?: boolean
   generating?: boolean
+  note?: string
   onAccept?: () => void
   onReject?: () => void
 }
@@ -72,6 +73,7 @@ export function SuggestionDiff({
   focused = false,
   inline = false,
   generating = false,
+  note,
   onAccept,
   onReject,
 }: SuggestionDiffProps) {
@@ -109,6 +111,11 @@ export function SuggestionDiff({
           presentableDiff(original, replacement),
         )}
       </Tag>
+      {note !== undefined && note.length > 0 ? (
+        <Tag className="suggestion-diff-note text-sm text-muted-foreground">
+          {note}
+        </Tag>
+      ) : null}
       {focused && (onAccept || onReject) ? (
         <Tag className="suggestion-diff-actions">
           {onAccept ? (

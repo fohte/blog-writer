@@ -12,12 +12,14 @@ export {
   type SuggestionLayerOptions,
   type SuggestionPosition,
   type TextSuggestion,
+  type TrackedSuggestionRange,
 } from '#editor/suggestion-layer'
 export {
   BodyRequestAccessory,
   type BodyRequestAccessoryContext,
   type BodyRequestEditorContext,
   bodyRequestExtensions,
+  type BodyRequestPreset,
 } from '#proposals/body-request'
 export {
   createOutlineProposalExtension,

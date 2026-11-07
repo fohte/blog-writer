@@ -22,6 +22,7 @@ import {
 import {
   createSuggestionLayer,
   type SuggestionLayerOptions,
+  type TextSuggestion,
 } from '#editor/suggestion-layer'
 import { saveLlmSettings } from '#lib/llm-settings'
 import { createMoveHistory } from '#outline/index'
@@ -49,7 +50,10 @@ function createEditor(
   const layer = createSuggestionLayer({
     ...options.layerOptions,
     onCancelInFlight: () => onResolve?.('cancel'),
-    onResolve: (_suggestion, decision) => onResolve?.(decision),
+    onResolve: (suggestion, decision, acceptedRange) => {
+      onResolve?.(decision)
+      options.layerOptions?.onResolve?.(suggestion, decision, acceptedRange)
+    },
   })
   let view: EditorView | undefined
 
@@ -80,12 +84,7 @@ function createEditor(
     host.remove()
   })
 
-  const setSuggestion = (suggestion: {
-    id: string
-    from: number
-    to: number
-    replacement: string
-  }) => {
+  const setSuggestion = (suggestion: TextSuggestion) => {
     let result: ReturnType<typeof layer.setSuggestions> | undefined
     act(() => {
       result = layer.setSuggestions([suggestion])
@@ -360,6 +359,87 @@ describe('suggestion layer', () => {
     })
 
     expect(body.toJSON()).toEqual('before new after')
+  })
+
+  it('notifies metadata and tracks an accepted range through later edits', () => {
+    let resolution:
+      | {
+          acceptedRange?: {
+            current(): { from: number; to: number } | undefined
+          }
+          decision: string
+          suggestion: TextSuggestion
+        }
+      | undefined
+    const { body, layer, setSuggestion, view } = createEditor(
+      initialText,
+      undefined,
+      [],
+      {
+        layerOptions: {
+          onResolve: (suggestion, decision, acceptedRange) => {
+            resolution = {
+              decision,
+              suggestion,
+              ...(acceptedRange === undefined ? {} : { acceptedRange }),
+            }
+          },
+        },
+      },
+    )
+    const from = initialText.indexOf('selected sentence')
+    setSuggestion({
+      id: 'suggestion-with-metadata',
+      from,
+      to: from + 'selected sentence'.length,
+      replacement: 'accepted sentence',
+      metadata: { sourceIds: ['source-a'] },
+    })
+
+    act(() => {
+      layer.accept('suggestion-with-metadata')
+    })
+    const initialRange = resolution?.acceptedRange?.current()
+    if (!initialRange) throw new Error('The accepted range was not reported')
+    act(() => {
+      view.dispatch({ changes: { from: 0, insert: 'new\n' } })
+    })
+    const rangeAfterPrefix = resolution?.acceptedRange?.current()
+    if (!rangeAfterPrefix) throw new Error('The accepted range was lost')
+    act(() => {
+      const range = resolution?.acceptedRange?.current()
+      if (!range) throw new Error('The accepted range was lost')
+      view.dispatch({
+        changes: { from: range.from + 9, insert: 'revised ' },
+      })
+    })
+    const currentRange = resolution?.acceptedRange?.current()
+    if (!currentRange) throw new Error('The accepted range was lost')
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      decision: resolution?.decision,
+      initialRange,
+      metadata: resolution?.suggestion.metadata,
+      rangeAfterPrefix,
+      trackedText: body.toJSON().slice(currentRange.from, currentRange.to),
+      currentRange,
+    })
+    expect(readOutput()).toEqual({
+      body: 'new\nopening sentence\naccepted revised sentence\nclosing sentence',
+      decision: 'accept',
+      initialRange: { from, to: from + 'accepted sentence'.length },
+      metadata: { sourceIds: ['source-a'] },
+      rangeAfterPrefix: {
+        from: from + 'new\n'.length,
+        to: from + 'new\n'.length + 'accepted sentence'.length,
+      },
+      trackedText: 'accepted revised sentence',
+      currentRange: {
+        from: from + 'new\n'.length,
+        to: from + 'new\n'.length + 'accepted revised sentence'.length,
+      },
+    })
   })
 
   it('rejects a zero-length suggestion without changing the document', () => {

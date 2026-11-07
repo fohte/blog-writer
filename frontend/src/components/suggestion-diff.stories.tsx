@@ -20,6 +20,18 @@ export const Focused: Story = {
   },
 }
 
+export const Annotated: Story = {
+  name: 'the suggestion shows a one-line note with its diff',
+  args: {
+    focused: true,
+    note: 'The revision reflects the source listed in the article.',
+    onAccept: () => {},
+    onReject: () => {},
+    original: 'A short draft sentence.',
+    replacement: 'A clearer sentence for the draft.',
+  },
+}
+
 export const Unfocused: Story = {
   name: 'the suggestion shows its changes without actions.',
   args: {

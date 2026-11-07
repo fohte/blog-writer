@@ -20,8 +20,10 @@ import {
   type SuggestionLayerState,
   type SuggestionPosition,
   type TextSuggestion,
+  type TrackedSuggestionRange,
   validateSuggestions,
 } from '#editor/suggestion-layer-range'
+import { SuggestionRangeTracker } from '#editor/suggestion-layer-tracking'
 import { createSuggestionDecorations } from '#editor/suggestion-layer-view'
 
 export type {
@@ -30,6 +32,7 @@ export type {
   SuggestionLayerState,
   SuggestionPosition,
   TextSuggestion,
+  TrackedSuggestionRange,
 } from '#editor/suggestion-layer-range'
 
 type ScopedEffect<Value> = { scope: symbol; value: Value }
@@ -48,7 +51,11 @@ const removeSuggestion = StateEffect.define<ScopedEffect<string>>()
 export interface SuggestionLayerOptions {
   initialSuggestions?: readonly TextSuggestion[]
   initialInFlight?: SuggestionPosition
-  onResolve?: (suggestion: TextSuggestion, decision: SuggestionDecision) => void
+  onResolve?: (
+    suggestion: TextSuggestion,
+    decision: SuggestionDecision,
+    acceptedRange?: TrackedSuggestionRange,
+  ) => void
   onCancelInFlight?: () => void
   onInFlightRangeEdited?: () => void
 }
@@ -59,6 +66,7 @@ export class SuggestionLayerController {
   private view: EditorView | null = null
   private readonly stateField: StateField<SuggestionLayerState>
   private nextGeneratedId = 0
+  private readonly trackedRanges = new SuggestionRangeTracker()
 
   constructor(private readonly options: SuggestionLayerOptions = {}) {
     this.stateField = StateField.define<SuggestionLayerState>({
@@ -181,11 +189,15 @@ export class SuggestionLayerController {
             if (viewLayers?.size === 0) mountedSuggestionLayers.delete(view)
             if (this.view === view) {
               this.view = null
+              this.trackedRanges.clear()
             }
           },
         }
       }),
       EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          this.trackedRanges.map(update.changes)
+        }
         const previousInFlight = update.startState.field(
           this.stateField,
           false,
@@ -337,7 +349,11 @@ export class SuggestionLayerController {
       ],
     })
     view.focus()
-    this.options.onResolve?.(suggestion, 'accept')
+    const acceptedRange = this.trackedRanges.track({
+      from: suggestion.from,
+      to: suggestion.from + suggestion.replacement.length,
+    })
+    this.options.onResolve?.(suggestion, 'accept', acceptedRange)
   }
 
   reject(id: string): void {

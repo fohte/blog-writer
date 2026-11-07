@@ -5,6 +5,11 @@ import { useRef } from 'react'
 
 export type BodyRequestPhase = 'input' | 'error'
 
+export interface BodyRequestPresetOption {
+  id: string
+  label: string
+}
+
 type BodyRequestViewProps = {
   anchor: HTMLElement | null
   open: boolean
@@ -12,9 +17,11 @@ type BodyRequestViewProps = {
   phase: BodyRequestPhase
   instruction: string
   error?: string | undefined
+  presets?: readonly BodyRequestPresetOption[]
   onOpenChange: (open: boolean) => void
   onInstructionChange: (instruction: string) => void
   onSubmit: () => void
+  onPresetSelect?: (id: string) => void
 }
 
 export function BodyRequestView({
@@ -24,9 +31,11 @@ export function BodyRequestView({
   phase,
   instruction,
   error,
+  presets,
   onOpenChange,
   onInstructionChange,
   onSubmit,
+  onPresetSelect,
 }: BodyRequestViewProps) {
   const anchorRef = useRef<HTMLElement | null>(null)
   anchorRef.current = anchor
@@ -50,6 +59,26 @@ export function BodyRequestView({
             onSubmit()
           }}
         >
+          {presets && presets.length > 0 ? (
+            <div
+              aria-label="定型の依頼"
+              className="flex flex-col gap-2"
+              role="group"
+            >
+              <p className="text-sm font-medium">定型の依頼</p>
+              {presets.map(({ id, label }) => (
+                <Button
+                  className="justify-start"
+                  key={id}
+                  onClick={() => onPresetSelect?.(id)}
+                  type="button"
+                  variant="outline"
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          ) : null}
           <label className="text-sm font-medium" htmlFor="body-request">
             本文への依頼
           </label>

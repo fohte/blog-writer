@@ -153,6 +153,7 @@ class SuggestionDiffWidget extends WidgetType {
             : {})}
           original={this.original}
           replacement={suggestion.replacement}
+          {...(suggestion.note === undefined ? {} : { note: suggestion.note })}
         />
       ) : (
         <SuggestionDiff

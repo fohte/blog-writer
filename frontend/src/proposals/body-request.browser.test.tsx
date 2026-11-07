@@ -13,6 +13,7 @@ import { setPremise } from '#article/premise'
 import {
   BodyRequestAccessory,
   bodyRequestExtensions,
+  type BodyRequestPreset,
   createSuggestionLayer,
 } from '#editor/index'
 import { createMoveHistory } from '#outline/index'
@@ -50,6 +51,7 @@ function createRequestEditor(
   additionalExtensions: Extension[] = [],
   article = content,
   includeBodyRequestLayer = true,
+  presets: readonly BodyRequestPreset[] = [],
 ) {
   const doc = new Y.Doc()
   setBody(doc, article)
@@ -87,6 +89,7 @@ function createRequestEditor(
         doc={doc}
         history={history}
         replaceBody={() => {}}
+        presets={presets}
         view={view}
       />,
     )
@@ -179,6 +182,30 @@ afterEach(() => {
 })
 
 describe('body request', () => {
+  it('runs the selected preset request', async () => {
+    const selectedPresets: string[] = []
+    const { view } = createRequestEditor([], content, true, [
+      {
+        id: 'research-section',
+        label: 'この見出しについて調べる',
+        onSelect: () => selectedPresets.push('research-section'),
+      },
+    ])
+    pressModK(view)
+    const presetButton = await vi.waitFor(() => {
+      const button = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('button'),
+      ).find(
+        (candidate) => candidate.textContent === 'この見出しについて調べる',
+      )
+      if (!button) throw new Error('The preset request was not rendered')
+      return button
+    })
+    await userEvent.click(presetButton)
+
+    expect(selectedPresets).toEqual(['research-section'])
+  })
+
   it('opens only for the platform Mod-K shortcut', async () => {
     const { view } = createRequestEditor()
 

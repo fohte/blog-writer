@@ -7,6 +7,7 @@ import type * as Y from 'yjs'
 import { getPremise } from '#article/premise'
 import {
   type BodyRequestPhase,
+  type BodyRequestPresetOption,
   BodyRequestView,
 } from '#components/body-request-view'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
@@ -32,6 +33,11 @@ export type BodyRequestEditorContext = {
 export type BodyRequestAccessoryContext = BodyRequestEditorContext & {
   view: EditorView | null
   replaceBody: MarkdownEditorHandle['replaceBody']
+  presets?: readonly BodyRequestPreset[]
+}
+
+export interface BodyRequestPreset extends BodyRequestPresetOption {
+  onSelect: () => void
 }
 
 function preserveBlankLineSeparators(
@@ -172,6 +178,7 @@ export function bodyRequestExtensions(
 export function BodyRequestAccessory({
   doc,
   view,
+  presets,
 }: BodyRequestAccessoryContext) {
   const manager = useMemo(() => getManager(doc), [doc])
   const [open, setOpen] = useState(false)
@@ -364,9 +371,19 @@ export function BodyRequestAccessory({
           setError(undefined)
         }
       }}
+      onPresetSelect={(id) => {
+        const preset = presets?.find((item) => item.id === id)
+        if (!preset) return
+        setOpen(false)
+        setError(undefined)
+        setInstruction('')
+        setPhase('input')
+        preset.onSelect()
+      }}
       onSubmit={startRequest}
       open={open}
       phase={phase}
+      {...(presets === undefined ? {} : { presets })}
       touchDevice={touchDevice}
     />
   )

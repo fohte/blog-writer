@@ -6,11 +6,18 @@ export interface TextSuggestion {
   from: number
   to: number
   replacement: string
+  metadata?: unknown
+  note?: string
 }
 
 export interface SuggestionPosition {
   from: number
   to: number
+}
+
+export interface TrackedSuggestionRange {
+  current(): SuggestionPosition | undefined
+  dispose(): void
 }
 
 export type SuggestionDecision = 'accept' | 'reject'
