@@ -80,3 +80,23 @@ export const StorageLoadUnavailable: Story = {
     storageError: 'load',
   },
 }
+
+export const FileSyncConfigured: Story = {
+  name: 'the settings page shows its synchronization folder',
+  args: {
+    fileSyncDirectory: '/workspace/articles',
+    settings: { route: 'server', bridgeUrl: '' },
+    status: 'ready',
+    locked: false,
+  },
+}
+
+export const FileSyncConfigurationError: Story = {
+  name: 'the settings page shows a synchronization configuration error',
+  args: {
+    fileSyncConfigurationError: '同期設定を読み込めませんでした。',
+    settings: { route: 'server', bridgeUrl: '' },
+    status: 'ready',
+    locked: false,
+  },
+}

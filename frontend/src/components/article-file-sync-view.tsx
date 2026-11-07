@@ -6,6 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@fohte/ui/popover'
 
 import { TextDiffView } from '#components/text-diff-view'
 import type { ArticleFileSyncStatus } from '#lib/file-sync-api'
+import { normalizeLineEndings } from '#lib/normalize-line-endings'
 
 type ArticleFileSyncViewProps = {
   status: ArticleFileSyncStatus
@@ -89,7 +90,7 @@ export function ArticleFileSyncView({
                 <TextDiffView
                   modified={body}
                   modifiedLabel="記事本文"
-                  original={content.replaceAll('\r\n', '\n')}
+                  original={normalizeLineEndings(content)}
                   originalLabel="ファイルの内容"
                 />
                 <div className="flex flex-wrap gap-2">
@@ -110,7 +111,7 @@ export function ArticleFileSyncView({
                   </Button>
                 </div>
               </>
-            ) : error === undefined ? (
+            ) : content === null && error === undefined && !busy ? (
               <Panel className="flex flex-col gap-3 rounded-md p-3">
                 <p>
                   同期ファイルが見つかりません。上書きして作り直すか、別のパスを指定してください。

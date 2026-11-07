@@ -15,6 +15,8 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [fileSyncConfiguration, setFileSyncConfiguration] =
     useState<FileSyncConfiguration>()
+  const [fileSyncConfigurationError, setFileSyncConfigurationError] =
+    useState<string>()
   const {
     articles,
     statuses,
@@ -31,9 +33,12 @@ export function App() {
       (configuration) => {
         if (active) {
           setFileSyncConfiguration(configuration)
+          setFileSyncConfigurationError(undefined)
         }
       },
-      () => {},
+      (loadError) => {
+        if (active) setFileSyncConfigurationError(loadError.message)
+      },
     )
     return () => {
       active = false
@@ -48,6 +53,7 @@ export function App() {
             ? (fileSyncConfiguration.directory ?? '')
             : undefined
         }
+        fileSyncConfigurationError={fileSyncConfigurationError}
         onBack={() => {
           setShowSettings(false)
         }}

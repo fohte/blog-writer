@@ -43,6 +43,13 @@ function mockFetch() {
           ? (JSON.parse(init.body) as unknown)
           : null
       requests.push({ url, method, body })
+      const path =
+        body !== null &&
+        typeof body === 'object' &&
+        'path' in body &&
+        typeof body.path === 'string'
+          ? body.path
+          : syncResponse.path
 
       return Promise.resolve(
         Response.json(
@@ -52,7 +59,11 @@ function mockFetch() {
                 content: '# Article\n\nText from the file.\n',
                 status: 'synced',
               }
-            : syncResponse,
+            : method === 'POST' && url.endsWith('/overwrite')
+              ? { ...syncResponse, status: 'synced' }
+              : method === 'PUT'
+                ? { ...syncResponse, path }
+                : syncResponse,
         ),
       )
     }),
@@ -63,6 +74,7 @@ function mount(
   withEditor: boolean,
   viewHolder: { current?: EditorView },
   replaceBody: ArticleEditorContext['replaceBody'],
+  initialStatus: 'unset' | 'synced' | 'external_changed' = 'external_changed',
 ) {
   host = document.createElement('div')
   document.body.append(host)
@@ -89,7 +101,7 @@ function mount(
         <ArticleFileSyncPopover
           articleId="story-article"
           doc={testDoc}
-          initialStatus="external_changed"
+          initialStatus={initialStatus}
           replaceBody={replaceBody}
         />
       </>,
@@ -99,9 +111,13 @@ function mount(
   return testDoc
 }
 
-function readImportOutput(testDoc: Y.Doc) {
+function readImportOutput(testDoc: Y.Doc, bodyAfterImport: string) {
   return {
+    bodyAfterImport,
     bodyAfterUndo: getBody(testDoc).toJSON(),
+    statuses: [...document.querySelectorAll('[role="status"]')].map(
+      (element) => element.textContent,
+    ),
     requests,
   }
 }
@@ -109,14 +125,29 @@ function readImportOutput(testDoc: Y.Doc) {
 function readFailureOutput() {
   return {
     alert: document.querySelector('[role="alert"]')?.textContent,
+    statuses: [...document.querySelectorAll('[role="status"]')].map(
+      (element) => element.textContent,
+    ),
     requests,
   }
 }
 
-function readImportButtonDisabled() {
-  return [...document.querySelectorAll('button')].find(
-    (button) => button.textContent === '取り込む',
-  )?.disabled
+function readOperationOutput() {
+  return {
+    path: document.querySelector<HTMLInputElement>(
+      '[aria-label="同期ファイルの相対パス"]',
+    )?.value,
+    statuses: [...document.querySelectorAll('[role="status"]')].map(
+      (element) => element.textContent,
+    ),
+    requests,
+  }
+}
+
+async function waitForRequestCount(count: number) {
+  await vi.waitFor(() => {
+    if (requests.length !== count) throw new Error('Waiting for requests')
+  })
 }
 
 beforeEach(() => {
@@ -155,18 +186,20 @@ describe('ArticleFileSyncPopover', () => {
     await act(async () => {
       await page.getByRole('button', { name: '取り込む' }).click()
       await vi.waitFor(() => {
-        expect(getBody(testDoc).toJSON()).toEqual(
-          '# Article\n\nText from the file.\n',
-        )
+        if (getBody(testDoc).toJSON() !== '# Article\n\nText from the file.\n')
+          throw new Error('Waiting for the imported body')
       })
     })
+    const bodyAfterImport = getBody(testDoc).toJSON()
 
     act(() => {
       if (viewHolder.current) history?.undo(viewHolder.current)
     })
 
-    expect(readImportOutput(testDoc)).toEqual({
+    expect(readImportOutput(testDoc, bodyAfterImport)).toEqual({
+      bodyAfterImport: '# Article\n\nText from the file.\n',
       bodyAfterUndo: '# Article\n\nThe original text.\n',
+      statuses: ['同期済み'],
       requests: [
         {
           body: null,
@@ -189,26 +222,92 @@ describe('ArticleFileSyncPopover', () => {
       await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
     })
     await act(async () => {
-      await vi.waitFor(() => {
-        expect(readImportButtonDisabled()).toEqual(false)
-      })
-    })
-    await act(async () => {
       await page.getByRole('button', { name: '取り込む' }).click()
       await vi.waitFor(() => {
-        expect(readFailureOutput().alert).toEqual(
-          'The article editor is not ready',
+        if (
+          document.querySelector('[role="alert"]')?.textContent !==
+          'The article editor is not ready'
         )
+          throw new Error('Waiting for the editor error')
       })
     })
 
     expect(readFailureOutput()).toEqual({
       alert: 'The article editor is not ready',
+      statuses: ['外部で変更あり'],
       requests: [
         {
           body: null,
           method: 'GET',
           url: '/api/articles/story-article/file-sync',
+        },
+      ],
+    })
+  })
+
+  it('sets the selected synchronization path', async () => {
+    mount(
+      false,
+      {},
+      () => err(new Error('The article editor is not ready')),
+      'unset',
+    )
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
+    })
+    await act(async () => {
+      await page
+        .getByRole('textbox', { name: '同期ファイルの相対パス' })
+        .fill('notes/updated.md')
+    })
+    await act(async () => {
+      await page.getByRole('button', { name: '指定' }).click()
+      await waitForRequestCount(2)
+    })
+
+    expect(readOperationOutput()).toEqual({
+      path: 'notes/updated.md',
+      statuses: ['外部で変更あり'],
+      requests: [
+        {
+          body: null,
+          method: 'GET',
+          url: '/api/articles/story-article/file-sync',
+        },
+        {
+          body: { path: 'notes/updated.md' },
+          method: 'PUT',
+          url: '/api/articles/story-article/file-sync',
+        },
+      ],
+    })
+  })
+
+  it('overwrites the selected synchronization file', async () => {
+    mount(false, {}, () => err(new Error('The article editor is not ready')))
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
+    })
+    await act(async () => {
+      await page.getByRole('button', { name: '上書き' }).click()
+      await waitForRequestCount(2)
+    })
+
+    expect(readOperationOutput()).toEqual({
+      path: 'notes/example.md',
+      statuses: ['同期済み'],
+      requests: [
+        {
+          body: null,
+          method: 'GET',
+          url: '/api/articles/story-article/file-sync',
+        },
+        {
+          body: null,
+          method: 'POST',
+          url: '/api/articles/story-article/file-sync/overwrite',
         },
       ],
     })

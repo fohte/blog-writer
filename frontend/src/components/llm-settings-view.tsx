@@ -16,6 +16,7 @@ type LlmSettingsViewProps = {
   onRouteChange: (route: LlmRoute) => void
   onBridgeUrlChange: (url: string) => void
   fileSyncDirectory?: string | undefined
+  fileSyncConfigurationError?: string | undefined
 }
 
 const routeOptions = [
@@ -33,6 +34,7 @@ export function LlmSettingsView({
   onRouteChange,
   onBridgeUrlChange,
   fileSyncDirectory,
+  fileSyncConfigurationError,
 }: LlmSettingsViewProps) {
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
@@ -103,9 +105,10 @@ export function LlmSettingsView({
           <p role="alert">Settings could not be saved on this device.</p>
         ) : null}
       </section>
-      {fileSyncDirectory !== undefined ? (
-        <FileSyncSettingsSection directory={fileSyncDirectory} />
-      ) : null}
+      <FileSyncSettingsSection
+        directory={fileSyncDirectory}
+        error={fileSyncConfigurationError}
+      />
     </main>
   )
 }

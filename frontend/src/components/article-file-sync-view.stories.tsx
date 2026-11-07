@@ -65,3 +65,15 @@ export const RequestError: Story = {
     status: 'external_changed',
   },
 }
+
+export const Busy: Story = {
+  name: 'the synchronization request is in progress',
+  args: {
+    busy: true,
+    content: '# A small article\n\nAn edited paragraph.\n',
+    contentHash: 'sample-hash',
+    open: true,
+    path: 'notes/example.md',
+    status: 'external_changed',
+  },
+}

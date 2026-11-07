@@ -1,3 +1,4 @@
+import type { ResultAsync } from 'neverthrow'
 import { useEffect, useRef, useState } from 'react'
 import type * as Y from 'yjs'
 
@@ -12,6 +13,7 @@ import {
   resumeArticleFileSync,
   setArticleFileSync,
 } from '#lib/file-sync-api'
+import { normalizeLineEndings } from '#lib/normalize-line-endings'
 
 type ArticleFileSyncPopoverProps = {
   articleId: string
@@ -22,10 +24,6 @@ type ArticleFileSyncPopoverProps = {
   defaultOpen?: boolean | undefined
   initialResponse?: ArticleFileSyncResponse | undefined
   initialError?: string | undefined
-}
-
-function normalizeLineEndings(value: string) {
-  return value.replaceAll('\r\n', '\n')
 }
 
 export function ArticleFileSyncPopover({
@@ -77,11 +75,25 @@ export function ArticleFileSyncPopover({
     }
   }, [initialPath, initialStatus])
 
-  async function loadFileState() {
+  async function runRequest(
+    makeRequest: () => ResultAsync<ArticleFileSyncResponse, Error>,
+    options: {
+      clearResponse?: boolean
+      beforeRequest?: () => Error | undefined
+    } = {},
+  ) {
     setBusy(true)
     setError(undefined)
-    setResponse(undefined)
-    await getArticleFileSync(fetch, articleId).match(
+    if (options.clearResponse === true) setResponse(undefined)
+
+    const beforeRequestError = options.beforeRequest?.()
+    if (beforeRequestError) {
+      setError(beforeRequestError.message)
+      setBusy(false)
+      return
+    }
+
+    await makeRequest().match(
       (nextResponse) => {
         setResponse(nextResponse)
         setPath(nextResponse.path ?? '')
@@ -91,6 +103,12 @@ export function ArticleFileSyncPopover({
       },
     )
     setBusy(false)
+  }
+
+  function loadFileState() {
+    return runRequest(() => getArticleFileSync(fetch, articleId), {
+      clearResponse: true,
+    })
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -98,69 +116,31 @@ export function ArticleFileSyncPopover({
     if (nextOpen) void loadFileState()
   }
 
-  async function handleSetPath() {
-    setBusy(true)
-    setError(undefined)
-    setResponse(undefined)
-    await setArticleFileSync(fetch, articleId, path).match(
-      (nextResponse) => {
-        setResponse(nextResponse)
-        setPath(nextResponse.path ?? '')
-      },
-      (requestError) => {
-        setError(requestError.message)
-      },
-    )
-    setBusy(false)
+  function handleSetPath() {
+    return runRequest(() => setArticleFileSync(fetch, articleId, path), {
+      clearResponse: true,
+    })
   }
 
-  async function handleImport() {
+  function handleImport() {
     const currentResponse = response
-    if (
-      currentResponse?.content == null ||
-      currentResponse.content_hash == null
-    )
-      return
+    const content = currentResponse?.content
+    const contentHash = currentResponse?.content_hash
+    if (content == null || contentHash == null) return
 
-    setBusy(true)
-    setError(undefined)
-    const replacement = normalizeLineEndings(currentResponse.content)
-    const replaceResult = replaceBody(replacement)
-    if (replaceResult.isErr()) {
-      setError(replaceResult.error.message)
-      setBusy(false)
-      return
-    }
-
-    await resumeArticleFileSync(
-      fetch,
-      articleId,
-      currentResponse.content_hash,
-    ).match(
-      (nextResponse) => {
-        setResponse(nextResponse)
-        setPath(nextResponse.path ?? '')
-      },
-      (requestError) => {
-        setError(requestError.message)
+    return runRequest(
+      () => resumeArticleFileSync(fetch, articleId, contentHash),
+      {
+        beforeRequest: () => {
+          const replaceResult = replaceBody(normalizeLineEndings(content))
+          return replaceResult.isErr() ? replaceResult.error : undefined
+        },
       },
     )
-    setBusy(false)
   }
 
-  async function handleOverwrite() {
-    setBusy(true)
-    setError(undefined)
-    await overwriteArticleFileSync(fetch, articleId).match(
-      (nextResponse) => {
-        setResponse(nextResponse)
-        setPath(nextResponse.path ?? '')
-      },
-      (requestError) => {
-        setError(requestError.message)
-      },
-    )
-    setBusy(false)
+  function handleOverwrite() {
+    return runRequest(() => overwriteArticleFileSync(fetch, articleId))
   }
 
   return (

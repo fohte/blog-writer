@@ -11,11 +11,13 @@ import { fetchLlmStatus } from '#lib/llm-status'
 type LlmSettingsScreenProps = {
   onBack: () => void
   fileSyncDirectory?: string | undefined
+  fileSyncConfigurationError?: string | undefined
 }
 
 export function LlmSettingsScreen({
   onBack,
   fileSyncDirectory,
+  fileSyncConfigurationError,
 }: LlmSettingsScreenProps) {
   const [initialSettings] = useState(() =>
     loadLlmSettings(() => window.localStorage),
@@ -70,6 +72,7 @@ export function LlmSettingsScreen({
     <LlmSettingsView
       error={error}
       fileSyncDirectory={fileSyncDirectory}
+      fileSyncConfigurationError={fileSyncConfigurationError}
       locked={locked}
       onBack={onBack}
       onBridgeUrlChange={(bridgeUrl) => {
