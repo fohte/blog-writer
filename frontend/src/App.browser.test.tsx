@@ -195,8 +195,11 @@ async function renderApp(articleDoc = doc) {
 }
 
 async function waitFor(assertion: () => void) {
-  await act(async () => {
-    await vi.waitFor(assertion)
+  await vi.waitFor(async () => {
+    await act(async () => {
+      await Promise.resolve()
+    })
+    assertion()
   })
 }
 
@@ -444,6 +447,8 @@ describe('the application research and evidence integrations', () => {
     const interruptedText = '調査を中断しました。資料は保存されていません。'
     let researchStarted: (() => void) | undefined
     let requestQuestion: unknown
+    let requestSignal: AbortSignal | undefined
+    let abortEventReceived = false
     const researchWasStarted = new Promise<void>((resolve) => {
       researchStarted = resolve
     })
@@ -452,9 +457,11 @@ describe('the application research and evidence integrations', () => {
       if (url === '/api/research/jobs') {
         if (typeof init.body === 'string')
           requestQuestion = JSON.parse(init.body) as unknown
+        requestSignal = init.signal ?? undefined
         if (researchStarted !== undefined) researchStarted()
         return new Promise<Response>((_resolve, reject) => {
           init.signal?.addEventListener('abort', () => {
+            abortEventReceived = true
             reject(new DOMException('Aborted', 'AbortError'))
           })
         })
@@ -487,6 +494,8 @@ describe('the application research and evidence integrations', () => {
 
     const readResult = () => ({
       query: requestQuestion,
+      requestSignalAborted: requestSignal?.aborted,
+      abortEventReceived,
       sourceCount: listSources(doc).length,
       findingCount: listFindings(doc).length,
       bodySaveRequests: putCount,
@@ -494,6 +503,8 @@ describe('the application research and evidence integrations', () => {
     })
     expect(readResult()).toEqual({
       query: { task: 'key_points', question: 'Research topic' },
+      requestSignalAborted: true,
+      abortEventReceived: true,
       sourceCount: 0,
       findingCount: 0,
       bodySaveRequests: 0,
@@ -999,7 +1010,8 @@ describe('the application research and evidence integrations', () => {
       if (
         listEvidence(doc)[0]?.verdict !== 'insufficient' ||
         host?.querySelector('.cm-evidence-marker')?.className !==
-          'cm-evidence-marker cm-evidence-needs-review'
+          'cm-evidence-marker cm-evidence-needs-review' ||
+        listEvidence(doc)[0]?.checkedAt === checkedAtBeforeAcceptance
       )
         throw new Error('The adopted claim was not rechecked')
     })
