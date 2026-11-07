@@ -67,14 +67,19 @@ const webkitDriver: ImeDriver = {
         inputType: 'insertCompositionText',
       }),
     )
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- WebKit reorders text sent as separate composition inputs.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- The keyboard driver emits one insertText event per character.
     document.execCommand('insertText', false, text)
+    await Promise.resolve()
+    const composingImmediately = content
+      ? EditorView.findFromDOM(content)?.composing === true
+      : false
+    const duringComposition = readOutput(body, content)
     content?.dispatchEvent(
       new CompositionEvent('compositionend', { bubbles: true, data: text }),
     )
     await nextFrame()
     const committed = readOutput(body, content)
-    return { committed }
+    return { composingImmediately, duringComposition, committed }
   },
 }
 
@@ -360,7 +365,7 @@ const value = 1
   },
 ]
 
-const webkitImeScenarios = imeScenarios.filter(
+const webkitCommittedTextScenarios = imeScenarios.filter(
   (scenario) => scenario.afterComposition === undefined,
 )
 
@@ -370,7 +375,9 @@ async function runImeScenario(scenario: ImeScenario) {
   const captured: Record<string, MarkdownEditorOutput> = {}
   for (const { key, capture } of scenario.beforeComposition) {
     await pressKey(key)
-    if (capture !== undefined) captured[capture] = readOutput(body, content)
+    if (capture !== undefined) {
+      captured[capture] = readOutput(body, content)
+    }
   }
 
   const composition = await compose(body, content, scenario.text)
@@ -385,12 +392,8 @@ async function runImeScenario(scenario: ImeScenario) {
 function expectedImeScenario(scenario: ImeScenario) {
   return {
     ...scenario.beforeCompositionOutput,
-    ...(isChromium
-      ? {
-          composingImmediately: true,
-          duringComposition: scenario.duringComposition,
-        }
-      : {}),
+    composingImmediately: true,
+    duringComposition: scenario.duringComposition,
     committed: scenario.committed,
     ...(scenario.afterComposition
       ? {
@@ -507,11 +510,14 @@ describe('MarkdownEditor IME', () => {
     })
   })
 
-  describe.skipIf(isChromium)('WebKit input', () => {
-    it.each(webkitImeScenarios)('$name', async (scenario) => {
-      expect(await runImeScenario(scenario)).toEqual(
-        expectedImeScenario(scenario),
-      )
-    })
-  })
+  describe.skipIf(isChromium)(
+    'WebKit committed text insertion without post-composition Enter or Backspace checks',
+    () => {
+      it.each(webkitCommittedTextScenarios)('$name', async (scenario) => {
+        expect(await runImeScenario(scenario)).toEqual(
+          expectedImeScenario(scenario),
+        )
+      })
+    },
+  )
 })
