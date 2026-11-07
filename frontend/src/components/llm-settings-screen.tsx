@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { type Dispatch, type SetStateAction, useEffect, useState } from 'react'
 
 import { LlmSettingsView } from '#components/llm-settings-view'
 import {
   defaultLlmSettings,
+  type LlmSettings,
   loadLlmSettings,
   saveLlmSettings,
 } from '#lib/llm-settings'
@@ -14,26 +15,45 @@ type LlmSettingsScreenProps = {
   fileSyncConfigurationError?: string | undefined
 }
 
+// The unreachable URL is stored instead of a flag so a late response for an
+// older URL cannot mark the URL being edited.
+const checkBridge = (
+  target: LlmSettings,
+  setUnreachableBridgeUrl: Dispatch<SetStateAction<string | undefined>>,
+) => {
+  if (target.route !== 'local' || target.bridgeUrl.trim().length === 0) return
+
+  void fetchLlmStatus(fetch, target.bridgeUrl).match(
+    () => {
+      setUnreachableBridgeUrl((current) =>
+        current === target.bridgeUrl ? undefined : current,
+      )
+    },
+    () => {
+      setUnreachableBridgeUrl(target.bridgeUrl)
+    },
+  )
+}
+
 export function LlmSettingsScreen({
   onBack,
   fileSyncDirectory,
   fileSyncConfigurationError,
 }: LlmSettingsScreenProps) {
   const [initialSettings] = useState(() =>
-    loadLlmSettings(() => window.localStorage),
-  )
-  const [settings, setSettings] = useState(() =>
-    initialSettings.match(
-      (savedSettings) => savedSettings,
-      () => defaultLlmSettings,
+    loadLlmSettings(() => window.localStorage).match(
+      (settings) => ({ settings, loadFailed: false }),
+      () => ({ settings: defaultLlmSettings, loadFailed: true }),
     ),
   )
+  const [savedSettings, setSavedSettings] = useState(initialSettings.settings)
+  const [settings, setSettings] = useState(initialSettings.settings)
   const [storageError, setStorageError] = useState<'load' | 'save' | undefined>(
-    () => (initialSettings.isErr() ? 'load' : undefined),
+    initialSettings.loadFailed ? 'load' : undefined,
   )
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [locked, setLocked] = useState(false)
-  const [error, setError] = useState<string>()
+  const [unreachableBridgeUrl, setUnreachableBridgeUrl] = useState<string>()
 
   useEffect(() => {
     let active = true
@@ -43,47 +63,54 @@ export function LlmSettingsScreen({
         if (!active) return
         setLocked(response.locked)
         setStatus('ready')
+        if (!response.locked)
+          checkBridge(initialSettings.settings, setUnreachableBridgeUrl)
       },
-      (loadError) => {
-        if (!active) return
-        setError(loadError.message)
-        setStatus('error')
+      () => {
+        if (active) setStatus('error')
       },
     )
 
     return () => {
       active = false
     }
-  }, [])
-
-  const updateSettings = (nextSettings: typeof settings) => {
-    saveLlmSettings(() => window.localStorage, nextSettings).match(
-      () => {
-        setStorageError(undefined)
-      },
-      () => {
-        setStorageError('save')
-      },
-    )
-    setSettings(nextSettings)
-  }
+  }, [initialSettings])
 
   return (
     <LlmSettingsView
-      error={error}
+      bridgeUnreachable={
+        settings.route === 'local' &&
+        settings.bridgeUrl === unreachableBridgeUrl
+      }
       fileSyncDirectory={fileSyncDirectory}
       fileSyncConfigurationError={fileSyncConfigurationError}
       locked={locked}
       onBack={onBack}
       onBridgeUrlChange={(bridgeUrl) => {
-        updateSettings({ ...settings, bridgeUrl })
+        setSettings({ ...settings, bridgeUrl })
       }}
       onRouteChange={(route) => {
-        updateSettings({ ...settings, route })
+        setSettings({ ...settings, route })
+      }}
+      onSave={() => {
+        saveLlmSettings(() => window.localStorage, settings).match(
+          () => {
+            setStorageError(undefined)
+            setSavedSettings(settings)
+            checkBridge(settings, setUnreachableBridgeUrl)
+          },
+          () => {
+            setStorageError('save')
+          },
+        )
       }}
       settings={settings}
       status={status}
       storageError={storageError}
+      unsaved={
+        settings.route !== savedSettings.route ||
+        settings.bridgeUrl !== savedSettings.bridgeUrl
+      }
     />
   )
 }

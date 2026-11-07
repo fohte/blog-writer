@@ -15,9 +15,10 @@ const parseLlmStatus = (value: unknown) =>
     ? okAsync(value)
     : errAsync(new Error('Invalid LLM settings response'))
 
-export function fetchLlmStatus(fetcher: typeof fetch) {
+// The local bridge serves the same endpoint, so `baseUrl` doubles as its reachability check.
+export function fetchLlmStatus(fetcher: typeof fetch, baseUrl = '') {
   return ResultAsync.fromPromise(
-    fetcher('/api/llm/status'),
+    fetcher(`${baseUrl.replace(/\/+$/, '')}/api/llm/status`),
     (cause) => new Error('Failed to load LLM settings', { cause }),
   ).andThen((response) => {
     if (!response.ok) {
