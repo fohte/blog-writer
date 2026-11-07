@@ -6,11 +6,15 @@ const meta = {
   component: MemoPanelView,
   args: {
     draft: '',
+    headings: [],
     onDraftChange: () => {},
     onAddMemo: () => {},
     onMoveMemo: () => {},
     onDismissMemo: () => {},
     onRestoreMemo: () => {},
+    onAdoptToHeading: () => {},
+    onInsertAsHeading: () => {},
+    onOpenAdoptionMenuChange: () => {},
   },
 } satisfies Meta<typeof MemoPanelView>
 
@@ -33,6 +37,10 @@ export const DraftReady: Story = {
 export const Unorganized: Story = {
   name: 'an unorganized memo can be dismissed',
   args: {
+    headings: [
+      { level: 1, text: 'Overview', from: 0, to: 11, children: [] },
+      { level: 1, text: 'Details', from: 13, to: 23, children: [] },
+    ],
     memos: [
       {
         id: 'memo-a',
@@ -41,6 +49,31 @@ export const Unorganized: Story = {
         state: { kind: 'unorganized' },
       },
     ],
+  },
+}
+
+export const AdoptionMenuOpen: Story = {
+  name: 'the adoption menu offers existing and new heading targets',
+  args: {
+    headings: [
+      {
+        level: 1,
+        text: 'Overview',
+        from: 0,
+        to: 11,
+        children: [{ level: 2, text: 'Goals', from: 13, to: 21, children: [] }],
+      },
+      { level: 1, text: 'Details', from: 23, to: 33, children: [] },
+    ],
+    memos: [
+      {
+        id: 'memo-a',
+        text: '記事の導入を簡潔にする',
+        order: 0,
+        state: { kind: 'unorganized' },
+      },
+    ],
+    openAdoptionMenuId: 'memo-a',
   },
 }
 

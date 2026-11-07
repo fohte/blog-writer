@@ -7,6 +7,7 @@ import {
   deleteSource,
   getBody,
   listEvidence,
+  listEvidenceOverlapping,
   moveBlock,
   pruneEvidence,
   readBody,
@@ -24,6 +25,63 @@ function makeSource(doc: Y.Doc): void {
     checkedAt: '2026-02-01T00:00:00.000Z',
   })._unsafeUnwrap()
 }
+
+describe('listEvidenceOverlapping', () => {
+  it('returns evidence with a strict range overlap', () => {
+    const doc = new Y.Doc()
+    makeSource(doc)
+    setBody(doc, 'abcde')
+    for (const { from, to, id, quote } of [
+      { from: 0, to: 2, id: 'before', quote: 'touches before' },
+      { from: 1, to: 3, id: 'overlap', quote: 'overlaps left edge' },
+      { from: 2, to: 4, id: 'inside', quote: 'same range' },
+      { from: 4, to: 5, id: 'after', quote: 'touches after' },
+    ]) {
+      addEvidence(doc, {
+        id,
+        from,
+        to,
+        claim: 'claim',
+        sourceId: 'source-a',
+        quote,
+        verdict: 'supported',
+        checkedAt: '2026-01-01T00:00:00Z',
+      })._unsafeUnwrap()
+    }
+
+    const actual = listEvidenceOverlapping(doc, { from: 2, to: 4 }).map(
+      (evidence) => ({ ...evidence, from: '<position>', to: '<position>' }),
+    )
+
+    expect(actual).toEqual([
+      {
+        checkedAt: '2026-01-01T00:00:00Z',
+        claim: 'claim',
+        currentClaim: 'bc',
+        edited: true,
+        from: '<position>',
+        id: 'overlap',
+        quote: 'overlaps left edge',
+        sourceId: 'source-a',
+        to: '<position>',
+        verdict: 'supported',
+      },
+      {
+        checkedAt: '2026-01-01T00:00:00Z',
+        claim: 'claim',
+        currentClaim: 'cd',
+        edited: true,
+        from: '<position>',
+        id: 'inside',
+        quote: 'same range',
+        sourceId: 'source-a',
+        to: '<position>',
+        verdict: 'supported',
+      },
+    ])
+    doc.destroy()
+  })
+})
 
 function readSyncedOutput(first: Y.Doc, second: Y.Doc) {
   const read = (doc: Y.Doc) =>

@@ -20,8 +20,10 @@ import {
   type SuggestionLayerState,
   type SuggestionPosition,
   type TextSuggestion,
+  type TrackedSuggestionRange,
   validateSuggestions,
 } from '#editor/suggestion-layer-range'
+import { SuggestionRangeTracker } from '#editor/suggestion-layer-tracking'
 import { createSuggestionDecorations } from '#editor/suggestion-layer-view'
 
 export type {
@@ -30,38 +32,60 @@ export type {
   SuggestionLayerState,
   SuggestionPosition,
   TextSuggestion,
+  TrackedSuggestionRange,
 } from '#editor/suggestion-layer-range'
 
 type ScopedEffect<Value> = { scope: symbol; value: Value }
 
+type SuggestionLayerSnapshot = {
+  suggestions: readonly SuggestionPosition[]
+  inFlight: SuggestionPosition | null
+}
+
+type GetSuggestionLayerSnapshot = () => SuggestionLayerSnapshot
+
 const mountedSuggestionLayers = new WeakMap<
   EditorView,
-  Set<SuggestionLayerController>
+  Set<GetSuggestionLayerSnapshot>
 >()
 
-const replaceSuggestions =
-  StateEffect.define<ScopedEffect<readonly TextSuggestion[]>>()
 const replaceInFlight =
   StateEffect.define<ScopedEffect<SuggestionPosition | null>>()
 const removeSuggestion = StateEffect.define<ScopedEffect<string>>()
 
-export interface SuggestionLayerOptions {
-  initialSuggestions?: readonly TextSuggestion[]
+export interface SuggestionLayerOptions<Metadata = unknown> {
+  initialSuggestions?: readonly TextSuggestion<Metadata>[]
   initialInFlight?: SuggestionPosition
-  onResolve?: (suggestion: TextSuggestion, decision: SuggestionDecision) => void
+  trackAcceptedRanges?: boolean
+  onResolve?: (
+    suggestion: TextSuggestion<Metadata>,
+    decision: SuggestionDecision,
+    acceptedRange?: TrackedSuggestionRange,
+  ) => void
   onCancelInFlight?: () => void
   onInFlightRangeEdited?: () => void
 }
 
-export class SuggestionLayerController {
+export class SuggestionLayerController<Metadata = unknown> {
   readonly extension: Extension
   private readonly effectScope = Symbol()
+  private readonly replaceSuggestions =
+    StateEffect.define<ScopedEffect<readonly TextSuggestion<Metadata>[]>>()
   private view: EditorView | null = null
-  private readonly stateField: StateField<SuggestionLayerState>
+  private readonly stateField: StateField<SuggestionLayerState<Metadata>>
   private nextGeneratedId = 0
+  private readonly trackedRanges = new SuggestionRangeTracker()
+  private readonly getSuggestionLayerSnapshot: GetSuggestionLayerSnapshot =
+    () => {
+      const state = this.view?.state.field(this.stateField, false)
+      return {
+        suggestions: state?.suggestions ?? [],
+        inFlight: state?.inFlight ?? null,
+      }
+    }
 
-  constructor(private readonly options: SuggestionLayerOptions = {}) {
-    this.stateField = StateField.define<SuggestionLayerState>({
+  constructor(private readonly options: SuggestionLayerOptions<Metadata> = {}) {
+    this.stateField = StateField.define<SuggestionLayerState<Metadata>>({
       create: (state) => {
         const suggestions = validateSuggestions(
           options.initialSuggestions ?? [],
@@ -95,7 +119,7 @@ export class SuggestionLayerController {
 
         for (const effect of transaction.effects) {
           if (
-            effect.is(replaceSuggestions) &&
+            effect.is(this.replaceSuggestions) &&
             effect.value.scope === this.effectScope
           ) {
             suggestions = effect.value.value
@@ -170,22 +194,29 @@ export class SuggestionLayerController {
         this.view = view
         const viewLayers = mountedSuggestionLayers.get(view)
         if (viewLayers) {
-          viewLayers.add(this)
+          viewLayers.add(this.getSuggestionLayerSnapshot)
         } else {
-          mountedSuggestionLayers.set(view, new Set([this]))
+          mountedSuggestionLayers.set(
+            view,
+            new Set([this.getSuggestionLayerSnapshot]),
+          )
         }
         return {
           destroy: () => {
             const viewLayers = mountedSuggestionLayers.get(view)
-            viewLayers?.delete(this)
+            viewLayers?.delete(this.getSuggestionLayerSnapshot)
             if (viewLayers?.size === 0) mountedSuggestionLayers.delete(view)
             if (this.view === view) {
               this.view = null
+              this.trackedRanges.clear()
             }
           },
         }
       }),
       EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          this.trackedRanges.map(update.changes)
+        }
         const previousInFlight = update.startState.field(
           this.stateField,
           false,
@@ -223,7 +254,7 @@ export class SuggestionLayerController {
   }
 
   setSuggestions(
-    suggestions: readonly TextSuggestion[],
+    suggestions: readonly TextSuggestion<Metadata>[],
   ): Result<void, SuggestionLayerError> {
     const view = this.view
     if (!view) return err({ type: 'not-mounted' })
@@ -235,7 +266,7 @@ export class SuggestionLayerController {
     }
 
     view.dispatch({
-      effects: replaceSuggestions.of({
+      effects: this.replaceSuggestions.of({
         scope: this.effectScope,
         value: validation.value,
       }),
@@ -266,7 +297,7 @@ export class SuggestionLayerController {
     if (validation.isErr()) return err(validation.error)
     view.dispatch({
       effects: [
-        replaceSuggestions.of({
+        this.replaceSuggestions.of({
           scope: this.effectScope,
           value: validation.value,
         }),
@@ -302,15 +333,13 @@ export class SuggestionLayerController {
     const view = this.view
     if (!view) return false
 
-    for (const layer of mountedSuggestionLayers.get(view) ?? []) {
-      if (layer === this) continue
-      const state = view.state.field(layer.stateField, false)
-      if (!state) continue
+    for (const getRanges of mountedSuggestionLayers.get(view) ?? []) {
+      if (getRanges === this.getSuggestionLayerSnapshot) continue
+      const { inFlight, suggestions } = getRanges()
       if (
-        state.suggestions.some((suggestion) =>
-          rangesOverlap(suggestion, position),
-        ) ||
-        (state.inFlight !== null && rangesOverlap(state.inFlight, position))
+        [...suggestions, ...(inFlight ? [inFlight] : [])].some((range) =>
+          rangesOverlap(range, position),
+        )
       ) {
         return true
       }
@@ -337,7 +366,14 @@ export class SuggestionLayerController {
       ],
     })
     view.focus()
-    this.options.onResolve?.(suggestion, 'accept')
+    const acceptedRange =
+      this.options.trackAcceptedRanges === true
+        ? this.trackedRanges.track({
+            from: suggestion.from,
+            to: suggestion.from + suggestion.replacement.length,
+          })
+        : undefined
+    this.options.onResolve?.(suggestion, 'accept', acceptedRange)
   }
 
   reject(id: string): void {
@@ -374,8 +410,9 @@ export class SuggestionLayerController {
       return true
     }
 
-    const state = view.state.field(this.stateField, false)
-    const suggestions = state?.suggestions ?? []
+    const suggestions = Array.from(mountedSuggestionLayers.get(view) ?? [])
+      .flatMap((getSnapshot) => getSnapshot().suggestions)
+      .sort((left, right) => left.from - right.from || left.to - right.to)
     if (suggestions.length === 0) return false
     const head = view.state.selection.main.head
     const next = suggestions.find(({ from }) => from > head) ?? suggestions[0]
@@ -406,18 +443,20 @@ export class SuggestionLayerController {
     return true
   }
 
-  private findSuggestion(id: string): TextSuggestion | undefined {
+  private findSuggestion(id: string): TextSuggestion<Metadata> | undefined {
     return this.view?.state
       .field(this.stateField, false)
       ?.suggestions.find((suggestion) => suggestion.id === id)
   }
 
-  private focusedSuggestion(): TextSuggestion | undefined {
+  private focusedSuggestion(): TextSuggestion<Metadata> | undefined {
     const state = this.view?.state.field(this.stateField, false)
     return state?.suggestions.find(({ id }) => id === state.focusedId)
   }
 
-  private createSuggestionId(suggestions: readonly TextSuggestion[]): string {
+  private createSuggestionId(
+    suggestions: readonly TextSuggestion<Metadata>[],
+  ): string {
     let id = `in-flight-${String(this.nextGeneratedId)}`
     while (suggestions.some((suggestion) => suggestion.id === id)) {
       this.nextGeneratedId += 1
@@ -428,8 +467,8 @@ export class SuggestionLayerController {
   }
 }
 
-export function createSuggestionLayer(
-  options?: SuggestionLayerOptions,
-): SuggestionLayerController {
+export function createSuggestionLayer<Metadata = unknown>(
+  options?: SuggestionLayerOptions<Metadata>,
+): SuggestionLayerController<Metadata> {
   return new SuggestionLayerController(options)
 }

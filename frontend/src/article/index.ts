@@ -15,19 +15,27 @@ export type { AddEvidenceInput } from '#article/evidence'
 export {
   addEvidence,
   listEvidence,
+  listEvidenceOverlapping,
   observeEvidence,
   pruneEvidence,
   removeEvidence,
 } from '#article/evidence'
-export { deriveHeadingTree } from '#article/headings'
+export type { HeadingWithDepth } from '#article/headings'
+export {
+  deriveHeadingTree,
+  flattenHeadingTree,
+  flattenHeadingTreeWithDepth,
+} from '#article/headings'
 export {
   addMemo,
   captureDeletedMemoAdoptions,
   dismissMemo,
+  getMemoAdoptedTo,
   getMemoState,
   listMemos,
   observeMemos,
   restoreMemo,
+  restoreMemoAdoptionHistory,
   restoreMemoAdoptions,
   setMemoAdoptedTo,
   updateMemoOrder,

@@ -1,17 +1,27 @@
+import type { EditorView } from '@codemirror/view'
 import { useState } from 'react'
 import * as Y from 'yjs'
 
 import { MemoPanelView } from '#components/memo-panel-view'
+import { useArticleHeadings } from '#hooks/use-article-headings'
+import {
+  adoptMemoToHeading,
+  insertMemoAsHeading,
+  memoAdoptionErrorMessage,
+} from '#memos/adoption'
 import { useMemos } from '#memos/use-memos'
 
 type MemoPanelProps = {
   doc: Y.Doc
+  view?: EditorView
 }
 
-export function MemoPanel({ doc }: MemoPanelProps) {
+export function MemoPanel({ doc, view }: MemoPanelProps) {
   const { memos, add, move, dismiss, restore } = useMemos(doc)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string>()
+  const { headings } = useArticleHeadings(doc)
+  const [openAdoptionMenuId, setOpenAdoptionMenuId] = useState<string>()
 
   const apply = (operation: () => string | undefined) => {
     const nextError = operation()
@@ -23,17 +33,38 @@ export function MemoPanel({ doc }: MemoPanelProps) {
     <MemoPanelView
       draft={draft}
       error={error}
+      headings={headings}
       memos={memos}
+      openAdoptionMenuId={openAdoptionMenuId}
       onAddMemo={() => {
         if (apply(() => add(draft))) setDraft('')
+      }}
+      onAdoptToHeading={(memoId, markerIndex) => {
+        apply(() =>
+          memoAdoptionErrorMessage(() =>
+            adoptMemoToHeading(doc, memoId, markerIndex),
+          ),
+        )
       }}
       onDismissMemo={(id) => {
         apply(() => dismiss(id))
       }}
       onDraftChange={setDraft}
+      {...(view === undefined
+        ? {}
+        : {
+            onInsertAsHeading: (memoId: string, beforeFrom?: number) => {
+              apply(() =>
+                memoAdoptionErrorMessage(() =>
+                  insertMemoAsHeading(doc, view, memoId, beforeFrom),
+                ),
+              )
+            },
+          })}
       onMoveMemo={(id, direction) => {
         apply(() => move(id, direction))
       }}
+      onOpenAdoptionMenuChange={setOpenAdoptionMenuId}
       onRestoreMemo={(id) => {
         apply(() => restore(id))
       }}

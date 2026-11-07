@@ -6,6 +6,10 @@ import { Textarea } from '@fohte/ui/textarea'
 import type { ClipboardEvent, DragEvent, ReactNode } from 'react'
 
 import type { Finding, Source } from '#article/index'
+import {
+  ResearchProgress,
+  type ResearchProgressProps,
+} from '#components/research-progress'
 import { ResearchSourceCard } from '#components/research-source-card'
 import { formatCheckedAt, getSourceHost } from '#research/source-format'
 
@@ -29,6 +33,7 @@ type SourcePanelViewProps = {
   onPastedBodyChange: (body: string) => void
   onSavePastedBody: (source: Source) => void
   onRetrySource: (source: Source) => void
+  researchProgress?: ResearchProgressProps | undefined
 }
 
 function getSourceLocation(source: Source): string {
@@ -62,6 +67,7 @@ export function SourcePanelView({
   onPastedBodyChange,
   onSavePastedBody,
   onRetrySource,
+  researchProgress,
 }: SourcePanelViewProps) {
   return (
     <section
@@ -85,6 +91,9 @@ export function SourcePanelView({
         <p className="text-sm text-muted-foreground">
           URL またはファイルをドロップ、または URL を貼り付け
         </p>
+        {researchProgress === undefined ? null : (
+          <ResearchProgress {...researchProgress} />
+        )}
         {error === undefined ? null : <p role="alert">{error}</p>}
         {sources.length === 0 && pending.length === 0 ? (
           <p className="py-3 text-sm text-muted-foreground">
@@ -93,18 +102,20 @@ export function SourcePanelView({
         ) : null}
 
         <List aria-label="資料一覧">
-          {pending.map((item) => (
-            <div
-              className="flex items-center justify-between gap-2 py-3"
-              key={item.id}
-              role="listitem"
-            >
-              <span className="truncate">{item.label}</span>
-              <Chip role="status" size="sm" tone="muted">
-                取り込み中
-              </Chip>
-            </div>
-          ))}
+          {pending
+            .filter(({ id }) => !sources.some((source) => source.id === id))
+            .map((item) => (
+              <div
+                className="flex items-center justify-between gap-2 py-3"
+                key={item.id}
+                role="listitem"
+              >
+                <span className="truncate">{item.label}</span>
+                <Chip role="status" size="sm" tone="muted">
+                  取り込み中
+                </Chip>
+              </div>
+            ))}
           {sources.map((source) => {
             const sourceFindings = findings.filter(
               (finding) => finding.sourceId === source.id,
@@ -162,7 +173,11 @@ export function SourcePanelView({
                       {getSourceLocation(source)}
                     </span>
                   </button>
-                  {source.status === 'unavailable' ? (
+                  {isPending ? (
+                    <Chip role="status" size="sm" tone="muted">
+                      取り込み中
+                    </Chip>
+                  ) : source.status === 'unavailable' ? (
                     <Chip size="sm" tone="strong">
                       取得できず
                     </Chip>

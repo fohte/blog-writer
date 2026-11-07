@@ -123,6 +123,18 @@ export const MidLineRange: Story = {
   args: midLineArgs,
 }
 
+export const AnnotatedSuggestion: Story = {
+  name: 'the editor shows a one-line note with the suggestion diff.',
+  args: {
+    ...midLineArgs,
+    suggestion: {
+      ...inlineSuggestion,
+      metadata: { sourceIds: ['source-a'] },
+      note: 'The revision reflects the source listed in the article.',
+    },
+  },
+}
+
 export const NarrowMidLineRange: Story = {
   name: 'the editor shows an inline suggestion in a 20rem-wide view.',
   args: { ...midLineArgs, width: '20rem' },

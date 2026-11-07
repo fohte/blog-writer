@@ -13,6 +13,8 @@ import { setPremise } from '#article/premise'
 import {
   BodyRequestAccessory,
   bodyRequestExtensions,
+  type BodyRequestPreset,
+  type BodyRequestPresetSelection,
   createSuggestionLayer,
 } from '#editor/index'
 import { createMoveHistory } from '#outline/index'
@@ -50,6 +52,8 @@ function createRequestEditor(
   additionalExtensions: Extension[] = [],
   article = content,
   includeBodyRequestLayer = true,
+  presets: readonly BodyRequestPreset[] = [],
+  accessoryView?: EditorView | null,
 ) {
   const doc = new Y.Doc()
   setBody(doc, article)
@@ -86,8 +90,8 @@ function createRequestEditor(
       <BodyRequestAccessory
         doc={doc}
         history={history}
-        replaceBody={() => {}}
-        view={view}
+        presets={presets}
+        view={accessoryView === undefined ? view : accessoryView}
       />,
     )
   })
@@ -179,6 +183,103 @@ afterEach(() => {
 })
 
 describe('body request', () => {
+  it('passes the selected context, view and instruction to a preset request', async () => {
+    let selected: BodyRequestPresetSelection | undefined
+    const { view } = createRequestEditor([], content, true, [
+      {
+        id: 'research-section',
+        label: 'この見出しについて調べる',
+        onSelect: (selection) => {
+          selected = selection
+        },
+      },
+    ])
+    const input = await openRequestInput(view)
+    await act(async () => {
+      await userEvent.fill(input, 'use the current request')
+    })
+    const presetButton = await vi.waitFor(() => {
+      const button = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('button'),
+      ).find(
+        (candidate) => candidate.textContent === 'この見出しについて調べる',
+      )
+      if (!button) throw new Error('The preset request was not rendered')
+      return button
+    })
+    await act(async () => {
+      await userEvent.click(presetButton)
+    })
+
+    const readOutput = () => ({
+      chooserOpen:
+        document
+          .querySelector<HTMLElement>('[data-slot="popover-content"]')
+          ?.hasAttribute('data-open') ?? false,
+      context: selected?.context,
+      instruction: selected?.instruction,
+      selectedView: selected?.view === view,
+    })
+    expect(readOutput()).toEqual({
+      chooserOpen: false,
+      context: {
+        headings: ['# Article', '## Section'],
+        range: { from: 22, to: 44 },
+        section:
+          '## Section\n⟪依頼範囲の開始⟫Rewrite this sentence.⟪依頼範囲の終了⟫',
+        target: 'Rewrite this sentence.',
+      },
+      instruction: 'use the current request',
+      selectedView: true,
+    })
+  })
+
+  it('shows the editor error and does not run a preset without a view', async () => {
+    let selected = false
+    const { view } = createRequestEditor(
+      [],
+      content,
+      true,
+      [
+        {
+          id: 'research-section',
+          label: 'この見出しについて調べる',
+          onSelect: () => {
+            selected = true
+          },
+        },
+      ],
+      null,
+    )
+    await openRequestInput(view)
+    const presetButton = await vi.waitFor(() => {
+      const button = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('button'),
+      ).find(
+        (candidate) => candidate.textContent === 'この見出しについて調べる',
+      )
+      if (!button) throw new Error('The preset request was not rendered')
+      return button
+    })
+    await act(async () => {
+      await userEvent.click(presetButton)
+    })
+
+    const readOutput = () => ({
+      chooserOpen:
+        document
+          .querySelector<HTMLElement>('[data-slot="popover-content"]')
+          ?.hasAttribute('data-open') ?? false,
+      error: document.querySelector('[role="alert"]')?.textContent ?? null,
+      selected,
+    })
+    expect(readOutput()).toEqual({
+      chooserOpen: true,
+      error: '本文エディターを準備できませんでした。',
+      selected: false,
+    })
+  })
+
   it('opens only for the platform Mod-K shortcut', async () => {
     const { view } = createRequestEditor()
 

@@ -559,6 +559,146 @@
         }
       }
     },
+    "/api/articles/{article_id}/source-bodies/{source_id}/restore": {
+      "post": {
+        "operationId": "restore_body",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "description": "Source ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreSourceBodyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Source body restored"
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Source body changed before it could be restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Source body storage is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/articles/{article_id}/source-bodies/{source_id}/save-if-unchanged": {
+      "post": {
+        "operationId": "save_body_if_unchanged",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "description": "Source ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveSourceBodyIfUnchangedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Source body stored"
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Source body changed before it could be stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Source body storage is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/articles/{article_id}/source-bodies/{source_id}/url": {
       "post": {
         "operationId": "fetch_from_url",
@@ -1017,6 +1157,43 @@
         }
       }
     },
+    "/api/proposals/premise": {
+      "post": {
+        "operationId": "propose_premise",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PremiseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Premise discussion reply and field suggestions",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/PremiseEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/proposals/transition": {
       "post": {
         "operationId": "propose_transition",
@@ -1309,6 +1486,12 @@
         "type": "object",
         "required": ["instruction", "premise", "headings", "section", "target"],
         "properties": {
+          "evidence_quotes": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            }
+          },
           "headings": {
             "type": "array",
             "items": {
@@ -1323,6 +1506,12 @@
           },
           "section": {
             "type": "string"
+          },
+          "sources": {
+            "type": ["array", "null"],
+            "items": {
+              "$ref": "#/components/schemas/BodyRequestSource"
+            }
           },
           "target": {
             "type": "string"
@@ -1374,6 +1563,24 @@
         "properties": {
           "replacement": {
             "type": "string"
+          }
+        }
+      },
+      "BodyRequestSource": {
+        "type": "object",
+        "required": ["title", "summary"],
+        "properties": {
+          "checked_at": {
+            "type": ["string", "null"]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": ["string", "null"]
           }
         }
       },
@@ -1821,6 +2028,115 @@
           }
         }
       },
+      "PremiseError": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "PremiseEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PremiseResponse"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PremiseError"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "PremiseMessage": {
+        "type": "object",
+        "required": ["role", "content"],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/PremiseMessageRole"
+          }
+        }
+      },
+      "PremiseMessageRole": {
+        "type": "string",
+        "enum": ["user", "assistant"]
+      },
+      "PremiseProposalInput": {
+        "type": "object",
+        "required": ["audience", "purpose", "thesis"],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
+          }
+        }
+      },
+      "PremiseRequest": {
+        "type": "object",
+        "required": ["premise", "headings", "messages"],
+        "properties": {
+          "headings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PremiseMessage"
+            }
+          },
+          "premise": {
+            "$ref": "#/components/schemas/PremiseProposalInput"
+          }
+        }
+      },
+      "PremiseResponse": {
+        "type": "object",
+        "required": ["reply"],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "reply": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
+          }
+        }
+      },
       "ProviderName": {
         "type": "string",
         "enum": ["claude_code", "openai_compatible"]
@@ -2144,12 +2460,36 @@
           }
         }
       },
+      "RestoreSourceBodyRequest": {
+        "type": "object",
+        "required": ["expected_body"],
+        "properties": {
+          "expected_body": {
+            "type": "string"
+          },
+          "restore_body": {
+            "type": ["string", "null"]
+          }
+        }
+      },
       "ResumeArticleFileSyncRequest": {
         "type": "object",
         "required": ["hash"],
         "properties": {
           "hash": {
             "type": "string"
+          }
+        }
+      },
+      "SaveSourceBodyIfUnchangedRequest": {
+        "type": "object",
+        "required": ["body"],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "expected_body": {
+            "type": ["string", "null"]
           }
         }
       },

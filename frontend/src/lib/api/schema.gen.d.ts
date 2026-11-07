@@ -84,6 +84,38 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/articles/{article_id}/source-bodies/{source_id}/restore': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['restore_body']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/articles/{article_id}/source-bodies/{source_id}/save-if-unchanged': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['save_body_if_unchanged']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/articles/{article_id}/source-bodies/{source_id}/url': {
     parameters: {
       query?: never
@@ -228,6 +260,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/proposals/premise': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['propose_premise']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/proposals/transition': {
     parameters: {
       query?: never
@@ -356,10 +404,12 @@ export interface components {
       thesis: string
     }
     BodyRequest: {
+      evidence_quotes?: string[] | null
       headings: string[]
       instruction: string
       premise: components['schemas']['ArticlePremise']
       section: string
+      sources?: components['schemas']['BodyRequestSource'][] | null
       target: string
     }
     BodyRequestError: {
@@ -378,6 +428,12 @@ export interface components {
         }
     BodyRequestResult: {
       replacement: string
+    }
+    BodyRequestSource: {
+      checked_at?: string | null
+      summary: string
+      title: string
+      url?: string | null
     }
     ClaimEvidenceQuote: {
       source_id: string
@@ -525,6 +581,42 @@ export interface components {
       replacement: string
       to: number
     }
+    PremiseError: {
+      message: string
+    }
+    PremiseEvent:
+      | {
+          data: components['schemas']['PremiseResponse']
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['PremiseError']
+          /** @enum {string} */
+          event: 'error'
+        }
+    PremiseMessage: {
+      content: string
+      role: components['schemas']['PremiseMessageRole']
+    }
+    /** @enum {string} */
+    PremiseMessageRole: 'user' | 'assistant'
+    PremiseProposalInput: {
+      audience: string
+      purpose: string
+      thesis: string
+    }
+    PremiseRequest: {
+      headings: string[]
+      messages: components['schemas']['PremiseMessage'][]
+      premise: components['schemas']['PremiseProposalInput']
+    }
+    PremiseResponse: {
+      audience?: string
+      purpose?: string
+      reply: string
+      thesis?: string
+    }
     /** @enum {string} */
     ProviderName: 'claude_code' | 'openai_compatible'
     PublishArticleRequest: {
@@ -634,8 +726,16 @@ export interface components {
       key_points: components['schemas']['ResearchKeyPoint'][]
       summary: string
     }
+    RestoreSourceBodyRequest: {
+      expected_body: string
+      restore_body?: string | null
+    }
     ResumeArticleFileSyncRequest: {
       hash: string
+    }
+    SaveSourceBodyIfUnchangedRequest: {
+      body: string
+      expected_body?: string | null
     }
     SaveSourceBodyRequest: {
       body: string
@@ -1180,6 +1280,114 @@ export interface operations {
       }
     }
   }
+  restore_body: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+        /** @description Source ID */
+        source_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RestoreSourceBodyRequest']
+      }
+    }
+    responses: {
+      /** @description Source body restored */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body changed before it could be restored */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body storage is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  save_body_if_unchanged: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Article ID */
+        article_id: string
+        /** @description Source ID */
+        source_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SaveSourceBodyIfUnchangedRequest']
+      }
+    }
+    responses: {
+      /** @description Source body stored */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body changed before it could be stored */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Source body storage is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
   fetch_from_url: {
     parameters: {
       query?: never
@@ -1558,6 +1766,39 @@ export interface operations {
         }
         content: {
           'text/event-stream': components['schemas']['OutlineProposalEvent']
+        }
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  propose_premise: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PremiseRequest']
+      }
+    }
+    responses: {
+      /** @description Premise discussion reply and field suggestions */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': components['schemas']['PremiseEvent']
         }
       }
       /** @description Invalid request body */

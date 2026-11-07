@@ -12,6 +12,7 @@ import {
   setFindings,
   updateSource,
 } from '#article/index'
+import type { ResearchProgressProps } from '#components/research-progress'
 import {
   type PendingSource,
   SourcePanelView,
@@ -28,6 +29,7 @@ import {
 type SourcePanelProps = {
   articleId: string
   doc: Y.Doc
+  researchProgress?: ResearchProgressProps | undefined
 }
 
 type SourceSnapshot = { sources: Source[]; findings: Finding[] }
@@ -60,7 +62,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
   )
 }
 
-export function SourcePanel({ articleId, doc }: SourcePanelProps) {
+export function SourcePanel({
+  articleId,
+  doc,
+  researchProgress,
+}: SourcePanelProps) {
   const [snapshot, setSnapshot] = useState(() => getSnapshot(doc))
   const [pending, setPending] = useState<PendingSource[]>([])
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null)
@@ -306,6 +312,7 @@ export function SourcePanel({ articleId, doc }: SourcePanelProps) {
       pasteTargetId={pasteTargetId}
       pastedBody={pastedBody}
       pending={pending}
+      researchProgress={researchProgress}
       sources={snapshot.sources}
     />
   )

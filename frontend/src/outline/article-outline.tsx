@@ -4,9 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type * as Y from 'yjs'
 
 import type { MoveBlockInput } from '#article/index'
-import { deriveHeadingTree, getBody, readBody } from '#article/index'
+import { findMoveBlockRange, flattenHeadingTree } from '#article/index'
 import type { Heading } from '#article/types'
 import { OutlineView } from '#components/outline-view'
+import { useArticleHeadings } from '#hooks/use-article-headings'
+import {
+  adoptMemoToHeading,
+  insertMemoAsHeading,
+  memoAdoptionErrorMessage,
+} from '#memos/adoption'
 import type { MoveHistory } from '#outline/move-history'
 import type { OutlineProposalState } from '#proposals/outline'
 
@@ -16,25 +22,28 @@ export interface ArticleOutlineProps {
   view: EditorView
   activeFrom?: number
   onHeadingSelected?: () => void
+  onActiveHeadingChange?: ((heading: Heading | undefined) => void) | undefined
   proposalState?: OutlineProposalState
   onProposalAccept?: (id: string) => void
   onProposalReject?: (id: string) => void
+}
+
+const HISTORY_FAILURE_PRESENTATION = {
+  move: {
+    label: 'Block move failed',
+    message: 'この位置には移動できません。',
+  },
+  undo: { label: 'History undo failed', message: '元に戻せませんでした。' },
+  redo: { label: 'History redo failed', message: 'やり直せませんでした。' },
 }
 
 function activeHeadingFrom(
   headings: Heading[],
   position: number,
 ): number | undefined {
-  return flattenHeadings(headings).findLast(
+  return flattenHeadingTree(headings).findLast(
     (heading) => heading.from <= position,
   )?.from
-}
-
-function flattenHeadings(headings: Heading[]): Heading[] {
-  return headings.flatMap((heading) => [
-    heading,
-    ...flattenHeadings(heading.children),
-  ])
 }
 
 export function ArticleOutline({
@@ -43,14 +52,13 @@ export function ArticleOutline({
   view,
   activeFrom,
   onHeadingSelected,
+  onActiveHeadingChange,
   proposalState,
   onProposalAccept,
   onProposalReject,
 }: ArticleOutlineProps) {
-  const body = getBody(doc)
-  const [markdown, setMarkdown] = useState(() => readBody(doc))
+  const { headings, markdown } = useArticleHeadings(doc)
   const [error, setError] = useState<string>()
-  const headings = useMemo(() => deriveHeadingTree(markdown), [markdown])
   const activeHeadingCompartment = useMemo(() => new Compartment(), [])
   const headingsRef = useRef(headings)
   headingsRef.current = headings
@@ -60,15 +68,8 @@ export function ArticleOutline({
   )
 
   useEffect(() => {
-    const update = () => {
-      setMarkdown(body.toJSON())
-      setError(undefined)
-    }
-    body.observe(update)
-    return () => {
-      body.unobserve(update)
-    }
-  }, [body])
+    setError(undefined)
+  }, [markdown])
 
   useEffect(() => {
     const listener = EditorView.updateListener.of((update) => {
@@ -103,22 +104,68 @@ export function ArticleOutline({
 
   useEffect(
     () =>
-      history.onError((moveError) => {
-        setError(moveError?.message)
+      history.onError((failure) => {
+        if (failure === undefined) {
+          setError(undefined)
+          return
+        }
+
+        const presentation = HISTORY_FAILURE_PRESENTATION[failure.operation]
+        console.warn(presentation.label, failure.error)
+        setError(presentation.message)
       }),
     [history],
   )
 
   const handleMove = useCallback(
     (input: MoveBlockInput) => {
+      if (input.childOf === undefined) {
+        const sourceRange = findMoveBlockRange(markdown, input.from)
+        if (
+          sourceRange !== undefined &&
+          (input.destination === sourceRange.from ||
+            input.destination === sourceRange.to)
+        ) {
+          return true
+        }
+      }
+
       return history.move(input, view).match(
         () => true,
         () => false,
       )
     },
-    [history, view],
+    [history, markdown, view],
+  )
+  const handleAdoptMemo = useCallback(
+    (memoId: string, markerIndex: number) => {
+      setError(
+        memoAdoptionErrorMessage(() =>
+          adoptMemoToHeading(doc, memoId, markerIndex),
+        ),
+      )
+    },
+    [doc],
+  )
+  const handleInsertMemo = useCallback(
+    (memoId: string, beforeFrom?: number) => {
+      setError(
+        memoAdoptionErrorMessage(() =>
+          insertMemoAsHeading(doc, view, memoId, beforeFrom),
+        ),
+      )
+    },
+    [doc, view],
   )
   const selectedHeadingFrom = activeFrom ?? selectedFrom
+
+  useEffect(() => {
+    onActiveHeadingChange?.(
+      flattenHeadingTree(headings).find(
+        (heading) => heading.from === selectedHeadingFrom,
+      ),
+    )
+  }, [headings, onActiveHeadingChange, selectedHeadingFrom])
 
   return (
     <OutlineView
@@ -130,6 +177,8 @@ export function ArticleOutline({
       {...(error === undefined ? {} : { error })}
       {...(proposalState === undefined ? {} : { proposalState })}
       onMove={handleMove}
+      onAdoptMemo={handleAdoptMemo}
+      onInsertMemo={handleInsertMemo}
       {...(onProposalAccept === undefined ? {} : { onProposalAccept })}
       {...(onProposalReject === undefined ? {} : { onProposalReject })}
       onSelect={(from) => {

@@ -4,12 +4,13 @@ import { errAsync } from 'neverthrow'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type * as Y from 'yjs'
 
+import { listEvidenceOverlapping, listSources } from '#article/index'
 import { getPremise } from '#article/premise'
 import {
   type BodyRequestPhase,
+  type BodyRequestPresetOption,
   BodyRequestView,
 } from '#components/body-request-view'
-import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { createSuggestionLayer } from '#editor/suggestion-layer'
 import { loadLlmSettings } from '#lib/llm-settings'
 import type { MoveHistory } from '#outline/move-history'
@@ -31,7 +32,17 @@ export type BodyRequestEditorContext = {
 
 export type BodyRequestAccessoryContext = BodyRequestEditorContext & {
   view: EditorView | null
-  replaceBody: MarkdownEditorHandle['replaceBody']
+  presets?: readonly BodyRequestPreset[]
+}
+
+export interface BodyRequestPresetSelection {
+  context: ReturnType<typeof getBodyRequestContext>
+  instruction: string
+  view: EditorView
+}
+
+export interface BodyRequestPreset extends BodyRequestPresetOption {
+  onSelect: (selection: BodyRequestPresetSelection) => void
 }
 
 function preserveBlankLineSeparators(
@@ -172,6 +183,7 @@ export function bodyRequestExtensions(
 export function BodyRequestAccessory({
   doc,
   view,
+  presets,
 }: BodyRequestAccessoryContext) {
   const manager = useMemo(() => getManager(doc), [doc])
   const [open, setOpen] = useState(false)
@@ -225,18 +237,27 @@ export function BodyRequestAccessory({
     [manager],
   )
 
-  const startRequest = () => {
+  const readRequestTarget = () => {
     if (!view) {
       setError('本文エディターを準備できませんでした。')
       setPhase('error')
       setOpen(true)
-      return
+      return undefined
     }
     const selection = view.state.selection.main
-    const context = getBodyRequestContext(view.state.doc.toString(), {
-      from: selection.from,
-      to: selection.to,
-    })
+    return {
+      context: getBodyRequestContext(view.state.doc.toString(), {
+        from: selection.from,
+        to: selection.to,
+      }),
+      view,
+    }
+  }
+
+  const startRequest = () => {
+    const requestTarget = readRequestTarget()
+    if (!requestTarget) return
+    const { context, view } = requestTarget
     const premise = getPremise(doc)
     const body: BodyRequestInput = {
       instruction,
@@ -249,6 +270,19 @@ export function BodyRequestAccessory({
       section: context.section,
       target: context.target,
     }
+    const sources = listSources(doc).map(
+      ({ checkedAt, summary, title, url }) => ({
+        title,
+        url,
+        summary,
+        checked_at: checkedAt,
+      }),
+    )
+    const evidenceQuotes = listEvidenceOverlapping(doc, context.range)
+      .map(({ quote }) => quote)
+      .filter((quote) => quote.trim().length > 0)
+    if (sources.length > 0) body.sources = sources
+    if (evidenceQuotes.length > 0) body.evidence_quotes = evidenceQuotes
     if (manager.layer.overlapsOtherLayer(context.range)) {
       setError(overlappingSuggestionError)
       setPhase('error')
@@ -364,9 +398,25 @@ export function BodyRequestAccessory({
           setError(undefined)
         }
       }}
+      onPresetSelect={(id) => {
+        const preset = presets?.find((item) => item.id === id)
+        if (!preset) return
+        const requestTarget = readRequestTarget()
+        if (!requestTarget) return
+        const selectedInstruction = instruction
+        setOpen(false)
+        setError(undefined)
+        setInstruction('')
+        setPhase('input')
+        preset.onSelect({
+          ...requestTarget,
+          instruction: selectedInstruction,
+        })
+      }}
       onSubmit={startRequest}
       open={open}
       phase={phase}
+      {...(presets === undefined ? {} : { presets })}
       touchDevice={touchDevice}
     />
   )

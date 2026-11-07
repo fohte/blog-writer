@@ -17,6 +17,16 @@ pub(crate) struct BodyRequest {
     pub headings: Vec<String>,
     pub section: String,
     pub target: String,
+    pub sources: Option<Vec<BodyRequestSource>>,
+    pub evidence_quotes: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, ToSchema)]
+pub(crate) struct BodyRequestSource {
+    pub title: String,
+    pub url: Option<String>,
+    pub summary: String,
+    pub checked_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, ToSchema)]

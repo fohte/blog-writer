@@ -5,6 +5,12 @@ import { ArticleExportPopover } from '#components/article-export-popover'
 import { ArticleFileSyncPopover } from '#components/article-file-sync-popover'
 import { LlmSettingsScreen } from '#components/llm-settings-screen'
 import {
+  BodyRequestAccessory,
+  bodyRequestExtensions,
+  createOutlineProposalExtension,
+  transitionProposalEditorExtensions,
+} from '#editor/index'
+import {
   ExportApiError,
   type ExportDestination,
   getExportDestinations,
@@ -15,9 +21,18 @@ import {
 } from '#lib/file-sync-api'
 import { useSyncClient } from '#lib/use-sync-client'
 import { ArticleWorkspace } from '#pages/article-workspace'
+import { PremiseProposalAccessory } from '#proposals/premise'
+import { HeadingResearchOutline } from '#research/heading-research-outline'
+import { SourcePanel } from '#research/source-panel'
+import { useHeadingResearch } from '#research/use-heading-research'
 
 export function App() {
   const [showSettings, setShowSettings] = useState(false)
+  const {
+    cancelResearch,
+    progress: researchProgress,
+    startResearch,
+  } = useHeadingResearch()
   const [fileSyncConfiguration, setFileSyncConfiguration] =
     useState<FileSyncConfiguration>()
   const [fileSyncConfigurationError, setFileSyncConfigurationError] =
@@ -99,6 +114,44 @@ export function App() {
       articles={articles}
       client={client}
       error={error}
+      bodyAccessory={(context) => (
+        <BodyRequestAccessory
+          doc={context.doc}
+          history={context.history}
+          presets={[
+            {
+              id: 'research-from-heading',
+              label: 'この見出しについて調べる',
+              onSelect: ({ context: requestContext, instruction }) => {
+                const sectionHeading = requestContext.section
+                  .split('\n', 1)[0]
+                  ?.replaceAll('⟪依頼範囲の開始⟫', '')
+                  .replaceAll('⟪依頼範囲の終了⟫', '')
+                  .trim()
+                const headingText =
+                  sectionHeading !== undefined &&
+                  /^#{1,6}(?:[ \t]+|$)/u.test(sectionHeading)
+                    ? sectionHeading.replace(/^#{1,6}(?:[ \t]+|$)/u, '').trim()
+                    : ''
+                if (instruction.trim().length === 0 && headingText.length === 0)
+                  return
+                startResearch(
+                  context.articleId,
+                  context.doc,
+                  headingText,
+                  instruction,
+                )
+              },
+            },
+          ]}
+          view={context.view}
+        />
+      )}
+      editorExtensions={({ doc, history }) => [
+        ...bodyRequestExtensions({ doc, history }),
+        createOutlineProposalExtension({ doc, history }),
+        ...transitionProposalEditorExtensions({ doc, history }),
+      ]}
       headerActions={(context: ArticleEditorContext) => {
         const article = articles.find(({ id }) => id === context.articleId)
         return (
@@ -128,6 +181,49 @@ export function App() {
       onOpenSettings={() => {
         setShowSettings(true)
       }}
+      outlineRenderer={(context) => (
+        <HeadingResearchOutline
+          busy={
+            researchProgress[context.articleId]?.status === 'running' ||
+            researchProgress[context.articleId]?.status === 'saving' ||
+            researchProgress[context.articleId]?.status === 'cancelling'
+          }
+          doc={context.doc}
+          history={context.history}
+          onResearch={(headingText, question) => {
+            startResearch(context.articleId, context.doc, headingText, question)
+          }}
+          view={context.view}
+          onHeadingSelected={context.onHeadingSelected}
+        />
+      )}
+      sourcesPanel={(context) => {
+        const progress = researchProgress[context.articleId]
+        return (
+          <SourcePanel
+            articleId={context.articleId}
+            doc={context.doc}
+            researchProgress={
+              progress === undefined
+                ? undefined
+                : {
+                    ...progress,
+                    ...(progress.status === 'running' ||
+                    progress.status === 'saving'
+                      ? {
+                          onCancel: () => {
+                            cancelResearch(context.articleId)
+                          },
+                        }
+                      : {}),
+                  }
+            }
+          />
+        )
+      }}
+      premiseAccessory={(context) => (
+        <PremiseProposalAccessory doc={context.doc} />
+      )}
       ready={canCreate}
       requiresAuthentication={requiresAuthentication}
       statuses={statuses}

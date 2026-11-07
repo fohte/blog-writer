@@ -21,6 +21,7 @@ import {
   type MoveBlockResult,
   recordMoveConflictRestoration,
   resolveMoveBlockStart,
+  restoreMemoAdoptionHistory,
   restoreMemoAdoptions,
   reverseBlockMove,
 } from '#article/index'
@@ -31,13 +32,17 @@ import { moveEntryForReverseStep } from '#outline/move-history-transitions'
 import type {
   HistoryEntry,
   HistoryStateValue,
+  MemoAdoptionHistoryRecord,
   MoveHistory,
+  MoveHistoryFailure,
   MoveHistoryStep,
   TextHistoryEntry,
   TextHistoryStep,
 } from '#outline/move-history-types'
 
 const textHistoryStep = Annotation.define<TextHistoryStep>()
+const recordMemoAdoptionHistory =
+  StateEffect.define<MemoAdoptionHistoryRecord>()
 const recordMove = StateEffect.define<MoveBlockResult>()
 const applyMoveHistoryStep = StateEffect.define<MoveHistoryStep>()
 const dropHistoryEntry = StateEffect.define<{
@@ -48,6 +53,10 @@ const clearHistory = StateEffect.define()
 const newGroupDelay = 500
 const maxHistoryDepth = 100
 const joinableUserEvent = /^(input\.type|delete)($|\.)/u
+
+export function memoAdoptionHistoryEffect(record: MemoAdoptionHistoryRecord) {
+  return recordMemoAdoptionHistory.of(record)
+}
 
 function pushHistoryEntry(stack: HistoryEntry[], entry: HistoryEntry): void {
   stack.push(entry)
@@ -80,6 +89,20 @@ function deletedRangesIn(changes: ChangeSet): MemoTextRange[] {
   return ranges
 }
 
+function memoAdoptionsForOppositeStep(
+  step: TextHistoryStep,
+  entry: TextHistoryEntry,
+) {
+  if (step.direction === 'redo') return step.memoAdoptions
+  return step.memoAdoptions.map((snapshot) => {
+    const change = entry.memoAdoptionChanges.find(
+      ({ id }) => id === snapshot.id,
+    )
+    if (change === undefined) return snapshot
+    return { ...snapshot, adoptedTo: change.previousAdoptedTo }
+  })
+}
+
 function isHistoryBoundary(
   value: string | undefined,
   side: 'before' | 'after',
@@ -110,9 +133,9 @@ export type { MoveHistory }
 
 export function createMoveHistory(doc: Y.Doc): MoveHistory {
   const errorListeners = new Set<
-    (error: InvalidBlockMoveError | undefined) => void
+    (failure: MoveHistoryFailure | undefined) => void
   >()
-  let currentError: InvalidBlockMoveError | undefined
+  let currentError: MoveHistoryFailure | undefined
   let applyingLocalMove = false
 
   const historyField = StateField.define<HistoryStateValue>({
@@ -133,7 +156,7 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         pushHistoryEntry(to, {
           ...entry,
           inverse: transaction.changes.invert(transaction.startState.doc),
-          memoAdoptions: step.memoAdoptions,
+          memoAdoptions: memoAdoptionsForOppositeStep(step, entry),
           selectionBefore: entry.selectionAfter,
           selectionAfter: entry.selectionBefore,
         })
@@ -202,12 +225,22 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
           ),
           transaction.changes,
         )
+        const adoptionRecord = transaction.effects.find((effect) =>
+          effect.is(recordMemoAdoptionHistory),
+        )
         const isolation = transaction.annotation(isolateHistory)
         const inverse = transaction.changes.invert(transaction.startState.doc)
         const next: TextHistoryEntry = {
           kind: 'text',
           inverse,
-          memoAdoptions,
+          memoAdoptions:
+            adoptionRecord?.is(recordMemoAdoptionHistory) === true
+              ? [...memoAdoptions, adoptionRecord.value.redoSnapshot]
+              : memoAdoptions,
+          memoAdoptionChanges:
+            adoptionRecord?.is(recordMemoAdoptionHistory) === true
+              ? [adoptionRecord.value.change]
+              : [],
           selectionBefore: transaction.startState.selection,
           selectionAfter: transaction.newSelection,
           userEvent: transaction.annotation(Transaction.userEvent),
@@ -228,6 +261,10 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
             ...previous,
             inverse: next.inverse.compose(previous.inverse),
             memoAdoptions: [...mappedSnapshots, ...next.memoAdoptions],
+            memoAdoptionChanges: [
+              ...previous.memoAdoptionChanges,
+              ...next.memoAdoptionChanges,
+            ],
             selectionAfter: next.selectionAfter,
             userEvent: next.userEvent,
             time: next.time,
@@ -249,15 +286,18 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
     for (const listener of errorListeners) listener(undefined)
   }
 
-  const report = <T>(result: Result<T, InvalidBlockMoveError>) =>
+  const report = <T>(
+    result: Result<T, InvalidBlockMoveError>,
+    operation: MoveHistoryFailure['operation'],
+  ) =>
     result
       .map((value) => {
         clearError()
         return value
       })
       .mapErr((error) => {
-        currentError = error
-        for (const listener of errorListeners) listener(error)
+        currentError = { operation, error }
+        for (const listener of errorListeners) listener(currentError)
         return error
       })
 
@@ -278,6 +318,14 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
         )
       }
       if (!step) continue
+
+      if (step.direction === 'undo') {
+        restoreMemoAdoptionHistory(
+          doc,
+          step.entry.memoAdoptionChanges,
+          step.memoAdoptions,
+        )
+      }
 
       const snapshots = mapMemoAdoptions(
         step.entry.memoAdoptions,
@@ -404,13 +452,16 @@ export function createMoveHistory(doc: Y.Doc): MoveHistory {
   return {
     extension,
     move(input, view) {
-      return report(applyMove(() => moveBlock(doc, input), view))
+      return report(
+        applyMove(() => moveBlock(doc, input), view),
+        'move',
+      )
     },
     undo(view) {
-      return report(stepHistory('undo', view))
+      return report(stepHistory('undo', view), 'undo')
     },
     redo(view) {
-      return report(stepHistory('redo', view))
+      return report(stepHistory('redo', view), 'redo')
     },
     onError(listener) {
       errorListeners.add(listener)

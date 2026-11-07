@@ -12,6 +12,7 @@ import type { Result } from 'neverthrow'
 import { useEffect, useState } from 'react'
 import type * as Y from 'yjs'
 
+import type { Heading } from '#article/types'
 import { type LlmSettings, loadLlmSettings } from '#lib/llm-settings'
 import { postLlmResult } from '#lib/llm-sse'
 import { ArticleOutline } from '#outline/article-outline'
@@ -52,7 +53,8 @@ export type OutlineProposalEditorContext = {
 
 export type OutlineProposalAccessoryContext = OutlineProposalEditorContext & {
   view: EditorView | null
-  replaceBody: (value: string) => void
+  onHeadingSelected: () => void
+  onActiveHeadingChange?: ((heading: Heading | undefined) => void) | undefined
 }
 
 export interface OutlineProposalOptions {
@@ -449,6 +451,8 @@ export function OutlineProposalAccessory({
   doc,
   history,
   view,
+  onHeadingSelected,
+  onActiveHeadingChange,
 }: OutlineProposalAccessoryContext) {
   const controller = view?.state.facet(outlineProposalControllerFacet) ?? null
   const [state, setState] = useState<OutlineProposalState>(
@@ -470,6 +474,8 @@ export function OutlineProposalAccessory({
       doc={doc}
       history={history}
       view={view}
+      onHeadingSelected={onHeadingSelected}
+      onActiveHeadingChange={onActiveHeadingChange}
       proposalState={state}
       onProposalAccept={(id) => {
         controller.accept(id)
