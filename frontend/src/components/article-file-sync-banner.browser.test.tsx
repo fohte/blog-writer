@@ -22,6 +22,9 @@ let history: MoveHistory | undefined
 let requests: Array<{ url: string; method: string }> = []
 let fileResponse: unknown
 let openedSections: Array<ArticleExportSection | undefined> = []
+let editorView: EditorView | null = null
+let holdResume = false
+let releaseResume: (() => void) | undefined
 
 const originalBody = '# Article\n\nThe original text.\n'
 const fileBody = '# Article\n\nText from the file.\n'
@@ -47,6 +50,12 @@ function stubFetch() {
               path: 'notes/example.md',
               status: 'synced',
             }
+      if (holdResume && url.endsWith('/resume'))
+        return new Promise<Response>((resolve) => {
+          releaseResume = () => {
+            resolve(Response.json(payload))
+          }
+        })
       return Promise.resolve(Response.json(payload))
     }),
   )
@@ -67,7 +76,10 @@ function BannerHarness({
     <>
       <MarkdownEditor
         history={moveHistory}
-        onViewChange={setView}
+        onViewChange={(nextView) => {
+          editorView = nextView
+          setView(nextView)
+        }}
         text={getBody(articleDoc)}
       />
       <ArticleFileSyncBanner
@@ -146,6 +158,8 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   requests = []
   openedSections = []
+  holdResume = false
+  releaseResume = undefined
   fileResponse = {
     content: fileBody.replaceAll('\n', '\r\n'),
     content_hash: 'file-hash',
@@ -230,6 +244,40 @@ describe('ArticleFileSyncBanner', () => {
       message: null,
       actions: [],
       body: originalBody,
+      requests: [
+        { url: '/api/articles/sample-article/file-sync', method: 'GET' },
+        {
+          url: '/api/articles/sample-article/file-sync/resume',
+          method: 'POST',
+        },
+      ],
+      openedSections: [],
+    })
+  })
+
+  it('does not offer to undo the import once the body was edited during the import', async () => {
+    holdResume = true
+    mount('external_changed')
+    await clickButton('ファイルの内容を取り込む')
+    act(() => {
+      editorView?.dispatch({
+        changes: {
+          from: editorView.state.doc.length,
+          insert: 'A later edit.\n',
+        },
+        userEvent: 'input.type',
+      })
+    })
+    releaseResume?.()
+    await vi.waitFor(() => {
+      if (readBanner().message?.startsWith('!') === true)
+        throw new Error('Waiting for the import to finish')
+    })
+
+    expect(readBanner()).toEqual({
+      message: null,
+      actions: [],
+      body: `${fileBody}A later edit.\n`,
       requests: [
         { url: '/api/articles/sample-article/file-sync', method: 'GET' },
         {

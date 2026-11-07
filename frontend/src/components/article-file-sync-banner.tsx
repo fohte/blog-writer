@@ -57,8 +57,17 @@ export function ArticleFileSyncBanner({
         openExport('sync')
       }}
       onImport={() => {
-        void sync.importFile().then((succeeded) => {
-          setImported(succeeded)
+        const body = doc.getText('body')
+        // The import replaces the body before this returns, so this only sees edits made while the request is pending.
+        const importing = sync.importFile()
+        let editedDuringImport = false
+        const markEdited = () => {
+          editedDuringImport = true
+        }
+        body.observe(markEdited)
+        void importing.then((succeeded) => {
+          body.unobserve(markEdited)
+          setImported(succeeded && !editedDuringImport)
         })
       }}
       onOverwrite={() => {
