@@ -40,3 +40,21 @@ type Story = StoryObj<typeof meta>
 export const AssistantAsksAndSuggestsAClaim: Story = {
   name: 'the assistant asks a question and proposes a claim.',
 }
+
+export const AssistantIsThinking: Story = {
+  name: 'the assistant is preparing a response.',
+  args: {
+    generating: true,
+    messages: [],
+    proposals: [],
+  },
+}
+
+export const RequestFailed: Story = {
+  name: 'the conversation shows a failed request.',
+  args: {
+    error: 'The proposal request failed. Please try again.',
+    messages: [],
+    proposals: [],
+  },
+}

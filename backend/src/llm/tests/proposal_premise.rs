@@ -7,6 +7,7 @@ use std::{
 
 use axum::{Router, body::Body, http::Request};
 use indoc::indoc;
+use rstest::rstest;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -174,9 +175,13 @@ async fn includes_the_conversation_and_omits_unchanged_fields()
     Ok(())
 }
 
+#[rstest]
+#[case::whitespace_only_user_message(json!([{"role": "user", "content": "   "}]))]
+#[case::assistant_only(json!([{"role": "assistant", "content": "A previous question."}]))]
 #[tokio::test]
-async fn rejects_a_discussion_without_a_non_empty_user_message()
--> Result<(), Box<dyn std::error::Error>> {
+async fn rejects_a_discussion_without_a_non_empty_user_message(
+    #[case] messages: Value,
+) -> Result<(), Box<dyn std::error::Error>> {
     let prompt = Arc::new(Mutex::new(None));
     let schema = Arc::new(Mutex::new(None));
     let state = LlmState::with_provider(
@@ -197,7 +202,7 @@ async fn rejects_a_discussion_without_a_non_empty_user_message()
         json!({
             "premise": {"audience": "", "purpose": "", "thesis": ""},
             "headings": [],
-            "messages": [{"role": "user", "content": "   "}]
+            "messages": messages
         }),
         state,
     )

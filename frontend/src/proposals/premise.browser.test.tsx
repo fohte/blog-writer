@@ -31,6 +31,16 @@ function unmountAccessory() {
   host = undefined
 }
 
+async function waitForRequestToFinish() {
+  await act(async () => {
+    await vi.waitFor(() => {
+      if (host?.querySelector('[role="status"]') !== null) {
+        throw new Error('The premise request is still running')
+      }
+    })
+  })
+}
+
 beforeEach(async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   await page.viewport(1024, 768)
@@ -99,15 +109,7 @@ describe('premise proposal accessory', () => {
       await userEvent.click(page.getByRole('button', { name: 'Send' }))
     })
 
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(
-          host?.querySelector(
-            '[aria-label="Conversation history"] li:nth-child(2) p',
-          )?.textContent,
-        ).toEqual('Who should use this process first?')
-      })
-    })
+    await waitForRequestToFinish()
     await act(async () => {
       await userEvent.click(
         page
@@ -126,15 +128,7 @@ describe('premise proposal accessory', () => {
       await userEvent.click(page.getByRole('button', { name: 'Send' }))
     })
 
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(
-          host?.querySelector(
-            '[aria-label="Conversation history"] li:last-child p',
-          )?.textContent,
-        ).toEqual('The purpose can focus on a specific decision.')
-      })
-    })
+    await waitForRequestToFinish()
     const acceptedPremise = getPremise(articleDoc)
 
     unmountAccessory()
@@ -146,21 +140,28 @@ describe('premise proposal accessory', () => {
       )
       await userEvent.click(page.getByRole('button', { name: 'Send' }))
     })
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(
-          host?.querySelector(
-            '[aria-label="Conversation history"] li:nth-child(2) p',
-          )?.textContent,
-        ).toEqual('What decision should the article explain?')
-      })
-    })
+    await waitForRequestToFinish()
 
     const actual = () => ({
       acceptedPremise,
       persistedPremise: getPremise(articleDoc),
       requestPayloads: requests,
       body: getBody(articleDoc).toJSON(),
+      renderedState: {
+        messages: Array.from(
+          host?.querySelectorAll('[aria-label="Conversation history"] li') ??
+            [],
+        ).map((message) => ({
+          speaker: message.querySelector('span')?.textContent ?? null,
+          content: message.querySelector('p')?.textContent ?? null,
+        })),
+        suggestionCount:
+          host?.querySelectorAll('[aria-label$="suggestion"]').length ?? 0,
+        generating: host?.querySelector('[role="status"]')?.textContent ?? null,
+        error: host?.querySelector('[role="alert"]')?.textContent ?? null,
+        draft:
+          host?.querySelector<HTMLTextAreaElement>('textarea')?.value ?? null,
+      },
     })
     expect(actual()).toEqual({
       acceptedPremise: {
@@ -210,6 +211,22 @@ describe('premise proposal accessory', () => {
         },
       ],
       body: '# Opening\n\n## Details\nA paragraph.\n',
+      renderedState: {
+        messages: [
+          {
+            speaker: 'You',
+            content: 'Start a fresh discussion',
+          },
+          {
+            speaker: 'Assistant',
+            content: 'What decision should the article explain?',
+          },
+        ],
+        suggestionCount: 0,
+        generating: null,
+        error: null,
+        draft: '',
+      },
     })
   })
 
@@ -230,16 +247,15 @@ describe('premise proposal accessory', () => {
         'Clarify the audience',
       )
       await userEvent.click(page.getByRole('button', { name: 'Send' }))
-      await vi.waitFor(() => {
-        expect(host?.querySelector('[role="alert"]')?.textContent).toEqual(
-          'LLM API returned status 503',
-        )
-      })
     })
+    await waitForRequestToFinish()
 
     const actual = () => ({
       alert: host?.querySelector('[role="alert"]')?.textContent ?? null,
       premise: getPremise(articleDoc),
+      draft:
+        host?.querySelector<HTMLTextAreaElement>('textarea')?.value ?? null,
+      generating: host?.querySelector('[role="status"]')?.textContent ?? null,
     })
     expect(actual()).toEqual({
       alert: 'LLM API returned status 503',
@@ -248,6 +264,8 @@ describe('premise proposal accessory', () => {
         purpose: 'Explain a useful process',
         claim: 'A clear process reduces confusion',
       },
+      draft: 'Clarify the audience',
+      generating: null,
     })
   })
 })

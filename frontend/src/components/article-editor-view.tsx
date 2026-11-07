@@ -297,6 +297,7 @@ export function ArticleEditorView({
   const layoutClasses = {
     pagePadding: isMobile ? 'px-4' : 'px-4 sm:px-6',
     premiseColumns: isMobile ? '' : 'sm:grid-cols-3',
+    premiseAccessorySpan: isMobile ? '' : 'sm:col-span-3',
     workspaceColumns: isMobile ? '' : 'lg:grid-cols-3',
     sidebar: isMobile
       ? ''
@@ -376,7 +377,7 @@ export function ArticleEditorView({
                     </label>
                   ))}
                   {context ? (
-                    <div className="sm:col-span-3">
+                    <div className={layoutClasses.premiseAccessorySpan}>
                       {premiseAccessory?.(context)}
                     </div>
                   ) : null}

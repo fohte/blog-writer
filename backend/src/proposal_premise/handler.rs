@@ -11,7 +11,7 @@ use crate::{
 
 use super::prompt::build_prompt;
 
-const UNCHANGED: &str = "変更なし";
+pub(super) const UNCHANGED: &str = "変更なし";
 
 #[derive(Debug, Deserialize, JsonSchema, ToSchema)]
 pub(crate) struct PremiseRequest {
