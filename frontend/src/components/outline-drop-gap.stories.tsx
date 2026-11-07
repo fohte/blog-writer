@@ -1,9 +1,21 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import type { ComponentProps } from 'react'
 
 import { OutlineDropGap } from '#components/outline-drop-gap'
 
+function renderOutlineGap(args: ComponentProps<typeof OutlineDropGap>) {
+  return (
+    <div aria-label="Article outline" className="flex w-80 flex-col gap-2 p-4">
+      <div className="rounded border p-2 text-sm">Introduction</div>
+      <OutlineDropGap {...args} />
+      <div className="rounded border p-2 text-sm">Next steps</div>
+    </div>
+  )
+}
+
 const meta = {
   component: OutlineDropGap,
+  render: renderOutlineGap,
   args: {
     beforeFrom: 24,
     bodyLength: 80,
