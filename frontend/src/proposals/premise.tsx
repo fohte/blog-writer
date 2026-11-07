@@ -31,11 +31,16 @@ const apiFields: Record<PremiseField, 'audience' | 'purpose' | 'thesis'> = {
   claim: 'thesis',
 }
 
+type ActiveRequest = {
+  controller: AbortController
+  invalidatedFields: Set<PremiseField>
+}
+
 function flattenHeadings(
   headings: ReturnType<typeof deriveHeadingTree>,
 ): string[] {
-  return headings.flatMap(({ text, children }) => [
-    text,
+  return headings.flatMap(({ level, text, children }) => [
+    `${'#'.repeat(level)} ${text}`,
     ...flattenHeadings(children),
   ])
 }
@@ -55,12 +60,33 @@ export function PremiseProposalAccessory({
   const [draft, setDraft] = useState('')
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string>()
-  const activeRequest = useRef<AbortController | null>(null)
+  const premiseRef = useRef(premise)
+  const activeRequest = useRef<ActiveRequest | null>(null)
 
   useEffect(() => {
     const premiseMap = doc.getMap('premise')
     const refresh = () => {
-      setPremiseState(getPremise(doc))
+      const nextPremise = getPremise(doc)
+      const changedFields = premiseFields.filter(
+        (field) => premiseRef.current[field] !== nextPremise[field],
+      )
+      premiseRef.current = nextPremise
+      setPremiseState(nextPremise)
+      if (changedFields.length === 0) return
+
+      changedFields.forEach((field) => {
+        activeRequest.current?.invalidatedFields.add(field)
+      })
+      setProposals((current) =>
+        Object.fromEntries(
+          premiseFields.flatMap((field) => {
+            const proposal = current[field]
+            return changedFields.includes(field) || proposal === undefined
+              ? []
+              : [[field, proposal]]
+          }),
+        ),
+      )
     }
     premiseMap.observe(refresh)
     refresh()
@@ -71,7 +97,7 @@ export function PremiseProposalAccessory({
 
   useEffect(
     () => () => {
-      activeRequest.current?.abort()
+      activeRequest.current?.controller.abort()
       activeRequest.current = null
     },
     [],
@@ -99,14 +125,20 @@ export function PremiseProposalAccessory({
     const content = draft.trim()
     if (!content || generating) return
 
-    activeRequest.current?.abort()
+    activeRequest.current?.controller.abort()
     const controller = new AbortController()
-    activeRequest.current = controller
+    const requestContext: ActiveRequest = {
+      controller,
+      invalidatedFields: new Set(),
+    }
+    activeRequest.current = requestContext
     const nextMessages: PremiseConversationMessage[] = [
       ...messages,
       { role: 'user', content },
     ]
     const currentPremise = getPremise(doc)
+    premiseRef.current = currentPremise
+    setPremiseState(currentPremise)
     const body = getBody(doc).toJSON()
     const request = {
       premise: {
@@ -120,7 +152,6 @@ export function PremiseProposalAccessory({
 
     setError(undefined)
     setGenerating(true)
-    setProposals({})
     const result = loadLlmSettings(() => window.localStorage).match(
       (settings) =>
         requestPremiseProposal(fetch, settings, request, controller.signal),
@@ -128,13 +159,14 @@ export function PremiseProposalAccessory({
     )
     void result.match(
       (response) => {
-        if (activeRequest.current !== controller) return
+        if (activeRequest.current !== requestContext) return
         activeRequest.current = null
         const latestPremise = getPremise(doc)
         const values: Partial<Record<PremiseField, string>> = {}
         for (const field of premiseFields) {
           const replacement = response[apiFields[field]]
           if (
+            !requestContext.invalidatedFields.has(field) &&
             replacement !== undefined &&
             replacement !== (latestPremise[field] ?? '')
           ) {
@@ -151,7 +183,7 @@ export function PremiseProposalAccessory({
         setGenerating(false)
       },
       (cause) => {
-        if (activeRequest.current !== controller) return
+        if (activeRequest.current !== requestContext) return
         activeRequest.current = null
         setGenerating(false)
         if (!controller.signal.aborted) setError(cause.message)

@@ -7,8 +7,10 @@ import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import { getBody, getPremise, setBody, setPremise } from '#article/index'
+import type { components } from '#lib/api/schema.gen.d.ts'
 import { PremiseProposalAccessory } from '#proposals/premise'
-import type { PremiseResponse } from '#proposals/premise-api'
+
+type PremiseResponse = components['schemas']['PremiseResponse']
 
 let host: HTMLDivElement | undefined
 let root: Root | undefined
@@ -41,6 +43,26 @@ async function waitForRequestToFinish() {
   })
 }
 
+async function waitForProposalCount(expected: number) {
+  await act(async () => {
+    await vi.waitFor(() => {
+      if (
+        (host?.querySelectorAll('[aria-label$="suggestion"]').length ?? 0) !==
+        expected
+      ) {
+        throw new Error('The expected premise suggestions are not visible')
+      }
+    })
+  })
+}
+
+function createSseResponse(response: PremiseResponse): Response {
+  return new Response(
+    `data: ${JSON.stringify({ event: 'result', data: response })}\n\n`,
+    { headers: { 'content-type': 'text/event-stream' } },
+  )
+}
+
 beforeEach(async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   await page.viewport(1024, 768)
@@ -64,7 +86,10 @@ describe('premise proposal accessory', () => {
   it('sends the open conversation and persists only accepted field values', async () => {
     const articleDoc = new Y.Doc()
     doc = articleDoc
-    setBody(articleDoc, '# Opening\n\n## Details\nA paragraph.\n')
+    setBody(
+      articleDoc,
+      '# Opening\n\n## Details\n\n### Deep detail\nA paragraph.\n',
+    )
     setPremise(articleDoc, 'audience', 'Existing readers')
     setPremise(articleDoc, 'purpose', 'Explain a useful process')
     setPremise(articleDoc, 'claim', 'A clear process reduces confusion')
@@ -113,12 +138,12 @@ describe('premise proposal accessory', () => {
     await act(async () => {
       await userEvent.click(
         page
-          .getByRole('region', { name: 'Reader suggestion' })
+          .getByRole('region', { name: 'Claim suggestion' })
           .getByRole('button', { name: '✓ 採用' }),
       )
       await userEvent.click(
         page
-          .getByRole('region', { name: 'Claim suggestion' })
+          .getByRole('region', { name: 'Reader suggestion' })
           .getByRole('button', { name: '× 却下' }),
       )
       const input = page.getByRole('textbox', {
@@ -165,14 +190,14 @@ describe('premise proposal accessory', () => {
     })
     expect(actual()).toEqual({
       acceptedPremise: {
-        audience: 'New maintainers',
+        audience: 'Existing readers',
         purpose: 'Explain a useful process',
-        claim: 'A clear process reduces confusion',
+        claim: 'A short checklist helps new maintainers catch risky changes',
       },
       persistedPremise: {
-        audience: 'New maintainers',
+        audience: 'Existing readers',
         purpose: 'Explain a useful process',
-        claim: 'A clear process reduces confusion',
+        claim: 'A short checklist helps new maintainers catch risky changes',
       },
       requestPayloads: [
         {
@@ -181,16 +206,17 @@ describe('premise proposal accessory', () => {
             purpose: 'Explain a useful process',
             thesis: 'A clear process reduces confusion',
           },
-          headings: ['Opening', 'Details'],
+          headings: ['# Opening', '## Details', '### Deep detail'],
           messages: [{ role: 'user', content: 'Clarify the audience' }],
         },
         {
           premise: {
-            audience: 'New maintainers',
+            audience: 'Existing readers',
             purpose: 'Explain a useful process',
-            thesis: 'A clear process reduces confusion',
+            thesis:
+              'A short checklist helps new maintainers catch risky changes',
           },
-          headings: ['Opening', 'Details'],
+          headings: ['# Opening', '## Details', '### Deep detail'],
           messages: [
             { role: 'user', content: 'Clarify the audience' },
             {
@@ -202,15 +228,16 @@ describe('premise proposal accessory', () => {
         },
         {
           premise: {
-            audience: 'New maintainers',
+            audience: 'Existing readers',
             purpose: 'Explain a useful process',
-            thesis: 'A clear process reduces confusion',
+            thesis:
+              'A short checklist helps new maintainers catch risky changes',
           },
-          headings: ['Opening', 'Details'],
+          headings: ['# Opening', '## Details', '### Deep detail'],
           messages: [{ role: 'user', content: 'Start a fresh discussion' }],
         },
       ],
-      body: '# Opening\n\n## Details\nA paragraph.\n',
+      body: '# Opening\n\n## Details\n\n### Deep detail\nA paragraph.\n',
       renderedState: {
         messages: [
           {
@@ -230,15 +257,175 @@ describe('premise proposal accessory', () => {
     })
   })
 
-  it('shows a failed request and keeps the current premise unchanged', async () => {
+  it('discards displayed proposals for locally and remotely edited fields', async () => {
     const articleDoc = new Y.Doc()
     doc = articleDoc
     setPremise(articleDoc, 'audience', 'Existing readers')
     setPremise(articleDoc, 'purpose', 'Explain a useful process')
     setPremise(articleDoc, 'claim', 'A clear process reduces confusion')
     vi.stubGlobal('fetch', () =>
-      Promise.resolve(new Response(null, { status: 503 })),
+      Promise.resolve(
+        createSseResponse({
+          reply: 'These three fields can be more specific.',
+          audience: 'New maintainers',
+          purpose: 'Help readers choose a safe process',
+          thesis: 'A short checklist helps readers catch risky changes',
+        }),
+      ),
     )
+
+    renderAccessory(articleDoc)
+    await act(async () => {
+      await userEvent.type(
+        page.getByRole('textbox', { name: 'Continue the discussion' }),
+        'Clarify the premise',
+      )
+      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+    })
+    await waitForRequestToFinish()
+    await waitForProposalCount(3)
+
+    act(() => {
+      setPremise(articleDoc, 'audience', 'Locally edited readers')
+    })
+    await waitForProposalCount(2)
+
+    const remoteDoc = new Y.Doc()
+    Y.applyUpdate(remoteDoc, Y.encodeStateAsUpdate(articleDoc))
+    setPremise(remoteDoc, 'claim', 'A remote reader edit changed the claim')
+    act(() => {
+      Y.applyUpdate(
+        articleDoc,
+        Y.encodeStateAsUpdate(remoteDoc, Y.encodeStateVector(articleDoc)),
+      )
+    })
+    remoteDoc.destroy()
+    await waitForProposalCount(1)
+
+    const actual = () => ({
+      premise: getPremise(articleDoc),
+      proposals: Array.from(
+        host?.querySelectorAll('[aria-label$="suggestion"]') ?? [],
+      ).map((proposal) => ({
+        label: proposal.querySelector('h3')?.textContent ?? null,
+        original: proposal.querySelector('del')?.textContent ?? null,
+        replacement: proposal.querySelector('ins')?.textContent ?? null,
+      })),
+    })
+    expect(actual()).toEqual({
+      premise: {
+        audience: 'Locally edited readers',
+        purpose: 'Explain a useful process',
+        claim: 'A remote reader edit changed the claim',
+      },
+      proposals: [
+        {
+          label: 'Purpose',
+          original: 'Explain a useful',
+          replacement: 'Help readers choose a safe',
+        },
+      ],
+    })
+  })
+
+  it('discards suggestions for fields edited while a request is generating', async () => {
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setPremise(articleDoc, 'audience', 'Existing readers')
+    setPremise(articleDoc, 'purpose', 'Explain a useful process')
+    setPremise(articleDoc, 'claim', 'A clear process reduces confusion')
+    let resolveResponse: ((response: Response) => void) | undefined
+    let requestCount = 0
+    let requestSignal: AbortSignal | undefined
+    vi.stubGlobal('fetch', ((_input, init) => {
+      requestCount += 1
+      requestSignal = init?.signal ?? undefined
+      return new Promise<Response>((resolve) => {
+        resolveResponse = resolve
+      })
+    }) satisfies typeof fetch)
+
+    renderAccessory(articleDoc)
+    await act(async () => {
+      await userEvent.type(
+        page.getByRole('textbox', { name: 'Continue the discussion' }),
+        'Clarify the premise',
+      )
+      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+    })
+    await act(async () => {
+      await vi.waitFor(() => {
+        if (
+          resolveResponse === undefined ||
+          host?.querySelector('[role="status"]')?.textContent !== 'Thinking…'
+        ) {
+          throw new Error('The request did not start')
+        }
+      })
+    })
+    await act(async () => {
+      setPremise(articleDoc, 'purpose', 'Edited while generating')
+      resolveResponse?.(
+        createSseResponse({
+          reply: 'The premise has become more specific.',
+          audience: 'New maintainers',
+          purpose: 'Use the new purpose suggestion',
+          thesis: 'A checklist helps maintainers catch risky changes',
+        }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const actual = () => ({
+      premise: getPremise(articleDoc),
+      proposals: Array.from(
+        host?.querySelectorAll('[aria-label$="suggestion"]') ?? [],
+      ).map((proposal) => proposal.querySelector('h3')?.textContent ?? null),
+      generating: host?.querySelector('[role="status"]')?.textContent ?? null,
+      error: host?.querySelector('[role="alert"]')?.textContent ?? null,
+      requestCount,
+      requestAborted: requestSignal?.aborted ?? null,
+    })
+    expect(actual()).toEqual({
+      premise: {
+        audience: 'Existing readers',
+        purpose: 'Edited while generating',
+        claim: 'A clear process reduces confusion',
+      },
+      proposals: ['Reader', 'Claim'],
+      generating: null,
+      error: null,
+      requestCount: 1,
+      requestAborted: false,
+    })
+  })
+
+  it('preserves pending proposals when a follow-up request fails', async () => {
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setPremise(articleDoc, 'audience', 'Existing readers')
+    setPremise(articleDoc, 'purpose', 'Explain a useful process')
+    setPremise(articleDoc, 'claim', 'A clear process reduces confusion')
+    let requestCount = 0
+    vi.stubGlobal('fetch', (() => {
+      requestCount += 1
+      if (requestCount === 2) {
+        return Promise.resolve(new Response(null, { status: 503 }))
+      }
+      return Promise.resolve(
+        new Response(
+          `data: ${JSON.stringify({
+            event: 'result',
+            data: {
+              reply: 'The claim can name a useful outcome.',
+              thesis:
+                'A short review checklist helps new maintainers catch risky changes',
+            },
+          })}\n\n`,
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+      )
+    }) satisfies typeof fetch)
 
     renderAccessory(articleDoc)
     await act(async () => {
@@ -249,6 +436,14 @@ describe('premise proposal accessory', () => {
       await userEvent.click(page.getByRole('button', { name: 'Send' }))
     })
     await waitForRequestToFinish()
+    await act(async () => {
+      const input = page.getByRole('textbox', {
+        name: 'Continue the discussion',
+      })
+      await userEvent.type(input, 'Ask another question')
+      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+    })
+    await waitForRequestToFinish()
 
     const actual = () => ({
       alert: host?.querySelector('[role="alert"]')?.textContent ?? null,
@@ -256,6 +451,13 @@ describe('premise proposal accessory', () => {
       draft:
         host?.querySelector<HTMLTextAreaElement>('textarea')?.value ?? null,
       generating: host?.querySelector('[role="status"]')?.textContent ?? null,
+      proposals: Array.from(
+        host?.querySelectorAll('[aria-label$="suggestion"]') ?? [],
+      ).map((proposal) => ({
+        label: proposal.querySelector('h3')?.textContent ?? null,
+        original: proposal.querySelector('del')?.textContent ?? null,
+        replacement: proposal.querySelector('ins')?.textContent ?? null,
+      })),
     })
     expect(actual()).toEqual({
       alert: 'LLM API returned status 503',
@@ -264,8 +466,16 @@ describe('premise proposal accessory', () => {
         purpose: 'Explain a useful process',
         claim: 'A clear process reduces confusion',
       },
-      draft: 'Clarify the audience',
+      draft: 'Ask another question',
       generating: null,
+      proposals: [
+        {
+          label: 'Claim',
+          original: 'clear process reduces confusion',
+          replacement:
+            'short review checklist helps new maintainers catch risky changes',
+        },
+      ],
     })
   })
 })

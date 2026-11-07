@@ -5,8 +5,8 @@ import { isRecord } from '#lib/guards'
 import type { LlmSettings } from '#lib/llm-settings'
 import { postLlmResult } from '#lib/llm-sse'
 
-export type PremiseRequest = components['schemas']['PremiseRequest']
-export type PremiseResponse = components['schemas']['PremiseResponse']
+type PremiseRequest = components['schemas']['PremiseRequest']
+type PremiseResponse = components['schemas']['PremiseResponse']
 
 function isPremiseResponse(value: unknown): value is PremiseResponse {
   return (
