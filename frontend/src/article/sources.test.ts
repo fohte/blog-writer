@@ -84,6 +84,7 @@ describe('article sources', () => {
     const findings = setFindings(doc, 'source-a', [
       {
         id: 'finding-a',
+        researchedHeading: '研究対象の見出し',
         text: '利用者数は増加しました。',
         quote: '利用者数は 12% 増加しました。',
       },
@@ -111,6 +112,7 @@ describe('article sources', () => {
         {
           id: 'finding-a',
           sourceId: 'source-a',
+          researchedHeading: '研究対象の見出し',
           text: '利用者数は増加しました。',
           quote: '利用者数は 12% 増加しました。',
         },
@@ -132,11 +134,46 @@ describe('article sources', () => {
         {
           id: 'finding-a',
           sourceId: 'source-a',
+          researchedHeading: '研究対象の見出し',
           text: '利用者数は増加しました。',
           quote: '利用者数は 12% 増加しました。',
         },
       ],
     })
+    doc.destroy()
+  })
+
+  it('omits a non-string researched heading when reading findings', () => {
+    const doc = new Y.Doc()
+    addSource(doc, {
+      id: 'source-a',
+      kind: 'url',
+      title: '資料',
+      url: 'https://data.example.invalid/report',
+      fileName: null,
+      checkedAt: null,
+    })
+    setFindings(doc, 'source-a', [
+      {
+        id: 'finding-a',
+        researchedHeading: '研究対象の見出し',
+        text: '要点です。',
+        quote: '本文の引用です。',
+      },
+    ])
+    doc
+      .getMap<Y.Map<unknown>>('findings')
+      .get('finding-a')
+      ?.set('researchedHeading', 42)
+
+    expect(listFindings(doc)).toEqual([
+      {
+        id: 'finding-a',
+        sourceId: 'source-a',
+        text: '要点です。',
+        quote: '本文の引用です。',
+      },
+    ])
     doc.destroy()
   })
 

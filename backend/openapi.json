@@ -559,6 +559,146 @@
         }
       }
     },
+    "/api/articles/{article_id}/source-bodies/{source_id}/restore": {
+      "post": {
+        "operationId": "restore_body",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "description": "Source ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreSourceBodyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Source body restored"
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Source body changed before it could be restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Source body storage is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/articles/{article_id}/source-bodies/{source_id}/save-if-unchanged": {
+      "post": {
+        "operationId": "save_body_if_unchanged",
+        "parameters": [
+          {
+            "name": "article_id",
+            "in": "path",
+            "description": "Article ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source_id",
+            "in": "path",
+            "description": "Source ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveSourceBodyIfUnchangedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Source body stored"
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Source body changed before it could be stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Source body storage is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/articles/{article_id}/source-bodies/{source_id}/url": {
       "post": {
         "operationId": "fetch_from_url",
@@ -2320,12 +2460,36 @@
           }
         }
       },
+      "RestoreSourceBodyRequest": {
+        "type": "object",
+        "required": ["expected_body"],
+        "properties": {
+          "expected_body": {
+            "type": "string"
+          },
+          "restore_body": {
+            "type": ["string", "null"]
+          }
+        }
+      },
       "ResumeArticleFileSyncRequest": {
         "type": "object",
         "required": ["hash"],
         "properties": {
           "hash": {
             "type": "string"
+          }
+        }
+      },
+      "SaveSourceBodyIfUnchangedRequest": {
+        "type": "object",
+        "required": ["body"],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "expected_body": {
+            "type": ["string", "null"]
           }
         }
       },

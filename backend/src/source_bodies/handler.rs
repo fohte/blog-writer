@@ -24,6 +24,18 @@ pub struct SaveSourceBodyRequest {
     pub body: String,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SaveSourceBodyIfUnchangedRequest {
+    pub body: String,
+    pub expected_body: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RestoreSourceBodyRequest {
+    pub expected_body: String,
+    pub restore_body: Option<String>,
+}
+
 #[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
 pub struct FetchSourceBodyResponse {
     pub source_id: String,
@@ -121,6 +133,82 @@ pub async fn save_body(
     ApiJson(request): ApiJson<SaveSourceBodyRequest>,
 ) -> Result<StatusCode, AppError> {
     store_body(database(&state)?, &source_id, &article_id, &request.body).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/articles/{article_id}/source-bodies/{source_id}/save-if-unchanged",
+    params(
+        ("article_id" = String, Path, description = "Article ID"),
+        ("source_id" = String, Path, description = "Source ID")
+    ),
+    request_body = SaveSourceBodyIfUnchangedRequest,
+    responses(
+        (status = 204, description = "Source body stored"),
+        (status = 400, description = "Invalid request body", body = ErrorResponse),
+        (status = 409, description = "Source body changed before it could be stored", body = ErrorResponse),
+        (status = 503, description = "Source body storage is not configured", body = ErrorResponse)
+    )
+)]
+pub async fn save_body_if_unchanged(
+    State(state): State<AppState>,
+    Path((article_id, source_id)): Path<(String, String)>,
+    ApiJson(request): ApiJson<SaveSourceBodyIfUnchangedRequest>,
+) -> Result<StatusCode, AppError> {
+    let saved = storage::upsert_if_unchanged(
+        database(&state)?,
+        &source_id,
+        &article_id,
+        request.expected_body.as_deref(),
+        &request.body,
+    )
+    .await
+    .map_err(storage_error)?;
+    if !saved {
+        return Err(AppError::Client {
+            status: StatusCode::CONFLICT,
+            message: "Source body changed before it could be stored".to_owned(),
+        });
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/articles/{article_id}/source-bodies/{source_id}/restore",
+    params(
+        ("article_id" = String, Path, description = "Article ID"),
+        ("source_id" = String, Path, description = "Source ID")
+    ),
+    request_body = RestoreSourceBodyRequest,
+    responses(
+        (status = 204, description = "Source body restored"),
+        (status = 400, description = "Invalid request body", body = ErrorResponse),
+        (status = 409, description = "Source body changed before it could be restored", body = ErrorResponse),
+        (status = 503, description = "Source body storage is not configured", body = ErrorResponse)
+    )
+)]
+pub async fn restore_body(
+    State(state): State<AppState>,
+    Path((article_id, source_id)): Path<(String, String)>,
+    ApiJson(request): ApiJson<RestoreSourceBodyRequest>,
+) -> Result<StatusCode, AppError> {
+    let restored = storage::restore_if_unchanged(
+        database(&state)?,
+        &source_id,
+        &article_id,
+        &request.expected_body,
+        request.restore_body.as_deref(),
+    )
+    .await
+    .map_err(storage_error)?;
+    if !restored {
+        return Err(AppError::Client {
+            status: StatusCode::CONFLICT,
+            message: "Source body changed before it could be restored".to_owned(),
+        });
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -326,6 +414,78 @@ mod tests {
             call_json(
                 api.clone(),
                 Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-test/save-if-unchanged")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":"Pasted Markdown body","body":"Research Markdown body"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-test/save-if-unchanged")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":"Pasted Markdown body","body":"Conflicting body"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-test/restore")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":"Research Markdown body","restore_body":"Prior Markdown body"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-test/restore")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":"Research write","restore_body":"Earlier body"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
                     .method("DELETE")
                     .uri("/articles/article-test/source-bodies/source-test")
                     .body(Body::empty())?,
@@ -334,7 +494,98 @@ mod tests {
             call_json(
                 api.clone(),
                 Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-test/save-if-unchanged")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":"Prior Markdown body","body":"Research after deletion"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
                     .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-test/restore")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":"Research after deletion","restore_body":null}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-test")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-new/save-if-unchanged")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":null,"body":"New source body"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-new")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("PUT")
+                    .uri("/articles/article-test/source-bodies/source-new")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"body":"Concurrent source body"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/articles/article-test/source-bodies/source-new/save-if-unchanged")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"expected_body":null,"body":"Lost research update"}"#,
+                    ))?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-new")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/articles/article-test/source-bodies/source-new")
+                    .body(Body::empty())?,
+            )
+            .await?,
+            call_json(
+                api.clone(),
+                Request::builder()
+                    .uri("/articles/article-test/source-bodies/source-new")
                     .body(Body::empty())?,
             )
             .await?,
@@ -392,6 +643,78 @@ mod tests {
                         "source_id": "source-test",
                         "article_id": "article-test",
                         "body": "Pasted Markdown body"
+                    })
+                ),
+                (204, Value::Null),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-test",
+                        "body": "Research Markdown body"
+                    })
+                ),
+                (
+                    409,
+                    json!({"error": "Source body changed before it could be stored"})
+                ),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-test",
+                        "body": "Research Markdown body"
+                    })
+                ),
+                (204, Value::Null),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-test",
+                        "body": "Prior Markdown body"
+                    })
+                ),
+                (
+                    409,
+                    json!({"error": "Source body changed before it could be restored"})
+                ),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-test",
+                        "article_id": "article-test",
+                        "body": "Prior Markdown body"
+                    })
+                ),
+                (204, Value::Null),
+                (
+                    409,
+                    json!({"error": "Source body changed before it could be stored"})
+                ),
+                (404, json!({"error": "Not Found"})),
+                (204, Value::Null),
+                (404, json!({"error": "Not Found"})),
+                (204, Value::Null),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-new",
+                        "article_id": "article-test",
+                        "body": "New source body"
+                    })
+                ),
+                (204, Value::Null),
+                (
+                    409,
+                    json!({"error": "Source body changed before it could be stored"})
+                ),
+                (
+                    200,
+                    json!({
+                        "source_id": "source-new",
+                        "article_id": "article-test",
+                        "body": "Concurrent source body"
                     })
                 ),
                 (204, Value::Null),
