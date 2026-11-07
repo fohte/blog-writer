@@ -25,6 +25,7 @@ type WorkspaceOptions = ArticleEditorIntegrationProps & {
   error?: string
   requiresAuthentication?: boolean
   syncStatus?: 'saved' | 'unsynced' | 'syncing' | 'synced'
+  onOpenSettings?: () => void
 }
 
 function renderWorkspace(
@@ -34,6 +35,7 @@ function renderWorkspace(
     error,
     requiresAuthentication = false,
     syncStatus = 'synced',
+    onOpenSettings = () => {},
     ...integrations
   }: WorkspaceOptions = {},
 ) {
@@ -76,7 +78,7 @@ function renderWorkspace(
           client={client}
           error={error}
           onCreateArticle={() => undefined}
-          onOpenSettings={() => {}}
+          onOpenSettings={onOpenSettings}
           ready
           requiresAuthentication={requiresAuthentication}
           statuses={{ [article.id]: syncStatus }}
@@ -1038,6 +1040,62 @@ First paragraph.
       focusedElementId: 'new-memo',
       startButtonsAfterMemo: false,
     })
+  })
+
+  it('hides the empty article guide once the body has text', async () => {
+    const article: Article = {
+      id: 'article-empty-body',
+      title: 'A fresh draft',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    renderWorkspace(article, articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const hasStartButtons = () =>
+      [...(host?.querySelectorAll('button') ?? [])].some(
+        (button) => button.textContent === 'メモを書く',
+      )
+    const startButtonsBeforeTyping = hasStartButtons()
+    const editor = host?.querySelector<HTMLElement>('.cm-content')
+    if (!editor) throw new Error('The article editor did not open')
+    await act(async () => {
+      await userEvent.type(editor, 'A first line')
+    })
+
+    const readGuideOutput = () => ({
+      startButtonsBeforeTyping,
+      startButtonsAfterTyping: hasStartButtons(),
+    })
+    expect(readGuideOutput()).toEqual({
+      startButtonsBeforeTyping: true,
+      startButtonsAfterTyping: false,
+    })
+  })
+
+  it('opens the settings from the editor header', async () => {
+    const article: Article = {
+      id: 'article-settings',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    const onOpenSettings = vi.fn()
+    renderWorkspace(article, articleDoc, { onOpenSettings })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '設定' }))
+    })
+
+    expect(onOpenSettings).toHaveBeenCalledTimes(1)
   })
 
   it('shows sync errors, reauthentication, and the unsynced state', async () => {
