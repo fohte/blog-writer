@@ -163,8 +163,7 @@ describe('article editor screen', () => {
     const readScreenOutput = () => ({
       bodyAfterMove,
       bodyAfterUndo,
-      listTitle: host?.querySelector('[role="listitem"] button span')
-        ?.textContent,
+      listTitle: host?.querySelector('li button')?.textContent,
       editorCount: host?.querySelectorAll('.cm-content').length,
     })
     expect(readScreenOutput()).toEqual({
@@ -201,8 +200,7 @@ describe('article editor screen', () => {
     })
 
     const readScreenOutput = () => ({
-      listTitle: host?.querySelector('[role="listitem"] button span')
-        ?.textContent,
+      listTitle: host?.querySelector('li button')?.textContent,
       editorCount: host?.querySelectorAll('.cm-content').length,
     })
     expect(readScreenOutput()).toEqual({
@@ -1015,8 +1013,8 @@ First paragraph.
     })
     expect(readSyncOutput()).toEqual({
       syncError: 'Sync needs attention.',
-      reauthentication: 'Log in again',
-      syncState: '未同期',
+      reauthentication: 'ログインし直す',
+      syncState: '○ 未同期',
     })
   })
 

@@ -1,19 +1,10 @@
-import { Chip } from '@fohte/ui/chip'
-
 import type { SyncState } from '#lib/sync-client'
 
-const stateLabels: Record<SyncState, string> = {
-  saved: '保存済み',
-  unsynced: '未同期',
-  syncing: '同期中',
-  synced: '同期済み',
-}
-
-const stateTones: Record<SyncState, 'faint' | 'muted' | 'strong'> = {
-  saved: 'muted',
-  unsynced: 'strong',
-  syncing: 'muted',
-  synced: 'faint',
+const stateLabels: Record<SyncState, { symbol: string; label: string }> = {
+  saved: { symbol: '✓', label: '端末に保存済み' },
+  unsynced: { symbol: '○', label: '未同期' },
+  syncing: { symbol: '◐', label: '同期中' },
+  synced: { symbol: '●', label: '同期済み' },
 }
 
 type SyncStatusProps = {
@@ -21,15 +12,17 @@ type SyncStatusProps = {
 }
 
 export function SyncStatus({ state }: SyncStatusProps) {
+  const { symbol, label } = stateLabels[state]
+
   return (
-    <Chip
+    <span
       aria-live="polite"
+      className="font-mono text-xs text-muted-foreground-strong"
       data-state={state}
       role="status"
-      size="md"
-      tone={stateTones[state]}
     >
-      {stateLabels[state]}
-    </Chip>
+      <span aria-hidden="true">{symbol} </span>
+      {label}
+    </span>
   )
 }
