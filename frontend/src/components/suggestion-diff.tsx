@@ -112,7 +112,10 @@ export function SuggestionDiff({
         )}
       </Tag>
       {note !== undefined && note.length > 0 ? (
-        <Tag className="suggestion-diff-note text-sm text-muted-foreground">
+        <Tag
+          className="suggestion-diff-note text-sm text-muted-foreground"
+          style={{ marginInlineStart: inline ? '0.5rem' : undefined }}
+        >
           {note}
         </Tag>
       ) : null}
