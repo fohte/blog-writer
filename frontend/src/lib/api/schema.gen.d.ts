@@ -228,6 +228,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/proposals/premise': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post: operations['propose_premise']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/proposals/transition': {
     parameters: {
       query?: never
@@ -524,6 +540,42 @@ export interface components {
       from: number
       replacement: string
       to: number
+    }
+    PremiseError: {
+      message: string
+    }
+    PremiseEvent:
+      | {
+          data: components['schemas']['PremiseResponse']
+          /** @enum {string} */
+          event: 'result'
+        }
+      | {
+          data: components['schemas']['PremiseError']
+          /** @enum {string} */
+          event: 'error'
+        }
+    PremiseMessage: {
+      content: string
+      role: components['schemas']['PremiseMessageRole']
+    }
+    /** @enum {string} */
+    PremiseMessageRole: 'user' | 'assistant'
+    PremiseProposalInput: {
+      audience: string
+      purpose: string
+      thesis: string
+    }
+    PremiseRequest: {
+      headings: string[]
+      messages: components['schemas']['PremiseMessage'][]
+      premise: components['schemas']['PremiseProposalInput']
+    }
+    PremiseResponse: {
+      audience?: string
+      purpose?: string
+      reply: string
+      thesis?: string
     }
     /** @enum {string} */
     ProviderName: 'claude_code' | 'openai_compatible'
@@ -1558,6 +1610,39 @@ export interface operations {
         }
         content: {
           'text/event-stream': components['schemas']['OutlineProposalEvent']
+        }
+      }
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  propose_premise: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PremiseRequest']
+      }
+    }
+    responses: {
+      /** @description Premise discussion reply and field suggestions */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': components['schemas']['PremiseEvent']
         }
       }
       /** @description Invalid request body */

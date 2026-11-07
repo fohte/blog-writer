@@ -37,11 +37,16 @@ export type {
 
 type ScopedEffect<Value> = { scope: symbol; value: Value }
 
-type GetSuggestionLayerRanges = () => readonly SuggestionPosition[]
+type SuggestionLayerSnapshot = {
+  suggestions: readonly SuggestionPosition[]
+  inFlight: SuggestionPosition | null
+}
+
+type GetSuggestionLayerSnapshot = () => SuggestionLayerSnapshot
 
 const mountedSuggestionLayers = new WeakMap<
   EditorView,
-  Set<GetSuggestionLayerRanges>
+  Set<GetSuggestionLayerSnapshot>
 >()
 
 const replaceInFlight =
@@ -70,12 +75,14 @@ export class SuggestionLayerController<Metadata = unknown> {
   private readonly stateField: StateField<SuggestionLayerState<Metadata>>
   private nextGeneratedId = 0
   private readonly trackedRanges = new SuggestionRangeTracker()
-  private readonly getSuggestionLayerRanges: GetSuggestionLayerRanges = () => {
-    const state = this.view?.state.field(this.stateField, false)
-    return state
-      ? [...state.suggestions, ...(state.inFlight ? [state.inFlight] : [])]
-      : []
-  }
+  private readonly getSuggestionLayerSnapshot: GetSuggestionLayerSnapshot =
+    () => {
+      const state = this.view?.state.field(this.stateField, false)
+      return {
+        suggestions: state?.suggestions ?? [],
+        inFlight: state?.inFlight ?? null,
+      }
+    }
 
   constructor(private readonly options: SuggestionLayerOptions<Metadata> = {}) {
     this.stateField = StateField.define<SuggestionLayerState<Metadata>>({
@@ -187,17 +194,17 @@ export class SuggestionLayerController<Metadata = unknown> {
         this.view = view
         const viewLayers = mountedSuggestionLayers.get(view)
         if (viewLayers) {
-          viewLayers.add(this.getSuggestionLayerRanges)
+          viewLayers.add(this.getSuggestionLayerSnapshot)
         } else {
           mountedSuggestionLayers.set(
             view,
-            new Set([this.getSuggestionLayerRanges]),
+            new Set([this.getSuggestionLayerSnapshot]),
           )
         }
         return {
           destroy: () => {
             const viewLayers = mountedSuggestionLayers.get(view)
-            viewLayers?.delete(this.getSuggestionLayerRanges)
+            viewLayers?.delete(this.getSuggestionLayerSnapshot)
             if (viewLayers?.size === 0) mountedSuggestionLayers.delete(view)
             if (this.view === view) {
               this.view = null
@@ -327,8 +334,13 @@ export class SuggestionLayerController<Metadata = unknown> {
     if (!view) return false
 
     for (const getRanges of mountedSuggestionLayers.get(view) ?? []) {
-      if (getRanges === this.getSuggestionLayerRanges) continue
-      if (getRanges().some((range) => rangesOverlap(range, position))) {
+      if (getRanges === this.getSuggestionLayerSnapshot) continue
+      const { inFlight, suggestions } = getRanges()
+      if (
+        [...suggestions, ...(inFlight ? [inFlight] : [])].some((range) =>
+          rangesOverlap(range, position),
+        )
+      ) {
         return true
       }
     }
@@ -398,8 +410,9 @@ export class SuggestionLayerController<Metadata = unknown> {
       return true
     }
 
-    const state = view.state.field(this.stateField, false)
-    const suggestions = state?.suggestions ?? []
+    const suggestions = Array.from(mountedSuggestionLayers.get(view) ?? [])
+      .flatMap((getSnapshot) => getSnapshot().suggestions)
+      .sort((left, right) => left.from - right.from || left.to - right.to)
     if (suggestions.length === 0) return false
     const head = view.state.selection.main.head
     const next = suggestions.find(({ from }) => from > head) ?? suggestions[0]

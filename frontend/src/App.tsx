@@ -5,6 +5,13 @@ import { ArticleExportPopover } from '#components/article-export-popover'
 import { ArticleFileSyncPopover } from '#components/article-file-sync-popover'
 import { LlmSettingsScreen } from '#components/llm-settings-screen'
 import {
+  BodyRequestAccessory,
+  bodyRequestExtensions,
+  createOutlineProposalExtension,
+  OutlineProposalAccessory,
+  transitionProposalEditorExtensions,
+} from '#editor/index'
+import {
   ExportApiError,
   type ExportDestination,
   getExportDestinations,
@@ -15,6 +22,7 @@ import {
 } from '#lib/file-sync-api'
 import { useSyncClient } from '#lib/use-sync-client'
 import { ArticleWorkspace } from '#pages/article-workspace'
+import { PremiseProposalAccessory } from '#proposals/premise'
 
 export function App() {
   const [showSettings, setShowSettings] = useState(false)
@@ -99,6 +107,18 @@ export function App() {
       articles={articles}
       client={client}
       error={error}
+      bodyAccessory={(context) => (
+        <BodyRequestAccessory
+          doc={context.doc}
+          history={context.history}
+          view={context.view}
+        />
+      )}
+      editorExtensions={({ doc, history }) => [
+        ...bodyRequestExtensions({ doc, history }),
+        createOutlineProposalExtension({ doc, history }),
+        ...transitionProposalEditorExtensions({ doc, history }),
+      ]}
       headerActions={(context: ArticleEditorContext) => {
         const article = articles.find(({ id }) => id === context.articleId)
         return (
@@ -128,6 +148,17 @@ export function App() {
       onOpenSettings={() => {
         setShowSettings(true)
       }}
+      outlineRenderer={(context) => (
+        <OutlineProposalAccessory
+          doc={context.doc}
+          history={context.history}
+          view={context.view}
+          onHeadingSelected={context.onHeadingSelected}
+        />
+      )}
+      premiseAccessory={(context) => (
+        <PremiseProposalAccessory doc={context.doc} />
+      )}
       ready={canCreate}
       requiresAuthentication={requiresAuthentication}
       statuses={statuses}

@@ -90,7 +90,6 @@ function createRequestEditor(
       <BodyRequestAccessory
         doc={doc}
         history={history}
-        replaceBody={() => {}}
         presets={presets}
         view={accessoryView === undefined ? view : accessoryView}
       />,

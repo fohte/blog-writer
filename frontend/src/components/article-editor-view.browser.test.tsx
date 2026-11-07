@@ -822,8 +822,8 @@ First paragraph.
         contextHistory = history
         return null
       },
-      outlineAccessory: () => (
-        <div data-testid="outline-accessory">Outline accessory</div>
+      outlineRenderer: () => (
+        <div data-testid="outline-renderer">Outline renderer</div>
       ),
       premiseAccessory: () => (
         <div data-testid="premise-accessory">Premise accessory</div>
@@ -833,6 +833,9 @@ First paragraph.
 
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: /^Premise:/u }))
     })
     const reader = page.getByRole('textbox', { name: 'Reader' })
     await act(async () => {
@@ -848,7 +851,7 @@ First paragraph.
       relativeBodyContainer: host
         ?.querySelector('[data-testid="body-accessory"]')
         ?.parentElement?.classList.contains('relative'),
-      outlineAccessory: host?.querySelector('[data-testid="outline-accessory"]')
+      outlineRenderer: host?.querySelector('[data-testid="outline-renderer"]')
         ?.textContent,
       premiseAccessory: host?.querySelector('[data-testid="premise-accessory"]')
         ?.textContent,
@@ -866,11 +869,57 @@ First paragraph.
       sameHistory: true,
       bodyAccessory: 'Draft request',
       relativeBodyContainer: true,
-      outlineAccessory: 'Outline accessory',
+      outlineRenderer: 'Outline renderer',
       premiseAccessory: 'Premise accessory',
       sourceMaterial: 'Source material',
       savedPremise: 'Designers',
     })
+  })
+
+  it('mounts premise discussion only while the premise row is open', async () => {
+    const article: Article = {
+      id: 'article-premise-toggle',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    renderWorkspace(article, articleDoc, {
+      premiseAccessory: () => (
+        <div data-testid="premise-accessory">Discussion</div>
+      ),
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const readPremiseState = () => ({
+      expanded: host
+        ?.querySelector('[aria-label="Article premise"] button')
+        ?.getAttribute('aria-expanded'),
+      fieldCount:
+        host?.querySelectorAll('#article-premise-fields textarea').length ?? 0,
+      accessory:
+        host?.querySelector('[data-testid="premise-accessory"]')?.textContent ??
+        null,
+    })
+    const states = [readPremiseState()]
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: /^Premise:/u }))
+    })
+    states.push(readPremiseState())
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: /^Premise:/u }))
+    })
+    states.push(readPremiseState())
+
+    expect(states).toEqual([
+      { expanded: 'false', fieldCount: 0, accessory: null },
+      { expanded: 'true', fieldCount: 3, accessory: 'Discussion' },
+      { expanded: 'false', fieldCount: 0, accessory: null },
+    ])
   })
 
   it('shares move errors with the outline and clears them after reopening', async () => {
