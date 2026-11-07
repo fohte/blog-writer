@@ -54,6 +54,7 @@ export function ArticleWorkspace({
         onBack={() => {
           setSelectedArticleId(undefined)
         }}
+        onOpenSettings={onOpenSettings}
         onViewChange={onViewChange}
         outlineRenderer={outlineRenderer}
         premiseAccessory={premiseAccessory}

@@ -6,37 +6,38 @@ import * as Y from 'yjs'
 
 import { getBody, setBody, setPremise } from '#article/index'
 import {
-  type ArticleEditorLayout,
   type ArticleEditorPanel,
   ArticleEditorView,
+  type ArticleEditorViewProps,
 } from '#components/article-editor-view'
 import { PremiseProposalView } from '#components/premise-proposal-view'
 import { ArticleOutline } from '#outline/article-outline'
 
 type StoryArgs = {
-  layout: ArticleEditorLayout
-  initialMobilePanel: ArticleEditorPanel
+  layout: NonNullable<ArticleEditorViewProps['layout']>
+  initialPanel: ArticleEditorPanel
   sources: boolean
   status: 'ready' | 'loading' | 'error'
   integrations: boolean
   showSyncIssue: boolean
   longOutline: boolean
-  premiseOpen: boolean
+  empty: boolean
 }
 
 function ArticleEditorPreview({
   layout,
-  initialMobilePanel,
+  initialPanel,
   sources,
   status,
   integrations,
   showSyncIssue,
   longOutline,
-  premiseOpen,
+  empty,
 }: StoryArgs) {
   const doc = useMemo(() => {
     if (status !== 'ready') return undefined
     const nextDoc = new Y.Doc()
+    if (empty) return nextDoc
     const articleBody = longOutline
       ? Array.from(
           { length: 24 },
@@ -48,7 +49,7 @@ function ArticleEditorPreview({
     setPremise(nextDoc, 'purpose', 'Explain one useful idea')
     setPremise(nextDoc, 'claim', 'A focused article is easier to follow')
     return nextDoc
-  }, [longOutline, status])
+  }, [empty, longOutline, status])
 
   useEffect(() => {
     if (!doc) return
@@ -93,9 +94,10 @@ function ArticleEditorPreview({
               )
             : undefined
         }
-        initialMobilePanel={initialMobilePanel}
+        initialPanel={initialPanel}
         layout={layout}
         onBack={() => {}}
+        onOpenSettings={() => {}}
         onViewChange={integrations ? () => {} : undefined}
         outlineRenderer={
           integrations
@@ -118,7 +120,7 @@ function ArticleEditorPreview({
         }
         onTitleChange={() => {}}
         premiseAccessory={
-          premiseOpen
+          initialPanel === 'premise'
             ? () => (
                 <PremiseProposalView
                   draft=""
@@ -149,7 +151,6 @@ function ArticleEditorPreview({
               )
             : undefined
         }
-        initialPremiseOpen={premiseOpen}
         status={
           status === 'loading'
             ? { kind: 'loading' }
@@ -186,14 +187,14 @@ const meta = {
   title: 'Editor/ArticleEditorView',
   component: ArticleEditorPreview,
   args: {
-    initialMobilePanel: 'body',
+    initialPanel: 'body',
     layout: 'desktop',
     sources: false,
     status: 'ready',
     integrations: false,
     showSyncIssue: false,
     longOutline: false,
-    premiseOpen: false,
+    empty: false,
   },
 } satisfies Meta<StoryArgs>
 
@@ -201,17 +202,17 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const Desktop: Story = {
-  name: 'the desktop layout shows the workspace without injected controls.',
+  name: 'the desktop layout shows the outline, the article, and the memo tab side by side.',
 }
 
 export const DesktopWithIntegrations: Story = {
-  name: 'the desktop layout places injected controls near their related content.',
-  args: { integrations: true, sources: true, premiseOpen: true },
+  name: 'the desktop layout places injected controls near their related content with the sources tab open.',
+  args: { integrations: true, sources: true, initialPanel: 'sources' },
 }
 
 export const DesktopPremiseConversation: Story = {
-  name: 'the open premise shows a reply and a field-level suggestion.',
-  args: { premiseOpen: true },
+  name: 'the premise tab shows the premise fields, a reply, and a field-level suggestion.',
+  args: { initialPanel: 'premise' },
 }
 
 export const DesktopSyncIssue: Story = {
@@ -225,7 +226,7 @@ export const DesktopLongOutline: Story = {
 }
 
 export const TabletLongOutline: Story = {
-  name: 'the tablet layout places a long outline above the article body.',
+  name: 'the tablet layout stacks a long outline above the article and the side tabs below it.',
   args: { layout: 'responsive', longOutline: true },
   globals: { viewport: { value: 'tablet' } },
   parameters: {
@@ -243,12 +244,12 @@ export const TabletLongOutline: Story = {
 
 export const MobileArticle: Story = {
   name: 'the mobile layout opens on the article tab without injected controls.',
-  args: { layout: 'mobile', initialMobilePanel: 'body' },
+  args: { layout: 'mobile', initialPanel: 'body' },
 }
 
 export const MobileMemo: Story = {
   name: 'the mobile layout opens the memo tab with its empty state.',
-  args: { layout: 'mobile', initialMobilePanel: 'memo' },
+  args: { layout: 'mobile', initialPanel: 'memo' },
 }
 
 export const MobileArticleWithIntegrations: Story = {
@@ -256,13 +257,13 @@ export const MobileArticleWithIntegrations: Story = {
   args: {
     integrations: true,
     layout: 'mobile',
-    initialMobilePanel: 'body',
+    initialPanel: 'body',
   },
 }
 
 export const MobileOutline: Story = {
   name: 'the mobile layout opens on the outline tab without injected controls.',
-  args: { layout: 'mobile', initialMobilePanel: 'outline' },
+  args: { layout: 'mobile', initialPanel: 'outline' },
 }
 
 export const MobileOutlineWithIntegrations: Story = {
@@ -270,7 +271,7 @@ export const MobileOutlineWithIntegrations: Story = {
   args: {
     integrations: true,
     layout: 'mobile',
-    initialMobilePanel: 'outline',
+    initialPanel: 'outline',
   },
 }
 
@@ -278,17 +279,22 @@ export const MobileSources: Story = {
   name: 'the mobile layout adds a sources tab when reference material is available.',
   args: {
     layout: 'mobile',
-    initialMobilePanel: 'sources',
+    initialPanel: 'sources',
     sources: true,
   },
 }
 
 export const Opening: Story = {
-  name: 'the editor shows a loading message while the article opens.',
+  name: 'the editor shows gray placeholder lines in the article column while the article opens.',
   args: { status: 'loading' },
 }
 
 export const OpenFailed: Story = {
   name: 'the editor shows an error when the article cannot be opened.',
   args: { status: 'error' },
+}
+
+export const EmptyArticle: Story = {
+  name: 'the empty article invites the writer to start with a memo or the premise.',
+  args: { empty: true },
 }
