@@ -101,11 +101,11 @@ export const Error: Story = {
 export const Conflict: Story = {
   name: 'the updated destination file is ready for review again',
   args: {
+    canPublish: true,
     diff: {
       original: 'title: "Sample article"\n\nNew destination body',
       modified: 'title: "Sample article"\n\nUpdated body',
     },
-    error:
-      '公開先のファイルが変更されています。 The file changed. 最新の差分を取り直しました。',
+    error: '公開先のファイルが変更されています。最新の差分を取り直しました。',
   },
 }

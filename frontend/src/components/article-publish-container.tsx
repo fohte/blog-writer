@@ -294,7 +294,7 @@ export function ArticlePublishContainer({
           refreshRequestId !== undefined &&
           isCurrentRequest(refreshRequestId)
         ) {
-          setError(`${conflictMessage} 最新の差分を取り直しました。`)
+          setError(`${conflictMessage}最新の差分を取り直しました。`)
         }
         return
       }

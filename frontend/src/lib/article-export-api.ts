@@ -17,8 +17,8 @@ export class ExportApiError extends Error {
 }
 
 export class ExportConflictError extends ExportApiError {
-  constructor(message: string) {
-    super(message, 409)
+  constructor() {
+    super('公開先のファイルが変更されています。', 409)
     this.name = 'ExportConflictError'
   }
 }
@@ -69,11 +69,7 @@ function parseResponse<T>(
           ? value['error']
           : `HTTP ${String(response.status)}`
       if (response.status === 409) {
-        return errAsync(
-          new ExportConflictError(
-            `公開先のファイルが変更されています。${message.length > 0 ? ` ${message}` : ''}`,
-          ),
-        )
+        return errAsync(new ExportConflictError())
       }
       return errAsync(
         new ExportApiError(`${label}: ${message}`, response.status),

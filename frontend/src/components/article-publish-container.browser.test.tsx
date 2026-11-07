@@ -206,7 +206,7 @@ async function exerciseConflictRefresh() {
         document.querySelector('[role="status"]')?.textContent !==
           '公開先を確認しています…' ||
         document.querySelector('[role="alert"]')?.textContent !==
-          '公開先のファイルが変更されています。 The file changed.'
+          '公開先のファイルが変更されています。'
       )
         throw new Error('Waiting for the automatic diff refresh')
     })
@@ -223,7 +223,7 @@ async function exerciseConflictRefresh() {
     if (
       document.querySelector('[role="status"]') ||
       document.querySelector('[role="alert"]')?.textContent !==
-        '公開先のファイルが変更されています。 The file changed. 最新の差分を取り直しました。'
+        '公開先のファイルが変更されています。最新の差分を取り直しました。'
     )
       throw new Error('Waiting for the refreshed diff')
   })
@@ -239,8 +239,15 @@ function readDestinationState() {
     selectedDestination:
       document.querySelector('[aria-label="公開先"]')?.textContent ?? null,
     frontmatter:
-      document.querySelector<HTMLTextAreaElement>('[aria-label="frontmatter"]')
-        ?.value ?? null,
+      [...document.querySelectorAll('label')]
+        .find((label) =>
+          [...label.childNodes].some(
+            (node) =>
+              node.nodeType === Node.TEXT_NODE &&
+              node.textContent?.trim() === 'frontmatter',
+          ),
+        )
+        ?.querySelector<HTMLTextAreaElement>('textarea')?.value ?? null,
     unavailableMessage:
       [...document.querySelectorAll('[role="status"]')]
         .map(({ textContent }) => textContent)
@@ -560,7 +567,7 @@ describe('ArticlePublishContainer', () => {
     expect(await exerciseConflictRefresh()).toEqual({
       refreshingState: {
         publishButtonAfterConflict: false,
-        error: '公開先のファイルが変更されています。 The file changed.',
+        error: '公開先のファイルが変更されています。',
         status: '公開先を確認しています…',
         diffContents: null,
         publishButtonDisabled: null,
@@ -590,7 +597,7 @@ describe('ArticlePublishContainer', () => {
       refreshedState: {
         publishButtonAfterConflict: true,
         error:
-          '公開先のファイルが変更されています。 The file changed. 最新の差分を取り直しました。',
+          '公開先のファイルが変更されています。最新の差分を取り直しました。',
         status: null,
         diffContents: [
           'Latest body',

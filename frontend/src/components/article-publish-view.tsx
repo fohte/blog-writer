@@ -80,25 +80,29 @@ export function ArticlePublishView({
           </SelectContent>
         </Select>
       </label>
-      <Input
-        aria-label="公開 slug"
-        autoComplete="off"
-        disabled={busy}
-        onChange={(event) => {
-          onSlugChange(event.currentTarget.value)
-        }}
-        placeholder="example-post"
-        value={slug}
-      />
-      <Textarea
-        aria-label="frontmatter"
-        disabled={busy}
-        onChange={(event) => {
-          onFrontmatterChange(event.currentTarget.value)
-        }}
-        rows={5}
-        value={frontmatter}
-      />
+      <label className="flex flex-col gap-1 text-sm">
+        公開 slug
+        <Input
+          autoComplete="off"
+          disabled={busy}
+          onChange={(event) => {
+            onSlugChange(event.currentTarget.value)
+          }}
+          placeholder="example-post"
+          value={slug}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-sm">
+        frontmatter
+        <Textarea
+          disabled={busy}
+          onChange={(event) => {
+            onFrontmatterChange(event.currentTarget.value)
+          }}
+          rows={5}
+          value={frontmatter}
+        />
+      </label>
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={
