@@ -8,11 +8,7 @@ import * as Y from 'yjs'
 import { setBody } from '#article/body'
 import { ArticlePublishContainer } from '#components/article-publish-container'
 import type { ExportDestination } from '#lib/article-export-api'
-import type {
-  Article,
-  ArticleExportSettings,
-  SyncClientApi,
-} from '#lib/sync-client'
+import type { Article, SyncClientApi } from '#lib/sync-client'
 
 vi.mock('#components/text-diff-view', () => ({
   TextDiffView: ({
@@ -28,6 +24,10 @@ vi.mock('#components/text-diff-view', () => ({
     </div>
   ),
 }))
+
+type ArticleExportSettings = Parameters<
+  SyncClientApi['updateArticleExportSettings']
+>[1]
 
 let root: Root | undefined
 let doc: Y.Doc | undefined

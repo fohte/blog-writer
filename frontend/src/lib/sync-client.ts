@@ -37,7 +37,7 @@ export type Article = {
   exportFrontmatter?: string
 }
 
-export type ArticleExportSettings = {
+type ArticleExportSettings = {
   exportDestinationId?: string | undefined
   exportSlug?: string | undefined
   exportFrontmatter?: string | undefined
