@@ -60,7 +60,10 @@ export function ResearchProgress({
         ) : (
           <List aria-label="検索の進捗">
             {queries.map((query, index) => (
-              <li className="py-1 text-sm" key={`${index.toString()}-${query}`}>
+              <li
+                className="list-inside py-1 text-sm"
+                key={`${index.toString()}-${query}`}
+              >
                 {query}
               </li>
             ))}
