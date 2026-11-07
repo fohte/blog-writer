@@ -17,7 +17,7 @@ import {
 import * as Y from 'yjs'
 
 import { getBody, getPremise, setPremise } from '#article/index'
-import type { Heading, PremiseField } from '#article/types'
+import type { PremiseField } from '#article/types'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
@@ -40,6 +40,9 @@ export type ArticleEditorContext = {
   history: MoveHistory
   view: EditorView | null
   replaceBody: (value: string) => Result<void, EditorNotReadyError>
+}
+type ArticleOutlineRenderContext = ArticleEditorContext & {
+  onHeadingSelected: () => void
 }
 
 class EditorNotReadyError extends Error {
@@ -65,13 +68,13 @@ export interface ArticleEditorViewProps {
   status?: { kind: 'loading' } | { kind: 'error'; message: string } | undefined
   layout?: ArticleEditorLayout
   initialMobilePanel?: ArticleEditorPanel
+  initialPremiseOpen?: boolean
   /** Keeps extension instances stable by calling the factory once per article document. */
   editorExtensions?:
     ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
   bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  outlineAccessory?:
-    | ((context: ArticleEditorContext, heading?: Heading) => ReactNode)
-    | undefined
+  outlineRenderer?:
+    ((context: ArticleOutlineRenderContext) => ReactNode) | undefined
   premiseAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
   headerActions?: ((context: ArticleEditorContext) => ReactNode) | undefined
   sourcesPanel?:
@@ -91,7 +94,7 @@ export type ArticleEditorIntegrationProps = Pick<
   | 'editorExtensions'
   | 'headerActions'
   | 'onViewChange'
-  | 'outlineAccessory'
+  | 'outlineRenderer'
   | 'premiseAccessory'
   | 'sourcesPanel'
 >
@@ -155,9 +158,10 @@ export function ArticleEditorView({
   status,
   layout = 'responsive',
   initialMobilePanel = 'body',
+  initialPremiseOpen = false,
   editorExtensions,
   bodyAccessory,
-  outlineAccessory,
+  outlineRenderer,
   premiseAccessory,
   headerActions,
   sourcesPanel,
@@ -175,10 +179,10 @@ export function ArticleEditorView({
   const [premise, setPremiseValue] = useState(() =>
     doc ? getPremise(doc) : { audience: null, purpose: null, claim: null },
   )
+  const [premiseOpen, setPremiseOpen] = useState(initialPremiseOpen)
   const history = doc ? getMoveHistory(doc) : undefined
   const body = doc ? getBody(doc) : undefined
   const [view, setView] = useState<EditorView | null>(null)
-  const [activeHeading, setActiveHeading] = useState<Heading>()
   const editorRef = useRef<MarkdownEditorHandle>(null)
   const editorViewRef = useRef<EditorView | null>(null)
   const suppliedExtensions =
@@ -242,33 +246,28 @@ export function ArticleEditorView({
     if (panel === 'memo')
       return doc ? <MemoPanel doc={doc} {...(view ? { view } : {})} /> : null
     if (panel === 'outline') {
-      if (!context || (!view && !outlineAccessory)) return null
-      const outline = view ? (
+      if (!context || (!view && !outlineRenderer)) return null
+      const onHeadingSelected = () => {
+        if (isMobile) setMobilePanel('body')
+      }
+      const outlineContext = { ...context, onHeadingSelected }
+      return outlineRenderer ? (
+        outlineRenderer(outlineContext)
+      ) : view ? (
         <ArticleOutline
           doc={context.doc}
           history={context.history}
-          onActiveHeadingChange={setActiveHeading}
-          onHeadingSelected={() => {
-            if (isMobile) setMobilePanel('body')
-          }}
+          onHeadingSelected={onHeadingSelected}
           view={view}
         />
       ) : null
-      if (!outlineAccessory) return outline
-      return (
-        <div className="flex flex-col gap-4">
-          {outlineAccessory(context, activeHeading)}
-          {outline}
-        </div>
-      )
     }
-    if (panel === 'sources') {
+    if (panel === 'sources')
       return typeof sourcesPanel === 'function'
         ? context
           ? sourcesPanel(context)
           : null
         : (sourcesPanel ?? null)
-    }
     return doc && body && history ? (
       <Panel className="min-h-96 overflow-auto rounded-lg p-4">
         <div className="relative">
@@ -307,6 +306,7 @@ export function ArticleEditorView({
   const layoutClasses = {
     pagePadding: isMobile ? 'px-4' : 'px-4 sm:px-6',
     premiseColumns: isMobile ? '' : 'sm:grid-cols-3',
+    premiseAccessorySpan: isMobile ? '' : 'sm:col-span-3',
     workspaceColumns: isMobile ? '' : 'lg:grid-cols-3',
     sidebar: isMobile
       ? ''
@@ -347,26 +347,51 @@ export function ArticleEditorView({
               aria-label="Article premise"
               className="flex flex-col gap-3"
             >
-              <div className={`grid gap-3 ${layoutClasses.premiseColumns}`}>
-                {premiseFields.map(({ field, label }) => (
-                  <label
-                    className="flex flex-col gap-2 text-sm font-medium"
-                    htmlFor={`premise-${field}`}
-                    key={field}
-                  >
-                    {label}
-                    <Textarea
-                      id={`premise-${field}`}
-                      onChange={(event) => {
-                        setPremiseField(field, event.currentTarget.value)
-                      }}
-                      placeholder={`${label} for this article`}
-                      value={premise[field] ?? ''}
-                    />
-                  </label>
-                ))}
-              </div>
-              {context ? premiseAccessory?.(context) : null}
+              <button
+                aria-controls="article-premise-fields"
+                aria-expanded={premiseOpen}
+                className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-left text-sm"
+                onClick={() => {
+                  setPremiseOpen((open) => !open)
+                }}
+                type="button"
+              >
+                <span className="min-w-0 truncate">
+                  Premise: Reader {premise.audience ?? 'unset'} · Purpose{' '}
+                  {premise.purpose ?? 'unset'} · Claim{' '}
+                  {premise.claim ?? 'unset'}
+                </span>
+                <span aria-hidden="true">{premiseOpen ? 'Hide' : 'Edit'}</span>
+              </button>
+              {premiseOpen ? (
+                <div
+                  className={`grid gap-3 ${layoutClasses.premiseColumns}`}
+                  id="article-premise-fields"
+                >
+                  {premiseFields.map(({ field, label }) => (
+                    <label
+                      className="flex flex-col gap-2 text-sm font-medium"
+                      htmlFor={`premise-${field}`}
+                      key={field}
+                    >
+                      {label}
+                      <Textarea
+                        id={`premise-${field}`}
+                        onChange={(event) => {
+                          setPremiseField(field, event.currentTarget.value)
+                        }}
+                        placeholder={`${label} for this article`}
+                        value={premise[field] ?? ''}
+                      />
+                    </label>
+                  ))}
+                  {context ? (
+                    <div className={layoutClasses.premiseAccessorySpan}>
+                      {premiseAccessory?.(context)}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </section>
           ) : null}
         </div>

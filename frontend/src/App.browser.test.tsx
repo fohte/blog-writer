@@ -19,6 +19,7 @@ import {
   setBody,
   setFindings,
 } from '#article/index'
+import { listMemos } from '#article/memos'
 import { isRecord } from '#lib/guards'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
@@ -53,6 +54,18 @@ function serverEvents(
   return new Response(body, {
     headers: { 'content-type': 'text/event-stream' },
   })
+}
+
+function proposalResponse(): Response {
+  return new Response(
+    `data: ${JSON.stringify({
+      event: 'result',
+      data: {
+        suggestions: [{ from: 0, to: 17, replacement: '# Revised section' }],
+      },
+    })}\n\n`,
+    { headers: { 'content-type': 'text/event-stream' } },
+  )
 }
 
 function installFetch(
@@ -137,6 +150,7 @@ afterEach(() => {
   doc.destroy()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('the application research and evidence integrations', () => {
@@ -438,6 +452,7 @@ describe('the application research and evidence integrations', () => {
       url,
       fileName: null,
       checkedAt: '2026-02-01T00:00:00.000Z',
+      status: 'unavailable',
       summary: 'The earlier summary.',
     })._unsafeUnwrap()
     setFindings(doc, 'source-existing', [
@@ -447,7 +462,7 @@ describe('the application research and evidence integrations', () => {
         quote: 'Earlier quote.',
       },
     ])._unsafeUnwrap()
-    let bodySaveCount = 0
+    const savedBodies: Array<{ url: string; body: unknown }> = []
     installFetch((requestUrl, init) => {
       if (requestUrl === '/api/research/jobs')
         return serverEvents([
@@ -481,7 +496,14 @@ describe('the application research and evidence integrations', () => {
             },
           },
         ])
-      if (init.method === 'PUT') bodySaveCount += 1
+      if (init.method === 'PUT')
+        savedBodies.push({
+          url: requestUrl,
+          body:
+            typeof init.body === 'string'
+              ? (JSON.parse(init.body) as unknown)
+              : init.body,
+        })
       return new Response(null, { status: 204 })
     })
     await renderApp()
@@ -500,11 +522,12 @@ describe('the application research and evidence integrations', () => {
     })
 
     const readResult = () => ({
-      bodySaveCount,
-      sources: listSources(doc).map(({ id, title, url, summary }) => ({
+      savedBodies,
+      sources: listSources(doc).map(({ id, title, url, status, summary }) => ({
         id,
         title,
         url,
+        status,
         summary,
       })),
       findings: listFindings(doc).map(({ sourceId, text, quote }) => ({
@@ -514,12 +537,18 @@ describe('the application research and evidence integrations', () => {
       })),
     })
     expect(readResult()).toEqual({
-      bodySaveCount: 0,
+      savedBodies: [
+        {
+          url: '/api/articles/article-a/source-bodies/source-existing',
+          body: { body: 'New body.' },
+        },
+      ],
       sources: [
         {
           id: 'source-existing',
           title: 'Existing source',
           url,
+          status: 'ready',
           summary: 'The latest summary.',
         },
       ],
@@ -718,6 +747,362 @@ describe('the application research and evidence integrations', () => {
           verdict: 'supported',
         },
       ],
+    })
+  })
+
+  it('starts heading research from a blank body request preset', async () => {
+    let requestBody: unknown
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs') {
+        if (typeof init.body === 'string')
+          requestBody = JSON.parse(init.body) as unknown
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: { task: 'key_points', data: { sources: [] } },
+              sources: [],
+            },
+          },
+        ])
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    const editorContent = host?.querySelector<HTMLElement>('.cm-content')
+    if (!editorContent) throw new Error('The article editor did not render')
+    const editorView = EditorView.findFromDOM(editorContent)
+    if (!editorView) throw new Error('The article editor view did not render')
+    const articleBody = getBody(doc).toJSON()
+    editorView.dispatch({
+      selection: { anchor: articleBody.indexOf('A sentence') + 2 },
+    })
+    editorView.focus()
+    const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
+    act(() => {
+      editorView.contentDOM.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          key: 'k',
+          [modifier]: true,
+        }),
+      )
+    })
+    await act(async () => {
+      await userEvent.click(
+        page
+          .getByRole('group', { name: '定型の依頼' })
+          .getByRole('button', { name: 'この見出しについて調べる' }),
+      )
+    })
+    await waitFor(() => {
+      if (requestBody === undefined) throw new Error('Research did not start')
+    })
+
+    const readResult = () => ({
+      requestBody,
+      articleBody: getBody(doc).toJSON(),
+      sourceCount: listSources(doc).length,
+      findingCount: listFindings(doc).length,
+    })
+    expect(readResult()).toEqual({
+      requestBody: { task: 'key_points', question: 'Research topic' },
+      articleBody,
+      sourceCount: 0,
+      findingCount: 0,
+    })
+  })
+
+  it('routes heading research through the configured local bridge', async () => {
+    window.localStorage.setItem('blog-writer.llm.route', 'local')
+    window.localStorage.setItem(
+      'blog-writer.llm.bridge-url',
+      'http://localhost:4141',
+    )
+    let requestUrl: string | undefined
+    let requestBody: unknown
+    installFetch((url, init) => {
+      requestUrl = url
+      if (typeof init.body === 'string')
+        requestBody = JSON.parse(init.body) as unknown
+      return serverEvents([
+        {
+          event: 'result',
+          data: {
+            analysis: {
+              task: 'key_points',
+              data: {
+                sources: [
+                  {
+                    id: 'source-local',
+                    summary: 'A local source summary.',
+                    key_points: [],
+                  },
+                ],
+              },
+            },
+            sources: [
+              {
+                id: 'source-local',
+                url: 'https://example.invalid/local',
+                title: null,
+                status: 'unavailable',
+                body: null,
+              },
+            ],
+          },
+        },
+      ])
+    })
+    await renderApp()
+    await openArticle()
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Research topic' }),
+      )
+      await userEvent.click(
+        page.getByRole('button', { name: 'この見出しについて調べる' }),
+      )
+    })
+    await waitFor(() => {
+      if (requestBody === undefined) throw new Error('Research did not start')
+    })
+
+    const readResult = () => ({
+      requestUrl,
+      requestBody,
+      sources: listSources(doc).map(({ id, title, url, status, summary }) => ({
+        id,
+        title,
+        url,
+        status,
+        summary,
+      })),
+    })
+    expect(readResult()).toEqual({
+      requestUrl: 'http://localhost:4141/api/research/jobs',
+      requestBody: { task: 'key_points', question: 'Research topic' },
+      sources: [
+        {
+          id: 'source-local',
+          title: 'example.invalid',
+          url: 'https://example.invalid/local',
+          status: 'unavailable',
+          summary: 'A local source summary.',
+        },
+      ],
+    })
+  })
+
+  it('rolls back source bodies when a later body save fails', async () => {
+    const savedBodyIds: string[] = []
+    const deletedBodyIds: string[] = []
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'key_points',
+                data: {
+                  sources: [
+                    {
+                      id: 'source-one',
+                      summary: 'First summary.',
+                      key_points: [],
+                    },
+                    {
+                      id: 'source-two',
+                      summary: 'Second summary.',
+                      key_points: [],
+                    },
+                  ],
+                },
+              },
+              sources: [
+                {
+                  id: 'source-one',
+                  url: 'https://example.invalid/first',
+                  title: 'First source',
+                  status: 'available',
+                  body: 'First source body.',
+                },
+                {
+                  id: 'source-two',
+                  url: 'https://example.invalid/second',
+                  title: 'Second source',
+                  status: 'available',
+                  body: 'Second source body.',
+                },
+              ],
+            },
+          },
+        ])
+      const sourceId = url.split('/source-bodies/')[1] ?? ''
+      if (init.method === 'PUT') {
+        savedBodyIds.push(sourceId)
+        return sourceId === 'source-two'
+          ? new Response('error', { status: 500 })
+          : new Response(null, { status: 204 })
+      }
+      if (init.method === 'DELETE') {
+        deletedBodyIds.push(sourceId)
+        return new Response(null, { status: 204 })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Research topic' }),
+      )
+      await userEvent.click(
+        page.getByRole('button', { name: 'この見出しについて調べる' }),
+      )
+    })
+    const saveError = '資料本文を保存できませんでした: HTTP 500'
+    await waitFor(() => {
+      if (!document.body.textContent.includes(saveError))
+        throw new Error('The source body save error was not shown')
+    })
+
+    const readResult = () => ({
+      savedBodyIds,
+      deletedBodyIds,
+      sources: listSources(doc),
+      findings: listFindings(doc),
+      errorVisible: document.body.textContent.includes(saveError),
+    })
+    expect(readResult()).toEqual({
+      savedBodyIds: ['source-one', 'source-two'],
+      deletedBodyIds: ['source-one', 'source-two'],
+      sources: [],
+      findings: [],
+      errorVisible: true,
+    })
+  })
+
+  it('keeps outline proposals when showing heading research controls', async () => {
+    await page.viewport(375, 812)
+    installFetch((url) =>
+      url === '/api/proposals/outline'
+        ? proposalResponse()
+        : new Response('', { status: 404 }),
+    )
+    setBody(
+      doc,
+      '# Starting point\n\n## Second section\n\nA useful paragraph.\n',
+    )
+    await renderApp()
+    await openArticle()
+    await act(async () => {
+      await userEvent.click(page.getByRole('tab', { name: 'Outline' }))
+    })
+
+    vi.useFakeTimers()
+    act(() => {
+      setBody(
+        doc,
+        '# Starting point!\n\n## Second section\n\nA useful paragraph.\n',
+      )
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+      for (let index = 0; index < 8; index += 1) await Promise.resolve()
+    })
+    vi.useRealTimers()
+
+    const readOutlineState = () => ({
+      outlineCount: host?.querySelectorAll('[aria-label="Article outline"]')
+        .length,
+      proposalButtons: [...(host?.querySelectorAll('button') ?? [])]
+        .map((button) => button.textContent.trim())
+        .filter((text) => text === '✓ 採用' || text === '× 却下'),
+      researchEntryVisible:
+        host !== undefined &&
+        (host.textContent.includes('この見出しについて調べる') ||
+          host.textContent.includes(
+            '見出しを選ぶと、その内容を調べられます。',
+          )),
+    })
+    const proposalState = readOutlineState()
+
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('option', { name: /Second section/u }),
+      )
+    })
+
+    const actual = () => ({
+      proposalState,
+      selectedTab: host
+        ?.querySelector('[role="tab"][aria-selected="true"]')
+        ?.textContent.trim(),
+    })
+    expect(actual()).toEqual({
+      proposalState: {
+        outlineCount: 1,
+        proposalButtons: ['✓ 採用', '× 却下'],
+        researchEntryVisible: true,
+      },
+      selectedTab: 'Article',
+    })
+  })
+
+  it('inserts a memo as a heading from the article workspace', async () => {
+    installFetch(() => new Response('', { status: 404 }))
+    await page.viewport(1280, 800)
+    setBody(doc, '# Starting point\n\nA useful paragraph.\n')
+    await renderApp()
+    await openArticle()
+    await act(async () => {
+      await userEvent.fill(
+        page.getByRole('textbox', { name: '新しいメモ' }),
+        'A useful thought',
+      )
+      await userEvent.click(page.getByRole('button', { name: '追加' }))
+      await userEvent.click(page.getByRole('button', { name: '採用先を選ぶ' }))
+      await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
+    })
+
+    const readResult = () => ({
+      body: getBody(doc).toJSON(),
+      memos: listMemos(doc).map(({ text, state }) => ({
+        text,
+        state: state.kind,
+      })),
+    })
+    expect(readResult()).toEqual({
+      body: '# Starting point\n\nA useful paragraph.\n\n# A useful thought\n\n',
+      memos: [{ text: 'A useful thought', state: 'adopted' }],
+    })
+  })
+
+  it('moves a body block from the article editor menu', async () => {
+    installFetch(() => new Response('', { status: 404 }))
+    await page.viewport(1280, 800)
+    setBody(doc, '# First section\n\none\n\n# Second section\n\ntwo\n')
+    await renderApp()
+    await openArticle()
+    const moveHandle = page.getByRole('button', { name: 'Move block' }).first()
+    await act(async () => {
+      await userEvent.click(moveHandle)
+    })
+    const menuOpened = document.body.querySelector('[role="menu"]') !== null
+    await act(async () => {
+      await userEvent.click(page.getByRole('menuitem', { name: 'Move down' }))
+    })
+
+    const readResult = () => ({
+      body: getBody(doc).toJSON(),
+      menuOpened,
+    })
+    expect(readResult()).toEqual({
+      body: '# Second section\n\ntwo\n\n# First section\n\none\n',
+      menuOpened: true,
     })
   })
 })

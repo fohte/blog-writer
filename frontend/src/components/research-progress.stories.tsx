@@ -28,3 +28,11 @@ export const Interrupted: Story = {
     defaultOpen: true,
   },
 }
+
+export const Cancelling: Story = {
+  name: '調査の中止処理中であることを示す',
+  args: {
+    status: 'cancelling',
+    defaultOpen: true,
+  },
+}

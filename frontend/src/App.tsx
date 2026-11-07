@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { ArticleEditorContext } from '#components/article-editor-view'
 import { ArticleExportPopover } from '#components/article-export-popover'
 import { ArticleFileSyncPopover } from '#components/article-file-sync-popover'
-import { HeadingResearchAccessory } from '#components/heading-research-accessory'
 import { LlmSettingsScreen } from '#components/llm-settings-screen'
-import type { ResearchProgressStatus } from '#components/research-progress'
+import {
+  BodyRequestAccessory,
+  bodyRequestExtensions,
+  createOutlineProposalExtension,
+  transitionProposalEditorExtensions,
+} from '#editor/index'
 import {
   ExportApiError,
   type ExportDestination,
@@ -15,32 +19,20 @@ import {
   type FileSyncConfiguration,
   getFileSyncConfiguration,
 } from '#lib/file-sync-api'
-import { loadLlmSettings } from '#lib/llm-settings'
 import { useSyncClient } from '#lib/use-sync-client'
 import { ArticleWorkspace } from '#pages/article-workspace'
-import { researchFromHeading } from '#research/research-from-heading'
+import { PremiseProposalAccessory } from '#proposals/premise'
+import { HeadingResearchOutline } from '#research/heading-research-outline'
 import { SourcePanel } from '#research/source-panel'
-
-type ResearchProgressState = {
-  status: ResearchProgressStatus
-  queries: string[]
-  error?: string
-}
-
-function isConnectionInterrupted(message: string): boolean {
-  return (
-    message.includes('Failed to connect') ||
-    message.includes('Failed to read LLM stream') ||
-    message.includes('stream ended without a result')
-  )
-}
+import { useHeadingResearch } from '#research/use-heading-research'
 
 export function App() {
   const [showSettings, setShowSettings] = useState(false)
-  const [researchProgress, setResearchProgress] = useState<
-    Record<string, ResearchProgressState>
-  >({})
-  const researchControllers = useRef(new Map<string, AbortController>())
+  const {
+    cancelResearch,
+    progress: researchProgress,
+    startResearch,
+  } = useHeadingResearch()
   const [fileSyncConfiguration, setFileSyncConfiguration] =
     useState<FileSyncConfiguration>()
   const [fileSyncConfigurationError, setFileSyncConfigurationError] =
@@ -58,144 +50,6 @@ export function App() {
     requiresAuthentication,
     createArticle,
   } = useSyncClient()
-
-  const cancelResearch = useCallback((articleId: string) => {
-    researchControllers.current.get(articleId)?.abort()
-    researchControllers.current.delete(articleId)
-    setResearchProgress((current) => ({
-      ...current,
-      [articleId]: {
-        ...(current[articleId] ?? { status: 'running', queries: [] }),
-        status: 'interrupted',
-      },
-    }))
-  }, [])
-
-  const startResearch = useCallback(
-    (
-      context: ArticleEditorContext,
-      headingText: string,
-      questionInput: string,
-    ) => {
-      if (researchControllers.current.has(context.articleId)) return
-      const controller = new AbortController()
-      researchControllers.current.set(context.articleId, controller)
-      setResearchProgress((current) => ({
-        ...current,
-        [context.articleId]: { status: 'running', queries: [] },
-      }))
-      const settings = loadLlmSettings(() => window.localStorage)
-      if (settings.isErr()) {
-        if (researchControllers.current.get(context.articleId) !== controller)
-          return
-        researchControllers.current.delete(context.articleId)
-        setResearchProgress((current) => ({
-          ...current,
-          [context.articleId]: {
-            status: 'failed',
-            queries: [],
-            error: 'LLM 設定を読み込めませんでした。',
-          },
-        }))
-        return
-      }
-      const question = questionInput.trim() || headingText
-      void researchFromHeading(
-        fetch,
-        context.articleId,
-        context.doc,
-        settings.value,
-        question,
-        controller.signal,
-        (query) => {
-          setResearchProgress((current) => ({
-            ...current,
-            [context.articleId]: {
-              ...(current[context.articleId] ?? {
-                status: 'running',
-                queries: [],
-              }),
-              status: 'running',
-              queries: [...(current[context.articleId]?.queries ?? []), query],
-            },
-          }))
-        },
-        () => {
-          setResearchProgress((current) => ({
-            ...current,
-            [context.articleId]: {
-              ...(current[context.articleId] ?? {
-                status: 'running',
-                queries: [],
-              }),
-              status: 'saving',
-            },
-          }))
-        },
-      ).match(
-        () => {
-          if (researchControllers.current.get(context.articleId) !== controller)
-            return
-          researchControllers.current.delete(context.articleId)
-          setResearchProgress((current) => ({
-            ...current,
-            [context.articleId]: {
-              ...(current[context.articleId] ?? {
-                status: 'running',
-                queries: [],
-              }),
-              status: 'complete',
-            },
-          }))
-        },
-        (researchError) => {
-          if (researchControllers.current.get(context.articleId) !== controller)
-            return
-          researchControllers.current.delete(context.articleId)
-          const interrupted =
-            controller.signal.aborted ||
-            isConnectionInterrupted(researchError.message)
-          setResearchProgress((current) => ({
-            ...current,
-            [context.articleId]: {
-              ...(current[context.articleId] ?? {
-                status: 'running',
-                queries: [],
-              }),
-              status: interrupted ? 'interrupted' : 'failed',
-              ...(interrupted ? {} : { error: researchError.message }),
-            },
-          }))
-        },
-      )
-    },
-    [],
-  )
-
-  useEffect(() => {
-    const runningArticleId = Object.entries(researchProgress).find(
-      ([, progress]) => progress.status === 'running',
-    )?.[0]
-    if (runningArticleId === undefined) return
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      cancelResearch(runningArticleId)
-    }
-    window.addEventListener('keydown', handleEscape, true)
-    return () => {
-      window.removeEventListener('keydown', handleEscape, true)
-    }
-  }, [cancelResearch, researchProgress])
-
-  useEffect(
-    () => () => {
-      for (const controller of researchControllers.current.values())
-        controller.abort()
-      researchControllers.current.clear()
-    },
-    [],
-  )
 
   useEffect(() => {
     let active = true
@@ -260,6 +114,39 @@ export function App() {
       articles={articles}
       client={client}
       error={error}
+      bodyAccessory={(context) => (
+        <BodyRequestAccessory
+          doc={context.doc}
+          history={context.history}
+          presets={[
+            {
+              id: 'research-from-heading',
+              label: 'この見出しについて調べる',
+              onSelect: ({ context: requestContext, instruction }) => {
+                const headingText =
+                  requestContext.headings
+                    .at(-1)
+                    ?.replace(/^#{1,6}(?:[ \t]+|$)/u, '')
+                    .trim() ?? ''
+                if (instruction.trim().length === 0 && headingText.length === 0)
+                  return
+                startResearch(
+                  context.articleId,
+                  context.doc,
+                  headingText,
+                  instruction,
+                )
+              },
+            },
+          ]}
+          view={context.view}
+        />
+      )}
+      editorExtensions={({ doc, history }) => [
+        ...bodyRequestExtensions({ doc, history }),
+        createOutlineProposalExtension({ doc, history }),
+        ...transitionProposalEditorExtensions({ doc, history }),
+      ]}
       headerActions={(context: ArticleEditorContext) => {
         const article = articles.find(({ id }) => id === context.articleId)
         return (
@@ -285,16 +172,24 @@ export function App() {
           </>
         )
       }}
-      outlineAccessory={(context, heading) => (
-        <HeadingResearchAccessory
+      onCreateArticle={createArticle}
+      onOpenSettings={() => {
+        setShowSettings(true)
+      }}
+      outlineRenderer={(context) => (
+        <HeadingResearchOutline
           busy={
             researchProgress[context.articleId]?.status === 'running' ||
-            researchProgress[context.articleId]?.status === 'saving'
+            researchProgress[context.articleId]?.status === 'saving' ||
+            researchProgress[context.articleId]?.status === 'cancelling'
           }
-          heading={heading}
-          onResearch={(question) => {
-            if (heading) startResearch(context, heading.text, question)
+          doc={context.doc}
+          history={context.history}
+          onResearch={(headingText, question) => {
+            startResearch(context.articleId, context.doc, headingText, question)
           }}
+          view={context.view}
+          onHeadingSelected={context.onHeadingSelected}
         />
       )}
       sourcesPanel={(context) => {
@@ -308,7 +203,8 @@ export function App() {
                 ? undefined
                 : {
                     ...progress,
-                    ...(progress.status === 'running'
+                    ...(progress.status === 'running' ||
+                    progress.status === 'saving'
                       ? {
                           onCancel: () => {
                             cancelResearch(context.articleId)
@@ -320,10 +216,9 @@ export function App() {
           />
         )
       }}
-      onCreateArticle={createArticle}
-      onOpenSettings={() => {
-        setShowSettings(true)
-      }}
+      premiseAccessory={(context) => (
+        <PremiseProposalAccessory doc={context.doc} />
+      )}
       ready={canCreate}
       requiresAuthentication={requiresAuthentication}
       statuses={statuses}

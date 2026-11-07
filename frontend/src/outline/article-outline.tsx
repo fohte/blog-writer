@@ -22,7 +22,7 @@ export interface ArticleOutlineProps {
   view: EditorView
   activeFrom?: number
   onHeadingSelected?: () => void
-  onActiveHeadingChange?: (heading: Heading | undefined) => void
+  onActiveHeadingChange?: ((heading: Heading | undefined) => void) | undefined
   proposalState?: OutlineProposalState
   onProposalAccept?: (id: string) => void
   onProposalReject?: (id: string) => void

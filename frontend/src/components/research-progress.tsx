@@ -4,7 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@fohte/ui/popover'
 import { useEffect, useState } from 'react'
 
 export type ResearchProgressStatus =
-  'running' | 'saving' | 'complete' | 'interrupted' | 'failed'
+  'running' | 'saving' | 'cancelling' | 'complete' | 'interrupted' | 'failed'
 
 export type ResearchProgressProps = {
   status: ResearchProgressStatus
@@ -17,6 +17,7 @@ export type ResearchProgressProps = {
 const statusLabels: Record<ResearchProgressStatus, string> = {
   running: '調査中',
   saving: '資料を保存しています',
+  cancelling: '調査を中断しています',
   complete: '調査が完了しました',
   interrupted: '調査を中断しました',
   failed: '調査に失敗しました',
@@ -35,6 +36,7 @@ export function ResearchProgress({
     if (
       status === 'running' ||
       status === 'saving' ||
+      status === 'cancelling' ||
       status === 'interrupted' ||
       status === 'failed'
     )
@@ -70,7 +72,7 @@ export function ResearchProgress({
         {status === 'failed' && error !== undefined ? (
           <p role="alert">{error}</p>
         ) : null}
-        {status === 'running' && onCancel ? (
+        {(status === 'running' || status === 'saving') && onCancel ? (
           <Button onClick={onCancel} type="button" variant="outline">
             中止
           </Button>

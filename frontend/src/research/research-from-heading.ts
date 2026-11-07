@@ -1,4 +1,11 @@
-import { err, errAsync, ok, okAsync, type ResultAsync } from 'neverthrow'
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from 'neverthrow'
 import * as Y from 'yjs'
 
 import {
@@ -11,8 +18,11 @@ import {
 } from '#article/index'
 import type { components } from '#lib/api/schema.gen.d.ts'
 import type { LlmSettings } from '#lib/llm-settings'
-import { saveSourceBody } from '#lib/source-api'
-import { runResearchJob } from '#research/research-job'
+import { deleteSourceBody, saveSourceBody } from '#lib/source-api'
+import {
+  ResearchJobInterruptedError,
+  runResearchJob,
+} from '#research/research-job'
 import { getSourceHost } from '#research/source-format'
 
 type ResearchJobSource = components['schemas']['ResearchJobSource']
@@ -30,6 +40,16 @@ type SourcePlan = {
   saveBody: boolean
 }
 
+class ResearchBodyRollbackError extends Error {
+  constructor(cause: Error) {
+    super(
+      '調査結果を保存できませんでした。保存済みの資料本文が残っている可能性があります。',
+      { cause },
+    )
+    this.name = 'ResearchBodyRollbackError'
+  }
+}
+
 function sourceUrl(source: ResearchJobSource): string {
   return source.final_url ?? source.url
 }
@@ -42,7 +62,6 @@ function planSources(doc: Y.Doc, result: ResearchJobResult): SourcePlan[] {
       source.url === null ? [] : [[source.url, source] as const],
     ),
   )
-  const plannedByUrl = new Map<string, Source>()
   const analysisSources =
     result.analysis.task === 'key_points' ? result.analysis.data.sources : []
   const analyses = new Map(
@@ -53,28 +72,13 @@ function planSources(doc: Y.Doc, result: ResearchJobResult): SourcePlan[] {
     const url = sourceUrl(source)
     if (seenUrls.has(url)) return []
     seenUrls.add(url)
-    const existing = existingByUrl.get(url) ?? plannedByUrl.get(url)
+    const existing = existingByUrl.get(url)
     const id = existing?.id ?? source.id
     const providedTitle = source.title?.trim()
     const title =
       providedTitle !== undefined && providedTitle.length > 0
         ? providedTitle
         : (getSourceHost(url) ?? url)
-    if (!existing) {
-      plannedByUrl.set(url, {
-        id,
-        kind: 'url',
-        title,
-        url,
-        fileName: null,
-        checkedAt: null,
-        status: 'unavailable',
-        summary: '',
-      })
-    }
-    const matchingExisting = existingSources.find(
-      ({ id: sourceId }) => sourceId === id,
-    )
     const analysis = analyses.get(source.id)
     return [
       {
@@ -82,16 +86,42 @@ function planSources(doc: Y.Doc, result: ResearchJobResult): SourcePlan[] {
         id,
         url,
         title,
-        ...(matchingExisting === undefined
-          ? {}
-          : { existing: matchingExisting }),
+        ...(existing === undefined ? {} : { existing }),
         ...(analysis === undefined ? {} : { analysis }),
         saveBody:
-          existing === undefined &&
+          (existing === undefined || existing.status === 'unavailable') &&
           source.status === 'available' &&
           typeof source.body === 'string',
       },
     ]
+  })
+}
+
+function rollbackSourceBodies(
+  fetcher: typeof fetch,
+  articleId: string,
+  sourceIds: string[],
+): ResultAsync<void, Error> {
+  return ResultAsync.fromPromise(
+    Promise.all(
+      sourceIds.map((sourceId) =>
+        deleteSourceBody(fetcher, articleId, sourceId).match(
+          () => undefined,
+          (error) => error,
+        ),
+      ),
+    ),
+    (cause) =>
+      new ResearchBodyRollbackError(
+        cause instanceof Error
+          ? cause
+          : new Error('資料本文を削除できませんでした。'),
+      ),
+  ).andThen((errors) => {
+    const firstError = errors.find((error) => error !== undefined)
+    return firstError === undefined
+      ? okAsync(undefined)
+      : errAsync(new ResearchBodyRollbackError(firstError))
   })
 }
 
@@ -100,43 +130,89 @@ function saveBodies(
   articleId: string,
   plans: SourcePlan[],
   signal: AbortSignal,
-  index = 0,
-): ResultAsync<void, Error> {
-  const plan = plans[index]
-  if (plan === undefined) return okAsync(undefined)
-  if (
-    !plan.saveBody ||
-    plan.source.body === undefined ||
-    plan.source.body === null
-  )
-    return saveBodies(fetcher, articleId, plans, signal, index + 1)
+): ResultAsync<string[], Error> {
+  const attemptedSourceIds: string[] = []
+  const saveNext = (
+    index: number,
+    savedSourceIds: string[],
+  ): ResultAsync<string[], Error> => {
+    const plan = plans[index]
+    if (plan === undefined) return okAsync(savedSourceIds)
+    if (
+      !plan.saveBody ||
+      plan.source.body === undefined ||
+      plan.source.body === null
+    )
+      return saveNext(index + 1, savedSourceIds)
 
-  return saveSourceBody(
-    fetcher,
-    articleId,
-    plan.id,
-    plan.source.body,
-    signal,
-  ).andThen(() => saveBodies(fetcher, articleId, plans, signal, index + 1))
+    attemptedSourceIds.push(plan.id)
+    return saveSourceBody(
+      fetcher,
+      articleId,
+      plan.id,
+      plan.source.body,
+      signal,
+    ).andThen(() => saveNext(index + 1, [...savedSourceIds, plan.id]))
+  }
+
+  return saveNext(0, []).orElse((saveError) =>
+    rollbackSourceBodies(fetcher, articleId, attemptedSourceIds).andThen(() =>
+      errAsync(
+        signal.aborted
+          ? new ResearchJobInterruptedError('調査を中断しました。', saveError)
+          : saveError,
+      ),
+    ),
+  )
+}
+
+function validateSourceChanges(
+  doc: Y.Doc,
+  plans: SourcePlan[],
+): Error | undefined {
+  const currentById = new Map(
+    listSources(doc).map((source) => [source.id, source]),
+  )
+  const plannedIds = new Set<string>()
+
+  for (const plan of plans) {
+    if (plan.id.trim().length === 0 || plan.title.trim().length === 0)
+      return new Error('調査結果に有効な資料 ID またはタイトルがありません。')
+    if (plannedIds.has(plan.id))
+      return new Error('調査結果に重複した資料 ID があります。')
+    plannedIds.add(plan.id)
+
+    const current = currentById.get(plan.id)
+    if (plan.existing !== undefined) {
+      if (current?.url !== plan.url)
+        return new Error(
+          '調査中に資料が変更されたため、結果を保存できませんでした。',
+        )
+    } else if (current !== undefined) {
+      return new Error('調査結果の資料 ID が既存の資料と重複しています。')
+    }
+  }
+
+  return undefined
 }
 
 function saveResultInDocument(
   doc: Y.Doc,
   plans: SourcePlan[],
-): Error | undefined {
-  let saveError: Error | undefined
+): Result<void, Error> {
   const checkedAt = new Date().toISOString()
-  doc.transact(() => {
+  return doc.transact(() => {
     for (const plan of plans) {
       const isAvailable =
         plan.source.status === 'available' &&
-        (plan.saveBody || plan.existing !== undefined)
+        (plan.saveBody ||
+          (plan.existing !== undefined &&
+            plan.existing.status !== 'unavailable'))
       const summary = plan.analysis?.summary ?? plan.existing?.summary ?? ''
       const sourceResult = plan.existing
         ? updateSource(doc, plan.id, {
-            ...(isAvailable
-              ? { status: 'ready' as const, checkedAt, summary }
-              : {}),
+            summary,
+            ...(isAvailable ? { status: 'ready' as const, checkedAt } : {}),
           })
         : addSource(doc, {
             id: plan.id,
@@ -149,8 +225,7 @@ function saveResultInDocument(
             summary,
           })
       if (sourceResult.isErr()) {
-        saveError = sourceResult.error
-        return
+        return err(sourceResult.error)
       }
       if (!plan.analysis || plan.analysis.key_points.length === 0) continue
       const existingFindings = listFindings(doc, plan.id)
@@ -164,12 +239,11 @@ function saveResultInDocument(
       ]
       const findingsResult = setFindings(doc, plan.id, nextFindings)
       if (findingsResult.isErr()) {
-        saveError = findingsResult.error
-        return
+        return err(findingsResult.error)
       }
     }
+    return ok(undefined)
   })
-  return saveError
 }
 
 export function researchFromHeading(
@@ -189,13 +263,36 @@ export function researchFromHeading(
     signal,
     onProgress,
   ).andThen((result) => {
-    if (signal.aborted) return errAsync(new Error('調査を中断しました。'))
     const plans = planSources(doc, result)
+    const validationError = validateSourceChanges(doc, plans)
+    if (validationError) return errAsync(validationError)
     onSaving()
-    return saveBodies(fetcher, articleId, plans, signal).andThen(() => {
-      if (signal.aborted) return errAsync(new Error('調査を中断しました。'))
-      const error = saveResultInDocument(doc, plans)
-      return error ? err(error) : ok(undefined)
-    })
+    return saveBodies(fetcher, articleId, plans, signal).andThen(
+      (savedSourceIds) => {
+        if (signal.aborted)
+          return rollbackSourceBodies(
+            fetcher,
+            articleId,
+            savedSourceIds,
+          ).andThen(() =>
+            errAsync(new ResearchJobInterruptedError('調査を中断しました。')),
+          )
+        const error = validateSourceChanges(doc, plans)
+        if (error)
+          return rollbackSourceBodies(
+            fetcher,
+            articleId,
+            savedSourceIds,
+          ).andThen(() => errAsync(error))
+        const saveResult = saveResultInDocument(doc, plans)
+        if (saveResult.isErr())
+          return rollbackSourceBodies(
+            fetcher,
+            articleId,
+            savedSourceIds,
+          ).andThen(() => err(saveResult.error))
+        return ok(undefined)
+      },
+    )
   })
 }

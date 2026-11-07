@@ -1,4 +1,4 @@
-import { EditorState, Transaction } from '@codemirror/state'
+import { EditorState, type Extension, Transaction } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +8,8 @@ import * as Y from 'yjs'
 import { getBody, setBody } from '#article/body'
 import { blockMoved } from '#article/index'
 import { transitionProposalEditorExtensions } from '#editor/index'
+import { createSuggestionLayer } from '#editor/suggestion-layer'
+import { isRecord } from '#lib/guards'
 import { saveLlmSettings } from '#lib/llm-settings'
 import { createMoveHistory } from '#outline/index'
 
@@ -68,6 +70,19 @@ function getRequestBody(options: RequestInit | undefined): unknown {
   return parsed
 }
 
+function getRequestSeamIds(options: RequestInit | undefined): string[] {
+  const request = getRequestBody(options)
+  if (!isRecord(request) || !Array.isArray(request['seams'])) {
+    throw new Error('Expected proposal request seams')
+  }
+  return request['seams'].map((seam) => {
+    if (!isRecord(seam) || typeof seam['id'] !== 'string') {
+      throw new Error('Expected a seam identifier')
+    }
+    return seam['id']
+  })
+}
+
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === 'string') return input
   if (input instanceof URL) return input.href
@@ -84,7 +99,10 @@ function transitionResponse(suggestions: unknown[]): Response {
   )
 }
 
-function createEditor(content = beforeMove): EditorView {
+function createEditor(
+  content = beforeMove,
+  additionalExtensions: Extension[] = [],
+): EditorView {
   const doc = new Y.Doc()
   setBody(doc, content)
   const body = getBody(doc)
@@ -100,6 +118,7 @@ function createEditor(content = beforeMove): EditorView {
         extensions: [
           history.extension,
           yCollab(body, null, { undoManager: false }),
+          ...additionalExtensions,
           ...transitionProposalEditorExtensions({ doc, history }),
         ],
       }),
@@ -609,6 +628,188 @@ describe('transition proposal extension', () => {
         ],
       },
       documentText: content,
+    })
+  })
+
+  it('omits transition seams that overlap a body request suggestion after a block move', async () => {
+    const bodyRequestLayer = createSuggestionLayer()
+    const view = createEditor(afterMove, [bodyRequestLayer.extension])
+    const bodyText = 'Section D begins here.'
+    const bodyFrom = afterMove.indexOf(bodyText)
+    const bodyTo = bodyFrom + bodyText.length
+    const bodyProposal = bodyRequestLayer.setSuggestions([
+      {
+        id: 'body-request-proposal',
+        from: bodyFrom,
+        to: bodyTo,
+        replacement: 'Section D presents another point.',
+      },
+    ])
+    if (bodyProposal.isErr()) throw new Error('Could not set the body proposal')
+
+    let resolveFetch: ((response: Response) => void) | undefined
+    const fetchMock = vi.fn<typeof fetch>(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    dispatchMoveMarker(view, movedRange)
+    await act(async () => {
+      await vi.waitFor(() => {
+        if (fetchMock.mock.calls.length !== 1) {
+          throw new Error('Expected a transition request')
+        }
+      })
+    })
+    const requestSeamIds = getRequestSeamIds(fetchMock.mock.calls[0]?.[1])
+    const seamRanges = [
+      {
+        from: afterMove.indexOf('Section A ends here.'),
+        to:
+          afterMove.indexOf('Section C begins here.') +
+          'Section C begins here.'.length,
+      },
+      {
+        from: afterMove.indexOf('Section C begins here.'),
+        to:
+          afterMove.indexOf('Section B begins here.') +
+          'Section B begins here.'.length,
+      },
+    ]
+
+    await act(async () => {
+      resolveFetch?.(
+        transitionResponse([
+          {
+            seam_id: 'seam-0',
+            ...seamRanges[0],
+            replacement: 'Section A leads into Section C.',
+          },
+          {
+            seam_id: 'seam-1',
+            ...seamRanges[1],
+            replacement: 'Section C leads into Section B.',
+          },
+        ]),
+      )
+      await vi.waitFor(() => {
+        if (view.dom.querySelectorAll('.cm-suggestion-widget').length !== 2) {
+          throw new Error('Expected both non-overlapping proposals')
+        }
+      })
+    })
+
+    const readOutput = () => ({
+      requestSeamIds,
+      body: view.state.doc.toString(),
+      proposalRanges: Array.from(
+        view.dom.querySelectorAll<HTMLElement>('.cm-suggestion-widget'),
+        (widget) => [
+          Number(widget.dataset['suggestionFrom']),
+          Number(widget.dataset['suggestionTo']),
+        ],
+      ),
+    })
+    expect(readOutput()).toEqual({
+      requestSeamIds: ['seam-0', 'seam-1'],
+      body: afterMove,
+      proposalRanges: [
+        [seamRanges[0]?.from, seamRanges[0]?.to],
+        [bodyFrom, bodyTo],
+      ],
+    })
+  })
+
+  it('drops transition results that start to overlap a body request while pending', async () => {
+    const bodyRequestLayer = createSuggestionLayer()
+    const view = createEditor(beforeMove, [bodyRequestLayer.extension])
+    let resolveFetch: ((response: Response) => void) | undefined
+    const fetchMock = vi.fn<typeof fetch>(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await act(async () => {
+      moveBlock(view, '# Section C', '# Section B')
+      await vi.waitFor(() => {
+        if (fetchMock.mock.calls.length !== 1) {
+          throw new Error('Expected a transition request')
+        }
+      })
+    })
+    const requestSeamIds = getRequestSeamIds(fetchMock.mock.calls[0]?.[1])
+    const bodyText = 'Section B begins here.'
+    const bodyFrom = afterMove.indexOf(bodyText)
+    const bodyTo = bodyFrom + bodyText.length
+    const bodyProposal = bodyRequestLayer.setSuggestions([
+      {
+        id: 'body-request-proposal',
+        from: bodyFrom,
+        to: bodyTo,
+        replacement: 'Section B starts with a different point.',
+      },
+    ])
+    if (bodyProposal.isErr()) throw new Error('Could not set the body proposal')
+    const seamRanges = [
+      {
+        from: afterMove.indexOf('Section A ends here.'),
+        to:
+          afterMove.indexOf('Section C begins here.') +
+          'Section C begins here.'.length,
+      },
+      {
+        from: afterMove.indexOf('Section C begins here.'),
+        to: bodyTo,
+      },
+      {
+        from: bodyFrom,
+        to:
+          afterMove.indexOf('Section D begins here.') +
+          'Section D begins here.'.length,
+      },
+    ]
+
+    await act(async () => {
+      resolveFetch?.(
+        transitionResponse(
+          seamRanges.map((range, index) => ({
+            seam_id: `seam-${String(index)}`,
+            ...range,
+            replacement: `Fictional transition ${String(index)}.`,
+          })),
+        ),
+      )
+      await vi.waitFor(() => {
+        if (view.dom.querySelectorAll('.cm-suggestion-widget').length !== 2) {
+          throw new Error('Expected only the non-overlapping proposal')
+        }
+      })
+    })
+
+    const readOutput = () => ({
+      requestSeamIds,
+      body: view.state.doc.toString(),
+      proposalRanges: Array.from(
+        view.dom.querySelectorAll<HTMLElement>('.cm-suggestion-widget'),
+        (widget) => [
+          Number(widget.dataset['suggestionFrom']),
+          Number(widget.dataset['suggestionTo']),
+        ],
+      ),
+    })
+    expect(readOutput()).toEqual({
+      requestSeamIds: ['seam-0', 'seam-1', 'seam-2'],
+      body: afterMove,
+      proposalRanges: [
+        [seamRanges[0]?.from, seamRanges[0]?.to],
+        [bodyFrom, bodyTo],
+      ],
     })
   })
 

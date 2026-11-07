@@ -3,7 +3,8 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::{
     app::AppState,
     llm::handler::{__path_status, status},
-    proposal_outline, proposal_transition, research_claim_evidence, research_key_points,
+    proposal_outline, proposal_premise, proposal_transition, research_claim_evidence,
+    research_key_points,
 };
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -16,5 +17,6 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(super::research_job::router())
         .merge(crate::write_from_key_points::router())
         .merge(crate::proposal_body_request::router())
+        .merge(proposal_premise::router())
         .merge(proposal_transition::router())
 }

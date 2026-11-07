@@ -3,10 +3,17 @@ import { errAsync, type ResultAsync } from 'neverthrow'
 import type { components } from '#lib/api/schema.gen.d.ts'
 import { isRecord } from '#lib/guards'
 import type { LlmSettings } from '#lib/llm-settings'
-import { postLlmResult } from '#lib/llm-sse'
+import { LlmStreamInterruptedError, postLlmResult } from '#lib/llm-sse'
 
 type ResearchJobRequest = components['schemas']['ResearchJobRequest']
 type ResearchJobResult = components['schemas']['ResearchJobResult']
+
+export class ResearchJobInterruptedError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause })
+    this.name = 'ResearchJobInterruptedError'
+  }
+}
 
 function isResearchJobResult(value: unknown): value is ResearchJobResult {
   if (!isRecord(value) || !Array.isArray(value['sources'])) return false
@@ -40,7 +47,9 @@ function isResearchJobResult(value: unknown): value is ResearchJobResult {
       (source['final_url'] === undefined ||
         source['final_url'] === null ||
         typeof source['final_url'] === 'string') &&
-      (source['title'] === undefined || typeof source['title'] === 'string') &&
+      (source['title'] === undefined ||
+        source['title'] === null ||
+        typeof source['title'] === 'string') &&
       (source['body'] === undefined ||
         source['body'] === null ||
         typeof source['body'] === 'string') &&
@@ -80,5 +89,9 @@ export function runResearchJob(
       )
         onProgress(data['query'])
     },
-  })
+  }).mapErr((error) =>
+    error instanceof LlmStreamInterruptedError
+      ? new ResearchJobInterruptedError('調査の接続が中断されました。', error)
+      : error,
+  )
 }

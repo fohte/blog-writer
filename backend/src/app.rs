@@ -307,6 +307,7 @@ mod tests {
     #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[case::research_job("/api/research/jobs")]
     #[case::proposal_body_request("/api/proposals/body-request")]
+    #[case::proposal_premise("/api/proposals/premise")]
     #[case::proposal_transition("/api/proposals/transition")]
     #[test_attr(tokio::test)]
     async fn includes_llm_use_case_routes_in_api_only_mode(#[case] uri: &'static str) {
@@ -345,6 +346,7 @@ mod tests {
     #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[case::research_job("/api/research/jobs")]
     #[case::proposal_body_request("/api/proposals/body-request")]
+    #[case::proposal_premise("/api/proposals/premise")]
     #[case::proposal_transition("/api/proposals/transition")]
     #[test_attr(tokio::test)]
     async fn allows_cors_preflight_from_an_allowed_origin(#[case] uri: &'static str) {
@@ -418,6 +420,52 @@ mod tests {
             .contains_key("/api/proposals/transition");
 
         assert!(actual);
+    }
+
+    #[test]
+    fn openapi_describes_the_premise_proposal_contract() {
+        let api = serde_json::to_value(openapi()).expect("OpenAPI document serializes");
+        let schemas = &api["components"]["schemas"];
+        let actual = json!({
+            "operation": {
+                "id": api["paths"]["/api/proposals/premise"]["post"]["operationId"],
+                "request": api["paths"]["/api/proposals/premise"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+                "response": api["paths"]["/api/proposals/premise"]["post"]["responses"]["200"]["content"]["text/event-stream"]["schema"]["$ref"]
+            },
+            "premise_required": schemas["PremiseProposalInput"]["required"],
+            "premise_properties": schemas["PremiseProposalInput"]["properties"],
+            "message_role": schemas["PremiseMessageRole"],
+            "response_required": schemas["PremiseResponse"]["required"],
+            "response_properties": schemas["PremiseResponse"]["properties"]
+        });
+
+        assert_eq!(
+            actual,
+            json!({
+                "operation": {
+                    "id": "propose_premise",
+                    "request": "#/components/schemas/PremiseRequest",
+                    "response": "#/components/schemas/PremiseEvent"
+                },
+                "premise_required": ["audience", "purpose", "thesis"],
+                "premise_properties": {
+                    "audience": {"type": "string"},
+                    "purpose": {"type": "string"},
+                    "thesis": {"type": "string"}
+                },
+                "message_role": {
+                    "type": "string",
+                    "enum": ["user", "assistant"]
+                },
+                "response_required": ["reply"],
+                "response_properties": {
+                    "audience": {"type": "string"},
+                    "purpose": {"type": "string"},
+                    "reply": {"type": "string"},
+                    "thesis": {"type": "string"}
+                }
+            })
+        );
     }
 
     #[rstest]

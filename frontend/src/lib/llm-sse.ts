@@ -19,6 +19,13 @@ type LlmStreamOptions<TBody, TResult> = {
   isResult: (data: unknown) => data is TResult
 }
 
+export class LlmStreamInterruptedError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause })
+    this.name = 'LlmStreamInterruptedError'
+  }
+}
+
 function parseEnvelope(
   eventName: string,
   rawData: string,
@@ -97,7 +104,8 @@ function readResult<TBody, TResult>(
   const read = (): ResultAsync<TResult, Error> =>
     ResultAsync.fromPromise(
       reader.read(),
-      (cause) => new Error('Failed to read LLM stream', { cause }),
+      (cause) =>
+        new LlmStreamInterruptedError('Failed to read LLM stream', cause),
     ).andThen(({ done, value }) => {
       if (done) {
         buffer += decoder.decode()
@@ -116,7 +124,9 @@ function readResult<TBody, TResult>(
         ) {
           return okAsync(finalEvent.value.value)
         }
-        return errAsync(new Error('LLM stream ended without a result'))
+        return errAsync(
+          new LlmStreamInterruptedError('LLM stream ended without a result'),
+        )
       }
 
       buffer += decoder.decode(value, { stream: true })
@@ -146,7 +156,8 @@ export function postLlmResult<TBody, TResult>(
       body: JSON.stringify(options.body),
       signal: options.signal,
     }),
-    (cause) => new Error('Failed to connect to the LLM API', { cause }),
+    (cause) =>
+      new LlmStreamInterruptedError('Failed to connect to the LLM API', cause),
   ).andThen((response) => {
     if (!response.ok) {
       return errAsync(
