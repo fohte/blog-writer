@@ -452,14 +452,26 @@ describe('transition proposal extension', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    const readOutput = () => ({
-      request: getRequestBody(fetchMock.mock.calls[0]?.[1]),
-      // The cursor stays at the start of the article, which focuses the first proposal.
-      focusedAddedText: Array.from(
+    const readAddedText = () =>
+      Array.from(
         view.dom.querySelectorAll('.suggestion-diff-added'),
         (node) => node.textContent,
-      ).join(''),
-      seamLines: readSeamLines(view),
+      ).join('')
+    // The cursor stays at the start of the article, which focuses the first proposal.
+    const firstAddedText = readAddedText()
+    const seamLines = readSeamLines(view)
+    const seamButton = view.dom.querySelector<HTMLButtonElement>(
+      '.cm-suggestion-seam-button',
+    )
+    if (!seamButton) throw new Error('The second proposal is not collapsed')
+    act(() => {
+      seamButton.click()
+    })
+
+    const readOutput = () => ({
+      request: getRequestBody(fetchMock.mock.calls[0]?.[1]),
+      addedText: [firstAddedText, readAddedText()],
+      seamLines,
       documentText: view.state.doc.toString(),
     })
     expect(readOutput()).toEqual({
@@ -503,7 +515,7 @@ describe('transition proposal extension', () => {
           },
         ],
       },
-      focusedAddedText: 'restoredrestored',
+      addedText: ['restoredrestored', 'shiftedshifted'],
       seamLines: [second],
       documentText: afterMove,
     })
