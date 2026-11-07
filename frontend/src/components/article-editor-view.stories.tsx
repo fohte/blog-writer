@@ -11,6 +11,7 @@ import {
   ArticleEditorView,
 } from '#components/article-editor-view'
 import { PremiseProposalView } from '#components/premise-proposal-view'
+import { ArticleOutline } from '#outline/article-outline'
 
 type StoryArgs = {
   layout: ArticleEditorLayout
@@ -96,11 +97,21 @@ function ArticleEditorPreview({
         layout={layout}
         onBack={() => {}}
         onViewChange={integrations ? () => {} : undefined}
-        outlineAccessory={
+        outlineRenderer={
           integrations
-            ? () => (
-                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
-                  Outline suggestion
+            ? ({ doc: articleDoc, history, onHeadingSelected, view }) => (
+                <div className="flex flex-col gap-4">
+                  <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                    Outline suggestion
+                  </div>
+                  {view ? (
+                    <ArticleOutline
+                      doc={articleDoc}
+                      history={history}
+                      onHeadingSelected={onHeadingSelected}
+                      view={view}
+                    />
+                  ) : null}
                 </div>
               )
             : undefined

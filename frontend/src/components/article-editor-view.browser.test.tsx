@@ -697,8 +697,8 @@ First paragraph.
         contextHistory = history
         return null
       },
-      outlineAccessory: () => (
-        <div data-testid="outline-accessory">Outline accessory</div>
+      outlineRenderer: () => (
+        <div data-testid="outline-renderer">Outline renderer</div>
       ),
       premiseAccessory: () => (
         <div data-testid="premise-accessory">Premise accessory</div>
@@ -726,7 +726,7 @@ First paragraph.
       relativeBodyContainer: host
         ?.querySelector('[data-testid="body-accessory"]')
         ?.parentElement?.classList.contains('relative'),
-      outlineAccessory: host?.querySelector('[data-testid="outline-accessory"]')
+      outlineRenderer: host?.querySelector('[data-testid="outline-renderer"]')
         ?.textContent,
       premiseAccessory: host?.querySelector('[data-testid="premise-accessory"]')
         ?.textContent,
@@ -744,7 +744,7 @@ First paragraph.
       sameHistory: true,
       bodyAccessory: 'Draft request',
       relativeBodyContainer: true,
-      outlineAccessory: 'Outline accessory',
+      outlineRenderer: 'Outline renderer',
       premiseAccessory: 'Premise accessory',
       sourceMaterial: 'Source material',
       savedPremise: 'Designers',

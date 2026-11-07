@@ -29,7 +29,6 @@ export function ArticleWorkspace({
   editorExtensions,
   headerActions,
   onViewChange,
-  outlineAccessory,
   outlineRenderer,
   premiseAccessory,
   sourcesPanel,
@@ -54,7 +53,6 @@ export function ArticleWorkspace({
           setSelectedArticleId(undefined)
         }}
         onViewChange={onViewChange}
-        outlineAccessory={outlineAccessory}
         outlineRenderer={outlineRenderer}
         premiseAccessory={premiseAccessory}
         requiresAuthentication={requiresAuthentication}

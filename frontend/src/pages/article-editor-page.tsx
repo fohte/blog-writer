@@ -29,7 +29,6 @@ export function ArticleEditorPage({
   editorExtensions,
   headerActions,
   onViewChange,
-  outlineAccessory,
   outlineRenderer,
   premiseAccessory,
   sourcesPanel,
@@ -61,7 +60,6 @@ export function ArticleEditorPage({
       onBack={onBack}
       onViewChange={onViewChange}
       onLoginAgain={onLoginAgain}
-      outlineAccessory={outlineAccessory}
       outlineRenderer={outlineRenderer}
       premiseAccessory={premiseAccessory}
       onTitleChange={(title) => {

@@ -73,7 +73,6 @@ export interface ArticleEditorViewProps {
   editorExtensions?:
     ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
   bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  outlineAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
   outlineRenderer?:
     ((context: ArticleOutlineRenderContext) => ReactNode) | undefined
   premiseAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
@@ -94,7 +93,6 @@ export type ArticleEditorIntegrationProps = Pick<
   | 'editorExtensions'
   | 'headerActions'
   | 'onViewChange'
-  | 'outlineAccessory'
   | 'outlineRenderer'
   | 'premiseAccessory'
   | 'sourcesPanel'
@@ -162,7 +160,6 @@ export function ArticleEditorView({
   initialPremiseOpen = false,
   editorExtensions,
   bodyAccessory,
-  outlineAccessory,
   outlineRenderer,
   premiseAccessory,
   headerActions,
@@ -247,13 +244,12 @@ export function ArticleEditorView({
   const renderPanel = (panel: ArticleEditorPanel) => {
     if (panel === 'memo') return doc ? <MemoPanel doc={doc} /> : null
     if (panel === 'outline') {
-      if (!context || (!view && !outlineAccessory && !outlineRenderer))
-        return null
+      if (!context || (!view && !outlineRenderer)) return null
       const onHeadingSelected = () => {
         if (isMobile) setMobilePanel('body')
       }
       const outlineContext = { ...context, onHeadingSelected }
-      const outline = outlineRenderer ? (
+      return outlineRenderer ? (
         outlineRenderer(outlineContext)
       ) : view ? (
         <ArticleOutline
@@ -263,13 +259,6 @@ export function ArticleEditorView({
           view={view}
         />
       ) : null
-      if (!outlineAccessory) return outline
-      return (
-        <div className="flex flex-col gap-4">
-          {outlineAccessory(context)}
-          {outline}
-        </div>
-      )
     }
     if (panel === 'sources') return sourcesPanel ?? null
     return doc && body && history ? (
