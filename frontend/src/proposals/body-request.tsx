@@ -113,6 +113,10 @@ export function bodyRequestExtensions(
   ]
 }
 
+export function openBodyRequest(doc: Y.Doc): void {
+  getBodyRequestManager(doc).openRequest()
+}
+
 function readSelectionContext(view: EditorView) {
   const selection = view.state.selection.main
   return getBodyRequestContext(view.state.doc.toString(), {

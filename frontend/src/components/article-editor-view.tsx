@@ -1,6 +1,5 @@
 import type { Extension } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { Button } from '@fohte/ui/button'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@fohte/ui/tabs'
 import { err, ok, type Result } from 'neverthrow'
 import type { ReactNode } from 'react'
@@ -9,19 +8,20 @@ import { flushSync } from 'react-dom'
 import type * as Y from 'yjs'
 
 import { getBody } from '#article/index'
-import { AppHeader } from '#components/app-header'
+import { ArticleBody } from '#components/article-body'
 import {
   getCachedEditorExtensions,
   getMoveHistory,
   useEmptyArticle,
 } from '#components/article-editor-document'
+import { ArticleEditorHeader } from '#components/article-editor-header'
+import { ArticleEditorMobileToolbar } from '#components/article-editor-mobile-toolbar'
 import type { ArticleExportSection } from '#components/article-export-screen'
 import { ArticlePremisePanel } from '#components/article-premise-panel'
 import { EditorStatusBar } from '#components/editor-status-bar'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
-import { SyncStatus } from '#components/sync-status'
 import { moveConflictExtension } from '#editor/index'
 import { useMobileViewport } from '#hooks/use-mobile-viewport'
 import type { SyncState } from '#lib/sync-client'
@@ -85,6 +85,8 @@ export interface ArticleEditorViewProps {
   editorExtensions?:
     ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
   bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  /** Opens the body request from the mobile toolbar; the toolbar hides the request button without it. */
+  onRequest?: ((context: ArticleEditorContext) => void) | undefined
   outlineRenderer?:
     ((context: ArticleOutlineRenderContext) => ReactNode) | undefined
   premisePanel?: ((context: ArticleEditorContext) => ReactNode) | undefined
@@ -109,6 +111,7 @@ export type ArticleEditorIntegrationProps = Pick<
   | 'editorExtensions'
   | 'exportScreen'
   | 'articleNotice'
+  | 'onRequest'
   | 'onViewChange'
   | 'outlineRenderer'
   | 'premisePanel'
@@ -116,8 +119,6 @@ export type ArticleEditorIntegrationProps = Pick<
 >
 
 const emptyExtensions: Extension[] = []
-
-const skeletonLineWidths = ['w-3/5', 'w-full', 'w-11/12', 'w-4/5', 'w-2/3']
 
 export function ArticleEditorView({
   articleId,
@@ -128,6 +129,7 @@ export function ArticleEditorView({
   initialPanel = 'body',
   editorExtensions,
   bodyAccessory,
+  onRequest,
   outlineRenderer,
   premisePanel,
   articleNotice,
@@ -250,55 +252,16 @@ export function ArticleEditorView({
           : null
         : (sourcesPanel ?? null)
     return (
-      <article className="mx-auto flex w-full max-w-175 flex-col gap-4">
-        <input
-          aria-label="タイトル"
-          className="w-full bg-transparent text-3xl leading-snug font-bold outline-none placeholder:text-muted-foreground"
-          onChange={(event) => {
-            onTitleChange(event.currentTarget.value)
-          }}
-          placeholder="タイトル"
-          value={title}
-        />
-        {status?.kind === 'loading' ? (
-          <div aria-busy="true" className="flex flex-col gap-3" role="status">
-            <span className="sr-only">記事を開いています</span>
-            {skeletonLineWidths.map((width) => (
-              <span
-                aria-hidden="true"
-                className={`block h-4 bg-muted ${width}`}
-                key={width}
-              />
-            ))}
-          </div>
-        ) : null}
-        {isEmpty ? (
-          <div className="flex flex-col gap-2.5">
-            <p className="text-sm leading-relaxed text-muted-foreground-strong">
-              まずはメモに思いつくことを書き出すか、そのまま本文を書き始めます。
-            </p>
-            <div className="flex gap-2">
-              <Button
-                onClick={writeMemo}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                メモを書く
-              </Button>
-              <Button
-                onClick={() => {
-                  setPanel('premise')
-                }}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                前提を決める
-              </Button>
-            </div>
-          </div>
-        ) : null}
+      <ArticleBody
+        empty={isEmpty}
+        loading={status?.kind === 'loading'}
+        onDecidePremise={() => {
+          setPanel('premise')
+        }}
+        onTitleChange={onTitleChange}
+        onWriteMemo={writeMemo}
+        title={title}
+      >
         {doc && body && history ? (
           <div className="relative">
             <MarkdownEditor
@@ -315,7 +278,7 @@ export function ArticleEditorView({
             {context ? bodyAccessory?.(context) : null}
           </div>
         ) : null}
-      </article>
+      </ArticleBody>
     )
   }
 
@@ -353,28 +316,45 @@ export function ArticleEditorView({
       {exportContent}
       {/* Hidden instead of unmounted so the editor keeps its undo history and can still take imported text. */}
       <div
-        className={`flex min-h-dvh flex-col ${isMobile ? '' : 'lg:h-dvh'}`}
+        className={`flex min-h-dvh flex-col ${isMobile ? 'h-dvh' : 'lg:h-dvh'}`}
         hidden={exportContent !== undefined}
       >
-        <AppHeader
-          actions={
-            context && exportScreen ? (
-              <Button
-                onClick={() => {
-                  openExport()
-                }}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                書き出し
-              </Button>
-            ) : null
+        <ArticleEditorHeader
+          mobile={isMobile}
+          mobilePanel={
+            selectedPanel === 'body'
+              ? undefined
+              : {
+                  title:
+                    availablePanels.find(({ value }) => value === selectedPanel)
+                      ?.label ?? '',
+                  closeLabel: selectedPanel === 'outline' ? '本文へ' : '閉じる',
+                  onClose: () => {
+                    setPanel('body')
+                  },
+                }
           }
-          articleTitle={title}
-          onHome={onBack}
+          onBack={onBack}
+          onExport={
+            context && exportScreen
+              ? () => {
+                  openExport()
+                }
+              : undefined
+          }
           onOpenSettings={onOpenSettings}
-          status={syncStatus ? <SyncStatus state={syncStatus} /> : undefined}
+          onShowPremise={() => {
+            setPanel('premise')
+          }}
+          onShowSources={
+            sourcesPanel == null
+              ? undefined
+              : () => {
+                  setPanel('sources')
+                }
+          }
+          syncStatus={syncStatus}
+          title={title}
         />
         <div className="flex flex-col gap-2 border-b border-border px-4 py-3 text-sm empty:hidden">
           {status?.kind === 'error' ? (
@@ -406,9 +386,8 @@ export function ArticleEditorView({
           style={{ display: 'contents' }}
           value={isMobile ? selectedPanel : selectedSidePanel}
         >
-          {isMobile ? renderTabs(availablePanels) : null}
           <div
-            className={`flex flex-col ${isMobile ? '' : 'lg:min-h-0 lg:flex-1 lg:flex-row'}`}
+            className={`flex flex-col ${isMobile ? 'min-h-0 flex-1 overflow-y-auto' : 'lg:min-h-0 lg:flex-1 lg:flex-row'}`}
           >
             <nav
               aria-label="構成"
@@ -429,7 +408,9 @@ export function ArticleEditorView({
             >
               <TabsPanel {...desktopPanelProps} keepMounted value="body">
                 <div
-                  className={isMobile ? 'p-4' : 'px-8 py-6 lg:pt-10 lg:pb-24'}
+                  className={
+                    isMobile ? 'px-4.5 py-5' : 'px-8 py-6 lg:pt-10 lg:pb-24'
+                  }
                 >
                   {renderPanel('body')}
                 </div>
@@ -464,7 +445,27 @@ export function ArticleEditorView({
             </aside>
           </div>
         </Tabs>
-        {isMobile ? null : <EditorStatusBar syncStatus={syncStatus} />}
+        {!isMobile ? (
+          <EditorStatusBar syncStatus={syncStatus} />
+        ) : selectedPanel === 'body' && context && view ? (
+          <ArticleEditorMobileToolbar
+            history={context.history}
+            onRequest={
+              onRequest
+                ? () => {
+                    onRequest(context)
+                  }
+                : undefined
+            }
+            onShowMemo={() => {
+              setPanel('memo')
+            }}
+            onShowOutline={() => {
+              setPanel('outline')
+            }}
+            view={view}
+          />
+        ) : null}
       </div>
     </>
   )

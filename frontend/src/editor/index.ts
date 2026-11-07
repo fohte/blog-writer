@@ -21,6 +21,7 @@ export {
   bodyRequestExtensions,
   type BodyRequestPreset,
   type BodyRequestPresetSelection,
+  openBodyRequest,
 } from '#proposals/body-request'
 export {
   createOutlineProposalExtension,

@@ -219,7 +219,8 @@ export function BodyRequestView({
       {touchDevice ? (
         <PopoverTrigger
           aria-label="本文を依頼"
-          className="absolute bottom-4 right-4 z-10"
+          // Narrow screens open the request from the editor toolbar instead.
+          className="absolute right-4 bottom-4 z-10 max-md:hidden"
           type="button"
         >
           依頼

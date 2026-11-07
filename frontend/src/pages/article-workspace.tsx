@@ -27,6 +27,7 @@ export function ArticleWorkspace({
   onCreateArticle,
   onOpenSettings,
   bodyAccessory,
+  onRequest,
   editorExtensions,
   articleNotice,
   exportScreen,
@@ -45,6 +46,7 @@ export function ArticleWorkspace({
         key={article.id}
         article={article}
         bodyAccessory={bodyAccessory}
+        onRequest={onRequest}
         client={client}
         editorExtensions={editorExtensions}
         error={error}

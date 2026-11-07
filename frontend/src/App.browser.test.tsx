@@ -3081,7 +3081,11 @@ describe('the application research and evidence integrations', () => {
     await renderApp()
     await openArticle()
     await act(async () => {
-      await userEvent.click(page.getByRole('tab', { name: '構成' }))
+      await userEvent.click(
+        page
+          .getByRole('toolbar', { name: '入力補助' })
+          .getByRole('button', { name: '構成' }),
+      )
     })
 
     vi.useFakeTimers()
@@ -3123,9 +3127,9 @@ describe('the application research and evidence integrations', () => {
 
     const actual = () => ({
       proposalState,
-      selectedTab: host
-        ?.querySelector('[role="tab"][aria-selected="true"]')
-        ?.textContent.trim(),
+      toolbar: host
+        ?.querySelector('[role="toolbar"]')
+        ?.getAttribute('aria-label'),
     })
     expect(actual()).toEqual({
       proposalState: {
@@ -3133,7 +3137,7 @@ describe('the application research and evidence integrations', () => {
         proposalButtons: ['改名案を採用', '改名案を却下'],
         researchEntryVisible: true,
       },
-      selectedTab: '本文',
+      toolbar: '入力補助',
     })
   })
 

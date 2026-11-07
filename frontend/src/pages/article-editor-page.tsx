@@ -28,6 +28,7 @@ export function ArticleEditorPage({
   requiresAuthentication,
   onLoginAgain,
   bodyAccessory,
+  onRequest,
   editorExtensions,
   articleNotice,
   exportScreen,
@@ -57,6 +58,7 @@ export function ArticleEditorPage({
       key={article.id}
       articleId={article.id}
       bodyAccessory={bodyAccessory}
+      onRequest={onRequest}
       doc={doc}
       editorExtensions={editorExtensions}
       articleNotice={articleNotice}

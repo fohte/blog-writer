@@ -4,14 +4,8 @@ import { createElement, type RefObject } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 
-import type { MoveBlockInput } from '#article/index'
-import type { BlockMoveMenuAction } from '#components/block-move-menu'
 import { BlockMoveMenu } from '#components/block-move-menu'
-import {
-  adjacentMove,
-  headingChildMove,
-  isHeadingBlockAt,
-} from '#outline/block-ranges'
+import { blockMoveActions } from '#outline/block-move-actions'
 import type { MoveHistory } from '#outline/move-history'
 
 export function mountBlockMoveMenu({
@@ -34,35 +28,8 @@ export function mountBlockMoveMenu({
   let menuOpen = false
   const currentFrom = () =>
     view.contentDOM.contains(button) ? view.posAtDOM(button) : undefined
-  const actions = (): BlockMoveMenuAction[] => {
-    const currentPosition = currentFrom() ?? from
-    const isHeading = isHeadingBlockAt(view.state, currentPosition)
-    const action = (
-      label: string,
-      getInput: (position: number) => MoveBlockInput | undefined,
-    ): BlockMoveMenuAction => ({
-      label,
-      input: getInput(currentPosition),
-      resolveInput: () => {
-        const position = currentFrom()
-        return position === undefined ? undefined : getInput(position)
-      },
-    })
-
-    return [
-      action('Move up', (position) => adjacentMove(view.state, position, 'up')),
-      action('Move down', (position) =>
-        adjacentMove(view.state, position, 'down'),
-      ),
-      ...(isHeading
-        ? [
-            action('Make child', (position) =>
-              headingChildMove(view.state, position),
-            ),
-          ]
-        : []),
-    ]
-  }
+  const actions = () =>
+    blockMoveActions(view, currentFrom() ?? from, currentFrom)
   const renderMenu = (open: boolean, sync = false) => {
     menuOpen = open
     button.setAttribute('aria-expanded', String(open))

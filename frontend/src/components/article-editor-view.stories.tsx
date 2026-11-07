@@ -92,6 +92,7 @@ function ArticleEditorPreview({
             : undefined
         }
         exportScreen={integrations ? () => null : undefined}
+        onRequest={integrations ? () => {} : undefined}
         initialPanel={initialPanel}
         layout={layout}
         onBack={() => {}}
@@ -241,17 +242,17 @@ export const TabletLongOutline: Story = {
 }
 
 export const MobileArticle: Story = {
-  name: 'the mobile layout opens on the article tab without injected controls.',
+  name: 'the mobile layout shows the article full screen with the toolbar at the bottom.',
   args: { layout: 'mobile', initialPanel: 'body' },
 }
 
 export const MobileMemo: Story = {
-  name: 'the mobile layout opens the memo tab with its empty state.',
+  name: 'the mobile memo screen covers the article and shows its empty state.',
   args: { layout: 'mobile', initialPanel: 'memo' },
 }
 
 export const MobileArticleWithIntegrations: Story = {
-  name: 'the mobile article tab keeps the injected request inside the article panel.',
+  name: 'the mobile article keeps the injected request inside the article and offers a request in the toolbar.',
   args: {
     integrations: true,
     layout: 'mobile',
@@ -260,12 +261,12 @@ export const MobileArticleWithIntegrations: Story = {
 }
 
 export const MobileOutline: Story = {
-  name: 'the mobile layout opens on the outline tab without injected controls.',
+  name: 'the mobile outline screen covers the article with a way back to the body.',
   args: { layout: 'mobile', initialPanel: 'outline' },
 }
 
 export const MobileOutlineWithIntegrations: Story = {
-  name: 'the mobile outline tab places outline suggestions above the outline.',
+  name: 'the mobile outline screen places outline suggestions above the outline.',
   args: {
     integrations: true,
     layout: 'mobile',
@@ -274,7 +275,7 @@ export const MobileOutlineWithIntegrations: Story = {
 }
 
 export const MobileSources: Story = {
-  name: 'the mobile layout adds a sources tab when reference material is available.',
+  name: 'the mobile sources screen shows the reference material.',
   args: {
     layout: 'mobile',
     initialPanel: 'sources',
