@@ -276,6 +276,14 @@ export class SuggestionLayerController<Metadata = unknown> {
     return ok(undefined)
   }
 
+  addSuggestion(
+    suggestion: TextSuggestion<Metadata>,
+  ): Result<void, SuggestionLayerError> {
+    const suggestions =
+      this.view?.state.field(this.stateField, false)?.suggestions ?? []
+    return this.setSuggestions([...suggestions, suggestion])
+  }
+
   resolveInFlight(
     replacement: string | ((position: SuggestionPosition) => string),
     details?: {
@@ -343,6 +351,11 @@ export class SuggestionLayerController<Metadata = unknown> {
       effects: replaceInFlight.of({ scope: this.effectScope, value: position }),
     })
     return ok(undefined)
+  }
+
+  getInFlight(): SuggestionPosition | null {
+    const view = this.view
+    return view?.state.field(this.stateField, false)?.inFlight ?? null
   }
 
   overlapsOtherLayer(position: SuggestionPosition): boolean {

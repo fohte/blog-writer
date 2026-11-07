@@ -4,7 +4,11 @@ import * as Y from 'yjs'
 import type { ResearchProgressStatus } from '#components/research-progress'
 import { loadLlmSettings } from '#lib/llm-settings'
 import { researchFromHeading } from '#research/research-from-heading'
-import { ResearchJobInterruptedError } from '#research/research-job'
+import {
+  acquireResearchLock,
+  releaseResearchLock,
+  ResearchJobInterruptedError,
+} from '#research/research-job'
 
 export type ResearchProgressState = {
   status: ResearchProgressStatus
@@ -50,6 +54,7 @@ export function useHeadingResearch() {
     ) => {
       if (controllers.current.has(articleId)) return
       const controller = new AbortController()
+      if (!acquireResearchLock(articleId, controller)) return
       controllers.current.set(articleId, controller)
       setProgress((current) => ({
         ...current,
@@ -58,8 +63,12 @@ export function useHeadingResearch() {
 
       const settings = loadLlmSettings(() => window.localStorage)
       if (settings.isErr()) {
-        if (controllers.current.get(articleId) !== controller) return
+        if (controllers.current.get(articleId) !== controller) {
+          releaseResearchLock(articleId, controller)
+          return
+        }
         controllers.current.delete(articleId)
+        releaseResearchLock(articleId, controller)
         patchProgress(articleId, {
           status: 'failed',
           error: 'LLM 設定を読み込めませんでした。',
@@ -104,13 +113,21 @@ export function useHeadingResearch() {
         },
       ).match(
         () => {
-          if (controllers.current.get(articleId) !== controller) return
+          if (controllers.current.get(articleId) !== controller) {
+            releaseResearchLock(articleId, controller)
+            return
+          }
           controllers.current.delete(articleId)
+          releaseResearchLock(articleId, controller)
           patchProgress(articleId, { status: 'complete' })
         },
         (researchError) => {
-          if (controllers.current.get(articleId) !== controller) return
+          if (controllers.current.get(articleId) !== controller) {
+            releaseResearchLock(articleId, controller)
+            return
+          }
           controllers.current.delete(articleId)
+          releaseResearchLock(articleId, controller)
           const interrupted =
             researchError instanceof ResearchJobInterruptedError
           patchProgress(articleId, {

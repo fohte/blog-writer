@@ -19,6 +19,7 @@ export {
   observeEvidence,
   pruneEvidence,
   removeEvidence,
+  setEvidence,
 } from '#article/evidence'
 export type { HeadingWithDepth } from '#article/headings'
 export {

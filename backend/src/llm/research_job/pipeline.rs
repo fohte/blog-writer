@@ -71,6 +71,7 @@ async fn execute(
         .take(MAX_CITATIONS)
         .enumerate()
     {
+        let _ = progress.send(format!("資料を取得中: {url}"));
         sources.push(fetch_source(fetcher.as_ref(), index, url).await);
     }
 

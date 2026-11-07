@@ -16,6 +16,8 @@ export type AddEvidenceInput = Omit<Evidence, 'from' | 'to'> & {
   to: number
 }
 
+type SetEvidenceInput = Omit<AddEvidenceInput, 'id'>
+
 function getEvidenceMap(doc: Y.Doc): Y.Map<EvidenceData> {
   return doc.getMap('evidence')
 }
@@ -103,6 +105,36 @@ function writeEvidenceAnchors(
     )
 }
 
+function validateEvidenceInput(
+  doc: Y.Doc,
+  input: SetEvidenceInput,
+): Result<Y.Text, SourceNotFoundError | InvalidEvidenceError> {
+  if (input.sourceId !== null && !doc.getMap('sources').has(input.sourceId))
+    return err(new SourceNotFoundError(input.sourceId))
+  const body = getBody(doc)
+  if (
+    input.claim.length === 0 ||
+    input.from < 0 ||
+    input.to <= input.from ||
+    input.to > body.length
+  )
+    return err(new InvalidEvidenceError('Invalid evidence range'))
+  return ok(body)
+}
+
+function writeEvidenceData(
+  data: EvidenceData,
+  body: Y.Text,
+  input: SetEvidenceInput,
+): void {
+  writeEvidenceAnchors(data, body, input.from, input.to)
+  data.set('claim', input.claim)
+  data.set('sourceId', input.sourceId)
+  data.set('quote', input.quote)
+  data.set('verdict', input.verdict)
+  data.set('checkedAt', input.checkedAt)
+}
+
 type EvidenceInspection =
   | { kind: 'visible'; from: number; to: number; view: EvidenceView }
   | { kind: 'hidden' }
@@ -136,30 +168,48 @@ export function addEvidence(
   doc: Y.Doc,
   input: AddEvidenceInput,
 ): Result<Evidence, SourceNotFoundError | InvalidEvidenceError> {
-  if (input.sourceId !== null && !doc.getMap('sources').has(input.sourceId))
-    return err(new SourceNotFoundError(input.sourceId))
-  const body = getBody(doc)
-  if (
-    input.id.length === 0 ||
-    input.claim.length === 0 ||
-    input.from < 0 ||
-    input.to <= input.from ||
-    input.to > body.length
-  )
+  const validation = validateEvidenceInput(doc, input)
+  if (validation.isErr()) return err(validation.error)
+  const body = validation.value
+  if (input.id.length === 0)
     return err(new InvalidEvidenceError('Invalid evidence range'))
   const evidence = getEvidenceMap(doc)
   if (evidence.has(input.id))
     return err(new InvalidEvidenceError('Evidence already exists'))
 
   const data = new Y.Map<unknown>()
-  writeEvidenceAnchors(data, body, input.from, input.to)
-  data.set('claim', input.claim)
-  data.set('sourceId', input.sourceId)
-  data.set('quote', input.quote)
-  data.set('verdict', input.verdict)
-  data.set('checkedAt', input.checkedAt)
+  writeEvidenceData(data, body, input)
   evidence.set(input.id, data)
   const result = readEvidence(input.id, data)
+  return result
+    ? ok(result)
+    : err(new InvalidEvidenceError('Evidence could not be read'))
+}
+
+export function setEvidence(
+  doc: Y.Doc,
+  input: SetEvidenceInput,
+): Result<Evidence, SourceNotFoundError | InvalidEvidenceError> {
+  const validation = validateEvidenceInput(doc, input)
+  if (validation.isErr()) return err(validation.error)
+  const body = validation.value
+
+  const evidence = getEvidenceMap(doc)
+  const matching = [...evidence.entries()].flatMap(([id, data]) => {
+    const item = readEvidence(id, data)
+    const range = item && resolveRange(doc, item)
+    return range?.from === input.from && range.to === input.to
+      ? [{ id, data }]
+      : []
+  })
+  const id = matching[0]?.id ?? crypto.randomUUID()
+  const data = matching[0]?.data ?? new Y.Map<unknown>()
+  doc.transact(() => {
+    writeEvidenceData(data, body, input)
+    if (matching.length === 0) evidence.set(id, data)
+    for (const duplicate of matching.slice(1)) evidence.delete(duplicate.id)
+  })
+  const result = readEvidence(id, data)
   return result
     ? ok(result)
     : err(new InvalidEvidenceError('Evidence could not be read'))

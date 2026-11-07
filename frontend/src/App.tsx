@@ -25,7 +25,10 @@ import { PremiseProposalAccessory } from '#proposals/premise'
 import { writeFromKeyPoints } from '#proposals/write-from-key-points'
 import { HeadingResearchOutline } from '#research/heading-research-outline'
 import { SourcePanel } from '#research/source-panel'
+import { useClaimEvidence } from '#research/use-claim-evidence'
 import { useHeadingResearch } from '#research/use-heading-research'
+
+const MAX_CLAIM_CONTEXT_CHARS = 1000
 
 export function App() {
   const [showSettings, setShowSettings] = useState(false)
@@ -34,6 +37,7 @@ export function App() {
     progress: researchProgress,
     startResearch,
   } = useHeadingResearch()
+  const claimEvidence = useClaimEvidence()
   const [fileSyncConfiguration, setFileSyncConfiguration] =
     useState<FileSyncConfiguration>()
   const [fileSyncConfigurationError, setFileSyncConfigurationError] =
@@ -121,6 +125,32 @@ export function App() {
           history={context.history}
           presets={[
             {
+              id: 'verify-claim-evidence',
+              label: '根拠を確かめる',
+              onSelect: ({ context: requestContext }) => {
+                const [before = '', rest = ''] = requestContext.section.split(
+                  '⟪依頼範囲の開始⟫',
+                  2,
+                )
+                const [selected = '', after = ''] = rest.split(
+                  '⟪依頼範囲の終了⟫',
+                  2,
+                )
+                const boundedBefore = before.slice(-MAX_CLAIM_CONTEXT_CHARS)
+                const boundedAfter = after.slice(0, MAX_CLAIM_CONTEXT_CHARS)
+                claimEvidence.startResearch({
+                  articleId: context.articleId,
+                  doc: context.doc,
+                  claim: selected || requestContext.target,
+                  range: requestContext.range,
+                  ...(boundedBefore.length === 0
+                    ? {}
+                    : { before: boundedBefore }),
+                  ...(boundedAfter.length === 0 ? {} : { after: boundedAfter }),
+                })
+              },
+            },
+            {
               id: 'research-from-heading',
               label: 'この見出しについて調べる',
               onSelect: ({ context: requestContext, instruction }) => {
@@ -156,6 +186,7 @@ export function App() {
       )}
       editorExtensions={({ doc, history }) => [
         ...bodyRequestExtensions({ doc, history }),
+        claimEvidence.editorExtension(doc),
         createOutlineProposalExtension({ doc, history }),
         ...transitionProposalEditorExtensions({ doc, history }),
       ]}
@@ -190,11 +221,15 @@ export function App() {
       }}
       outlineRenderer={(context) => (
         <HeadingResearchOutline
-          busy={
-            researchProgress[context.articleId]?.status === 'running' ||
-            researchProgress[context.articleId]?.status === 'saving' ||
-            researchProgress[context.articleId]?.status === 'cancelling'
-          }
+          busy={[
+            researchProgress[context.articleId]?.status,
+            claimEvidence.progress[context.articleId]?.status,
+          ].some(
+            (status) =>
+              status === 'running' ||
+              status === 'saving' ||
+              status === 'cancelling',
+          )}
           doc={context.doc}
           history={context.history}
           onResearch={(headingText, question) => {
@@ -205,11 +240,28 @@ export function App() {
         />
       )}
       sourcesPanel={(context) => {
-        const progress = researchProgress[context.articleId]
+        const claimProgress = claimEvidence.progress[context.articleId]
+        const claimResearchActive =
+          claimProgress?.status === 'running' ||
+          claimProgress?.status === 'saving' ||
+          claimProgress?.status === 'cancelling'
+        const headingProgress = researchProgress[context.articleId]
+        const headingResearchActive =
+          headingProgress?.status === 'running' ||
+          headingProgress?.status === 'saving' ||
+          headingProgress?.status === 'cancelling'
+        const progress = claimResearchActive
+          ? claimProgress
+          : headingResearchActive
+            ? headingProgress
+            : claimProgress?.status === 'failed'
+              ? claimProgress
+              : (headingProgress ?? claimProgress)
         return (
           <SourcePanel
             articleId={context.articleId}
             doc={context.doc}
+            researchError={claimEvidence.recheckErrors[context.articleId]}
             researchProgress={
               progress === undefined
                 ? undefined
@@ -218,9 +270,13 @@ export function App() {
                     ...(progress.status === 'running' ||
                     progress.status === 'saving'
                       ? {
-                          onCancel: () => {
-                            cancelResearch(context.articleId)
-                          },
+                          onCancel: claimResearchActive
+                            ? () => {
+                                claimEvidence.cancelResearch(context.articleId)
+                              }
+                            : () => {
+                                cancelResearch(context.articleId)
+                              },
                         }
                       : {}),
                   }

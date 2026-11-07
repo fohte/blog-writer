@@ -34,6 +34,7 @@ type SourcePanelViewProps = {
   onSavePastedBody: (source: Source) => void
   onRetrySource: (source: Source) => void
   researchProgress?: ResearchProgressProps | undefined
+  researchError?: string | undefined
 }
 
 function getSourceLocation(source: Source): string {
@@ -68,6 +69,7 @@ export function SourcePanelView({
   onSavePastedBody,
   onRetrySource,
   researchProgress,
+  researchError,
 }: SourcePanelViewProps) {
   return (
     <section
@@ -91,10 +93,13 @@ export function SourcePanelView({
         <p className="text-sm text-muted-foreground">
           URL またはファイルをドロップ、または URL を貼り付け
         </p>
+        {researchError === undefined ? null : (
+          <p role="alert">{researchError}</p>
+        )}
+        {error === undefined ? null : <p role="alert">{error}</p>}
         {researchProgress === undefined ? null : (
           <ResearchProgress {...researchProgress} />
         )}
-        {error === undefined ? null : <p role="alert">{error}</p>}
         {sources.length === 0 && pending.length === 0 ? (
           <p className="py-3 text-sm text-muted-foreground">
             資料はありません。

@@ -140,3 +140,16 @@ export const Error: Story = {
     error: '資料ページを取得できませんでした。',
   },
 }
+
+export const RecheckErrorDuringResearch: Story = {
+  name: '別の調査を続けながら再判定できない理由を示す',
+  args: {
+    researchError: '別の調査が実行中のため、根拠を再判定できませんでした。',
+    researchProgress: {
+      status: 'running',
+      queries: ['主張を照合しています。'],
+      defaultOpen: true,
+      onCancel: () => {},
+    },
+  },
+}
