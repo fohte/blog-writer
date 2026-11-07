@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 
-import type { ArticleEditorContext } from '#components/article-editor-view'
-import { ArticleExportPopover } from '#components/article-export-popover'
-import { ArticleFileSyncPopover } from '#components/article-file-sync-popover'
+import { ArticleExportContainer } from '#components/article-export-container'
+import { ArticleFileSyncBanner } from '#components/article-file-sync-banner'
 import { LlmSettingsScreen } from '#components/llm-settings-screen'
 import {
   BodyRequestAccessory,
@@ -191,31 +190,27 @@ export function App() {
         createOutlineProposalExtension({ doc, history }),
         ...transitionProposalEditorExtensions({ doc, history }),
       ]}
-      headerActions={(context: ArticleEditorContext) => {
+      articleNotice={(context) => {
+        if (fileSyncConfiguration?.enabled !== true) return null
         const article = articles.find(({ id }) => id === context.articleId)
         return (
-          <>
-            <ArticleExportPopover
-              articleId={context.articleId}
-              articleTitle={article?.title ?? ''}
-              doc={context.doc}
-              article={article}
-              client={client}
-              destinations={exportDestinations}
-              destinationError={exportDestinationsError}
-            />
-            {fileSyncConfiguration?.enabled === true ? (
-              <ArticleFileSyncPopover
-                articleId={context.articleId}
-                doc={context.doc}
-                initialPath={article?.syncFilePath}
-                initialStatus={article?.syncFileStatus ?? 'unset'}
-                replaceBody={context.replaceBody}
-              />
-            ) : null}
-          </>
+          <ArticleFileSyncBanner
+            context={context}
+            initialPath={article?.syncFilePath}
+            initialStatus={article?.syncFileStatus ?? 'unset'}
+          />
         )
       }}
+      exportScreen={(context) => (
+        <ArticleExportContainer
+          article={articles.find(({ id }) => id === context.articleId)}
+          client={client}
+          context={context}
+          destinationError={exportDestinationsError}
+          destinations={exportDestinations}
+          fileSyncEnabled={fileSyncConfiguration?.enabled === true}
+        />
+      )}
       onCreateArticle={createArticle}
       onOpenSettings={() => {
         setShowSettings(true)

@@ -1,8 +1,6 @@
 import { Button } from '@fohte/ui/button'
-import { Chip } from '@fohte/ui/chip'
 import { Input } from '@fohte/ui/input'
-import { Panel } from '@fohte/ui/panel'
-import { Popover, PopoverContent, PopoverTrigger } from '@fohte/ui/popover'
+import { useId } from 'react'
 
 import { TextDiffView } from '#components/text-diff-view'
 import type { ArticleFileSyncStatus } from '#lib/file-sync-api'
@@ -14,10 +12,8 @@ type ArticleFileSyncViewProps = {
   content?: string | null | undefined
   contentHash?: string | null | undefined
   body: string
-  open?: boolean | undefined
   busy?: boolean | undefined
   error?: string | undefined
-  onOpenChange: (open: boolean) => void
   onPathChange: (path: string) => void
   onSetPath: () => void
   onImport: () => void
@@ -36,125 +32,127 @@ export function ArticleFileSyncView({
   content,
   contentHash,
   body,
-  open = false,
   busy = false,
   error,
-  onOpenChange,
   onPathChange,
   onSetPath,
   onImport,
   onOverwrite,
 }: ArticleFileSyncViewProps) {
+  const pathId = useId()
   const fileExists = content !== null && content !== undefined
-  const showDiff = status === 'external_changed' && fileExists
 
   return (
-    <div className="flex items-center gap-2">
-      <Chip
-        aria-live="polite"
-        data-state={status}
-        role="status"
-        size="md"
-        tone={status === 'external_changed' ? 'strong' : 'muted'}
-      >
-        {statusLabels[status]}
-      </Chip>
-      <Popover onOpenChange={onOpenChange} open={open}>
-        <PopoverTrigger render={<Button type="button" variant="outline" />}>
-          ローカル同期
-        </PopoverTrigger>
-        <PopoverContent
-          className={
-            showDiff
-              ? 'flex flex-col gap-3'
-              : 'flex w-96 max-w-full flex-col gap-3'
-          }
-          style={
-            showDiff
-              ? { width: '48rem', maxWidth: 'calc(100vw - 2rem)' }
-              : undefined
-          }
+    <div className="flex flex-col gap-5">
+      <p className="text-sm leading-relaxed text-muted-foreground-strong">
+        本文を編集すると、このファイルに自動で書き込みます。ファイル側の変更は自動では取り込みません。
+      </p>
+      <p className="font-mono text-xs text-muted-foreground-strong">
+        状態{' '}
+        <span
+          aria-live="polite"
+          className="text-foreground"
+          data-state={status}
+          role="status"
         >
-          <h2 className="font-semibold">同期ファイル</h2>
-          <div className="flex gap-2">
-            <Input
-              aria-label="同期ファイルの相対パス"
-              autoComplete="off"
-              disabled={busy}
-              onChange={(event) => {
-                onPathChange(event.currentTarget.value)
-              }}
-              placeholder="notes/example.md"
-              value={path}
+          {statusLabels[status]}
+        </span>
+      </p>
+      <div className="flex flex-col gap-1.5">
+        <label
+          className="text-xs font-bold text-muted-foreground-strong"
+          htmlFor={pathId}
+        >
+          同期フォルダー配下のパス
+        </label>
+        <div className="flex gap-2">
+          <Input
+            autoComplete="off"
+            className="font-mono"
+            disabled={busy}
+            id={pathId}
+            onChange={(event) => {
+              onPathChange(event.currentTarget.value)
+            }}
+            placeholder="notes/example.md"
+            value={path}
+          />
+          <Button
+            disabled={busy || path.trim().length === 0}
+            onClick={onSetPath}
+            type="button"
+            variant="outline"
+          >
+            指定
+          </Button>
+        </div>
+      </div>
+      {status === 'external_changed' && fileExists ? (
+        <>
+          <section className="flex flex-col gap-2">
+            <h2 className="text-base font-bold">ファイルとの差分</h2>
+            <TextDiffView
+              modified={body}
+              modifiedLabel="アプリの本文"
+              original={normalizeLineEndings(content)}
+              originalLabel="ファイルの内容"
             />
+          </section>
+          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+            <span className="flex-1 basis-75 text-sm leading-relaxed text-muted-foreground-strong">
+              ファイルへの書き込みだけ止めています。取り込んだ内容は 1
+              回の取り消しで戻せます。
+            </span>
             <Button
-              disabled={busy || path.trim().length === 0}
-              onClick={onSetPath}
+              disabled={busy}
+              onClick={onOverwrite}
               type="button"
               variant="outline"
             >
-              指定
+              アプリの内容で上書き
+            </Button>
+            <Button
+              disabled={busy || contentHash == null}
+              onClick={onImport}
+              type="button"
+              variant="solid"
+            >
+              ファイルの内容を取り込む
             </Button>
           </div>
-          {status === 'external_changed' ? (
-            fileExists ? (
-              <>
-                <TextDiffView
-                  modified={body}
-                  modifiedLabel="記事本文"
-                  original={normalizeLineEndings(content)}
-                  originalLabel="ファイルの内容"
-                />
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    disabled={busy || contentHash == null}
-                    onClick={onImport}
-                    type="button"
-                  >
-                    取り込む
-                  </Button>
-                  <Button
-                    disabled={busy}
-                    onClick={onOverwrite}
-                    type="button"
-                    variant="outline"
-                  >
-                    上書き
-                  </Button>
-                </div>
-              </>
-            ) : content === null && error === undefined && !busy ? (
-              <Panel className="flex flex-col gap-3 rounded-md p-3">
-                <p>
-                  同期ファイルが見つかりません。上書きして作り直すか、別のパスを指定してください。
-                </p>
-                <Button disabled={busy} onClick={onOverwrite} type="button">
-                  上書きして作り直す
-                </Button>
-              </Panel>
-            ) : null
-          ) : null}
-          {busy ? (
-            <p
-              aria-live="polite"
-              className="text-muted-foreground"
-              role="status"
-            >
-              同期しています…
-            </p>
-          ) : null}
-          {error !== undefined && error.length > 0 ? (
-            <Panel
-              aria-live="assertive"
-              className="rounded-md border-destructive/40 bg-destructive/10 text-sm text-destructive"
-              padding="sm"
-              role="alert"
-            >
-              {error}
-            </Panel>
-          ) : null}
-        </PopoverContent>
-      </Popover>
+        </>
+      ) : null}
+      {status === 'external_changed' &&
+      content === null &&
+      error === undefined &&
+      !busy ? (
+        <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+          <span className="flex-1 basis-75 text-sm leading-relaxed text-muted-foreground-strong">
+            同期先のファイルが見つかりません。作り直すか、パスを指定し直してください。
+          </span>
+          <Button onClick={onOverwrite} type="button" variant="solid">
+            作り直す
+          </Button>
+        </div>
+      ) : null}
+      {busy ? (
+        <p
+          aria-live="polite"
+          className="text-sm text-muted-foreground-strong"
+          role="status"
+        >
+          同期しています…
+        </p>
+      ) : null}
+      {error !== undefined && error.length > 0 ? (
+        <p
+          aria-live="assertive"
+          className="text-sm text-destructive"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }

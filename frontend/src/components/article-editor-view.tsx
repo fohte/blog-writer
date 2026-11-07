@@ -4,19 +4,18 @@ import { Button } from '@fohte/ui/button'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@fohte/ui/tabs'
 import { err, ok, type Result } from 'neverthrow'
 import type { ReactNode } from 'react'
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import * as Y from 'yjs'
+import type * as Y from 'yjs'
 
-import { getBody, listMemos } from '#article/index'
+import { getBody } from '#article/index'
 import { AppHeader } from '#components/app-header'
+import {
+  getCachedEditorExtensions,
+  getMoveHistory,
+  useEmptyArticle,
+} from '#components/article-editor-document'
+import type { ArticleExportSection } from '#components/article-export-screen'
 import { ArticlePremisePanel } from '#components/article-premise-panel'
 import { EditorStatusBar } from '#components/editor-status-bar'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
@@ -29,7 +28,6 @@ import type { SyncState } from '#lib/sync-client'
 import { MemoPanel } from '#memos/memo-panel'
 import {
   ArticleOutline,
-  createMoveHistory,
   createOutlineEditorExtension,
   type MoveHistory,
 } from '#outline/index'
@@ -44,6 +42,12 @@ export type ArticleEditorContext = {
   view: EditorView | null
   replaceBody: (value: string) => Result<void, EditorNotReadyError>
   showSources: () => void
+  openExport: (section?: ArticleExportSection) => void
+}
+export type ArticleExportContext = ArticleEditorContext & {
+  section: ArticleExportSection | undefined
+  syncStatus: SyncState | undefined
+  onBack: () => void
 }
 type ArticleOutlineRenderContext = ArticleEditorContext & {
   onHeadingSelected: () => void
@@ -84,7 +88,9 @@ export interface ArticleEditorViewProps {
   outlineRenderer?:
     ((context: ArticleOutlineRenderContext) => ReactNode) | undefined
   premisePanel?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  headerActions?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  /** Renders above every panel so the writer notices it whichever panel is open. */
+  articleNotice?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  exportScreen?: ((context: ArticleExportContext) => ReactNode) | undefined
   sourcesPanel?:
     ReactNode | ((context: ArticleEditorContext) => ReactNode) | undefined
   onViewChange?: ((view: EditorView | null) => void) | undefined
@@ -101,7 +107,8 @@ export type ArticleEditorIntegrationProps = Pick<
   ArticleEditorViewProps,
   | 'bodyAccessory'
   | 'editorExtensions'
-  | 'headerActions'
+  | 'exportScreen'
+  | 'articleNotice'
   | 'onViewChange'
   | 'outlineRenderer'
   | 'premisePanel'
@@ -109,48 +116,6 @@ export type ArticleEditorIntegrationProps = Pick<
 >
 
 const emptyExtensions: Extension[] = []
-// Extension instances may hold article state and must survive StrictMode replays.
-const moveHistoriesByDocument = new WeakMap<Y.Doc, MoveHistory>()
-const extensionsByDocument = new WeakMap<Y.Doc, Extension[]>()
-
-function getMoveHistory(doc: Y.Doc) {
-  const existing = moveHistoriesByDocument.get(doc)
-  if (existing) return existing
-  const history = createMoveHistory(doc)
-  moveHistoriesByDocument.set(doc, history)
-  return history
-}
-
-function getCachedEditorExtensions(
-  doc: Y.Doc,
-  history: MoveHistory,
-  factory: (context: { doc: Y.Doc; history: MoveHistory }) => Extension[],
-) {
-  const existing = extensionsByDocument.get(doc)
-  if (existing) return existing
-  const extensions = factory({ doc, history })
-  extensionsByDocument.set(doc, extensions)
-  return extensions
-}
-
-function useEmptyArticle(doc: Y.Doc | undefined) {
-  const subscribe = useCallback(
-    (listener: () => void) => {
-      doc?.on('update', listener)
-      return () => {
-        doc?.off('update', listener)
-      }
-    },
-    [doc],
-  )
-  return useSyncExternalStore(
-    subscribe,
-    () =>
-      doc !== undefined &&
-      getBody(doc).length === 0 &&
-      listMemos(doc).length === 0,
-  )
-}
 
 const skeletonLineWidths = ['w-3/5', 'w-full', 'w-11/12', 'w-4/5', 'w-2/3']
 
@@ -165,7 +130,8 @@ export function ArticleEditorView({
   bodyAccessory,
   outlineRenderer,
   premisePanel,
-  headerActions,
+  articleNotice,
+  exportScreen,
   sourcesPanel,
   onViewChange,
   syncStatus,
@@ -180,6 +146,9 @@ export function ArticleEditorView({
   const isMobile =
     layout === 'mobile' || (layout === 'responsive' && viewportIsMobile)
   const [panel, setPanel] = useState<ArticleEditorPanel>(initialPanel)
+  const [exportView, setExportView] = useState<{
+    section: ArticleExportSection | undefined
+  }>()
   const isEmpty = useEmptyArticle(doc)
   const history = doc ? getMoveHistory(doc) : undefined
   const body = doc ? getBody(doc) : undefined
@@ -218,9 +187,23 @@ export function ArticleEditorView({
   const showSources = () => {
     setPanel('sources')
   }
+  const openExport = (section?: ArticleExportSection) => {
+    setExportView({ section })
+  }
   const context =
     doc && history
-      ? { articleId, doc, history, view, replaceBody, showSources }
+      ? { articleId, doc, history, view, replaceBody, showSources, openExport }
+      : undefined
+  const exportContent =
+    exportView && context && exportScreen
+      ? exportScreen({
+          ...context,
+          section: exportView.section,
+          syncStatus,
+          onBack: () => {
+            setExportView(undefined)
+          },
+        })
       : undefined
 
   const handleViewChange = (nextView: EditorView | null) => {
@@ -365,97 +348,123 @@ export function ArticleEditorView({
   )
 
   return (
-    <div className={`flex min-h-dvh flex-col ${isMobile ? '' : 'lg:h-dvh'}`}>
-      <AppHeader
-        actions={context ? headerActions?.(context) : null}
-        articleTitle={title}
-        onHome={onBack}
-        onOpenSettings={onOpenSettings}
-        status={syncStatus ? <SyncStatus state={syncStatus} /> : undefined}
-      />
-      <div className="flex flex-col gap-2 border-b border-border px-4 py-3 text-sm empty:hidden">
-        {status?.kind === 'error' ? (
-          <p className="text-destructive" role="alert">
-            {status.message}
-          </p>
-        ) : null}
-        {syncError !== undefined ? (
-          <p className="text-destructive" role="alert">
-            {syncError}
-          </p>
-        ) : null}
-        {requiresAuthentication && onLoginAgain ? (
-          <ReauthenticationPrompt onLoginAgain={onLoginAgain} />
-        ) : null}
-      </div>
-
-      <Tabs
-        onValueChange={(value) => {
-          const nextValue: unknown = value
-          if (typeof nextValue === 'string' && isArticleEditorPanel(nextValue))
-            setPanel(nextValue)
-        }}
-        // The tabs root wraps the columns, so it must not break the page's flex column that lets each column scroll on its own.
-        style={{ display: 'contents' }}
-        value={isMobile ? selectedPanel : selectedSidePanel}
+    <>
+      {exportContent}
+      {/* Hidden instead of unmounted so the editor keeps its undo history and can still take imported text. */}
+      <div
+        className={`flex min-h-dvh flex-col ${isMobile ? '' : 'lg:h-dvh'}`}
+        hidden={exportContent !== undefined}
       >
-        {isMobile ? renderTabs(availablePanels) : null}
-        <div
-          className={`flex flex-col ${isMobile ? '' : 'lg:min-h-0 lg:flex-1 lg:flex-row'}`}
+        <AppHeader
+          actions={
+            context && exportScreen ? (
+              <Button
+                onClick={() => {
+                  openExport()
+                }}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                書き出し
+              </Button>
+            ) : null
+          }
+          articleTitle={title}
+          onHome={onBack}
+          onOpenSettings={onOpenSettings}
+          status={syncStatus ? <SyncStatus state={syncStatus} /> : undefined}
+        />
+        <div className="flex flex-col gap-2 border-b border-border px-4 py-3 text-sm empty:hidden">
+          {status?.kind === 'error' ? (
+            <p className="text-destructive" role="alert">
+              {status.message}
+            </p>
+          ) : null}
+          {syncError !== undefined ? (
+            <p className="text-destructive" role="alert">
+              {syncError}
+            </p>
+          ) : null}
+          {requiresAuthentication && onLoginAgain ? (
+            <ReauthenticationPrompt onLoginAgain={onLoginAgain} />
+          ) : null}
+          {context ? articleNotice?.(context) : null}
+        </div>
+
+        <Tabs
+          onValueChange={(value) => {
+            const nextValue: unknown = value
+            if (
+              typeof nextValue === 'string' &&
+              isArticleEditorPanel(nextValue)
+            )
+              setPanel(nextValue)
+          }}
+          // The tabs root wraps the columns, so it must not break the page's flex column that lets each column scroll on its own.
+          style={{ display: 'contents' }}
+          value={isMobile ? selectedPanel : selectedSidePanel}
         >
-          <nav
-            aria-label="構成"
-            className={
-              isMobile
-                ? ''
-                : 'border-b border-border lg:w-66 lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-b-0'
-            }
+          {isMobile ? renderTabs(availablePanels) : null}
+          <div
+            className={`flex flex-col ${isMobile ? '' : 'lg:min-h-0 lg:flex-1 lg:flex-row'}`}
           >
-            <TabsPanel {...desktopPanelProps} keepMounted value="outline">
-              <div className={isMobile ? 'p-4' : 'px-3 py-5'}>
-                {renderPanel('outline')}
-              </div>
-            </TabsPanel>
-          </nav>
-          <main
-            className={`min-w-0 ${isMobile ? '' : 'lg:flex-1 lg:overflow-y-auto'}`}
-          >
-            <TabsPanel {...desktopPanelProps} keepMounted value="body">
-              <div className={isMobile ? 'p-4' : 'px-8 py-6 lg:pt-10 lg:pb-24'}>
-                {renderPanel('body')}
-              </div>
-            </TabsPanel>
-          </main>
-          <aside
-            className={
-              isMobile
-                ? ''
-                : 'flex flex-col border-t border-border lg:w-85 lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-l'
-            }
-          >
-            {isMobile ? null : renderTabs(sidePanels)}
-            <TabsPanel keepMounted value="memo">
-              <div className={isMobile ? 'p-4' : 'p-3.5'}>
-                {renderPanel('memo')}
-              </div>
-            </TabsPanel>
-            {/* Unmounting the premise panel discards its unsaved LLM conversation when the writer leaves the tab. */}
-            <TabsPanel value="premise">
-              <div className={isMobile ? 'p-4' : 'p-3.5'}>
-                {renderPanel('premise')}
-              </div>
-            </TabsPanel>
-            {sourcesPanel == null ? null : (
-              <TabsPanel keepMounted value="sources">
-                <div className={isMobile ? 'p-4' : 'p-3.5'}>
-                  {renderPanel('sources')}
+            <nav
+              aria-label="構成"
+              className={
+                isMobile
+                  ? ''
+                  : 'border-b border-border lg:w-66 lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-b-0'
+              }
+            >
+              <TabsPanel {...desktopPanelProps} keepMounted value="outline">
+                <div className={isMobile ? 'p-4' : 'px-3 py-5'}>
+                  {renderPanel('outline')}
                 </div>
               </TabsPanel>
-            )}
-          </aside>
-        </div>
-      </Tabs>
-      {isMobile ? null : <EditorStatusBar syncStatus={syncStatus} />}
-    </div>
+            </nav>
+            <main
+              className={`min-w-0 ${isMobile ? '' : 'lg:flex-1 lg:overflow-y-auto'}`}
+            >
+              <TabsPanel {...desktopPanelProps} keepMounted value="body">
+                <div
+                  className={isMobile ? 'p-4' : 'px-8 py-6 lg:pt-10 lg:pb-24'}
+                >
+                  {renderPanel('body')}
+                </div>
+              </TabsPanel>
+            </main>
+            <aside
+              className={
+                isMobile
+                  ? ''
+                  : 'flex flex-col border-t border-border lg:w-85 lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-l'
+              }
+            >
+              {isMobile ? null : renderTabs(sidePanels)}
+              <TabsPanel keepMounted value="memo">
+                <div className={isMobile ? 'p-4' : 'p-3.5'}>
+                  {renderPanel('memo')}
+                </div>
+              </TabsPanel>
+              {/* Unmounting the premise panel discards its unsaved LLM conversation when the writer leaves the tab. */}
+              <TabsPanel value="premise">
+                <div className={isMobile ? 'p-4' : 'p-3.5'}>
+                  {renderPanel('premise')}
+                </div>
+              </TabsPanel>
+              {sourcesPanel == null ? null : (
+                <TabsPanel keepMounted value="sources">
+                  <div className={isMobile ? 'p-4' : 'p-3.5'}>
+                    {renderPanel('sources')}
+                  </div>
+                </TabsPanel>
+              )}
+            </aside>
+          </div>
+        </Tabs>
+        {isMobile ? null : <EditorStatusBar syncStatus={syncStatus} />}
+      </div>
+    </>
   )
 }

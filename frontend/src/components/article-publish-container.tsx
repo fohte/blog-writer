@@ -22,7 +22,6 @@ type ArticlePublishContainerProps = {
   doc: Y.Doc
   destinations: ExportDestination[]
   client: SyncClientApi
-  onDiffChange: (showing: boolean) => void
 }
 
 type PreparedPublish = {
@@ -57,7 +56,6 @@ export function ArticlePublishContainer({
   doc,
   destinations,
   client,
-  onDiffChange,
 }: ArticlePublishContainerProps) {
   const savedDestinationExists = destinations.some(
     ({ id }) => id === article.exportDestinationId,
@@ -198,7 +196,6 @@ export function ArticlePublishContainer({
       frontmatterPersisted.current = true
       updateSettings({ destinationId: nextId, frontmatter: nextFrontmatter })
     }
-    onDiffChange(false)
   }
 
   async function loadDiff(preserveError: boolean): Promise<number | undefined> {
@@ -254,7 +251,6 @@ export function ArticlePublishContainer({
       sha: fileResult.file.sha,
       original: fileResult.file.content ?? '',
     })
-    onDiffChange(true)
     setBusyAction(undefined)
     return currentRequestId
   }
@@ -288,7 +284,6 @@ export function ArticlePublishContainer({
       if (result.error instanceof ExportConflictError) {
         const conflictMessage = result.error.message
         setPrepared(undefined)
-        onDiffChange(false)
         const refreshRequestId = await loadDiff(true)
         if (
           refreshRequestId !== undefined &&
@@ -301,7 +296,6 @@ export function ArticlePublishContainer({
     } else {
       setPrepared(undefined)
       setPublishedUrl(result.url)
-      onDiffChange(false)
     }
     setBusyAction(undefined)
   }

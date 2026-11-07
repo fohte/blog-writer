@@ -62,7 +62,6 @@ function renderPublish(
   options: {
     article?: Article
     destinations?: ExportDestination[]
-    onDiffChange?: (showing: boolean) => void
     body?: string
   } = {},
 ) {
@@ -95,7 +94,6 @@ function renderPublish(
         client={client}
         destinations={options.destinations ?? destinations}
         doc={currentDoc}
-        onDiffChange={options.onDiffChange ?? (() => {})}
       />,
     )
   })
@@ -270,10 +268,6 @@ function readMdxConversionFailureState() {
   }
 }
 
-function readUnmountedDiffState(diffChangeCalls: unknown[]) {
-  return { diffChangeCalls, requests }
-}
-
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   requests = []
@@ -400,7 +394,7 @@ describe('ArticlePublishContainer', () => {
   it('requires a new diff after the slug or article body changes', async () => {
     renderPublish()
     await clickAndWait('差分を見る', waitForDiff)
-    await fillTextbox('公開 slug', 'changed-post')
+    await fillTextbox('slug', 'changed-post')
     const disabledAfterSlugChange = isButtonDisabled('PR を作成')
     await clickAndWait('差分を見る', waitForDiff)
     await fillTextbox('frontmatter', 'title: "Changed article"')
@@ -491,7 +485,7 @@ describe('ArticlePublishContainer', () => {
       if (settingsUpdates.length === 0)
         throw new Error('Waiting for the initial export settings')
     })
-    await fillTextbox('公開 slug', 'revised-post')
+    await fillTextbox('slug', 'revised-post')
     await fillTextbox('frontmatter', 'title: "Edited article"')
 
     expect(readDestinationState()).toEqual({
@@ -638,44 +632,6 @@ describe('ArticlePublishContainer', () => {
     expect(readInvalidSlugState(disabled)).toEqual({
       disabled: true,
       requests: [],
-    })
-  })
-
-  it('does not update the popover after unmount while loading a diff', async () => {
-    const onDiffChange = vi.fn()
-    let resolvePendingGet: ((response: Response) => void) | undefined
-    const responsePromise = new Promise<Response>((resolve) => {
-      resolvePendingGet = resolve
-    })
-    pendingGetResponse = responsePromise
-    renderPublish({}, { onDiffChange })
-    await act(async () => {
-      await page.getByRole('button', { name: '差分を見る' }).click()
-    })
-    await vi.waitFor(() => {
-      expect(requests).toEqual([
-        {
-          method: 'GET',
-          url: '/api/export/sample-site/articles/article-one?slug=sample-post',
-          body: null,
-        },
-      ])
-    })
-    act(() => root?.unmount())
-    root = undefined
-    resolvePendingGet?.(Response.json({ content: 'Old body', sha: 'base-sha' }))
-    await responsePromise
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
-
-    expect(readUnmountedDiffState(onDiffChange.mock.calls)).toEqual({
-      diffChangeCalls: [],
-      requests: [
-        {
-          method: 'GET',
-          url: '/api/export/sample-site/articles/article-one?slug=sample-post',
-          body: null,
-        },
-      ],
     })
   })
 })
