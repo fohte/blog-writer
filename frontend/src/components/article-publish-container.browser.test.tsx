@@ -531,37 +531,97 @@ describe('ArticlePublishContainer', () => {
     })
   })
 
-  it('does not request a file or publish when MDX conversion fails', async () => {
-    vi.doMock('remark', () => ({
-      remark: () => {
-        throw new Error('parser failed')
-      },
-    }))
-    renderPublish(
-      {},
-      {
-        destinations: [
-          {
-            id: 'sample-site',
-            format: 'mdx',
-            frontmatter_template: 'title: {{ title }}\ndate: {{ date }}',
+  it(
+    'does not request a file or publish when MDX conversion fails',
+    { timeout: 30000 },
+    async () => {
+      performance.setResourceTimingBufferSize(100000)
+      const diag: Record<string, unknown> = {}
+      const t0 = performance.now()
+      const rel = () => Math.round(performance.now() - t0)
+      vi.doMock('remark', () => {
+        diag.factoryAt = rel()
+        return {
+          remark: () => {
+            diag.remarkCalledAt = rel()
+            throw new Error('parser failed')
           },
-        ],
-      },
-    )
-    await clickAndWait('差分を見る', async () => {
-      await vi.waitFor(() => {
-        if (!document.querySelector('[role="alert"]'))
-          throw new Error('Waiting for the MDX conversion error')
+        }
       })
-    })
+      const observer = new MutationObserver(() => {
+        if (
+          diag.alertAt === undefined &&
+          document.querySelector('[role="alert"]')
+        )
+          diag.alertAt = rel()
+        if (
+          diag.diffAt === undefined &&
+          document.querySelector('[data-testid="text-diff"]')
+        )
+          diag.diffAt = rel()
+      })
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+      })
+      renderPublish(
+        {},
+        {
+          destinations: [
+            {
+              id: 'sample-site',
+              format: 'mdx',
+              frontmatter_template: 'title: {{ title }}\ndate: {{ date }}',
+            },
+          ],
+        },
+      )
+      diag.clickStart = rel()
+      await clickAndWait('差分を見る', async () => {
+        const clickDone = rel()
+        diag.clickDone = clickDone
+        await new Promise((resolve) => window.setTimeout(resolve, 1000))
+        diag.after1s = {
+          at: rel(),
+          alert: document.querySelector('[role="alert"]')?.textContent ?? null,
+          diff: document.querySelector('[data-testid="text-diff"]') !== null,
+          requests: requests.length,
+          disabledButtons: [...document.querySelectorAll('button')]
+            .filter((b) => b.disabled)
+            .map((b) => b.textContent),
+        }
+        await vi.waitFor(
+          () => {
+            if (!document.querySelector('[role="alert"]'))
+              throw new Error('Waiting for the MDX conversion error')
+          },
+          { timeout: 20000 },
+        )
+      })
+      observer.disconnect()
+      diag.resources = performance
+        .getEntriesByType('resource')
+        .filter(
+          (e) =>
+            /remark|mdx|gfm|micromark|mdast|unified|chunk-/.test(e.name) &&
+            e.startTime >= t0,
+        )
+        .map((e) => ({
+          name: e.name.replace(location.origin, ''),
+          start: Math.round(e.startTime - t0),
+          end: Math.round(e.startTime + e.duration - t0),
+        }))
+      console.log(`MDX_DIAG ${JSON.stringify(diag)}`)
 
-    expect(readMdxConversionFailureState()).toEqual({
-      error: 'MDX 形式に変換できませんでした。',
-      diff: false,
-      requests: [],
-    })
-  })
+      expect(readMdxConversionFailureState()).toEqual({
+        error: 'MDX 形式に変換できませんでした。',
+        diff: false,
+        requests: [],
+      })
+    },
+  )
 
   it('reports the automatic refresh only after the latest diff is ready', async () => {
     expect(await exerciseConflictRefresh()).toEqual({
