@@ -39,7 +39,7 @@ let pendingGetResponse: Promise<Response> | undefined
 
 const article: Article = {
   id: 'article-one',
-  createdAt: Date.UTC(2026, 0, 15),
+  createdAt: new Date(2026, 0, 15).getTime(),
   title: 'Sample article',
   exportDestinationId: 'sample-site',
   exportSlug: 'sample-post',
