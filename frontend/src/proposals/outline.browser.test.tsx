@@ -120,10 +120,9 @@ function proposalButtons(outlineHost: HTMLElement): string[] {
     .filter((label) => /を(採用|却下)$/u.test(label))
 }
 
-function proposalButton(outlineHost: HTMLElement, action: '採用' | '却下') {
+function proposalButton(outlineHost: HTMLElement, label: string) {
   return [...outlineHost.querySelectorAll('button')].find(
-    (button) =>
-      button.getAttribute('aria-label')?.endsWith(`を${action}`) === true,
+    (button) => button.getAttribute('aria-label') === label,
   )
 }
 
@@ -306,7 +305,7 @@ describe('outline proposal integration', () => {
       for (let index = 0; index < 8; index += 1) await Promise.resolve()
     })
 
-    const adoptButton = proposalButton(outlineHost, '採用')
+    const adoptButton = proposalButton(outlineHost, '追加案を採用')
     if (!adoptButton) throw new Error('The outline suggestion is missing')
     await act(async () => {
       await userEvent.click(adoptButton)
@@ -391,7 +390,7 @@ describe('outline proposal integration', () => {
       await vi.advanceTimersByTimeAsync(30_000)
       for (let index = 0; index < 8; index += 1) await Promise.resolve()
     })
-    const acceptButton = proposalButton(outlineHost, '採用')
+    const acceptButton = proposalButton(outlineHost, '改名案を採用')
     if (!acceptButton) throw new Error('The heading rename is missing')
     await act(async () => {
       await userEvent.click(acceptButton)
@@ -454,9 +453,13 @@ describe('outline proposal integration', () => {
     })
   })
 
-  it.each(['addition', 'rename', 'deletion'] as const)(
+  it.each([
+    ['addition', '追加案を却下'],
+    ['rename', '改名案を却下'],
+    ['deletion', '削除案を却下'],
+  ] as const)(
     'does not offer a rejected %s proposal again while the page stays open',
-    async (operation) => {
+    async (operation, rejectLabel) => {
       let requestCount = 0
       let requestBody = ''
       const fetcher: typeof fetch = (_input, init) => {
@@ -481,7 +484,7 @@ describe('outline proposal integration', () => {
         await vi.advanceTimersByTimeAsync(30_000)
         for (let index = 0; index < 8; index += 1) await Promise.resolve()
       })
-      const rejectButton = proposalButton(outlineHost, '却下')
+      const rejectButton = proposalButton(outlineHost, rejectLabel)
       if (!rejectButton) throw new Error('The outline suggestion is missing')
       const paragraph = paragraphFrom(requestBody)
       await act(async () => {
@@ -581,7 +584,7 @@ describe('outline proposal integration', () => {
         await vi.advanceTimersByTimeAsync(30_000)
         for (let index = 0; index < 8; index += 1) await Promise.resolve()
       })
-      const acceptButton = proposalButton(outlineHost, '採用')
+      const acceptButton = proposalButton(outlineHost, '削除案を採用')
       if (!acceptButton) throw new Error('The heading deletion is missing')
       await act(async () => {
         await userEvent.click(acceptButton)
@@ -615,7 +618,7 @@ describe('outline proposal integration', () => {
       await vi.advanceTimersByTimeAsync(30_000)
       for (let index = 0; index < 8; index += 1) await Promise.resolve()
     })
-    const acceptButton = proposalButton(outlineHost, '採用')
+    const acceptButton = proposalButton(outlineHost, '削除案を採用')
     if (!acceptButton) throw new Error('The heading deletion is missing')
     await act(async () => {
       await userEvent.click(acceptButton)
@@ -716,7 +719,7 @@ describe('outline proposal integration', () => {
       )
       for (let index = 0; index < 8; index += 1) await Promise.resolve()
     })
-    const acceptButton = proposalButton(outlineHost, '採用')
+    const acceptButton = proposalButton(outlineHost, '追加案を採用')
     if (!acceptButton)
       throw new Error('The mapped outline suggestion is missing')
     await act(async () => {

@@ -440,8 +440,16 @@ describe('outline interactions', () => {
   })
 
   it('moves the editor selection to the heading chosen in the outline', async () => {
-    const markdownText =
-      '# Overview\n\nFirst section.\n\n# Details\n\nSecond section.\n'
+    const markdownText = asMarkdown(
+      '# Overview',
+      '',
+      'First section.',
+      '',
+      '# Details',
+      '',
+      'Second section.',
+      '',
+    )
     const doc = new Y.Doc()
     setBody(doc, markdownText)
     const history = createMoveHistory(doc)
@@ -488,8 +496,16 @@ describe('outline interactions', () => {
   })
 
   it('counts the memos adopted to each heading as they are adopted', () => {
-    const markdownText =
-      '# Overview\n\nFirst section.\n\n# Details\n\nSecond section.\n'
+    const markdownText = asMarkdown(
+      '# Overview',
+      '',
+      'First section.',
+      '',
+      '# Details',
+      '',
+      'Second section.',
+      '',
+    )
     const doc = new Y.Doc()
     setBody(doc, markdownText)
     for (const [order, id] of ['memo-a', 'memo-b', 'memo-c'].entries()) {
@@ -528,18 +544,21 @@ describe('outline interactions', () => {
         memos:
           option.querySelector('[title="採用済みのメモ"]')?.textContent ?? null,
       }))
-    expect(readCounts()).toEqual([
-      { heading: 'Overview', memos: 'メモ 2' },
-      { heading: 'Details', memos: null },
-    ])
-
+    const snapshots = [readCounts()]
     act(() => {
       adopt('memo-c', '# Details')
     })
+    snapshots.push(readCounts())
 
-    expect(readCounts()).toEqual([
-      { heading: 'Overview', memos: 'メモ 2' },
-      { heading: 'Details', memos: 'メモ 1' },
+    expect(snapshots).toEqual([
+      [
+        { heading: 'Overview', memos: 'メモ 2' },
+        { heading: 'Details', memos: null },
+      ],
+      [
+        { heading: 'Overview', memos: 'メモ 2' },
+        { heading: 'Details', memos: 'メモ 1' },
+      ],
     ])
   })
 
