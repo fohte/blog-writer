@@ -1,6 +1,6 @@
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { ok } from 'neverthrow'
+import { ok, okAsync } from 'neverthrow'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -770,6 +770,62 @@ describe('body request', () => {
     expect(readOutput()).toEqual({
       alert: null,
       instruction: 'make it concise',
+    })
+  })
+
+  it('keeps an accepted proposal and explains when its evidence cannot be saved', async () => {
+    const { body, view } = createRequestEditor([], content, true, [
+      {
+        id: 'write-from-sources',
+        label: '資料をもとに書く',
+        createProposal: () =>
+          okAsync({
+            replacement: 'Sourced sentence.',
+            metadata: {
+              sentences: [
+                {
+                  from: 0,
+                  to: 1000,
+                  claim: 'Sourced sentence.',
+                  sourceId: null,
+                  quote: '',
+                  verdict: 'insufficient',
+                },
+              ],
+            },
+            replacementMarks: [],
+          }),
+      },
+    ])
+    await openRequestInput(view)
+    const presetButton = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('button'),
+    ).find((candidate) => candidate.textContent === '資料をもとに書く')
+    if (!presetButton) throw new Error('The preset request was not rendered')
+    await act(async () => {
+      await userEvent.click(presetButton)
+    })
+    const acceptButton = await vi.waitFor(() => {
+      const button = Array.from(
+        view.dom.querySelectorAll<HTMLButtonElement>(
+          '.cm-suggestion-widget button',
+        ),
+      ).find((candidate) => candidate.textContent.includes('採用'))
+      if (!button) throw new Error('The proposal has no accept action')
+      return button
+    })
+
+    await act(async () => {
+      await userEvent.click(acceptButton)
+    })
+
+    const readOutput = () => ({
+      alert: document.querySelector('[role="alert"]')?.textContent ?? null,
+      body: body.toJSON(),
+    })
+    expect(readOutput()).toEqual({
+      alert: '根拠を保存できませんでした · 提案は本文に採用されています。',
+      body: '# Article\n\n## Section\nSourced sentence.',
     })
   })
 

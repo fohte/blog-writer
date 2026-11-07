@@ -132,6 +132,7 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -337,6 +338,43 @@ describe('suggestion layer', () => {
       widgetFollowsLine: true,
       label: '> Shorten it',
       status: '作成中',
+    })
+  })
+
+  it('keeps the label and the elapsed time of an in-flight range moved by an outside edit', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    const { host, layer, view } = createEditor()
+    const from = initialText.indexOf('selected')
+    act(() => {
+      layer
+        .setInFlight({
+          from,
+          to: from + 'selected sentence'.length,
+          label: 'Shorten it',
+        })
+        .match(
+          () => undefined,
+          () => undefined,
+        )
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(2000)
+      view.dispatch({ changes: { from: 0, insert: 'new ' } })
+      vi.advanceTimersByTime(1000)
+    })
+
+    const readOutput = () => ({
+      inFlight: layer.getInFlight(),
+      bar: host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
+    })
+    expect(readOutput()).toEqual({
+      inFlight: {
+        from: from + 'new '.length,
+        to: from + 'new selected sentence'.length,
+        label: 'Shorten it',
+      },
+      bar: '> Shorten it作成中 ··· 3s中止 Esc',
     })
   })
 
