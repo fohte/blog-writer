@@ -17,7 +17,7 @@ type UseArticleFileSyncOptions = {
   initialPath?: string | undefined
   initialStatus: ArticleFileSyncStatus
   replaceBody: ArticleEditorContext['replaceBody']
-  /** Loads the file while true, and reloads it when the indexed path or status changes. */
+  /** Loads the file while true, and reloads it when the indexed path or status changes to a state other than the last response. */
   active: boolean
 }
 
