@@ -3,10 +3,12 @@ import * as Y from 'yjs'
 
 import type { Finding, Source } from '#article/index'
 import {
+  addEvidence,
   addSource,
   deleteSource,
   listFindings,
   listSources,
+  setBody,
   setFindings,
   updateSource,
 } from '#article/index'
@@ -29,12 +31,26 @@ function readStoredSourceOutput(
 }
 
 function readSourceDeletionOutput(
-  mergedSource: ReturnType<typeof listSources>[number] | undefined,
   removed: boolean,
   sources: ReturnType<typeof listSources>,
   findings: ReturnType<typeof listFindings>,
+  evidenceIds: string[],
+  transactionCount: number,
 ) {
-  return { mergedSource, removed, sources, findings }
+  return {
+    removed,
+    sources,
+    findings,
+    evidenceIds,
+    transactionCount,
+  }
+}
+
+function readConcurrentSourceMergeOutput(first: Y.Doc, second: Y.Doc) {
+  return {
+    first: listSources(first),
+    second: listSources(second),
+  }
 }
 
 function readDuplicateSourceOutput(
@@ -124,7 +140,7 @@ describe('article sources', () => {
     doc.destroy()
   })
 
-  it('preserves concurrent field updates and removes findings with their source', () => {
+  it('merges concurrent updates to separate source fields', () => {
     const first = new Y.Doc({ guid: 'article-a' })
     const second = new Y.Doc({ guid: 'article-a' })
     addSource(first, {
@@ -140,6 +156,47 @@ describe('article sources', () => {
     updateSource(second, 'source-a', { summary: '資料の要約です。' })
     Y.applyUpdate(first, Y.encodeStateAsUpdate(second))
     Y.applyUpdate(second, Y.encodeStateAsUpdate(first))
+
+    expect(readConcurrentSourceMergeOutput(first, second)).toEqual({
+      first: [
+        {
+          id: 'source-a',
+          kind: 'file',
+          title: '更新された概要',
+          url: null,
+          fileName: 'overview.pdf',
+          checkedAt: null,
+          status: 'ready',
+          summary: '資料の要約です。',
+        },
+      ],
+      second: [
+        {
+          id: 'source-a',
+          kind: 'file',
+          title: '更新された概要',
+          url: null,
+          fileName: 'overview.pdf',
+          checkedAt: null,
+          status: 'ready',
+          summary: '資料の要約です。',
+        },
+      ],
+    })
+    first.destroy()
+    second.destroy()
+  })
+
+  it('deletes a source, its findings, and its evidence in one transaction', () => {
+    const first = new Y.Doc()
+    addSource(first, {
+      id: 'source-a',
+      kind: 'file',
+      title: '概要',
+      url: null,
+      fileName: 'overview.pdf',
+      checkedAt: null,
+    })
     setFindings(first, 'source-a', [
       {
         id: 'finding-a',
@@ -147,7 +204,21 @@ describe('article sources', () => {
         quote: '本文の引用です。',
       },
     ])
-    const mergedSource = listSources(first)[0]
+    setBody(first, 'x')
+    addEvidence(first, {
+      id: 'evidence-a',
+      from: 0,
+      to: 1,
+      claim: 'x',
+      sourceId: 'source-a',
+      quote: 'A quote.',
+      verdict: 'supported',
+      checkedAt: '2026-02-01T00:00:00.000Z',
+    })._unsafeUnwrap()
+    let transactionCount = 0
+    first.on('afterTransaction', () => {
+      transactionCount += 1
+    })
     const removed = deleteSource(first, 'source-a').match(
       () => true,
       () => false,
@@ -155,28 +226,20 @@ describe('article sources', () => {
 
     expect(
       readSourceDeletionOutput(
-        mergedSource,
         removed,
         listSources(first),
         listFindings(first),
+        [...first.getMap('evidence').keys()],
+        transactionCount,
       ),
     ).toEqual({
-      mergedSource: {
-        id: 'source-a',
-        kind: 'file',
-        title: '更新された概要',
-        url: null,
-        fileName: 'overview.pdf',
-        checkedAt: null,
-        status: 'ready',
-        summary: '資料の要約です。',
-      },
       removed: true,
       sources: [],
       findings: [],
+      evidenceIds: [],
+      transactionCount: 1,
     })
     first.destroy()
-    second.destroy()
   })
 
   it('preserves the original source when an ID is already present', () => {

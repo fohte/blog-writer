@@ -258,6 +258,34 @@ Nested text
     })
   })
 
+  it('keeps a memo attached to the heading after a moved section', () => {
+    const doc = new Y.Doc()
+    const markdown = '# Alpha\n\nAlpha text.\n\n# Beta\n\nBeta text.'
+    setBody(doc, markdown)
+    addMemo(doc, { id: 'memo-beta', text: 'Beta note', order: 0 })
+    setMemoAdoptedTo(doc, 'memo-beta', markdown.indexOf('# Beta'))
+    moveBlock(doc, { from: 0, destination: markdown.length })._unsafeUnwrap()
+
+    const state = getMemoState(doc, 'memo-beta').match(
+      (memoState) =>
+        memoState.kind === 'adopted'
+          ? {
+              kind: memoState.kind,
+              heading: {
+                from: memoState.heading.from,
+                text: memoState.heading.text,
+              },
+            }
+          : memoState,
+      (error) => error.name,
+    )
+    expect(state).toEqual({
+      kind: 'adopted',
+      heading: { from: 0, text: 'Beta' },
+    })
+    doc.destroy()
+  })
+
   it('moves a single Markdown block', () => {
     const doc = new Y.Doc()
     const markdown = `# Heading
