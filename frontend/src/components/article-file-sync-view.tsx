@@ -64,7 +64,11 @@ export function ArticleFileSyncView({
           ローカル同期
         </PopoverTrigger>
         <PopoverContent
-          className="flex w-96 max-w-full flex-col gap-3"
+          className={
+            showDiff
+              ? 'flex flex-col gap-3'
+              : 'flex w-96 max-w-full flex-col gap-3'
+          }
           style={
             showDiff
               ? { width: '48rem', maxWidth: 'calc(100vw - 2rem)' }
