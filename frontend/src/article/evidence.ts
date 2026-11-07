@@ -16,6 +16,8 @@ export type AddEvidenceInput = Omit<Evidence, 'from' | 'to'> & {
   to: number
 }
 
+export type SetEvidenceInput = Omit<AddEvidenceInput, 'id'>
+
 function getEvidenceMap(doc: Y.Doc): Y.Map<EvidenceData> {
   return doc.getMap('evidence')
 }
@@ -160,6 +162,47 @@ export function addEvidence(
   data.set('checkedAt', input.checkedAt)
   evidence.set(input.id, data)
   const result = readEvidence(input.id, data)
+  return result
+    ? ok(result)
+    : err(new InvalidEvidenceError('Evidence could not be read'))
+}
+
+export function setEvidence(
+  doc: Y.Doc,
+  input: SetEvidenceInput,
+): Result<Evidence, SourceNotFoundError | InvalidEvidenceError> {
+  if (input.sourceId !== null && !doc.getMap('sources').has(input.sourceId))
+    return err(new SourceNotFoundError(input.sourceId))
+  const body = getBody(doc)
+  if (
+    input.claim.length === 0 ||
+    input.from < 0 ||
+    input.to <= input.from ||
+    input.to > body.length
+  )
+    return err(new InvalidEvidenceError('Invalid evidence range'))
+
+  const evidence = getEvidenceMap(doc)
+  const matching = [...evidence.entries()].flatMap(([id, data]) => {
+    const item = readEvidence(id, data)
+    const range = item && resolveRange(doc, item)
+    return range?.from === input.from && range.to === input.to
+      ? [{ id, data }]
+      : []
+  })
+  const id = matching[0]?.id ?? crypto.randomUUID()
+  const data = matching[0]?.data ?? new Y.Map<unknown>()
+  doc.transact(() => {
+    writeEvidenceAnchors(data, body, input.from, input.to)
+    data.set('claim', input.claim)
+    data.set('sourceId', input.sourceId)
+    data.set('quote', input.quote)
+    data.set('verdict', input.verdict)
+    data.set('checkedAt', input.checkedAt)
+    if (matching.length === 0) evidence.set(id, data)
+    for (const duplicate of matching.slice(1)) evidence.delete(duplicate.id)
+  })
+  const result = readEvidence(id, data)
   return result
     ? ok(result)
     : err(new InvalidEvidenceError('Evidence could not be read'))

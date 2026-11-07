@@ -206,6 +206,33 @@ async function openArticle() {
   })
 }
 
+async function openClaimEvidencePreset(claim: string) {
+  const content = host?.querySelector<HTMLElement>('.cm-content')
+  if (!content) throw new Error('The article editor did not render')
+  const view = EditorView.findFromDOM(content)
+  if (!view) throw new Error('The article editor view did not render')
+  const from = getBody(doc).toJSON().indexOf(claim)
+  view.dispatch({ selection: { anchor: from, head: from + claim.length } })
+  view.focus()
+  const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
+  act(() => {
+    view.contentDOM.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        key: 'k',
+        [modifier]: true,
+      }),
+    )
+  })
+  await act(async () => {
+    await userEvent.click(
+      page
+        .getByRole('group', { name: '定型の依頼' })
+        .getByRole('button', { name: '根拠を確かめる' }),
+    )
+  })
+}
+
 beforeEach(async () => {
   writeRequest = undefined
   writeRequestCount = 0
@@ -839,6 +866,318 @@ describe('the application research and evidence integrations', () => {
         },
       ],
     })
+  })
+
+  it('judges a claim, adopts its proposal, and rechecks the adopted text', async () => {
+    const claim = 'A sentence to edit.'
+    const replacement = 'A verified sentence.'
+    const sourceId = 'source-research-a'
+    let judgedRequest: unknown
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'progress',
+            data: { query: 'search query' },
+          },
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'outdated',
+                  quote: {
+                    source_id: sourceId,
+                    text: 'A current source quote.',
+                  },
+                  suggestion: replacement,
+                },
+              },
+              sources: [
+                {
+                  id: sourceId,
+                  url: 'https://example.invalid/research',
+                  final_url: 'https://example.invalid/research',
+                  title: 'Research source',
+                  body: 'A current source quote.',
+                  status: 'available',
+                },
+              ],
+            },
+          },
+        ])
+      if (url.includes('/source-bodies/' + sourceId)) {
+        if (url.endsWith('/save-if-unchanged'))
+          return new Response(null, { status: 204 })
+        return new Response('', { status: 404 })
+      }
+      if (url === '/api/research/claim-evidence') {
+        judgedRequest = parseObjectBody(init.body)
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            resolve(
+              serverEvents([
+                {
+                  event: 'result',
+                  data: {
+                    verdict: 'supported',
+                    quote: { source_id: sourceId, text: replacement },
+                    suggestion: null,
+                  },
+                },
+              ]),
+            )
+          }, 20)
+        })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openClaimEvidencePreset(claim)
+    await waitFor(() => {
+      if (!host?.querySelector('.suggestion-diff-note'))
+        throw new Error('The source note did not render')
+    })
+    const originalCheckedAt = listEvidence(doc)[0]?.checkedAt
+    expect(host?.querySelector('.suggestion-diff-note')?.textContent).toBe(
+      '根拠の資料: Research source',
+    )
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+    })
+    await waitFor(() => {
+      if (
+        listEvidence(doc)[0]?.verdict !== 'supported' ||
+        host?.querySelector('.cm-evidence-marker')?.className !==
+          'cm-evidence-marker cm-evidence-supported'
+      )
+        throw new Error('The adopted claim was not rechecked')
+    })
+
+    const readResult = () => ({
+      body: getBody(doc).toJSON(),
+      judgedRequest,
+      source: listSources(doc).map(({ title, url, status }) => ({
+        title,
+        url,
+        status,
+      })),
+      evidence: listEvidence(doc).map(
+        ({ currentClaim, edited, quote, verdict }) => ({
+          currentClaim,
+          edited,
+          quote,
+          verdict,
+        }),
+      ),
+      markers: [...(host?.querySelectorAll('.cm-evidence-marker') ?? [])].map(
+        ({ className }) => className,
+      ),
+      checkedAtUpdated: listEvidence(doc)[0]?.checkedAt !== originalCheckedAt,
+    })
+    expect(readResult()).toEqual({
+      body: `# Research topic\n\n${replacement}\n`,
+      judgedRequest: {
+        claim: replacement,
+        before: '# Research topic\n\n',
+        sources: [{ id: sourceId, body: 'A current source quote.' }],
+      },
+      source: [
+        {
+          title: 'Research source',
+          url: 'https://example.invalid/research',
+          status: 'ready',
+        },
+      ],
+      evidence: [
+        {
+          currentClaim: replacement,
+          edited: false,
+          quote: replacement,
+          verdict: 'supported',
+        },
+      ],
+      markers: ['cm-evidence-marker cm-evidence-supported'],
+      checkedAtUpdated: true,
+    })
+  })
+
+  it('keeps a yellow marker on the original claim when its proposal is rejected', async () => {
+    const claim = 'A sentence to edit.'
+    const sourceId = 'source-research-a'
+    installFetch((url) => {
+      if (url === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'contradicted',
+                  quote: { source_id: sourceId, text: 'A conflicting quote.' },
+                  suggestion: 'A corrected sentence.',
+                },
+              },
+              sources: [
+                {
+                  id: sourceId,
+                  url: 'https://example.invalid/research',
+                  title: 'Research source',
+                  body: 'A conflicting quote.',
+                  status: 'available',
+                },
+              ],
+            },
+          },
+        ])
+      if (url.includes('/source-bodies/' + sourceId)) {
+        if (url.endsWith('/save-if-unchanged'))
+          return new Response(null, { status: 204 })
+        return new Response('', { status: 404 })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openClaimEvidencePreset(claim)
+    await waitFor(() => {
+      if (!host?.querySelector('.suggestion-diff-note'))
+        throw new Error('The source note did not render')
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '× 却下' }))
+    })
+
+    const readResult = () => ({
+      body: getBody(doc).toJSON(),
+      evidence: listEvidence(doc).map(
+        ({ currentClaim, edited, quote, verdict }) => ({
+          currentClaim,
+          edited,
+          quote,
+          verdict,
+        }),
+      ),
+      markers: [...(host?.querySelectorAll('.cm-evidence-marker') ?? [])].map(
+        ({ className }) => className,
+      ),
+    })
+    expect(readResult()).toEqual({
+      body: `# Research topic\n\n${claim}\n`,
+      evidence: [
+        {
+          currentClaim: claim,
+          edited: false,
+          quote: 'A conflicting quote.',
+          verdict: 'contradicted',
+        },
+      ],
+      markers: ['cm-evidence-marker cm-evidence-needs-review'],
+    })
+  })
+
+  it('marks a claim yellow when the sources provide insufficient support', async () => {
+    const claim = 'A sentence to edit.'
+    installFetch((url) => {
+      if (url === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'insufficient',
+                  quote: null,
+                  suggestion: null,
+                },
+              },
+              sources: [
+                {
+                  id: 'source-research-a',
+                  url: 'https://example.invalid/research',
+                  title: 'Research source',
+                  body: null,
+                  status: 'unavailable',
+                },
+              ],
+            },
+          },
+        ])
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openClaimEvidencePreset(claim)
+    await waitFor(() => {
+      if (!host?.querySelector('.cm-evidence-marker'))
+        throw new Error('The insufficient judgment marker did not render')
+    })
+
+    const readResult = () => ({
+      evidence: listEvidence(doc).map(
+        ({ currentClaim, edited, quote, verdict }) => ({
+          currentClaim,
+          edited,
+          quote,
+          verdict,
+        }),
+      ),
+      markerClass: host?.querySelector('.cm-evidence-marker')?.className,
+      proposals: host?.querySelectorAll('.suggestion-diff').length,
+    })
+    expect(readResult()).toEqual({
+      evidence: [
+        {
+          currentClaim: claim,
+          edited: false,
+          quote: '',
+          verdict: 'insufficient',
+        },
+      ],
+      markerClass: 'cm-evidence-marker cm-evidence-needs-review',
+      proposals: 0,
+    })
+  })
+
+  it('does not save sources or evidence when the research is cancelled', async () => {
+    const claim = 'A sentence to edit.'
+    let requestSignal: AbortSignal | undefined
+    installFetch((url, init) => {
+      if (url !== '/api/research/jobs') return new Response('', { status: 404 })
+      requestSignal = init.signal ?? undefined
+      return new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        })
+      })
+    })
+    await renderApp()
+    await openArticle()
+    await openClaimEvidencePreset(claim)
+    await waitFor(() => {
+      if (!requestSignal) throw new Error('Research did not start')
+    })
+    const activeRequestSignal = requestSignal
+    if (!activeRequestSignal) throw new Error('Research did not start')
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '中止' }))
+    })
+    await waitFor(() => {
+      if (!document.body.textContent.includes('調査を中断しました。'))
+        throw new Error('The cancelled research did not finish')
+    })
+
+    const readResult = () => ({
+      sources: listSources(doc),
+      evidence: listEvidence(doc),
+      aborted: activeRequestSignal.aborted,
+    })
+    expect(readResult()).toEqual({ sources: [], evidence: [], aborted: true })
   })
 
   it('starts heading research from a blank body request preset', async () => {

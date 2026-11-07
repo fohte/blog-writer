@@ -18,27 +18,36 @@ export class ResearchJobInterruptedError extends Error {
 function isResearchJobResult(value: unknown): value is ResearchJobResult {
   if (!isRecord(value) || !Array.isArray(value['sources'])) return false
   const analysis = value['analysis']
-  if (
-    !isRecord(analysis) ||
-    analysis['task'] !== 'key_points' ||
-    !isRecord(analysis['data']) ||
-    !Array.isArray(analysis['data']['sources'])
-  )
-    return false
-
-  const validAnalysisSources = analysis['data']['sources'].every(
-    (source) =>
-      isRecord(source) &&
-      typeof source['id'] === 'string' &&
-      typeof source['summary'] === 'string' &&
-      Array.isArray(source['key_points']) &&
-      source['key_points'].every(
-        (point) =>
-          isRecord(point) &&
-          typeof point['text'] === 'string' &&
-          typeof point['quote'] === 'string',
-      ),
-  )
+  if (!isRecord(analysis) || !isRecord(analysis['data'])) return false
+  const validAnalysis =
+    analysis['task'] === 'key_points'
+      ? Array.isArray(analysis['data']['sources']) &&
+        analysis['data']['sources'].every(
+          (source) =>
+            isRecord(source) &&
+            typeof source['id'] === 'string' &&
+            typeof source['summary'] === 'string' &&
+            Array.isArray(source['key_points']) &&
+            source['key_points'].every(
+              (point) =>
+                isRecord(point) &&
+                typeof point['text'] === 'string' &&
+                typeof point['quote'] === 'string',
+            ),
+        )
+      : analysis['task'] === 'claim_evidence' &&
+        (analysis['data']['verdict'] === 'supported' ||
+          analysis['data']['verdict'] === 'insufficient' ||
+          analysis['data']['verdict'] === 'outdated' ||
+          analysis['data']['verdict'] === 'contradicted') &&
+        (analysis['data']['quote'] === undefined ||
+          analysis['data']['quote'] === null ||
+          (isRecord(analysis['data']['quote']) &&
+            typeof analysis['data']['quote']['source_id'] === 'string' &&
+            typeof analysis['data']['quote']['text'] === 'string')) &&
+        (analysis['data']['suggestion'] === undefined ||
+          analysis['data']['suggestion'] === null ||
+          typeof analysis['data']['suggestion'] === 'string')
   const validSources = value['sources'].every(
     (source) =>
       isRecord(source) &&
@@ -55,7 +64,7 @@ function isResearchJobResult(value: unknown): value is ResearchJobResult {
         typeof source['body'] === 'string') &&
       (source['status'] === 'available' || source['status'] === 'unavailable'),
   )
-  return validAnalysisSources && validSources
+  return validAnalysis && validSources
 }
 
 function researchApiUrl(settings: LlmSettings): string {
@@ -67,7 +76,7 @@ function researchApiUrl(settings: LlmSettings): string {
 export function runResearchJob(
   fetcher: typeof fetch,
   settings: LlmSettings,
-  question: string,
+  request: ResearchJobRequest,
   signal: AbortSignal,
   onProgress: (query: string) => void,
 ): ResultAsync<ResearchJobResult, Error> {
@@ -77,7 +86,7 @@ export function runResearchJob(
 
   return postLlmResult<ResearchJobRequest, ResearchJobResult>({
     url,
-    body: { task: 'key_points', question },
+    body: request,
     signal,
     fetcher,
     isResult: isResearchJobResult,

@@ -345,6 +345,11 @@ export class SuggestionLayerController<Metadata = unknown> {
     return ok(undefined)
   }
 
+  getInFlight(): SuggestionPosition | null {
+    const view = this.view
+    return view?.state.field(this.stateField, false)?.inFlight ?? null
+  }
+
   overlapsOtherLayer(position: SuggestionPosition): boolean {
     const view = this.view
     if (!view) return false

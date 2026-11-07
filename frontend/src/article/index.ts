@@ -11,7 +11,7 @@ export {
   SourceAlreadyExistsError,
   SourceNotFoundError,
 } from '#article/errors'
-export type { AddEvidenceInput } from '#article/evidence'
+export type { AddEvidenceInput, SetEvidenceInput } from '#article/evidence'
 export {
   addEvidence,
   listEvidence,
@@ -19,6 +19,7 @@ export {
   observeEvidence,
   pruneEvidence,
   removeEvidence,
+  setEvidence,
 } from '#article/evidence'
 export type { HeadingWithDepth } from '#article/headings'
 export {

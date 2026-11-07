@@ -130,7 +130,7 @@ export const AnnotatedSuggestion: Story = {
     suggestion: {
       ...inlineSuggestion,
       metadata: { sourceIds: ['source-a'] },
-      note: 'The revision reflects the source listed in the article.',
+      note: '根拠の資料: Sample source',
     },
   },
 }

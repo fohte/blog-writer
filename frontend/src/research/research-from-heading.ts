@@ -48,6 +48,15 @@ type SourcePlan = {
 type SourceBodySnapshot = { sourceId: string; body?: string }
 type SourceBodyRollback = SourceBodySnapshot & { expectedBody: string }
 
+export type SavedResearchSource = {
+  id: string
+  researchId: string
+  title: string
+  url: string
+  status: ResearchJobSource['status']
+  body?: string
+}
+
 class ResearchBodyRollbackError extends Error {
   constructor(cause: Error) {
     super(
@@ -331,40 +340,69 @@ export function researchFromHeading(
   return runResearchJob(
     fetcher,
     settings,
-    question,
+    { task: 'key_points', question },
     signal,
     onProgress,
-  ).andThen((result) => {
-    const plans = planSources(doc, result)
-    const validationError = validateSourceChanges(doc, plans)
-    if (validationError) return errAsync(validationError)
-    onSaving()
-    return saveBodies(fetcher, articleId, plans, signal).andThen(
-      (savedSourceRollbacks) => {
-        if (signal.aborted)
-          return rollbackSourceBodies(
-            fetcher,
-            articleId,
-            savedSourceRollbacks,
-          ).andThen(() =>
-            errAsync(new ResearchJobInterruptedError('調査を中断しました。')),
-          )
-        const error = validateSourceChanges(doc, plans)
-        if (error)
-          return rollbackSourceBodies(
-            fetcher,
-            articleId,
-            savedSourceRollbacks,
-          ).andThen(() => errAsync(error))
-        const saveResult = saveResultInDocument(doc, plans, researchedHeading)
-        if (saveResult.isErr())
-          return rollbackSourceBodies(
-            fetcher,
-            articleId,
-            savedSourceRollbacks,
-          ).andThen(() => err(saveResult.error))
-        return ok(undefined)
-      },
-    )
-  })
+  ).andThen((result) =>
+    saveResearchJobResult(
+      fetcher,
+      articleId,
+      doc,
+      result,
+      researchedHeading,
+      signal,
+      onSaving,
+    ).map(() => undefined),
+  )
+}
+
+export function saveResearchJobResult(
+  fetcher: typeof fetch,
+  articleId: string,
+  doc: Y.Doc,
+  result: ResearchJobResult,
+  researchedHeading: string | undefined,
+  signal: AbortSignal,
+  onSaving: () => void,
+): ResultAsync<SavedResearchSource[], Error> {
+  const plans = planSources(doc, result)
+  const validationError = validateSourceChanges(doc, plans)
+  if (validationError) return errAsync(validationError)
+  onSaving()
+  return saveBodies(fetcher, articleId, plans, signal).andThen(
+    (savedSourceRollbacks) => {
+      if (signal.aborted)
+        return rollbackSourceBodies(
+          fetcher,
+          articleId,
+          savedSourceRollbacks,
+        ).andThen(() =>
+          errAsync(new ResearchJobInterruptedError('調査を中断しました。')),
+        )
+      const error = validateSourceChanges(doc, plans)
+      if (error)
+        return rollbackSourceBodies(
+          fetcher,
+          articleId,
+          savedSourceRollbacks,
+        ).andThen(() => errAsync(error))
+      const saveResult = saveResultInDocument(doc, plans, researchedHeading)
+      if (saveResult.isErr())
+        return rollbackSourceBodies(
+          fetcher,
+          articleId,
+          savedSourceRollbacks,
+        ).andThen(() => err(saveResult.error))
+      return okAsync(
+        plans.map(({ id, title, url, source }) => ({
+          id,
+          researchId: source.id,
+          title,
+          url,
+          status: source.status,
+          ...(typeof source.body === 'string' ? { body: source.body } : {}),
+        })),
+      )
+    },
+  )
 }

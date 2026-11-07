@@ -25,6 +25,7 @@ import { PremiseProposalAccessory } from '#proposals/premise'
 import { writeFromKeyPoints } from '#proposals/write-from-key-points'
 import { HeadingResearchOutline } from '#research/heading-research-outline'
 import { SourcePanel } from '#research/source-panel'
+import { useClaimEvidence } from '#research/use-claim-evidence'
 import { useHeadingResearch } from '#research/use-heading-research'
 
 export function App() {
@@ -34,6 +35,7 @@ export function App() {
     progress: researchProgress,
     startResearch,
   } = useHeadingResearch()
+  const claimEvidence = useClaimEvidence()
   const [fileSyncConfiguration, setFileSyncConfiguration] =
     useState<FileSyncConfiguration>()
   const [fileSyncConfigurationError, setFileSyncConfigurationError] =
@@ -121,6 +123,28 @@ export function App() {
           history={context.history}
           presets={[
             {
+              id: 'verify-claim-evidence',
+              label: '根拠を確かめる',
+              onSelect: ({ context: requestContext }) => {
+                const [before = '', rest = ''] = requestContext.section.split(
+                  '⟪依頼範囲の開始⟫',
+                  2,
+                )
+                const [selected = '', after = ''] = rest.split(
+                  '⟪依頼範囲の終了⟫',
+                  2,
+                )
+                claimEvidence.startResearch({
+                  articleId: context.articleId,
+                  doc: context.doc,
+                  claim: selected || requestContext.target,
+                  range: requestContext.range,
+                  ...(before.length === 0 ? {} : { before }),
+                  ...(after.length === 0 ? {} : { after }),
+                })
+              },
+            },
+            {
               id: 'research-from-heading',
               label: 'この見出しについて調べる',
               onSelect: ({ context: requestContext, instruction }) => {
@@ -156,6 +180,7 @@ export function App() {
       )}
       editorExtensions={({ doc, history }) => [
         ...bodyRequestExtensions({ doc, history }),
+        claimEvidence.editorExtension(doc),
         createOutlineProposalExtension({ doc, history }),
         ...transitionProposalEditorExtensions({ doc, history }),
       ]}
@@ -205,7 +230,14 @@ export function App() {
         />
       )}
       sourcesPanel={(context) => {
-        const progress = researchProgress[context.articleId]
+        const claimProgress = claimEvidence.progress[context.articleId]
+        const claimResearchActive =
+          claimProgress?.status === 'running' ||
+          claimProgress?.status === 'saving' ||
+          claimProgress?.status === 'cancelling'
+        const progress = claimResearchActive
+          ? claimProgress
+          : (researchProgress[context.articleId] ?? claimProgress)
         return (
           <SourcePanel
             articleId={context.articleId}
@@ -218,9 +250,13 @@ export function App() {
                     ...(progress.status === 'running' ||
                     progress.status === 'saving'
                       ? {
-                          onCancel: () => {
-                            cancelResearch(context.articleId)
-                          },
+                          onCancel: claimResearchActive
+                            ? () => {
+                                claimEvidence.cancelResearch(context.articleId)
+                              }
+                            : () => {
+                                cancelResearch(context.articleId)
+                              },
                         }
                       : {}),
                   }
