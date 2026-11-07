@@ -2,6 +2,7 @@ import type { EditorView } from '@codemirror/view'
 import { useState } from 'react'
 import * as Y from 'yjs'
 
+import type { Memo } from '#article/index'
 import { MemoPanelView } from '#components/memo-panel-view'
 import { useArticleHeadings } from '#hooks/use-article-headings'
 import {
@@ -22,6 +23,16 @@ export function MemoPanel({ doc, view }: MemoPanelProps) {
   const [error, setError] = useState<string>()
   const { headings } = useArticleHeadings(doc)
   const [openAdoptionMenuId, setOpenAdoptionMenuId] = useState<string>()
+  const [filter, setFilter] = useState<Memo['state']['kind']>('unorganized')
+  // A remote edit can move the memo out of the filter, and a stale ID would
+  // reopen its menu once the memo returns.
+  if (
+    openAdoptionMenuId !== undefined &&
+    !memos.some(
+      (memo) => memo.id === openAdoptionMenuId && memo.state.kind === filter,
+    )
+  )
+    setOpenAdoptionMenuId(undefined)
 
   const apply = (operation: () => string | undefined) => {
     const nextError = operation()
@@ -33,6 +44,7 @@ export function MemoPanel({ doc, view }: MemoPanelProps) {
     <MemoPanelView
       draft={draft}
       error={error}
+      filter={filter}
       headings={headings}
       memos={memos}
       openAdoptionMenuId={openAdoptionMenuId}
@@ -50,6 +62,7 @@ export function MemoPanel({ doc, view }: MemoPanelProps) {
         apply(() => dismiss(id))
       }}
       onDraftChange={setDraft}
+      onFilterChange={setFilter}
       {...(view === undefined
         ? {}
         : {

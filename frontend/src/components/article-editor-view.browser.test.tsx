@@ -340,7 +340,7 @@ First paragraph.
         .width ?? 0
     const readPanels = () => ({
       outlineVisible: widthOf('[aria-label="Article outline"]') > 0,
-      memoVisible: widthOf('[aria-labelledby="memo-panel-heading"]') > 0,
+      memoVisible: widthOf('section[aria-label="メモ"]') > 0,
       sourcesVisible: widthOf('[aria-label="Reference sources"]') > 0,
       bodyVisible: widthOf('.cm-content') > 0,
       tabs: [...(host?.querySelectorAll('[role="tab"]') ?? [])].map(
@@ -648,10 +648,10 @@ First paragraph.
     await act(async () => {
       await userEvent.click(page.getByRole('tab', { name: 'メモ' }))
     })
-    const memoPanelVisible = page.getByRole('textbox', { name: '新しいメモ' })
+    const memoPanelVisible = page.getByRole('textbox', { name: 'メモを足す' })
     await act(async () => {
       await userEvent.type(memoPanelVisible, 'A useful note')
-      await userEvent.click(page.getByRole('button', { name: '追加' }))
+      await userEvent.keyboard('{Enter}')
       await userEvent.click(page.getByRole('tab', { name: '構成' }))
     })
     const heading = page.getByRole('option', { name: /First section/u })
@@ -707,7 +707,9 @@ First paragraph.
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '採用先を選ぶ' }))
+      await userEvent.click(
+        page.getByRole('button', { name: '採用', exact: true }),
+      )
     })
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
@@ -1023,7 +1025,7 @@ First paragraph.
     const focusedElementId = document.activeElement?.id
     await act(async () => {
       await userEvent.keyboard('A first thought')
-      await userEvent.click(page.getByRole('button', { name: '追加' }))
+      await userEvent.keyboard('{Enter}')
     })
 
     const readEmptyArticleOutput = () => ({
