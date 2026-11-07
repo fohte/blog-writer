@@ -255,10 +255,12 @@ export const MarkdownEditor = forwardRef<
       (item) => item.id === activeEvidenceId,
     )
     if (!evidence) return undefined
-    const source = listSources(text.doc).find(
-      (item) => item.id === evidence.sourceId,
-    )
-    return source ? { evidence, source } : undefined
+    const source =
+      evidence.sourceId === null
+        ? null
+        : listSources(text.doc).find((item) => item.id === evidence.sourceId)
+    if (evidence.sourceId !== null && !source) return undefined
+    return { evidence, source: source ?? null }
   }, [activeEvidenceId, evidenceVersion, text])
 
   return (

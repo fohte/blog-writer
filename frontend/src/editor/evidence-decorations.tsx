@@ -99,8 +99,7 @@ function buildDecorations(
   const sources = new Map(listSources(doc).map((source) => [source.id, source]))
   const decorations = []
   for (const item of items) {
-    const source = sources.get(item.sourceId)
-    if (!source) continue
+    if (item.sourceId !== null && !sources.has(item.sourceId)) continue
     const from = Y.createAbsolutePositionFromRelativePosition(item.from, doc)
     const to = Y.createAbsolutePositionFromRelativePosition(item.to, doc)
     if (!from || !to || to.index <= from.index) continue

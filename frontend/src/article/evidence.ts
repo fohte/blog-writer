@@ -49,7 +49,8 @@ function readEvidence(id: string, data: EvidenceData): Evidence | undefined {
     from: Y.createRelativePositionFromJSON(from),
     to: Y.createRelativePositionFromJSON(to),
     claim: asString(data.get('claim')),
-    sourceId: asString(data.get('sourceId')),
+    sourceId:
+      data.get('sourceId') === null ? null : asString(data.get('sourceId')),
     quote: asString(data.get('quote')),
     verdict,
     checkedAt: asString(data.get('checkedAt')),
@@ -116,7 +117,8 @@ function inspectEvidence(
 ): EvidenceInspection {
   const item = readEvidence(id, data)
   if (!item) return { kind: 'hidden' }
-  if (!sources.has(item.sourceId)) return { kind: 'prune' }
+  if (item.sourceId !== null && !sources.has(item.sourceId))
+    return { kind: 'prune' }
   const range = resolveRange(doc, item)
   if (!range) return { kind: 'hidden' }
   if (range.to === range.from) return { kind: 'prune' }
@@ -134,7 +136,7 @@ export function addEvidence(
   doc: Y.Doc,
   input: AddEvidenceInput,
 ): Result<Evidence, SourceNotFoundError | InvalidEvidenceError> {
-  if (!doc.getMap('sources').has(input.sourceId))
+  if (input.sourceId !== null && !doc.getMap('sources').has(input.sourceId))
     return err(new SourceNotFoundError(input.sourceId))
   const body = getBody(doc)
   if (

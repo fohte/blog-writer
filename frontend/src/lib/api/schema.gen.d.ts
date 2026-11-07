@@ -639,7 +639,7 @@ export interface components {
       key_points: components['schemas']['ReferencePointRequest'][]
       summary: string
       title: string
-      url: string
+      url?: string | null
     }
     ResearchJobAnalysis:
       | {

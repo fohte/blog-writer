@@ -22,6 +22,7 @@ import {
 import { useSyncClient } from '#lib/use-sync-client'
 import { ArticleWorkspace } from '#pages/article-workspace'
 import { PremiseProposalAccessory } from '#proposals/premise'
+import { writeFromKeyPoints } from '#proposals/write-from-key-points'
 import { HeadingResearchOutline } from '#research/heading-research-outline'
 import { SourcePanel } from '#research/source-panel'
 import { useHeadingResearch } from '#research/use-heading-research'
@@ -142,6 +143,12 @@ export function App() {
                   instruction,
                 )
               },
+            },
+            {
+              id: 'write-from-key-points',
+              label: '資料をもとに書く',
+              createProposal: (selection, signal) =>
+                writeFromKeyPoints(context.doc, selection, signal),
             },
           ]}
           view={context.view}
