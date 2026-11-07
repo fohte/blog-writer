@@ -24,6 +24,15 @@ export function MemoPanel({ doc, view }: MemoPanelProps) {
   const { headings } = useArticleHeadings(doc)
   const [openAdoptionMenuId, setOpenAdoptionMenuId] = useState<string>()
   const [filter, setFilter] = useState<Memo['state']['kind']>('unorganized')
+  // A remote edit can move the memo out of the filter, and a stale ID would
+  // reopen its menu once the memo returns.
+  if (
+    openAdoptionMenuId !== undefined &&
+    !memos.some(
+      (memo) => memo.id === openAdoptionMenuId && memo.state.kind === filter,
+    )
+  )
+    setOpenAdoptionMenuId(undefined)
 
   const apply = (operation: () => string | undefined) => {
     const nextError = operation()

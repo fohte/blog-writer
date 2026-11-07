@@ -9,6 +9,7 @@ import {
   dismissMemo,
   getBody,
   listMemos,
+  restoreMemo,
   setBody,
   setMemoAdoptedTo,
 } from '#article/index'
@@ -91,6 +92,12 @@ const readPanelOutput = (doc: Y.Doc, generatedId?: string) => ({
   ),
   draft: host?.querySelector<HTMLInputElement>('#new-memo')?.value,
   alert: host?.querySelector('[role="alert"]')?.textContent,
+})
+
+const readPanelOutputWithMenu = (doc: Y.Doc) => ({
+  output: readPanelOutput(doc),
+  menuOpen:
+    document.body.querySelector('[data-slot="popover-content"]') !== null,
 })
 
 beforeEach(() => {
@@ -210,6 +217,38 @@ describe('MemoPanel', () => {
       rendered: [['次の案'], ['最初の案']],
       draft: '',
       alert: undefined,
+    })
+  })
+
+  it('keeps the adoption menu closed after its memo leaves and returns to the filter', () => {
+    const doc = new Y.Doc()
+    addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
+    mountMemoPanel(doc)
+
+    openAdoptionMenu('memo-a')
+    act(() => {
+      dismissMemo(doc, 'memo-a')
+    })
+    act(() => {
+      restoreMemo(doc, 'memo-a')
+    })
+
+    expect(readPanelOutputWithMenu(doc)).toEqual({
+      output: {
+        memos: [
+          {
+            id: 'memo-a',
+            text: '最初の案',
+            order: 0,
+            state: { kind: 'unorganized' },
+          },
+        ],
+        filters: ['未整理 1 (selected)', '採用済み 0', '見送り 0'],
+        rendered: [['最初の案']],
+        draft: '',
+        alert: undefined,
+      },
+      menuOpen: false,
     })
   })
 
