@@ -84,13 +84,13 @@ export function OutlineDropGap({
   return (
     <div
       aria-hidden="true"
-      className={`w-full shrink-0 rounded-sm transition-colors ${
+      className={`w-full shrink-0 transition-colors ${
         active ? 'border border-dashed border-primary bg-primary/10' : ''
       }`}
       data-outline-gap={beforeFrom ?? 'end'}
       data-outline-drop-target={active ? 'gap' : undefined}
       ref={gapRef}
-      style={{ height: '16px' }}
+      style={{ height: '8px' }}
     />
   )
 }
