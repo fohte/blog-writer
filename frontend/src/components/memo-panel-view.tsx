@@ -18,6 +18,7 @@ type MemoPanelViewProps = {
   filter: MemoFilter
   error?: string | undefined
   openAdoptionMenuId?: string | undefined
+  adoptionPresentation?: 'popover' | 'sheet' | undefined
   onDraftChange: (draft: string) => void
   onAddMemo: () => void
   onFilterChange: (filter: MemoFilter) => void
@@ -49,6 +50,7 @@ export function MemoPanelView({
   filter,
   error,
   openAdoptionMenuId,
+  adoptionPresentation,
   onDraftChange,
   onAddMemo,
   onFilterChange,
@@ -210,6 +212,7 @@ export function MemoPanelView({
                     onRestoreMemo(memo.id)
                   }}
                   open={openAdoptionMenuId === memo.id}
+                  presentation={adoptionPresentation}
                 />
               )}
             </div>

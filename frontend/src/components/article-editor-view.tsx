@@ -227,7 +227,9 @@ export function ArticleEditorView({
 
   const renderPanel = (target: ArticleEditorPanel) => {
     if (target === 'memo')
-      return doc ? <MemoPanel doc={doc} {...(view ? { view } : {})} /> : null
+      return doc ? (
+        <MemoPanel doc={doc} mobile={isMobile} {...(view ? { view } : {})} />
+      ) : null
     if (target === 'outline') {
       if (!context || (!view && !outlineRenderer)) return null
       const onHeadingSelected = () => {

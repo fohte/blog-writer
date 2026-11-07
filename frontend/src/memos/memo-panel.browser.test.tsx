@@ -36,13 +36,13 @@ vi.mock('#article/index', async (importOriginal) => {
 let host: HTMLDivElement | undefined
 let root: Root | undefined
 
-const mountMemoPanel = (doc: Y.Doc) => {
+const mountMemoPanel = (doc: Y.Doc, mobile = false) => {
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
 
   act(() => {
-    root?.render(<MemoPanel doc={doc} />)
+    root?.render(<MemoPanel doc={doc} mobile={mobile} />)
   })
 }
 
@@ -305,6 +305,56 @@ describe('MemoPanel', () => {
       rendered: [],
       draft: '',
       alert: undefined,
+    })
+  })
+
+  it('adopts a memo to a heading from the bottom sheet on a phone', () => {
+    const doc = new Y.Doc()
+    setBody(doc, '# Section')
+    addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
+    mountMemoPanel(doc, true)
+
+    openAdoptionMenu('memo-a')
+    const sheet = document.body.querySelector('[role="dialog"]')
+    const sheetBeforeAdopt = {
+      label: sheet?.getAttribute('aria-label'),
+      title: sheet?.querySelector('h2')?.textContent,
+      buttons: [...(sheet?.querySelectorAll('button') ?? [])].map(
+        (button) => button.textContent,
+      ),
+    }
+    clickButton('# Section')
+
+    const readOutput = () => ({
+      sheetBeforeAdopt,
+      sheetOpenAfterAdopt:
+        document.body.querySelector('[role="dialog"]') !== null,
+      memos: listMemos(doc),
+    })
+    expect(readOutput()).toEqual({
+      sheetBeforeAdopt: {
+        label: '採用先',
+        title: '最初の案',
+        buttons: ['# Section', '上へ', '下へ', '見送る', 'キャンセル'],
+      },
+      sheetOpenAfterAdopt: false,
+      memos: [
+        {
+          id: 'memo-a',
+          text: '最初の案',
+          order: 0,
+          state: {
+            kind: 'adopted',
+            heading: {
+              level: 1,
+              text: 'Section',
+              from: 0,
+              to: 9,
+              children: [],
+            },
+          },
+        },
+      ],
     })
   })
 

@@ -54,6 +54,11 @@ export const NoHeadings: Story = {
   args: { headings: [] },
 }
 
+export const Sheet: Story = {
+  name: 'on a phone, the adoption targets open in a bottom sheet with touch-sized rows.',
+  args: { presentation: 'sheet' },
+}
+
 export const AdoptedMemo: Story = {
   name: 'the menu for an adopted memo can also return it to unorganized.',
   args: {
