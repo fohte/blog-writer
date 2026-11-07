@@ -59,7 +59,8 @@ export const editorTheme = EditorView.theme({
   },
   '.cm-content': {
     caretColor: 'var(--foreground)',
-    padding: '1rem 1.25rem 4rem',
+    // The wider start padding holds the suggestion markers beside each line.
+    padding: '1rem 1.25rem 4rem 3rem',
   },
   '.cm-line': { padding: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },

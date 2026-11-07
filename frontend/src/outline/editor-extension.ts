@@ -241,8 +241,12 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
     ),
     createDragPlugin(history, composingViews),
     EditorView.theme({
+      // Other extensions read this to line their block widgets up with the text after the handle column.
+      '.cm-content': {
+        '--cm-line-inset': '1.5rem',
+      },
       '.cm-content .cm-line': {
-        paddingInlineStart: '1.5rem',
+        paddingInlineStart: 'var(--cm-line-inset)',
       },
       '.cm-block-drag-handle': {
         top: '50%',

@@ -300,7 +300,8 @@ export function ArticleEditorView({
           </div>
         ) : null}
         {doc && body && history ? (
-          <div className="relative">
+          // Offsets the editor's wide start padding, which holds the suggestion markers in the page margin.
+          <div className="relative -ms-7">
             <MarkdownEditor
               ariaLabel="本文"
               articleId={articleId}

@@ -170,6 +170,14 @@ async function pressEscape(view: EditorView) {
   })
 }
 
+function findAcceptButton(view: EditorView): HTMLButtonElement | undefined {
+  return Array.from(
+    view.dom.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="提案の操作"] button',
+    ),
+  ).find((candidate) => candidate.textContent.startsWith('採用'))
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   window.localStorage.clear()
@@ -633,11 +641,11 @@ describe('body request', () => {
               added: [...proposal.querySelectorAll('ins')].map(
                 (element) => element.textContent,
               ),
-              actions: [...proposal.querySelectorAll('button')].map(
-                (button) => button.textContent,
-              ),
             }
           : null,
+        actions: [
+          ...view.dom.querySelectorAll('[aria-label="提案の操作"] button'),
+        ].map((button) => button.textContent),
       }
     }
     expect(readOutput()).toEqual({
@@ -647,8 +655,8 @@ describe('body request', () => {
         text: 'Rewrite thisA shorter sentence.',
         removed: ['Rewrite this'],
         added: ['A shorter'],
-        actions: ['✓ 採用', '× 却下'],
       },
+      actions: ['却下 Esc', '採用 Tab'],
     })
   })
 
@@ -806,11 +814,7 @@ describe('body request', () => {
       await userEvent.click(presetButton)
     })
     const acceptButton = await vi.waitFor(() => {
-      const button = Array.from(
-        view.dom.querySelectorAll<HTMLButtonElement>(
-          '.cm-suggestion-widget button',
-        ),
-      ).find((candidate) => candidate.textContent.includes('採用'))
+      const button = findAcceptButton(view)
       if (!button) throw new Error('The proposal has no accept action')
       return button
     })
@@ -847,7 +851,7 @@ describe('body request', () => {
     await act(async () => {
       await resolveResponse(0, 'NEW')
     })
-    const acceptButton = view.dom.querySelector<HTMLButtonElement>('button')
+    const acceptButton = findAcceptButton(view)
     if (!acceptButton)
       throw new Error('The insertion proposal has no accept action')
     await act(async () => {
@@ -886,9 +890,7 @@ describe('body request', () => {
     await act(async () => {
       await resolveResponse(0, 'NEW')
     })
-    const acceptButton = view.dom.querySelector<HTMLButtonElement>(
-      '.cm-suggestion-widget button',
-    )
+    const acceptButton = findAcceptButton(view)
     if (!acceptButton)
       throw new Error('The insertion proposal has no accept action')
     await act(async () => {
@@ -1057,8 +1059,9 @@ describe('body request', () => {
       ]),
     ).toEqual(ok(undefined))
     await submitRequest(view, 'make it concise', () => signals.length === 1)
+    // The unfocused proposal shows only its margin marker beside the generating bar.
     const proposalWidgetsBeforeEscape = view.dom.querySelectorAll(
-      '.cm-suggestion-widget',
+      '.cm-suggestion-widget, .cm-suggestion-marker',
     ).length
     const loadingMessageBeforeEscape = view.dom.querySelector(
       '.suggestion-diff-generating',
