@@ -1953,6 +1953,164 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
+  it('preserves a saved source referenced by evidence added during cancellation', async () => {
+    const claim = 'A sentence to edit.'
+    const sourceId = 'source-saved-before-cancel'
+    const bodySaveRequests: unknown[] = []
+    const rollbackRequests: unknown[] = []
+    let requestSignal: AbortSignal | undefined
+    let sourceBody: string | undefined
+    let cancellationSent = false
+    const sources = doc.getMap('sources')
+    const cancelAfterSourceSave = () => {
+      if (cancellationSent || !sources.has(sourceId)) return
+      cancellationSent = true
+      const from = getBody(doc).toJSON().indexOf(claim)
+      addEvidence(doc, {
+        id: 'concurrent-evidence',
+        from,
+        to: from + claim.length,
+        claim,
+        sourceId,
+        quote: 'A quote added by a collaborator.',
+        verdict: 'supported',
+        checkedAt: '2026-11-07T00:00:00.000Z',
+      })._unsafeUnwrap()
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      )
+    }
+    sources.observeDeep(cancelAfterSourceSave)
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs') {
+        requestSignal = init.signal ?? undefined
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'supported',
+                  quote: { source_id: sourceId, text: 'A verified quote.' },
+                  suggestion: null,
+                },
+              },
+              sources: [
+                {
+                  id: sourceId,
+                  url: 'https://example.invalid/research',
+                  title: 'Research source',
+                  body: 'A verified quote.',
+                  status: 'available',
+                },
+              ],
+            },
+          },
+        ])
+      }
+      if (url.includes('/source-bodies/' + sourceId)) {
+        if (init.method === undefined)
+          return sourceBody === undefined
+            ? new Response('', { status: 404 })
+            : new Response(
+                JSON.stringify({
+                  article_id: article.id,
+                  source_id: sourceId,
+                  body: sourceBody,
+                }),
+              )
+        if (url.endsWith('/save-if-unchanged')) {
+          const body = parseObjectBody(init.body)
+          bodySaveRequests.push(body)
+          sourceBody = typeof body?.['body'] === 'string' ? body['body'] : ''
+          return new Response(null, { status: 204 })
+        }
+        if (url.endsWith('/restore')) {
+          const body = parseObjectBody(init.body)
+          rollbackRequests.push(body)
+          sourceBody =
+            typeof body?.['restore_body'] === 'string'
+              ? body['restore_body']
+              : undefined
+          return new Response(null, { status: 204 })
+        }
+        return new Response('', { status: 404 })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openBodyRequestPreset(claim, '根拠を確かめる')
+    const interruptedText = '調査を中断しました。資料は保存されていません。'
+    await waitFor(() => {
+      if (exactRoleText('status', interruptedText) !== interruptedText)
+        throw new Error('The post-save cancellation was not shown')
+    })
+    sources.unobserveDeep(cancelAfterSourceSave)
+
+    const readResult = () => ({
+      bodySaveRequests,
+      rollbackRequests,
+      sourceBody: sourceBody ?? null,
+      requestAborted: requestSignal?.aborted,
+      sources: listSources(doc).map(({ checkedAt, ...source }) => ({
+        ...source,
+        checkedAt: checkedAt === null ? null : 'saved',
+      })),
+      evidence: listEvidence(doc).map(
+        ({
+          id,
+          currentClaim,
+          sourceId,
+          quote,
+          verdict,
+          checkedAt,
+          edited,
+        }) => ({
+          id,
+          currentClaim,
+          sourceId,
+          quote,
+          verdict,
+          checkedAt,
+          edited,
+        }),
+      ),
+      interruptedMessage: exactRoleText('status', interruptedText),
+    })
+    expect(readResult()).toEqual({
+      bodySaveRequests: [{ expected_body: null, body: 'A verified quote.' }],
+      rollbackRequests: [],
+      sourceBody: 'A verified quote.',
+      requestAborted: true,
+      sources: [
+        {
+          id: sourceId,
+          kind: 'url',
+          title: 'Research source',
+          url: 'https://example.invalid/research',
+          fileName: null,
+          checkedAt: 'saved',
+          status: 'ready',
+          summary: '',
+        },
+      ],
+      evidence: [
+        {
+          id: 'concurrent-evidence',
+          currentClaim: claim,
+          sourceId,
+          quote: 'A quote added by a collaborator.',
+          verdict: 'supported',
+          checkedAt: '2026-11-07T00:00:00.000Z',
+          edited: false,
+        },
+      ],
+      interruptedMessage: interruptedText,
+    })
+  })
+
   it('restores an existing source without removing findings added during the check', async () => {
     const claim = 'A sentence to edit.'
     const sourceId = 'source-existing'

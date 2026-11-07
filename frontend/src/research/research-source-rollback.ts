@@ -3,13 +3,14 @@ import * as Y from 'yjs'
 
 import {
   deleteSource,
+  listEvidence,
   listFindings,
   listSources,
   type Source,
   updateSource,
 } from '#article/index'
 
-export type ResearchSourceSnapshot = {
+type ResearchSourceSnapshot = {
   id: string
   source?: Source
   saved?: Source
@@ -55,6 +56,11 @@ export function restoreResearchSources(
     const sources = new Map(
       listSources(doc).map((source) => [source.id, source]),
     )
+    const evidenceSourceIds = new Set(
+      listEvidence(doc).flatMap(({ sourceId }) =>
+        sourceId === null ? [] : [sourceId],
+      ),
+    )
     const preservedSourceIds: string[] = []
     for (const snapshot of snapshots) {
       const current = sources.get(snapshot.id)
@@ -63,7 +69,8 @@ export function restoreResearchSources(
         if (
           snapshot.saved === undefined ||
           !sameSource(current, snapshot.saved) ||
-          listFindings(doc, snapshot.id).length > 0
+          listFindings(doc, snapshot.id).length > 0 ||
+          evidenceSourceIds.has(snapshot.id)
         ) {
           preservedSourceIds.push(snapshot.id)
           continue

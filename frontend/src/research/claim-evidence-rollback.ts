@@ -10,7 +10,7 @@ import {
 import type { EvidenceVerdict } from '#article/types'
 import type { SavedResearchJobResult } from '#research/research-from-heading'
 
-export type ClaimEvidenceSnapshot = {
+type ClaimEvidenceSnapshot = {
   id: string
   from: number
   to: number
