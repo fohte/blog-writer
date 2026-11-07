@@ -181,7 +181,8 @@ const imeScenarios: ImeScenario[] = [
       key: 'Enter',
       capture: 'afterNewline',
       output: {
-        body: '日本語\nplain',
+        body: `日本語
+plain`,
         lines: ['日本語', 'plain'],
         visible: '日本語plain',
       },
@@ -221,23 +222,39 @@ const imeScenarios: ImeScenario[] = [
   },
   {
     name: 'inserts Japanese text at the end of a line before a code block',
-    initial: 'before\n```ts\nconst value = 1\n```\nafter',
+    initial: `before
+\`\`\`ts
+const value = 1
+\`\`\`
+after`,
     beforeComposition: [{ key: 'End' }],
     text: '日本語',
     duringComposition: {
-      body: 'before日本語\n```ts\nconst value = 1\n```\nafter',
+      body: `before日本語
+\`\`\`ts
+const value = 1
+\`\`\`
+after`,
       lines: ['before日本語', '```ts', 'const value = 1', '```', 'after'],
       visible: 'before日本語```tsconst value = 1```after',
     },
     committed: {
-      body: 'before日本語\n```ts\nconst value = 1\n```\nafter',
+      body: `before日本語
+\`\`\`ts
+const value = 1
+\`\`\`
+after`,
       lines: ['before日本語', '```ts', 'const value = 1', '```', 'after'],
       visible: 'before日本語```tsconst value = 1```after',
     },
   },
   {
     name: 'inserts Japanese text at the start of a line after a code block',
-    initial: 'before\n```ts\nconst value = 1\n```\nafter',
+    initial: `before
+\`\`\`ts
+const value = 1
+\`\`\`
+after`,
     beforeComposition: [
       { key: 'ArrowDown' },
       { key: 'ArrowDown' },
@@ -246,12 +263,20 @@ const imeScenarios: ImeScenario[] = [
     ],
     text: '日本語',
     duringComposition: {
-      body: 'before\n```ts\nconst value = 1\n```\n日本語after',
+      body: `before
+\`\`\`ts
+const value = 1
+\`\`\`
+日本語after`,
       lines: ['before', '```ts', 'const value = 1', '```', '日本語after'],
       visible: 'before```tsconst value = 1```日本語after',
     },
     committed: {
-      body: 'before\n```ts\nconst value = 1\n```\n日本語after',
+      body: `before
+\`\`\`ts
+const value = 1
+\`\`\`
+日本語after`,
       lines: ['before', '```ts', 'const value = 1', '```', '日本語after'],
       visible: 'before```tsconst value = 1```日本語after',
     },
@@ -266,24 +291,28 @@ const imeScenarios: ImeScenario[] = [
     ],
     beforeCompositionOutput: {
       afterEnter: {
-        body: '- item\n- ',
+        body: `- item
+- `,
         lines: ['- item', '- '],
         visible: '- item- ',
       },
       afterBackspace: {
-        body: '- item\n  ',
+        body: `- item
+  `,
         lines: ['- item', '  '],
         visible: '- item  ',
       },
     },
     text: '日本語',
     duringComposition: {
-      body: '- item\n  日本語',
+      body: `- item
+  日本語`,
       lines: ['- item', '  日本語'],
       visible: '- item  日本語',
     },
     committed: {
-      body: '- item\n  日本語',
+      body: `- item
+  日本語`,
       lines: ['- item', '  日本語'],
       visible: '- item  日本語',
     },
