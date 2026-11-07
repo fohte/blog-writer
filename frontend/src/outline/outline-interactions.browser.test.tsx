@@ -745,21 +745,31 @@ describe('outline interactions', () => {
 
   it.each([
     {
-      name: 'the last paragraph',
+      name: 'the lower half of the last paragraph',
       markdownText: 'First paragraph.\n\nSecond paragraph.\n',
       targetText: 'Second paragraph.',
+      dropHeight: 0.75,
       expected: 'Second paragraph.\n\nFirst paragraph.\n',
     },
     {
-      name: 'a paragraph before another paragraph',
+      name: 'the lower half of a paragraph before another paragraph',
       markdownText:
         'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n',
       targetText: 'Second paragraph.',
+      dropHeight: 0.75,
       expected: 'Second paragraph.\n\nFirst paragraph.\n\nThird paragraph.\n',
     },
+    {
+      name: 'the upper half of a paragraph before another paragraph',
+      markdownText:
+        'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n',
+      targetText: 'Second paragraph.',
+      dropHeight: 0.25,
+      expected: 'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n',
+    },
   ])(
-    'moves a Markdown block with a real pointer drag to $name',
-    async ({ markdownText, targetText, expected }) => {
+    'uses the drop half to place a Markdown block at $name',
+    async ({ markdownText, targetText, dropHeight, expected }) => {
       const doc = new Y.Doc()
       setBody(doc, markdownText)
       const body = getBody(doc)
@@ -800,7 +810,10 @@ describe('outline interactions', () => {
       const bounds = targetLine.getBoundingClientRect()
       await act(async () => {
         await userEvent.dragAndDrop(firstHandle, targetLine, {
-          targetPosition: { x: bounds.width / 2, y: bounds.height * 0.75 },
+          targetPosition: {
+            x: bounds.width / 2,
+            y: bounds.height * dropHeight,
+          },
         })
       })
 
