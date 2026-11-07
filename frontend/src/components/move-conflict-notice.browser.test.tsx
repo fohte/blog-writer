@@ -23,8 +23,8 @@ afterEach(() => {
 
 describe('MoveConflictNotice', () => {
   it.each([
-    ['Move it with the section', { move: 1, keep: 0 }],
-    ['Keep it here', { move: 0, keep: 1 }],
+    ['移動先へ移す', { move: 1, keep: 0 }],
+    ['その場に残す', { move: 0, keep: 1 }],
   ] as const)('calls only the selected action: %s', (label, expected) => {
     const calls = { move: vi.fn(), keep: vi.fn() }
     host = document.createElement('div')

@@ -129,7 +129,7 @@ describe('moveConflictExtension', () => {
         { notice: null, highlightedText: null },
         {
           notice:
-            'This text was written in a section that has moved.xyMove it with the sectionKeep it here',
+            'xyこの文は、移動前のセクションに書き足されたものです。移動先へ移すその場に残す',
           highlightedText: 'xy',
         },
       ],
@@ -245,7 +245,7 @@ describe('moveConflictExtension', () => {
 `,
         acknowledgements: 2,
         notice:
-          'This text was written in a section that has moved.one Move it with the sectionKeep it here',
+          'one この文は、移動前のセクションに書き足されたものです。移動先へ移すその場に残す',
         highlightedText: 'one ',
         restorations: 1,
       },
@@ -262,7 +262,7 @@ describe('moveConflictExtension', () => {
 
     expect(readOutput()).toEqual({
       notice:
-        'This text was written in a section that has moved.xyMove it with the sectionKeep it here',
+        'xyこの文は、移動前のセクションに書き足されたものです。移動先へ移すその場に残す',
       highlightedText: 'xy',
     })
   })

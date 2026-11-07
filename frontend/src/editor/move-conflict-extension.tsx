@@ -55,7 +55,7 @@ class MoveConflictWidget extends WidgetType {
               },
               () => {
                 render(
-                  'This text changed before the choice could be applied. Review the updated text.',
+                  '選択を反映する前にこの文が変わりました。変わった文を確認してください。',
                 )
               },
             )
@@ -67,7 +67,7 @@ class MoveConflictWidget extends WidgetType {
               },
               () => {
                 render(
-                  'This text changed before the choice could be applied. Review the updated text.',
+                  '選択を反映する前にこの文が変わりました。変わった文を確認してください。',
                 )
               },
             )
@@ -179,9 +179,7 @@ export function moveConflictExtension(doc: Y.Doc): Extension {
     moveConflictPlugin(doc),
     EditorView.baseTheme({
       '.cm-move-conflict-range': {
-        backgroundColor:
-          'color-mix(in srgb, var(--color-amber-500) 20%, transparent)',
-        textDecoration: 'underline wavy var(--color-amber-700)',
+        textDecoration: 'underline dashed var(--muted-foreground)',
       },
       '.cm-move-conflict-widget': {
         whiteSpace: 'normal',
