@@ -206,7 +206,7 @@ async function openArticle() {
   })
 }
 
-async function openClaimEvidencePreset(claim: string) {
+async function openBodyRequestPreset(claim: string, presetLabel: string) {
   const content = host?.querySelector<HTMLElement>('.cm-content')
   if (!content) throw new Error('The article editor did not render')
   const view = EditorView.findFromDOM(content)
@@ -228,7 +228,7 @@ async function openClaimEvidencePreset(claim: string) {
     await userEvent.click(
       page
         .getByRole('group', { name: '定型の依頼' })
-        .getByRole('button', { name: '根拠を確かめる' }),
+        .getByRole('button', { name: presetLabel }),
     )
   })
 }
@@ -871,10 +871,29 @@ describe('the application research and evidence integrations', () => {
   it('judges a claim, adopts its proposal, and rechecks the adopted text', async () => {
     const claim = 'A sentence to edit.'
     const replacement = 'A verified sentence.'
+    const beforeContext = 'p'.repeat(1200)
+    const afterContext = 's'.repeat(1300)
+    setBody(
+      doc,
+      `# Research topic\n\n${beforeContext}${claim}${afterContext}\n`,
+    )
     const sourceId = 'source-research-a'
+    const savedSourceId = 'source-existing'
+    addSource(doc, {
+      id: savedSourceId,
+      kind: 'url',
+      title: 'Existing source',
+      url: 'https://example.invalid/research',
+      fileName: null,
+      checkedAt: null,
+      status: 'unavailable',
+      summary: '',
+    })._unsafeUnwrap()
+    let researchRequest: unknown
     let judgedRequest: unknown
     installFetch((url, init) => {
-      if (url === '/api/research/jobs')
+      if (url === '/api/research/jobs') {
+        researchRequest = parseObjectBody(init.body)
         return serverEvents([
           {
             event: 'progress',
@@ -907,7 +926,8 @@ describe('the application research and evidence integrations', () => {
             },
           },
         ])
-      if (url.includes('/source-bodies/' + sourceId)) {
+      }
+      if (url.includes('/source-bodies/' + savedSourceId)) {
         if (url.endsWith('/save-if-unchanged'))
           return new Response(null, { status: 204 })
         return new Response('', { status: 404 })
@@ -922,7 +942,7 @@ describe('the application research and evidence integrations', () => {
                   event: 'result',
                   data: {
                     verdict: 'supported',
-                    quote: { source_id: sourceId, text: replacement },
+                    quote: { source_id: savedSourceId, text: replacement },
                     suggestion: null,
                   },
                 },
@@ -935,15 +955,13 @@ describe('the application research and evidence integrations', () => {
     })
     await renderApp()
     await openArticle()
-    await openClaimEvidencePreset(claim)
+    await openBodyRequestPreset(claim, '根拠を確かめる')
     await waitFor(() => {
       if (!host?.querySelector('.suggestion-diff-note'))
         throw new Error('The source note did not render')
     })
+    const sourceNote = host?.querySelector('.suggestion-diff-note')?.textContent
     const originalCheckedAt = listEvidence(doc)[0]?.checkedAt
-    expect(host?.querySelector('.suggestion-diff-note')?.textContent).toBe(
-      '根拠の資料: Research source',
-    )
 
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
@@ -959,17 +977,20 @@ describe('the application research and evidence integrations', () => {
 
     const readResult = () => ({
       body: getBody(doc).toJSON(),
+      researchRequest,
       judgedRequest,
+      sourceNote,
       source: listSources(doc).map(({ title, url, status }) => ({
         title,
         url,
         status,
       })),
       evidence: listEvidence(doc).map(
-        ({ currentClaim, edited, quote, verdict }) => ({
+        ({ currentClaim, edited, quote, sourceId, verdict }) => ({
           currentClaim,
           edited,
           quote,
+          sourceId,
           verdict,
         }),
       ),
@@ -979,15 +1000,23 @@ describe('the application research and evidence integrations', () => {
       checkedAtUpdated: listEvidence(doc)[0]?.checkedAt !== originalCheckedAt,
     })
     expect(readResult()).toEqual({
-      body: `# Research topic\n\n${replacement}\n`,
+      body: `# Research topic\n\n${beforeContext}${replacement}${afterContext}\n`,
+      researchRequest: {
+        task: 'claim_evidence',
+        claim,
+        before: beforeContext.slice(-1000),
+        after: afterContext.slice(0, 1000),
+      },
       judgedRequest: {
         claim: replacement,
-        before: '# Research topic\n\n',
-        sources: [{ id: sourceId, body: 'A current source quote.' }],
+        before: beforeContext.slice(-1000),
+        after: afterContext.slice(0, 1000),
+        sources: [{ id: savedSourceId, body: 'A current source quote.' }],
       },
+      sourceNote: '根拠の資料: Research source',
       source: [
         {
-          title: 'Research source',
+          title: 'Existing source',
           url: 'https://example.invalid/research',
           status: 'ready',
         },
@@ -997,6 +1026,7 @@ describe('the application research and evidence integrations', () => {
           currentClaim: replacement,
           edited: false,
           quote: replacement,
+          sourceId: savedSourceId,
           verdict: 'supported',
         },
       ],
@@ -1043,7 +1073,7 @@ describe('the application research and evidence integrations', () => {
     })
     await renderApp()
     await openArticle()
-    await openClaimEvidencePreset(claim)
+    await openBodyRequestPreset(claim, '根拠を確かめる')
     await waitFor(() => {
       if (!host?.querySelector('.suggestion-diff-note'))
         throw new Error('The source note did not render')
@@ -1080,6 +1110,89 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
+  it('shows an error when rechecking an adopted claim fails', async () => {
+    const claim = 'A sentence to edit.'
+    const replacement = 'A corrected sentence.'
+    const sourceId = 'source-research-a'
+    installFetch((url) => {
+      if (url === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'outdated',
+                  quote: { source_id: sourceId, text: 'A current quote.' },
+                  suggestion: replacement,
+                },
+              },
+              sources: [
+                {
+                  id: sourceId,
+                  url: 'https://example.invalid/research',
+                  title: 'Research source',
+                  body: 'A current quote.',
+                  status: 'available',
+                },
+              ],
+            },
+          },
+        ])
+      if (url.includes('/source-bodies/' + sourceId)) {
+        if (url.endsWith('/save-if-unchanged'))
+          return new Response(null, { status: 204 })
+        return new Response('', { status: 404 })
+      }
+      if (url === '/api/research/claim-evidence')
+        return new Response('', { status: 500 })
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openBodyRequestPreset(claim, '根拠を確かめる')
+    await waitFor(() => {
+      if (!host?.querySelector('.suggestion-diff-note'))
+        throw new Error('The source note did not render')
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+    })
+    const errorMessage = '採用後の根拠を再判定できませんでした。'
+    await waitFor(() => {
+      if (exactRoleText('alert', errorMessage) !== errorMessage)
+        throw new Error('The failed recheck was not shown')
+    })
+
+    const readResult = () => ({
+      body: getBody(doc).toJSON(),
+      error: exactRoleText('alert', errorMessage),
+      evidence: listEvidence(doc).map(
+        ({ currentClaim, edited, quote, verdict }) => ({
+          currentClaim,
+          edited,
+          quote,
+          verdict,
+        }),
+      ),
+      marker: host?.querySelector('.cm-evidence-marker')?.className,
+    })
+    expect(readResult()).toEqual({
+      body: `# Research topic\n\n${replacement}\n`,
+      error: errorMessage,
+      evidence: [
+        {
+          currentClaim: replacement,
+          edited: false,
+          quote: '',
+          verdict: 'insufficient',
+        },
+      ],
+      marker: 'cm-evidence-marker cm-evidence-needs-review',
+    })
+  })
+
   it('marks a claim yellow when the sources provide insufficient support', async () => {
     const claim = 'A sentence to edit.'
     installFetch((url) => {
@@ -1096,15 +1209,7 @@ describe('the application research and evidence integrations', () => {
                   suggestion: null,
                 },
               },
-              sources: [
-                {
-                  id: 'source-research-a',
-                  url: 'https://example.invalid/research',
-                  title: 'Research source',
-                  body: null,
-                  status: 'unavailable',
-                },
-              ],
+              sources: [],
             },
           },
         ])
@@ -1112,7 +1217,7 @@ describe('the application research and evidence integrations', () => {
     })
     await renderApp()
     await openArticle()
-    await openClaimEvidencePreset(claim)
+    await openBodyRequestPreset(claim, '根拠を確かめる')
     await waitFor(() => {
       if (!host?.querySelector('.cm-evidence-marker'))
         throw new Error('The insufficient judgment marker did not render')
@@ -1120,10 +1225,11 @@ describe('the application research and evidence integrations', () => {
 
     const readResult = () => ({
       evidence: listEvidence(doc).map(
-        ({ currentClaim, edited, quote, verdict }) => ({
+        ({ currentClaim, edited, quote, sourceId, verdict }) => ({
           currentClaim,
           edited,
           quote,
+          sourceId,
           verdict,
         }),
       ),
@@ -1136,11 +1242,88 @@ describe('the application research and evidence integrations', () => {
           currentClaim: claim,
           edited: false,
           quote: '',
+          sourceId: null,
           verdict: 'insufficient',
         },
       ],
       markerClass: 'cm-evidence-marker cm-evidence-needs-review',
       proposals: 0,
+    })
+  })
+
+  it('keeps earlier claim proposals when another claim is checked', async () => {
+    const firstClaim = 'A first sentence.'
+    const secondClaim = 'A second sentence.'
+    setBody(doc, `# Research topic\n\n${firstClaim} ${secondClaim}\n`)
+    let researchCount = 0
+    installFetch((url) => {
+      if (url === '/api/research/jobs') {
+        researchCount += 1
+        const sourceId = researchCount === 1 ? 'source-one' : 'source-two'
+        const title = researchCount === 1 ? 'Source one' : 'Source two'
+        const claim = researchCount === 1 ? firstClaim : secondClaim
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'outdated',
+                  quote: { source_id: sourceId, text: `${title} quote.` },
+                  suggestion: `${claim} Updated`,
+                },
+              },
+              sources: [
+                {
+                  id: sourceId,
+                  url: `https://example.invalid/${sourceId}`,
+                  title,
+                  body: `${title} quote.`,
+                  status: 'available',
+                },
+              ],
+            },
+          },
+        ])
+      }
+      if (url.includes('/source-bodies/')) {
+        if (url.endsWith('/save-if-unchanged'))
+          return new Response(null, { status: 204 })
+        return new Response('', { status: 404 })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openBodyRequestPreset(firstClaim, '根拠を確かめる')
+    await waitFor(() => {
+      if (host?.querySelectorAll('.suggestion-diff-note').length !== 1)
+        throw new Error('The first claim proposal did not render')
+    })
+    await openBodyRequestPreset(secondClaim, '根拠を確かめる')
+    await waitFor(() => {
+      if (host?.querySelectorAll('.suggestion-diff-note').length !== 2)
+        throw new Error('Both claim proposals did not render')
+    })
+
+    const readResult = () => ({
+      researchCount,
+      notes: [...(host?.querySelectorAll('.suggestion-diff-note') ?? [])].map(
+        (note) => note.textContent,
+      ),
+      evidence: listEvidence(doc).map(({ currentClaim, verdict }) => ({
+        currentClaim,
+        verdict,
+      })),
+    })
+    expect(readResult()).toEqual({
+      researchCount: 2,
+      notes: ['根拠の資料: Source one', '根拠の資料: Source two'],
+      evidence: [
+        { currentClaim: firstClaim, verdict: 'outdated' },
+        { currentClaim: secondClaim, verdict: 'outdated' },
+      ],
     })
   })
 
@@ -1158,7 +1341,7 @@ describe('the application research and evidence integrations', () => {
     })
     await renderApp()
     await openArticle()
-    await openClaimEvidencePreset(claim)
+    await openBodyRequestPreset(claim, '根拠を確かめる')
     await waitFor(() => {
       if (!requestSignal) throw new Error('Research did not start')
     })
@@ -1178,6 +1361,193 @@ describe('the application research and evidence integrations', () => {
       aborted: activeRequestSignal.aborted,
     })
     expect(readResult()).toEqual({ sources: [], evidence: [], aborted: true })
+  })
+
+  it('keeps the active claim check visible when another research preset is selected', async () => {
+    const claim = 'A sentence to edit.'
+    let requestCount = 0
+    let requestSignal: AbortSignal | undefined
+    installFetch((url, init) => {
+      if (url !== '/api/research/jobs') return new Response('', { status: 404 })
+      requestCount += 1
+      requestSignal = init.signal ?? undefined
+      return new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        })
+      })
+    })
+    await renderApp()
+    await openArticle()
+    await openBodyRequestPreset(claim, '根拠を確かめる')
+    await waitFor(() => {
+      if (!requestSignal) throw new Error('Research did not start')
+    })
+    await openBodyRequestPreset(claim, 'この見出しについて調べる')
+    const activeRequestSignal = requestSignal
+    if (!activeRequestSignal) throw new Error('Research did not start')
+    const progressTrigger = [...document.body.querySelectorAll('button')].find(
+      (button) => button.textContent.trim() === '調査中',
+    )
+    if (!progressTrigger) throw new Error('The research progress is missing')
+    if (progressTrigger.getAttribute('aria-expanded') !== 'true')
+      await act(async () => {
+        await userEvent.click(progressTrigger)
+      })
+    const activeProgress = {
+      requestCount,
+      runningLabels: [...document.body.querySelectorAll('button')].filter(
+        (button) => button.textContent.trim() === '調査中',
+      ).length,
+      cancelButtons: [...document.body.querySelectorAll('button')].filter(
+        (button) => button.textContent.trim() === '中止',
+      ).length,
+    }
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '中止' }))
+    })
+    const interruptedText = '調査を中断しました。資料は保存されていません。'
+    await waitFor(() => {
+      if (exactRoleText('status', interruptedText) !== interruptedText)
+        throw new Error('The interrupted state was not shown')
+    })
+
+    const readResult = () => ({
+      activeProgress,
+      requestAborted: activeRequestSignal.aborted,
+      sources: listSources(doc),
+      evidence: listEvidence(doc),
+    })
+    expect(readResult()).toEqual({
+      activeProgress: { requestCount: 1, runningLabels: 1, cancelButtons: 1 },
+      requestAborted: true,
+      sources: [],
+      evidence: [],
+    })
+  })
+
+  it('rolls back source bodies when cancelled while saving research results', async () => {
+    const claim = 'A sentence to edit.'
+    const rollbackRequests: Array<{ id: string; body: unknown }> = []
+    let resolveSecondSave: (() => void) | undefined
+    const secondSaveStarted = new Promise<void>((resolve) => {
+      resolveSecondSave = resolve
+    })
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'claim_evidence',
+                data: {
+                  verdict: 'supported',
+                  quote: {
+                    source_id: 'source-one',
+                    text: 'First source quote.',
+                  },
+                  suggestion: null,
+                },
+              },
+              sources: [
+                {
+                  id: 'source-one',
+                  url: 'https://example.invalid/first',
+                  title: 'First source',
+                  status: 'available',
+                  body: 'First source body.',
+                },
+                {
+                  id: 'source-two',
+                  url: 'https://example.invalid/second',
+                  title: 'Second source',
+                  status: 'available',
+                  body: 'Second source body.',
+                },
+              ],
+            },
+          },
+        ])
+      const sourceId = url.split('/source-bodies/')[1]?.split('/')[0] ?? ''
+      if (init.method === undefined) return new Response('', { status: 404 })
+      if (
+        init.method === 'POST' &&
+        url.endsWith('/save-if-unchanged') &&
+        sourceId === 'source-one'
+      )
+        return new Response(null, { status: 204 })
+      if (
+        init.method === 'POST' &&
+        url.endsWith('/save-if-unchanged') &&
+        sourceId === 'source-two'
+      ) {
+        resolveSecondSave?.()
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(new DOMException('Aborted', 'AbortError'))
+            },
+            { once: true },
+          )
+        })
+      }
+      if (init.method === 'POST' && url.endsWith('/restore')) {
+        rollbackRequests.push({
+          id: sourceId,
+          body:
+            typeof init.body === 'string'
+              ? (JSON.parse(init.body) as unknown)
+              : init.body,
+        })
+        return new Response(null, { status: 204 })
+      }
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await openBodyRequestPreset(claim, '根拠を確かめる')
+    await secondSaveStarted
+    await waitFor(() => {
+      if (
+        ![...document.body.querySelectorAll('button')].some(
+          (button) => button.textContent.trim() === '中止',
+        )
+      )
+        throw new Error('The source save could not be cancelled')
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '中止' }))
+    })
+    const interruptedText = '調査を中断しました。資料は保存されていません。'
+    await waitFor(() => {
+      if (exactRoleText('status', interruptedText) !== interruptedText)
+        throw new Error('The interrupted state was not shown')
+    })
+
+    const readResult = () => ({
+      rollbackRequests,
+      sources: listSources(doc),
+      evidence: listEvidence(doc),
+      interruptedMessage: exactRoleText('status', interruptedText),
+    })
+    expect(readResult()).toEqual({
+      rollbackRequests: [
+        {
+          id: 'source-one',
+          body: { expected_body: 'First source body.', restore_body: null },
+        },
+        {
+          id: 'source-two',
+          body: { expected_body: 'Second source body.', restore_body: null },
+        },
+      ],
+      sources: [],
+      evidence: [],
+      interruptedMessage: interruptedText,
+    })
   })
 
   it('starts heading research from a blank body request preset', async () => {

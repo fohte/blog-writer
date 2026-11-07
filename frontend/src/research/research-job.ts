@@ -8,6 +8,19 @@ import { LlmStreamInterruptedError, postLlmResult } from '#lib/llm-sse'
 type ResearchJobRequest = components['schemas']['ResearchJobRequest']
 type ResearchJobResult = components['schemas']['ResearchJobResult']
 
+const activeResearchJobs = new Map<string, object>()
+
+export function acquireResearchLock(articleId: string, token: object): boolean {
+  if (activeResearchJobs.has(articleId)) return false
+  activeResearchJobs.set(articleId, token)
+  return true
+}
+
+export function releaseResearchLock(articleId: string, token: object): void {
+  if (activeResearchJobs.get(articleId) === token)
+    activeResearchJobs.delete(articleId)
+}
+
 export class ResearchJobInterruptedError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message, { cause })

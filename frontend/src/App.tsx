@@ -28,6 +28,8 @@ import { SourcePanel } from '#research/source-panel'
 import { useClaimEvidence } from '#research/use-claim-evidence'
 import { useHeadingResearch } from '#research/use-heading-research'
 
+const MAX_CLAIM_CONTEXT_CHARS = 1000
+
 export function App() {
   const [showSettings, setShowSettings] = useState(false)
   const {
@@ -134,13 +136,17 @@ export function App() {
                   '⟪依頼範囲の終了⟫',
                   2,
                 )
+                const boundedBefore = before.slice(-MAX_CLAIM_CONTEXT_CHARS)
+                const boundedAfter = after.slice(0, MAX_CLAIM_CONTEXT_CHARS)
                 claimEvidence.startResearch({
                   articleId: context.articleId,
                   doc: context.doc,
                   claim: selected || requestContext.target,
                   range: requestContext.range,
-                  ...(before.length === 0 ? {} : { before }),
-                  ...(after.length === 0 ? {} : { after }),
+                  ...(boundedBefore.length === 0
+                    ? {}
+                    : { before: boundedBefore }),
+                  ...(boundedAfter.length === 0 ? {} : { after: boundedAfter }),
                 })
               },
             },
@@ -215,11 +221,15 @@ export function App() {
       }}
       outlineRenderer={(context) => (
         <HeadingResearchOutline
-          busy={
-            researchProgress[context.articleId]?.status === 'running' ||
-            researchProgress[context.articleId]?.status === 'saving' ||
-            researchProgress[context.articleId]?.status === 'cancelling'
-          }
+          busy={[
+            researchProgress[context.articleId]?.status,
+            claimEvidence.progress[context.articleId]?.status,
+          ].some(
+            (status) =>
+              status === 'running' ||
+              status === 'saving' ||
+              status === 'cancelling',
+          )}
           doc={context.doc}
           history={context.history}
           onResearch={(headingText, question) => {
@@ -235,9 +245,18 @@ export function App() {
           claimProgress?.status === 'running' ||
           claimProgress?.status === 'saving' ||
           claimProgress?.status === 'cancelling'
+        const headingProgress = researchProgress[context.articleId]
+        const headingResearchActive =
+          headingProgress?.status === 'running' ||
+          headingProgress?.status === 'saving' ||
+          headingProgress?.status === 'cancelling'
         const progress = claimResearchActive
           ? claimProgress
-          : (researchProgress[context.articleId] ?? claimProgress)
+          : headingResearchActive
+            ? headingProgress
+            : claimProgress?.status === 'failed'
+              ? claimProgress
+              : (headingProgress ?? claimProgress)
         return (
           <SourcePanel
             articleId={context.articleId}

@@ -276,6 +276,14 @@ export class SuggestionLayerController<Metadata = unknown> {
     return ok(undefined)
   }
 
+  addSuggestion(
+    suggestion: TextSuggestion<Metadata>,
+  ): Result<void, SuggestionLayerError> {
+    const suggestions =
+      this.view?.state.field(this.stateField, false)?.suggestions ?? []
+    return this.setSuggestions([...suggestions, suggestion])
+  }
+
   resolveInFlight(
     replacement: string | ((position: SuggestionPosition) => string),
     details?: {

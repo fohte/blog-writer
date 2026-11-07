@@ -8,6 +8,7 @@ import {
 } from '#editor/suggestion-layer'
 
 export type ClaimEvidenceSuggestionMetadata = {
+  articleId: string
   sourceId: string
   checkedAt: string
   before?: string
@@ -81,7 +82,7 @@ export function setClaimEvidenceSuggestion(
   suggestion: TextSuggestion<ClaimEvidenceSuggestionMetadata>,
   onResolve: ResolveHandler,
 ) {
-  return getManager(doc, onResolve).layer.setSuggestions([suggestion])
+  return getManager(doc, onResolve).layer.addSuggestion(suggestion)
 }
 
 export function setClaimEvidenceInFlight(

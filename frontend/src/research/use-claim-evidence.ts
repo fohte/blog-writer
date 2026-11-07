@@ -33,6 +33,8 @@ import {
   saveResearchJobResult,
 } from '#research/research-from-heading'
 import {
+  acquireResearchLock,
+  releaseResearchLock,
   ResearchJobInterruptedError,
   runResearchJob,
 } from '#research/research-job'
@@ -58,7 +60,9 @@ function selectedSource(
 ) {
   if (result.quote)
     return sources.find(
-      ({ researchId }) => researchId === result.quote?.source_id,
+      ({ id, researchId }) =>
+        id === result.quote?.source_id ||
+        researchId === result.quote?.source_id,
     )
   return sources[0]
 }
@@ -118,47 +122,100 @@ export function useClaimEvidence() {
 
       const settings = loadLlmSettings(() => window.localStorage)
       if (settings.isErr()) {
+        patchProgress(metadata.articleId, {
+          status: 'failed',
+          error: 'LLM 設定を読み込めませんでした。',
+        })
         acceptedRange.dispose()
         return
+      }
+      const controller = new AbortController()
+      if (!acquireResearchLock(metadata.articleId, controller)) {
+        patchProgress(metadata.articleId, {
+          status: 'failed',
+          error: '別の調査が実行中のため、根拠を再判定できませんでした。',
+        })
+        acceptedRange.dispose()
+        return
+      }
+      controllers.current.set(metadata.articleId, controller)
+      setProgress((current) => ({
+        ...current,
+        [metadata.articleId]: {
+          status: 'running',
+          queries: ['保存済みの資料で再判定しています。'],
+        },
+      }))
+      const finishRecheck = (error?: string) => {
+        if (controllers.current.get(metadata.articleId) === controller)
+          controllers.current.delete(metadata.articleId)
+        releaseResearchLock(metadata.articleId, controller)
+        if (error !== undefined) {
+          patchProgress(metadata.articleId, { status: 'failed', error })
+          return
+        }
+        setProgress((current) => ({
+          ...current,
+          [metadata.articleId]: { status: 'complete', queries: [] },
+        }))
       }
       void judgeClaimEvidenceFromSources(
         fetch,
         adoptedClaim,
         metadata.sourceBodies,
         settings.value,
-        new AbortController().signal,
+        controller.signal,
         metadata.before,
         metadata.after,
       ).match(
         (result) => {
+          if (controller.signal.aborted) {
+            finishRecheck(
+              '採用後の根拠の再判定を中止しました。根拠は未確認です。',
+            )
+            acceptedRange.dispose()
+            return
+          }
           const latestRange = acceptedRange.current()
+          let updateError: string | undefined
           if (latestRange) {
             const latestClaim = getBody(metadata.doc)
               .toJSON()
               .slice(latestRange.from, latestRange.to)
             const source = selectedSource(result, metadata.sources)
-            if (latestClaim === adoptedClaim && source)
+            if (latestClaim === adoptedClaim && (source || !result.quote))
               setEvidence(metadata.doc, {
                 from: latestRange.from,
                 to: latestRange.to,
                 claim: latestClaim,
-                sourceId: source.id,
+                sourceId: source?.id ?? null,
                 quote: result.quote?.text ?? '',
                 verdict: result.verdict,
                 checkedAt: new Date().toISOString(),
               }).match(
                 () => undefined,
-                () => undefined,
+                () => {
+                  updateError = '採用後の根拠を再判定できませんでした。'
+                },
               )
+            else if (latestClaim === adoptedClaim) {
+              updateError = '採用後の根拠を再判定できませんでした。'
+            }
           }
+          finishRecheck(updateError)
           acceptedRange.dispose()
         },
         () => {
+          finishRecheck(
+            controller.signal.aborted
+              ? '採用後の根拠の再判定を中止しました。根拠は未確認です。'
+              : '採用後の根拠を再判定できませんでした。',
+          )
           acceptedRange.dispose()
         },
       )
     },
-    [],
+    [patchProgress],
   )
 
   const cancelResearch = useCallback(
@@ -186,6 +243,7 @@ export function useClaimEvidence() {
       }
 
       const controller = new AbortController()
+      if (!acquireResearchLock(articleId, controller)) return
       let isFinishing = false
       const onRangeEdited = () => {
         if (isFinishing) return
@@ -199,6 +257,7 @@ export function useClaimEvidence() {
         onRangeEdited,
       )
       if (inFlightResult.isErr()) {
+        releaseResearchLock(articleId, controller)
         patchProgress(articleId, {
           status: 'failed',
           queries: [],
@@ -214,6 +273,7 @@ export function useClaimEvidence() {
       const settings = loadLlmSettings(() => window.localStorage)
       if (settings.isErr()) {
         controllers.current.delete(articleId)
+        releaseResearchLock(articleId, controller)
         isFinishing = true
         clearClaimEvidenceInFlight(doc, resolveSuggestion, onRangeEdited)
         patchProgress(articleId, {
@@ -261,8 +321,6 @@ export function useClaimEvidence() {
           return errAsync(
             new ResearchJobInterruptedError('調査を中断しました。'),
           )
-        if (result.sources.length === 0)
-          return errAsync(new Error('判定に使える資料が見つかりませんでした。'))
         return saveResearchJobResult(
           fetch,
           articleId,
@@ -291,7 +349,7 @@ export function useClaimEvidence() {
               new ResearchJobInterruptedError('調査を中断しました。'),
             )
           const source = selectedSource(judgment, sources)
-          if (!source)
+          if (!source && judgment.verdict !== 'insufficient')
             return errAsync(new Error('判定に使える資料がありません。'))
           const checkedAt = new Date().toISOString()
           const existing = listEvidenceOverlapping(doc, savedRange).filter(
@@ -302,8 +360,8 @@ export function useClaimEvidence() {
             from: savedRange.from,
             to: savedRange.to,
             claim,
-            sourceId: source.id,
-            quote: judgment.quote?.text ?? '',
+            sourceId: source?.id ?? null,
+            quote: source ? (judgment.quote?.text ?? '') : '',
             verdict: judgment.verdict,
             checkedAt,
           })
@@ -315,10 +373,12 @@ export function useClaimEvidence() {
           if (
             (judgment.verdict === 'outdated' ||
               judgment.verdict === 'contradicted') &&
+            source !== undefined &&
             suggestedText !== undefined &&
             suggestedText.length > 0
           ) {
             const metadata: ClaimEvidenceSuggestionMetadata = {
+              articleId,
               sourceId: source.id,
               checkedAt,
               ...(before === undefined ? {} : { before }),
@@ -355,15 +415,23 @@ export function useClaimEvidence() {
 
       void job.match(
         () => {
-          if (controllers.current.get(articleId) !== controller) return
+          if (controllers.current.get(articleId) !== controller) {
+            releaseResearchLock(articleId, controller)
+            return
+          }
           controllers.current.delete(articleId)
+          releaseResearchLock(articleId, controller)
           isFinishing = true
           clearClaimEvidenceInFlight(doc, resolveSuggestion, onRangeEdited)
           patchProgress(articleId, { status: 'complete' })
         },
         (error) => {
-          if (controllers.current.get(articleId) !== controller) return
+          if (controllers.current.get(articleId) !== controller) {
+            releaseResearchLock(articleId, controller)
+            return
+          }
           controllers.current.delete(articleId)
+          releaseResearchLock(articleId, controller)
           isFinishing = true
           clearClaimEvidenceInFlight(doc, resolveSuggestion, onRangeEdited)
           const interrupted =
