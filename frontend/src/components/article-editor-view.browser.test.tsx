@@ -110,6 +110,7 @@ afterEach(() => {
   for (const additionalDoc of additionalDocs) additionalDoc.destroy()
   additionalDocs = []
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('article editor screen', () => {
@@ -163,8 +164,7 @@ describe('article editor screen', () => {
     const readScreenOutput = () => ({
       bodyAfterMove,
       bodyAfterUndo,
-      listTitle: host?.querySelector('[role="listitem"] button span')
-        ?.textContent,
+      listTitle: host?.querySelector('li button')?.textContent,
       editorCount: host?.querySelectorAll('.cm-content').length,
     })
     expect(readScreenOutput()).toEqual({
@@ -201,8 +201,7 @@ describe('article editor screen', () => {
     })
 
     const readScreenOutput = () => ({
-      listTitle: host?.querySelector('[role="listitem"] button span')
-        ?.textContent,
+      listTitle: host?.querySelector('li button')?.textContent,
       editorCount: host?.querySelectorAll('.cm-content').length,
     })
     expect(readScreenOutput()).toEqual({
@@ -1015,8 +1014,37 @@ First paragraph.
     })
     expect(readSyncOutput()).toEqual({
       syncError: 'Sync needs attention.',
-      reauthentication: 'Log in again',
-      syncState: '未同期',
+      reauthentication: 'ログインし直す',
+      syncState: '○ 未同期',
+    })
+  })
+
+  it('shows the offline banner while the browser is offline and removes it after reconnecting', () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    const article: Article = {
+      id: 'article-offline',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    renderWorkspace(article, articleDoc)
+
+    const readBanner = () => host?.querySelector('[role="status"]')?.textContent
+    const offlineBanner = readBanner()
+    onLine.mockReturnValue(true)
+    act(() => {
+      window.dispatchEvent(new Event('online'))
+    })
+
+    const readBannerOutput = () => ({
+      offlineBanner,
+      onlineBanner: readBanner(),
+    })
+    expect(readBannerOutput()).toEqual({
+      offlineBanner:
+        'オフラインです。すべての記事を開いて編集できます。変更は端末に保存され、つながったら同期します。LLM はつながってから使えます。',
+      onlineBanner: undefined,
     })
   })
 

@@ -1,5 +1,4 @@
 import { Button } from '@fohte/ui/button'
-import { Panel } from '@fohte/ui/panel'
 
 type ReauthenticationPromptProps = {
   onLoginAgain: () => void
@@ -9,15 +8,21 @@ export function ReauthenticationPrompt({
   onLoginAgain,
 }: ReauthenticationPromptProps) {
   return (
-    <Panel
+    <div
       aria-live="assertive"
-      className="flex flex-col items-start gap-3 rounded-lg p-4"
+      className="flex flex-col items-start gap-2 border border-foreground px-3 py-2.5 text-sm leading-relaxed"
       role="alert"
     >
-      <p>Cloudflare Access needs you to sign in again to resume syncing.</p>
-      <Button onClick={onLoginAgain} type="button">
-        Log in again
+      <p>
+        <span aria-hidden="true" className="font-mono text-primary">
+          !{' '}
+        </span>
+        ログインが切れました。編集は端末に保存され続けます。同期と LLM
+        はログインすると再開します。
+      </p>
+      <Button onClick={onLoginAgain} size="sm" type="button" variant="solid">
+        ログインし直す
       </Button>
-    </Panel>
+    </div>
   )
 }
