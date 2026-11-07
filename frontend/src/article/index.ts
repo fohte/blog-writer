@@ -15,6 +15,7 @@ export type { AddEvidenceInput } from '#article/evidence'
 export {
   addEvidence,
   listEvidence,
+  listEvidenceOverlapping,
   observeEvidence,
   pruneEvidence,
   removeEvidence,

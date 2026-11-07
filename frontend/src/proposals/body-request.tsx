@@ -4,6 +4,7 @@ import { errAsync, type ResultAsync } from 'neverthrow'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type * as Y from 'yjs'
 
+import { listEvidenceOverlapping, listSources } from '#article/index'
 import { getPremise } from '#article/premise'
 import {
   type BodyRequestPhase,
@@ -203,6 +204,19 @@ export function BodyRequestAccessory({
       section: context.section,
       target: context.target,
     }
+    const sources = listSources(doc).map(
+      ({ checkedAt, summary, title, url }) => ({
+        title,
+        url,
+        summary,
+        checked_at: checkedAt,
+      }),
+    )
+    const evidenceQuotes = listEvidenceOverlapping(doc, context.range)
+      .map(({ quote }) => quote)
+      .filter((quote) => quote.trim().length > 0)
+    if (sources.length > 0) body.sources = sources
+    if (evidenceQuotes.length > 0) body.evidence_quotes = evidenceQuotes
     const selection: BodyRequestPresetSelection = {
       ...requestTarget,
       instruction,
@@ -214,14 +228,12 @@ export function BodyRequestAccessory({
           (settings) => requestBodyProposal(fetch, settings, body, signal),
           (cause) => errAsync(cause),
         ),
-      (proposal, target) => ({
-        ...proposal,
-        replacement: preserveBlankLineSeparators(
-          target.view.state.doc.toString(),
-          target.context.range,
+      (proposal, range) =>
+        preserveBlankLineSeparators(
+          selection.view.state.doc.toString(),
+          range,
           proposal.replacement,
         ),
-      }),
     )
   }
 
@@ -230,10 +242,10 @@ export function BodyRequestAccessory({
     createProposal: (
       signal: AbortSignal,
     ) => ResultAsync<BodyRequestProposalResult, Error>,
-    prepareProposal: (
+    resolveReplacement: (
       proposal: BodyRequestProposalResult,
-      target: BodyRequestPresetSelection,
-    ) => BodyRequestProposalResult = (proposal) => proposal,
+      range: { from: number; to: number },
+    ) => string = ({ replacement }) => replacement,
   ) => {
     const { context, view } = requestTarget
     if (manager.layer.overlapsOtherLayer(context.range)) {
@@ -272,15 +284,14 @@ export function BodyRequestAccessory({
         if (controller.signal.aborted) return
         manager.finishRequest(controller)
         setRequestActive(false)
-        const proposal = prepareProposal(response, requestTarget)
         manager.layer
-          .resolveInFlight(proposal.replacement, {
-            ...(proposal.metadata === undefined
+          .resolveInFlight((range) => resolveReplacement(response, range), {
+            ...(response.metadata === undefined
               ? {}
-              : { metadata: proposal.metadata }),
-            ...(proposal.replacementMarks === undefined
+              : { metadata: response.metadata }),
+            ...(response.replacementMarks === undefined
               ? {}
-              : { replacementMarks: proposal.replacementMarks }),
+              : { replacementMarks: response.replacementMarks }),
           })
           .match(
             () => undefined,

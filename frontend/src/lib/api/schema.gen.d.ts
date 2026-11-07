@@ -372,10 +372,12 @@ export interface components {
       thesis: string
     }
     BodyRequest: {
+      evidence_quotes?: string[] | null
       headings: string[]
       instruction: string
       premise: components['schemas']['ArticlePremise']
       section: string
+      sources?: components['schemas']['BodyRequestSource'][] | null
       target: string
     }
     BodyRequestError: {
@@ -394,6 +396,12 @@ export interface components {
         }
     BodyRequestResult: {
       replacement: string
+    }
+    BodyRequestSource: {
+      checked_at?: string | null
+      summary: string
+      title: string
+      url?: string | null
     }
     ClaimEvidenceQuote: {
       source_id: string

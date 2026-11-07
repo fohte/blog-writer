@@ -104,7 +104,7 @@ function writeEvidenceAnchors(
 }
 
 type EvidenceInspection =
-  | { kind: 'visible'; from: number; view: EvidenceView }
+  | { kind: 'visible'; from: number; to: number; view: EvidenceView }
   | { kind: 'hidden' }
   | { kind: 'prune' }
 
@@ -127,6 +127,7 @@ function inspectEvidence(
   return {
     kind: 'visible',
     from: range.from,
+    to: range.to,
     view: { ...item, currentClaim, edited: currentClaim !== item.claim },
   }
 }
@@ -164,7 +165,9 @@ export function addEvidence(
     : err(new InvalidEvidenceError('Evidence could not be read'))
 }
 
-export function listEvidence(doc: Y.Doc): EvidenceView[] {
+function listVisibleEvidence(
+  doc: Y.Doc,
+): Extract<EvidenceInspection, { kind: 'visible' }>[] {
   const evidence = getEvidenceMap(doc)
   if (evidence.size === 0) return []
   const markdown = getBody(doc).toJSON()
@@ -175,8 +178,19 @@ export function listEvidence(doc: Y.Doc): EvidenceView[] {
     const inspection = inspectEvidence(doc, id, data, markdown, sources)
     if (inspection.kind === 'visible') result.push(inspection)
   }
-  return result
-    .sort((left, right) => left.from - right.from)
+  return result.sort((left, right) => left.from - right.from)
+}
+
+export function listEvidence(doc: Y.Doc): EvidenceView[] {
+  return listVisibleEvidence(doc).map(({ view }) => view)
+}
+
+export function listEvidenceOverlapping(
+  doc: Y.Doc,
+  range: { from: number; to: number },
+): EvidenceView[] {
+  return listVisibleEvidence(doc)
+    .filter(({ from, to }) => from < range.to && to > range.from)
     .map(({ view }) => view)
 }
 
