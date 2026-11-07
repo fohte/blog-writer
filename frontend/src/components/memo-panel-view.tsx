@@ -3,6 +3,7 @@ import { Button } from '@fohte/ui/button'
 import { Input } from '@fohte/ui/input'
 import { List } from '@fohte/ui/list'
 import { SegmentedControl } from '@fohte/ui/segmented-control'
+import { GripVerticalIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 
 import type { Heading, Memo } from '#article/index'
@@ -142,14 +143,14 @@ export function MemoPanelView({
               {memo.state.kind === 'dismissed' ? null : (
                 <button
                   aria-label={`メモ「${memo.text}」をドラッグ`}
-                  className="h-8 w-6 shrink-0 cursor-grab touch-none select-none rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
+                  className="flex h-8 w-6 shrink-0 cursor-grab items-center justify-center touch-none select-none rounded text-muted-foreground hover:bg-accent active:cursor-grabbing [-webkit-touch-callout:none] [-webkit-user-select:none]"
                   ref={(element) => {
                     if (element) dragHandleRefs.current.set(memo.id, element)
                     else dragHandleRefs.current.delete(memo.id)
                   }}
                   type="button"
                 >
-                  ⋮⋮
+                  <GripVerticalIcon aria-hidden="true" className="size-4" />
                 </button>
               )}
               <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-1.5 text-sm">
