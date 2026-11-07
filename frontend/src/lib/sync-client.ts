@@ -2,6 +2,8 @@ import { err, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 import { v7 } from 'uuid'
 import * as Y from 'yjs'
 
+import { DEFAULT_ARTICLE_TITLE } from '#article/constants'
+import type { ArticleFileSyncStatus } from '#lib/file-sync-api'
 import {
   buildSyncDocument,
   createLocalPersistence,
@@ -13,15 +15,23 @@ import {
 import { SyncClientError, toSyncClientError } from '#lib/sync-client-errors'
 
 const ARTICLE_INDEX_DOC_ID = 'article-index'
-const DEFAULT_ARTICLE_TITLE = 'Untitled article'
 
 export type SyncState = 'saved' | 'unsynced' | 'syncing' | 'synced'
 type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'
+
+function isArticleFileSyncStatus(
+  value: unknown,
+): value is ArticleFileSyncStatus {
+  return value === 'unset' || value === 'synced' || value === 'external_changed'
+}
 
 export type Article = {
   id: string
   createdAt: number
   title: string
+  syncFilePath?: string
+  syncFileHash?: string
+  syncFileStatus?: ArticleFileSyncStatus
 }
 
 export type SyncClientOptions = {
@@ -183,10 +193,18 @@ class SyncClient implements SyncClientApi {
       .map(([id, entry]) => {
         const createdAt = entry.get('createdAt')
         const title = entry.get('title')
+        const syncFilePath = entry.get('syncFilePath')
+        const syncFileHash = entry.get('syncFileHash')
+        const syncFileStatus = entry.get('syncFileStatus')
         return {
           id,
           createdAt: typeof createdAt === 'number' ? createdAt : 0,
           title: typeof title === 'string' ? title : DEFAULT_ARTICLE_TITLE,
+          ...(typeof syncFilePath === 'string' ? { syncFilePath } : {}),
+          ...(typeof syncFileHash === 'string' ? { syncFileHash } : {}),
+          ...(isArticleFileSyncStatus(syncFileStatus)
+            ? { syncFileStatus }
+            : {}),
         }
       })
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))

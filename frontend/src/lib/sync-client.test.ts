@@ -141,6 +141,9 @@ describe('createSyncClient', () => {
     const savedIndex = new Y.Doc()
     const entry = new Y.Map<unknown>()
     entry.set('createdAt', 1_800_000_000_000)
+    entry.set('syncFilePath', 'notes/sample.md')
+    entry.set('syncFileHash', 'sample-hash')
+    entry.set('syncFileStatus', 'external_changed')
     savedIndex
       .getMap<Y.Map<unknown>>('articles')
       .set('018f0000-0000-7000-8000-000000000001', entry)
@@ -167,6 +170,9 @@ describe('createSyncClient', () => {
           id: '018f0000-0000-7000-8000-000000000001',
           createdAt: 1_800_000_000_000,
           title: 'Untitled article',
+          syncFilePath: 'notes/sample.md',
+          syncFileHash: 'sample-hash',
+          syncFileStatus: 'external_changed',
         },
       ],
       [
