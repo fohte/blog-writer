@@ -82,7 +82,7 @@ export interface ArticleEditorViewProps {
   bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
   outlineRenderer?:
     ((context: ArticleOutlineRenderContext) => ReactNode) | undefined
-  premiseAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  premisePanel?: ((context: ArticleEditorContext) => ReactNode) | undefined
   headerActions?: ((context: ArticleEditorContext) => ReactNode) | undefined
   sourcesPanel?:
     ReactNode | ((context: ArticleEditorContext) => ReactNode) | undefined
@@ -103,7 +103,7 @@ export type ArticleEditorIntegrationProps = Pick<
   | 'headerActions'
   | 'onViewChange'
   | 'outlineRenderer'
-  | 'premiseAccessory'
+  | 'premisePanel'
   | 'sourcesPanel'
 >
 
@@ -163,7 +163,7 @@ export function ArticleEditorView({
   editorExtensions,
   bodyAccessory,
   outlineRenderer,
-  premiseAccessory,
+  premisePanel,
   headerActions,
   sourcesPanel,
   onViewChange,
@@ -250,13 +250,10 @@ export function ArticleEditorView({
         />
       ) : null
     }
-    if (target === 'premise')
-      return doc ? (
-        <ArticlePremisePanel
-          accessory={context ? premiseAccessory?.(context) : undefined}
-          doc={doc}
-        />
-      ) : null
+    if (target === 'premise') {
+      if (context && premisePanel) return premisePanel(context)
+      return doc ? <ArticlePremisePanel doc={doc} /> : null
+    }
     if (target === 'sources')
       return typeof sourcesPanel === 'function'
         ? context

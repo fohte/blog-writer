@@ -21,7 +21,7 @@ import {
 } from '#lib/file-sync-api'
 import { useSyncClient } from '#lib/use-sync-client'
 import { ArticleWorkspace } from '#pages/article-workspace'
-import { PremiseProposalAccessory } from '#proposals/premise'
+import { PremiseDiscussionPanel } from '#proposals/premise'
 import { writeFromKeyPoints } from '#proposals/write-from-key-points'
 import { HeadingResearchOutline } from '#research/heading-research-outline'
 import { SourcePanel } from '#research/source-panel'
@@ -284,9 +284,7 @@ export function App() {
           />
         )
       }}
-      premiseAccessory={(context) => (
-        <PremiseProposalAccessory doc={context.doc} />
-      )}
+      premisePanel={(context) => <PremiseDiscussionPanel doc={context.doc} />}
       ready={canCreate}
       requiresAuthentication={requiresAuthentication}
       statuses={statuses}

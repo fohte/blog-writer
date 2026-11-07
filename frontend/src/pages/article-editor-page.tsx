@@ -32,7 +32,7 @@ export function ArticleEditorPage({
   headerActions,
   onViewChange,
   outlineRenderer,
-  premiseAccessory,
+  premisePanel,
   sourcesPanel,
 }: ArticleEditorPageProps) {
   const [doc, setDoc] = useState<Y.Doc>()
@@ -64,7 +64,7 @@ export function ArticleEditorPage({
       onViewChange={onViewChange}
       onLoginAgain={onLoginAgain}
       outlineRenderer={outlineRenderer}
-      premiseAccessory={premiseAccessory}
+      premisePanel={premisePanel}
       onTitleChange={(title) => {
         client.updateArticleTitle(article.id, title).match(
           () => {

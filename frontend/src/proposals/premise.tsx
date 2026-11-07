@@ -9,19 +9,10 @@ import {
   setPremise,
 } from '#article/index'
 import type { PremiseField } from '#article/types'
-import {
-  type PremiseConversationMessage,
-  type PremiseFieldProposal,
-  PremiseProposalView,
-} from '#components/premise-proposal-view'
+import { ArticlePremisePanel } from '#components/article-premise-panel'
+import type { PremiseConversationMessage } from '#components/premise-panel-view'
 import { loadLlmSettings } from '#lib/llm-settings'
 import { requestPremiseProposal } from '#proposals/premise-api'
-
-const fieldLabels: Record<PremiseField, string> = {
-  audience: 'Reader',
-  purpose: 'Purpose',
-  claim: 'Claim',
-}
 
 const premiseFields: PremiseField[] = ['audience', 'purpose', 'claim']
 
@@ -45,13 +36,11 @@ function flattenHeadings(
   ])
 }
 
-export interface PremiseProposalAccessoryProps {
+export interface PremiseDiscussionPanelProps {
   doc: Y.Doc
 }
 
-export function PremiseProposalAccessory({
-  doc,
-}: PremiseProposalAccessoryProps) {
+export function PremiseDiscussionPanel({ doc }: PremiseDiscussionPanelProps) {
   const [premise, setPremiseState] = useState(() => getPremise(doc))
   const [messages, setMessages] = useState<PremiseConversationMessage[]>([])
   const [proposals, setProposals] = useState<
@@ -103,21 +92,17 @@ export function PremiseProposalAccessory({
     [],
   )
 
-  const proposalViews = useMemo<PremiseFieldProposal[]>(
+  const visibleProposals = useMemo(
     () =>
-      premiseFields.flatMap((field) => {
-        const replacement = proposals[field]
-        const original = premise[field] ?? ''
-        if (replacement === undefined || replacement === original) return []
-        return [
-          {
-            field,
-            label: fieldLabels[field],
-            original,
-            replacement,
-          },
-        ]
-      }),
+      Object.fromEntries(
+        premiseFields.flatMap((field) => {
+          const replacement = proposals[field]
+          return replacement === undefined ||
+            replacement === (premise[field] ?? '')
+            ? []
+            : [[field, replacement]]
+        }),
+      ),
     [premise, proposals],
   )
 
@@ -208,16 +193,19 @@ export function PremiseProposalAccessory({
   }
 
   return (
-    <PremiseProposalView
-      draft={draft}
-      error={error}
-      generating={generating}
-      messages={messages}
-      onAccept={acceptProposal}
-      onDraftChange={setDraft}
-      onReject={rejectProposal}
-      onSubmit={sendMessage}
-      proposals={proposalViews}
+    <ArticlePremisePanel
+      discussion={{
+        draft,
+        error,
+        generating,
+        messages,
+        onAccept: acceptProposal,
+        onDraftChange: setDraft,
+        onReject: rejectProposal,
+        onSubmit: sendMessage,
+        proposals: visibleProposals,
+      }}
+      doc={doc}
     />
   )
 }

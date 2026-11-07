@@ -8,7 +8,7 @@ import * as Y from 'yjs'
 
 import { getBody, getPremise, setBody, setPremise } from '#article/index'
 import type { components } from '#lib/api/schema.gen.d.ts'
-import { PremiseProposalAccessory } from '#proposals/premise'
+import { PremiseDiscussionPanel } from '#proposals/premise'
 
 type PremiseResponse = components['schemas']['PremiseResponse']
 
@@ -17,16 +17,16 @@ let root: Root | undefined
 let doc: Y.Doc | undefined
 let previousRoute: string | null = null
 
-function renderAccessory(articleDoc: Y.Doc) {
+function renderPanel(articleDoc: Y.Doc) {
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
   act(() => {
-    root?.render(<PremiseProposalAccessory doc={articleDoc} />)
+    root?.render(<PremiseDiscussionPanel doc={articleDoc} />)
   })
 }
 
-function unmountAccessory() {
+function unmountPanel() {
   act(() => root?.unmount())
   root = undefined
   host?.remove()
@@ -47,7 +47,7 @@ async function waitForProposalCount(expected: number) {
   await act(async () => {
     await vi.waitFor(() => {
       if (
-        (host?.querySelectorAll('[aria-label$="suggestion"]').length ?? 0) !==
+        (host?.querySelectorAll('[aria-label$="の修正案"]').length ?? 0) !==
         expected
       ) {
         throw new Error('The expected premise suggestions are not visible')
@@ -71,7 +71,7 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
-  unmountAccessory()
+  unmountPanel()
   doc?.destroy()
   doc = undefined
   if (previousRoute === null) {
@@ -82,7 +82,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('premise proposal accessory', () => {
+describe('premise discussion panel', () => {
   it('sends the open conversation and persists only accepted field values', async () => {
     const articleDoc = new Y.Doc()
     doc = articleDoc
@@ -125,45 +125,45 @@ describe('premise proposal accessory', () => {
     }
     vi.stubGlobal('fetch', fetcher)
 
-    renderAccessory(articleDoc)
+    renderPanel(articleDoc)
     await act(async () => {
       await userEvent.type(
-        page.getByRole('textbox', { name: 'Continue the discussion' }),
+        page.getByRole('textbox', { name: '前提について話す' }),
         'Clarify the audience',
       )
-      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+      await userEvent.click(page.getByRole('button', { name: '送る' }))
     })
 
     await waitForRequestToFinish()
     await act(async () => {
       await userEvent.click(
         page
-          .getByRole('region', { name: 'Claim suggestion' })
-          .getByRole('button', { name: '✓ 採用' }),
+          .getByRole('group', { name: '主張の修正案' })
+          .getByRole('button', { name: '採用' }),
       )
       await userEvent.click(
         page
-          .getByRole('region', { name: 'Reader suggestion' })
-          .getByRole('button', { name: '× 却下' }),
+          .getByRole('group', { name: '想定読者の修正案' })
+          .getByRole('button', { name: '却下' }),
       )
       const input = page.getByRole('textbox', {
-        name: 'Continue the discussion',
+        name: '前提について話す',
       })
       await userEvent.type(input, 'Make the purpose actionable')
-      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+      await userEvent.click(page.getByRole('button', { name: '送る' }))
     })
 
     await waitForRequestToFinish()
     const acceptedPremise = getPremise(articleDoc)
 
-    unmountAccessory()
-    renderAccessory(articleDoc)
+    unmountPanel()
+    renderPanel(articleDoc)
     await act(async () => {
       await userEvent.type(
-        page.getByRole('textbox', { name: 'Continue the discussion' }),
+        page.getByRole('textbox', { name: '前提について話す' }),
         'Start a fresh discussion',
       )
-      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+      await userEvent.click(page.getByRole('button', { name: '送る' }))
     })
     await waitForRequestToFinish()
 
@@ -174,18 +174,18 @@ describe('premise proposal accessory', () => {
       body: getBody(articleDoc).toJSON(),
       renderedState: {
         messages: Array.from(
-          host?.querySelectorAll('[aria-label="Conversation history"] li') ??
-            [],
+          host?.querySelectorAll('[aria-label="やり取り"] li') ?? [],
         ).map((message) => ({
           speaker: message.querySelector('span')?.textContent ?? null,
           content: message.querySelector('p')?.textContent ?? null,
         })),
         suggestionCount:
-          host?.querySelectorAll('[aria-label$="suggestion"]').length ?? 0,
+          host?.querySelectorAll('[aria-label$="の修正案"]').length ?? 0,
         generating: host?.querySelector('[role="status"]')?.textContent ?? null,
         error: host?.querySelector('[role="alert"]')?.textContent ?? null,
         draft:
-          host?.querySelector<HTMLTextAreaElement>('textarea')?.value ?? null,
+          host?.querySelector<HTMLInputElement>('#premise-message')?.value ??
+          null,
       },
     })
     expect(actual()).toEqual({
@@ -241,11 +241,11 @@ describe('premise proposal accessory', () => {
       renderedState: {
         messages: [
           {
-            speaker: 'You',
+            speaker: 'あなた',
             content: 'Start a fresh discussion',
           },
           {
-            speaker: 'Assistant',
+            speaker: 'LLM',
             content: 'What decision should the article explain?',
           },
         ],
@@ -274,13 +274,13 @@ describe('premise proposal accessory', () => {
       ),
     )
 
-    renderAccessory(articleDoc)
+    renderPanel(articleDoc)
     await act(async () => {
       await userEvent.type(
-        page.getByRole('textbox', { name: 'Continue the discussion' }),
+        page.getByRole('textbox', { name: '前提について話す' }),
         'Clarify the premise',
       )
-      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+      await userEvent.click(page.getByRole('button', { name: '送る' }))
     })
     await waitForRequestToFinish()
     await waitForProposalCount(3)
@@ -305,9 +305,9 @@ describe('premise proposal accessory', () => {
     const actual = () => ({
       premise: getPremise(articleDoc),
       proposals: Array.from(
-        host?.querySelectorAll('[aria-label$="suggestion"]') ?? [],
+        host?.querySelectorAll('[aria-label$="の修正案"]') ?? [],
       ).map((proposal) => ({
-        label: proposal.querySelector('h3')?.textContent ?? null,
+        label: proposal.getAttribute('aria-label'),
         original: proposal.querySelector('del')?.textContent ?? null,
         replacement: proposal.querySelector('ins')?.textContent ?? null,
       })),
@@ -320,7 +320,7 @@ describe('premise proposal accessory', () => {
       },
       proposals: [
         {
-          label: 'Purpose',
+          label: '目的の修正案',
           original: 'Explain a useful',
           replacement: 'Help readers choose a safe',
         },
@@ -345,19 +345,19 @@ describe('premise proposal accessory', () => {
       })
     }) satisfies typeof fetch)
 
-    renderAccessory(articleDoc)
+    renderPanel(articleDoc)
     await act(async () => {
       await userEvent.type(
-        page.getByRole('textbox', { name: 'Continue the discussion' }),
+        page.getByRole('textbox', { name: '前提について話す' }),
         'Clarify the premise',
       )
-      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+      await userEvent.click(page.getByRole('button', { name: '送る' }))
     })
     await act(async () => {
       await vi.waitFor(() => {
         if (
           resolveResponse === undefined ||
-          host?.querySelector('[role="status"]')?.textContent !== 'Thinking…'
+          host?.querySelector('[role="status"]')?.textContent !== '作成中…'
         ) {
           throw new Error('The request did not start')
         }
@@ -379,8 +379,8 @@ describe('premise proposal accessory', () => {
     const actual = () => ({
       premise: getPremise(articleDoc),
       proposals: Array.from(
-        host?.querySelectorAll('[aria-label$="suggestion"]') ?? [],
-      ).map((proposal) => proposal.querySelector('h3')?.textContent ?? null),
+        host?.querySelectorAll('[aria-label$="の修正案"]') ?? [],
+      ).map((proposal) => proposal.getAttribute('aria-label')),
       generating: host?.querySelector('[role="status"]')?.textContent ?? null,
       error: host?.querySelector('[role="alert"]')?.textContent ?? null,
       requestCount,
@@ -392,7 +392,7 @@ describe('premise proposal accessory', () => {
         purpose: 'Edited while generating',
         claim: 'A clear process reduces confusion',
       },
-      proposals: ['Reader', 'Claim'],
+      proposals: ['想定読者の修正案', '主張の修正案'],
       generating: null,
       error: null,
       requestCount: 1,
@@ -427,21 +427,21 @@ describe('premise proposal accessory', () => {
       )
     }) satisfies typeof fetch)
 
-    renderAccessory(articleDoc)
+    renderPanel(articleDoc)
     await act(async () => {
       await userEvent.type(
-        page.getByRole('textbox', { name: 'Continue the discussion' }),
+        page.getByRole('textbox', { name: '前提について話す' }),
         'Clarify the audience',
       )
-      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+      await userEvent.click(page.getByRole('button', { name: '送る' }))
     })
     await waitForRequestToFinish()
     await act(async () => {
       const input = page.getByRole('textbox', {
-        name: 'Continue the discussion',
+        name: '前提について話す',
       })
       await userEvent.type(input, 'Ask another question')
-      await userEvent.click(page.getByRole('button', { name: 'Send' }))
+      await userEvent.click(page.getByRole('button', { name: '送る' }))
     })
     await waitForRequestToFinish()
 
@@ -449,12 +449,13 @@ describe('premise proposal accessory', () => {
       alert: host?.querySelector('[role="alert"]')?.textContent ?? null,
       premise: getPremise(articleDoc),
       draft:
-        host?.querySelector<HTMLTextAreaElement>('textarea')?.value ?? null,
+        host?.querySelector<HTMLInputElement>('#premise-message')?.value ??
+        null,
       generating: host?.querySelector('[role="status"]')?.textContent ?? null,
       proposals: Array.from(
-        host?.querySelectorAll('[aria-label$="suggestion"]') ?? [],
+        host?.querySelectorAll('[aria-label$="の修正案"]') ?? [],
       ).map((proposal) => ({
-        label: proposal.querySelector('h3')?.textContent ?? null,
+        label: proposal.getAttribute('aria-label'),
         original: proposal.querySelector('del')?.textContent ?? null,
         replacement: proposal.querySelector('ins')?.textContent ?? null,
       })),
@@ -470,7 +471,7 @@ describe('premise proposal accessory', () => {
       generating: null,
       proposals: [
         {
-          label: 'Claim',
+          label: '主張の修正案',
           original: 'clear process reduces confusion',
           replacement:
             'short review checklist helps new maintainers catch risky changes',
