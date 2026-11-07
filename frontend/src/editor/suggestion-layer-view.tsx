@@ -18,7 +18,7 @@ import type {
   TextSuggestion,
 } from '#editor/suggestion-layer-range'
 
-/** `seam` collapses each suggestion into a divider after the line where it starts. */
+/** `seam` collapses each unfocused suggestion into a divider after the line where it starts. */
 export type SuggestionDisplay = 'marker' | 'seam'
 
 const rootsByDOM = new WeakMap<HTMLElement, Root>()
