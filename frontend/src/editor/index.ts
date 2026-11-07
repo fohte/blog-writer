@@ -14,6 +14,7 @@ export {
   type TextSuggestion,
   type TrackedSuggestionRange,
 } from '#editor/suggestion-layer'
+export { suggestionActionsPresentation } from '#editor/suggestion-layer-view'
 export {
   BodyRequestAccessory,
   type BodyRequestAccessoryContext,

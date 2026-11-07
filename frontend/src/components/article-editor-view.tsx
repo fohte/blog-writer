@@ -22,7 +22,10 @@ import { EditorStatusBar } from '#components/editor-status-bar'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
-import { moveConflictExtension } from '#editor/index'
+import {
+  moveConflictExtension,
+  suggestionActionsPresentation,
+} from '#editor/index'
 import { useMobileViewport } from '#hooks/use-mobile-viewport'
 import type { SyncState } from '#lib/sync-client'
 import { MemoPanel } from '#memos/memo-panel'
@@ -167,10 +170,11 @@ export function ArticleEditorView({
         ? [
             moveConflictExtension(doc),
             createOutlineEditorExtension(history),
+            ...(isMobile ? [suggestionActionsPresentation.of('sheet')] : []),
             ...suppliedExtensions,
           ]
         : [],
-    [doc, history, suppliedExtensions],
+    [doc, history, isMobile, suppliedExtensions],
   )
 
   useEffect(() => {

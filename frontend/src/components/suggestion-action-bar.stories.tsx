@@ -57,3 +57,30 @@ export const Seam: Story = {
     variant: 'seam',
   },
 }
+
+const phoneScreen: NonNullable<Story['decorators']> = [
+  (Story) => (
+    <div className="relative h-96 w-97.5 transform-gpu">
+      <Story />
+    </div>
+  ),
+]
+
+export const Sheet: Story = {
+  name: 'on a phone, the bottom sheet shows the request and what it replaces above large reject and accept buttons.',
+  args: {
+    presentation: 'sheet',
+    label: 'Add one example',
+    target: '段落を置き換え',
+  },
+  decorators: phoneScreen,
+}
+
+export const SeamSheet: Story = {
+  name: 'on a phone, the bottom sheet for a transition accepts the sentences on both sides of the seam.',
+  args: {
+    presentation: 'sheet',
+    variant: 'seam',
+  },
+  decorators: phoneScreen,
+}
