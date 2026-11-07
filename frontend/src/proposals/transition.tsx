@@ -335,7 +335,9 @@ function startProposal(
   runtime.pending = []
   clearLayer(runtime)
 
-  const seams = seamsAtMove(markdown, marker)
+  const seams = seamsAtMove(markdown, marker).filter(
+    ({ from, to }) => !runtime.layer.overlapsOtherLayer({ from, to }),
+  )
   if (seams.length === 0) return
   const settings = loadLlmSettings(() => window.localStorage).match(
     (value) => value,
@@ -387,7 +389,8 @@ function startProposal(
           if (
             !pending ||
             pending.seam.from !== suggestion.from ||
-            pending.seam.to !== suggestion.to
+            pending.seam.to !== suggestion.to ||
+            runtime.layer.overlapsOtherLayer(pending)
           )
             return []
           return [

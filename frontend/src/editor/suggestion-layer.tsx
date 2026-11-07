@@ -374,8 +374,11 @@ export class SuggestionLayerController {
       return true
     }
 
-    const state = view.state.field(this.stateField, false)
-    const suggestions = state?.suggestions ?? []
+    const suggestions = Array.from(mountedSuggestionLayers.get(view) ?? [])
+      .flatMap(
+        (layer) => view.state.field(layer.stateField, false)?.suggestions ?? [],
+      )
+      .sort((left, right) => left.from - right.from || left.to - right.to)
     if (suggestions.length === 0) return false
     const head = view.state.selection.main.head
     const next = suggestions.find(({ from }) => from > head) ?? suggestions[0]
