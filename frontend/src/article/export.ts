@@ -4,6 +4,33 @@ import { DEFAULT_ARTICLE_TITLE } from '#article/constants'
 
 export type ExportFormat = 'markdown' | 'mdx'
 
+export function isValidArticleSlug(slug: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)
+}
+
+export function prependArticleFrontmatter(
+  frontmatter: string,
+  body: string,
+): string {
+  return `---\n${frontmatter}\n---\n\n${body}`
+}
+
+export function createArticleFrontmatter(
+  template: string,
+  title: string,
+  createdAt: number,
+): string {
+  const createdDate = new Date(createdAt)
+  const date = [
+    createdDate.getFullYear(),
+    String(createdDate.getMonth() + 1).padStart(2, '0'),
+    String(createdDate.getDate()).padStart(2, '0'),
+  ].join('-')
+  return template
+    .replaceAll('{{ title }}', () => JSON.stringify(title))
+    .replaceAll('{{ date }}', () => JSON.stringify(date))
+}
+
 const editorComponents = new Set([
   'CardLink',
   'ImageGrid',
