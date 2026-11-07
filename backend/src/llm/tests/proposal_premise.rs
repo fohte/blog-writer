@@ -185,7 +185,7 @@ async fn omits_empty_and_whitespace_only_field_suggestions()
             output: json!({
                 "reply": "どのような主張にしますか?",
                 "audience": "",
-                "purpose": "  \n  ",
+                "purpose": "    ",
                 "thesis": "変更を早めに確認すると手戻りを防げる"
             }),
             prompt,
