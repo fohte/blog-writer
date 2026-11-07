@@ -808,7 +808,7 @@ First paragraph.
     expect(readMoveErrorOutput()).toEqual({
       initialOutlineError: null,
       invalidMoveResult: 'No Markdown block at position',
-      outlineErrorAfterMove: 'No Markdown block at position',
+      outlineErrorAfterMove: 'この位置には移動できません。',
       outlineErrorAfterReopen: null,
     })
   })
