@@ -35,6 +35,10 @@ function selectionIntersects(
   )
 }
 
+function isAtxHeading(name: string | undefined): boolean {
+  return name !== undefined && /^ATXHeading[1-6]$/u.test(name)
+}
+
 function shouldHideMark(
   state: EditorState,
   name: string,
@@ -46,7 +50,7 @@ function shouldHideMark(
 
   switch (name) {
     case 'HeaderMark':
-      return !parent || !/^ATXHeading[1-6]$/u.test(parent.name)
+      return !isAtxHeading(parent?.name)
     case 'EmphasisMark':
     case 'StrikethroughMark':
       return !parent || !selectionIntersects(state, parent.from, parent.to)
@@ -67,7 +71,7 @@ function buildDecorations(state: EditorState): DecorationSet {
   const cursor = syntaxTree(state).cursor()
 
   while (cursor.next()) {
-    if (/^ATXHeading[1-6]$/u.test(cursor.name)) {
+    if (isAtxHeading(cursor.name)) {
       const level = Number(cursor.name.slice('ATXHeading'.length))
       const line = state.doc.lineAt(cursor.from)
       decorations.push(
@@ -147,7 +151,7 @@ function buildDecorations(state: EditorState): DecorationSet {
     }
 
     const parentName = cursor.node.parent?.name ?? ''
-    if (cursor.name === 'HeaderMark' && /^ATXHeading[1-6]$/u.test(parentName)) {
+    if (cursor.name === 'HeaderMark' && isAtxHeading(parentName)) {
       decorations.push(
         Decoration.mark({ class: 'cm-md-header-mark' }).range(
           cursor.from,
