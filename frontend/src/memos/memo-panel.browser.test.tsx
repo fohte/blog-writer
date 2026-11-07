@@ -177,23 +177,12 @@ describe('MemoPanel', () => {
     })
   })
 
-  it('moves a memo above the previous memo in the same state', () => {
-    const doc = new Y.Doc()
-    addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
-    addMemo(doc, { id: 'memo-x', text: '見送った案', order: 1 })
-    addMemo(doc, { id: 'memo-b', text: '次の案', order: 2 })
-    dismissMemo(doc, 'memo-x')
-    mountMemoPanel(doc)
-
-    openAdoptionMenu('memo-b')
-    act(() => {
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-label="メモ「次の案」を上へ"]')
-        ?.click()
-    })
-
-    expect(readPanelOutput(doc)).toEqual({
-      memos: [
+  it.each([
+    {
+      name: 'moves a memo above the previous memo in the same state',
+      memoId: 'memo-b',
+      action: 'メモ「次の案」を上へ',
+      expectedMemos: [
         {
           id: 'memo-b',
           text: '次の案',
@@ -213,6 +202,49 @@ describe('MemoPanel', () => {
           state: { kind: 'dismissed' },
         },
       ],
+    },
+    {
+      name: 'moves a memo below the next memo in the same state',
+      memoId: 'memo-a',
+      action: 'メモ「最初の案」を下へ',
+      expectedMemos: [
+        {
+          id: 'memo-x',
+          text: '見送った案',
+          order: 0,
+          state: { kind: 'dismissed' },
+        },
+        {
+          id: 'memo-b',
+          text: '次の案',
+          order: 1,
+          state: { kind: 'unorganized' },
+        },
+        {
+          id: 'memo-a',
+          text: '最初の案',
+          order: 2,
+          state: { kind: 'unorganized' },
+        },
+      ],
+    },
+  ])('$name', ({ memoId, action, expectedMemos }) => {
+    const doc = new Y.Doc()
+    addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
+    addMemo(doc, { id: 'memo-x', text: '見送った案', order: 1 })
+    addMemo(doc, { id: 'memo-b', text: '次の案', order: 2 })
+    dismissMemo(doc, 'memo-x')
+    mountMemoPanel(doc)
+
+    openAdoptionMenu(memoId)
+    act(() => {
+      document.body
+        .querySelector<HTMLButtonElement>(`[aria-label="${action}"]`)
+        ?.click()
+    })
+
+    expect(readPanelOutput(doc)).toEqual({
+      memos: expectedMemos,
       filters: ['未整理 2 (selected)', '採用済み 0', '見送り 1'],
       rendered: [['次の案'], ['最初の案']],
       draft: '',
