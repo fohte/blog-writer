@@ -87,21 +87,6 @@ export const AnalysisFailed: Story = {
   },
 }
 
-export const RetryingAnalysis: Story = {
-  name: '要約をやり直す資料の行に取り込み中を表示する',
-  args: {
-    sources: [
-      {
-        ...readySource,
-        status: 'analysisFailed',
-        summary: '',
-      },
-    ],
-    expandedSourceId: readySource.id,
-    pending: [{ id: readySource.id, label: readySource.title }],
-  },
-}
-
 export const Ready: Story = {
   name: '取得済み資料を一覧に表示する',
   args: {
@@ -119,7 +104,7 @@ export const Expanded: Story = {
 }
 
 export const ImportingExisting: Story = {
-  name: '取り込み中の既存資料を一行で表示する',
+  name: '要約のやり直しなどで取り込み直している既存資料は、行に取り込み中と表示する',
   args: {
     sources: [readySource],
     pending: [{ id: readySource.id, label: readySource.title }],
