@@ -10,6 +10,7 @@ import type { BlockMoved } from '#article/index'
 import { blockMoved, getPremise, topLevelBlocks } from '#article/index'
 import {
   createSuggestionLayer,
+  type InFlightSuggestion,
   type SuggestionPosition,
   type TextSuggestion,
 } from '#editor/suggestion-layer'
@@ -65,7 +66,7 @@ function clearLayer(runtime: Runtime): void {
 
 function setInFlight(
   runtime: Runtime,
-  position: SuggestionPosition | null,
+  position: InFlightSuggestion | null,
 ): void {
   runtime.layer.setInFlight(position).match(
     () => undefined,
@@ -89,6 +90,7 @@ function makeRuntime({ doc }: ArticleContext): Runtime {
 
   const runtime: Runtime = {
     layer: createSuggestionLayer({
+      display: 'seam',
       onCancelInFlight: () => {
         runtime.abortController?.abort()
         runtime.abortController = null
@@ -368,7 +370,11 @@ function startProposal(
   }))
   const firstSeam = seams[0]
   if (!firstSeam) return
-  setInFlight(runtime, { from: firstSeam.from, to: firstSeam.to })
+  setInFlight(runtime, {
+    from: firstSeam.from,
+    to: firstSeam.to,
+    label: 'つなぎの文',
+  })
 
   const abortController = new AbortController()
   runtime.abortController = abortController

@@ -99,6 +99,21 @@ function transitionResponse(suggestions: unknown[]): Response {
   )
 }
 
+// An unfocused transition shows only a seam below the line where its range starts.
+function readSeamLines(view: EditorView): (string | null)[] {
+  return Array.from(
+    view.dom.querySelectorAll('.cm-suggestion-seam'),
+    (seam) => seam.previousElementSibling?.textContent ?? null,
+  )
+}
+
+function readBodyTargets(view: EditorView): string[] {
+  return Array.from(
+    view.dom.querySelectorAll('.cm-suggestion-target'),
+    (target) => target.textContent,
+  )
+}
+
 function createEditor(
   content = beforeMove,
   additionalExtensions: Extension[] = [],
@@ -268,11 +283,7 @@ describe('transition proposal extension', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
     await vi.waitFor(() => {
-      expect(
-        view.dom.querySelectorAll(
-          '.cm-suggestion-widget [aria-label="提案差分"]',
-        ).length,
-      ).toBe(1)
+      expect(view.dom.querySelectorAll('.cm-suggestion-seam').length).toBe(1)
     })
 
     const seamRanges: [number, number][] = [
@@ -319,9 +330,8 @@ describe('transition proposal extension', () => {
         getRequestBody(requestOptions),
       ]),
       documentText: view.state.doc.toString(),
-      suggestionWidgets: view.dom.querySelectorAll(
-        '.cm-suggestion-widget [aria-label="提案差分"]',
-      ).length,
+      suggestionWidgets: view.dom.querySelectorAll('.cm-suggestion-seam')
+        .length,
       generatingWidgets: view.dom.querySelectorAll(
         '.cm-suggestion-widget [role="status"]',
       ).length,
@@ -442,15 +452,26 @@ describe('transition proposal extension', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
+    const readAddedText = () =>
+      Array.from(
+        view.dom.querySelectorAll('.suggestion-diff-added'),
+        (node) => node.textContent,
+      ).join('')
+    // The cursor stays at the start of the article, which focuses the first proposal.
+    const firstAddedText = readAddedText()
+    const seamLines = readSeamLines(view)
+    const seamButton = view.dom.querySelector<HTMLButtonElement>(
+      '.cm-suggestion-seam-button',
+    )
+    if (!seamButton) throw new Error('The second proposal is not collapsed')
+    act(() => {
+      seamButton.click()
+    })
+
     const readOutput = () => ({
       request: getRequestBody(fetchMock.mock.calls[0]?.[1]),
-      addedText: Array.from(
-        view.dom.querySelectorAll('.suggestion-diff'),
-        (widget) =>
-          Array.from(widget.querySelectorAll('.suggestion-diff-added'))
-            .map((node) => node.textContent)
-            .join(''),
-      ),
+      addedText: [firstAddedText, readAddedText()],
+      seamLines,
       documentText: view.state.doc.toString(),
     })
     expect(readOutput()).toEqual({
@@ -495,6 +516,7 @@ describe('transition proposal extension', () => {
         ],
       },
       addedText: ['restoredrestored', 'shiftedshifted'],
+      seamLines: [second],
       documentText: afterMove,
     })
   })
@@ -533,7 +555,7 @@ describe('transition proposal extension', () => {
     const readOutput = () => ({
       request: getRequestBody(fetchMock.mock.calls[0]?.[1]),
       documentText: view.state.doc.toString(),
-      suggestionCount: view.dom.querySelectorAll('.suggestion-diff').length,
+      suggestionCount: view.dom.querySelectorAll('.cm-suggestion-seam').length,
     })
     expect(readOutput()).toEqual({
       request: {
@@ -696,7 +718,11 @@ describe('transition proposal extension', () => {
         ]),
       )
       await vi.waitFor(() => {
-        if (view.dom.querySelectorAll('.cm-suggestion-widget').length !== 2) {
+        if (
+          view.dom.querySelectorAll(
+            '.cm-suggestion-seam, .cm-suggestion-marker',
+          ).length !== 2
+        ) {
           throw new Error('Expected both non-overlapping proposals')
         }
       })
@@ -705,21 +731,14 @@ describe('transition proposal extension', () => {
     const readOutput = () => ({
       requestSeamIds,
       body: view.state.doc.toString(),
-      proposalRanges: Array.from(
-        view.dom.querySelectorAll<HTMLElement>('.cm-suggestion-widget'),
-        (widget) => [
-          Number(widget.dataset['suggestionFrom']),
-          Number(widget.dataset['suggestionTo']),
-        ],
-      ),
+      seamLines: readSeamLines(view),
+      bodyTargets: readBodyTargets(view),
     })
     expect(readOutput()).toEqual({
       requestSeamIds: ['seam-0', 'seam-1'],
       body: afterMove,
-      proposalRanges: [
-        [seamRanges[0]?.from, seamRanges[0]?.to],
-        [bodyFrom, bodyTo],
-      ],
+      seamLines: ['Section A ends here.'],
+      bodyTargets: [bodyText],
     })
   })
 
@@ -786,7 +805,11 @@ describe('transition proposal extension', () => {
         ),
       )
       await vi.waitFor(() => {
-        if (view.dom.querySelectorAll('.cm-suggestion-widget').length !== 2) {
+        if (
+          view.dom.querySelectorAll(
+            '.cm-suggestion-seam, .cm-suggestion-marker',
+          ).length !== 2
+        ) {
           throw new Error('Expected only the non-overlapping proposal')
         }
       })
@@ -795,21 +818,14 @@ describe('transition proposal extension', () => {
     const readOutput = () => ({
       requestSeamIds,
       body: view.state.doc.toString(),
-      proposalRanges: Array.from(
-        view.dom.querySelectorAll<HTMLElement>('.cm-suggestion-widget'),
-        (widget) => [
-          Number(widget.dataset['suggestionFrom']),
-          Number(widget.dataset['suggestionTo']),
-        ],
-      ),
+      seamLines: readSeamLines(view),
+      bodyTargets: readBodyTargets(view),
     })
     expect(readOutput()).toEqual({
       requestSeamIds: ['seam-0', 'seam-1', 'seam-2'],
       body: afterMove,
-      proposalRanges: [
-        [seamRanges[0]?.from, seamRanges[0]?.to],
-        [bodyFrom, bodyTo],
-      ],
+      seamLines: ['Section A ends here.'],
+      bodyTargets: [bodyText],
     })
   })
 
@@ -957,15 +973,13 @@ describe('transition proposal extension', () => {
         ),
       )
       await vi.waitFor(() => {
-        expect(view.dom.querySelectorAll('.cm-suggestion-widget').length).toBe(
-          0,
-        )
+        expect(view.dom.querySelectorAll('.cm-suggestion-seam').length).toBe(0)
       })
     })
 
     const readOutput = () => ({
       body: view.state.doc.toString(),
-      suggestionWidgets: view.dom.querySelectorAll('.cm-suggestion-widget')
+      suggestionWidgets: view.dom.querySelectorAll('.cm-suggestion-seam')
         .length,
     })
     expect(readOutput()).toEqual({
@@ -1032,21 +1046,16 @@ describe('transition proposal extension', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
     await vi.waitFor(() => {
-      expect(
-        view.dom.querySelectorAll(
-          '.cm-suggestion-widget [aria-label="提案差分"]',
-        ).length,
-      ).toBe(1)
+      expect(view.dom.querySelectorAll('.cm-suggestion-seam').length).toBe(1)
     })
 
     const readOutput = () => ({
       body: view.state.doc.toString(),
       suggestionInsideLine:
-        view.dom.querySelector('.cm-suggestion-widget')?.closest('.cm-line') !==
+        view.dom.querySelector('.cm-suggestion-seam')?.closest('.cm-line') !==
         null,
-      suggestionWidgets: view.dom.querySelectorAll(
-        '.cm-suggestion-widget [aria-label="提案差分"]',
-      ).length,
+      suggestionWidgets: view.dom.querySelectorAll('.cm-suggestion-seam')
+        .length,
     })
     expect(readOutput()).toEqual({
       body: `Intro.\n\n${afterMove}`,
@@ -1080,9 +1089,8 @@ describe('transition proposal extension', () => {
     const readOutput = () => ({
       body: view.state.doc.toString(),
       alerts: alertSpy.mock.calls,
-      suggestionWidgets: view.dom.querySelectorAll(
-        '.cm-suggestion-widget [aria-label="提案差分"]',
-      ).length,
+      suggestionWidgets: view.dom.querySelectorAll('.cm-suggestion-seam')
+        .length,
       generatingWidgets: view.dom.querySelectorAll(
         '.cm-suggestion-widget [role="status"]',
       ).length,

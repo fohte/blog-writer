@@ -1,6 +1,7 @@
 import { Button } from '@fohte/ui/button'
 
 import type { EvidenceVerdict, Source } from '#article/types'
+import { getSourceHost } from '#research/source-format'
 
 type ClaimEvidenceCardProps = {
   source: Source | null
@@ -9,16 +10,24 @@ type ClaimEvidenceCardProps = {
   checkedAt: string
   publishedAt: string | null
   edited?: boolean
-  open?: boolean
   onRemove?: () => void
-  showMarker?: boolean
 }
 
-const verdictLabels: Record<EvidenceVerdict, string> = {
-  supported: '裏付けあり',
+const verdictLabels: Record<EvidenceVerdict, string | undefined> = {
+  supported: undefined,
   insufficient: '不足',
   outdated: '古い',
   contradicted: '矛盾',
+}
+
+function getStatusLabel(verdict: EvidenceVerdict, edited: boolean): string {
+  const verdictLabel = verdictLabels[verdict]
+  if (!edited && verdictLabel === undefined) return '根拠あり'
+  return [
+    '要確認',
+    ...(verdictLabel === undefined ? [] : [verdictLabel]),
+    ...(edited ? ['確認後に編集'] : []),
+  ].join(' · ')
 }
 
 export function ClaimEvidenceCard({
@@ -28,72 +37,67 @@ export function ClaimEvidenceCard({
   checkedAt,
   publishedAt,
   edited = false,
-  open = true,
   onRemove,
-  showMarker = true,
 }: ClaimEvidenceCardProps) {
-  const markerColor =
-    edited || verdict !== 'supported'
-      ? 'var(--tint-yellow-foreground)'
-      : 'var(--tint-green-foreground)'
-  const markerClass =
-    edited || verdict !== 'supported'
-      ? 'cm-evidence-marker cm-evidence-edited'
-      : 'cm-evidence-marker cm-evidence-supported'
+  const host =
+    source?.url === null || source?.url === undefined
+      ? undefined
+      : getSourceHost(source.url)
+  const origin = [
+    ...(host === undefined ? [] : [host]),
+    publishedAt === null ? '公開日不明' : `公開 ${publishedAt}`,
+  ].join(' · ')
   return (
-    <div className="flex flex-col gap-2">
-      {showMarker ? (
-        <span
-          aria-label="根拠の状態"
-          className={`self-start ${markerClass}`}
-          role="img"
-          style={{ color: markerColor }}
-        >
-          ●
+    <section
+      aria-label="この文の根拠"
+      className="cm-evidence-card flex w-96 max-w-full flex-col gap-2.5 border border-muted-foreground bg-card p-3.5 text-sm leading-relaxed text-card-foreground shadow-md"
+    >
+      <div className="flex items-center gap-2.5">
+        <span className="border border-muted-foreground px-1.5 font-mono text-xs">
+          {getStatusLabel(verdict, edited)}
         </span>
-      ) : null}
-      <section
-        aria-label="根拠"
-        className="cm-evidence-card flex w-80 flex-col gap-3 rounded-md border bg-popover p-3 text-popover-foreground shadow-md"
-        hidden={!open}
-      >
-        <h3 className="font-semibold">{source?.title ?? '資料なし'}</h3>
-        <p className="text-sm text-muted-foreground">
-          {verdictLabels[verdict]}
-        </p>
-        {edited ? (
-          <p className="text-sm text-muted-foreground">確認後に編集</p>
-        ) : null}
-        <blockquote className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
-          {quote || '引用箇所はありません。'}
-        </blockquote>
-        {source ? (
-          <p className="whitespace-pre-wrap text-sm">
-            {source.summary || '要約はありません。'}
-          </p>
-        ) : null}
-        <p className="text-xs text-muted-foreground">
-          確認日: {checkedAt.slice(0, 10)}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          公開日: {publishedAt ?? '不明'}
-        </p>
+        <span className="flex-1" />
+        <span className="font-mono text-xs text-muted-foreground">
+          確認 {checkedAt.slice(0, 10)}
+        </span>
+      </div>
+      <div className="flex flex-col gap-0.5">
         {source?.url !== null && source?.url !== undefined ? (
-          <a href={source.url} rel="noreferrer" target="_blank">
-            資料を開く
-          </a>
-        ) : null}
-        {onRemove ? (
-          <Button
-            className="self-start text-sm underline"
-            onClick={onRemove}
-            type="button"
-            variant="plain"
+          <a
+            className="font-semibold underline-offset-4 hover:underline"
+            href={source.url}
+            rel="noreferrer"
+            target="_blank"
           >
-            外す
-          </Button>
+            {source.title}
+          </a>
+        ) : (
+          <span className="font-semibold">{source?.title ?? '資料なし'}</span>
+        )}
+        {source ? (
+          <span className="font-mono text-xs text-muted-foreground">
+            {origin}
+          </span>
         ) : null}
-      </section>
-    </div>
+      </div>
+      <blockquote className="border border-border px-2.5 py-2 text-muted-foreground">
+        {quote ? `“${quote}”` : '引用箇所はありません。'}
+      </blockquote>
+      {source ? (
+        <p className="whitespace-pre-wrap text-muted-foreground">
+          要約: {source.summary || 'ありません。'}
+        </p>
+      ) : null}
+      {onRemove ? (
+        <Button
+          className="self-start text-xs text-muted-foreground underline underline-offset-3"
+          onClick={onRemove}
+          type="button"
+          variant="plain"
+        >
+          根拠を外す
+        </Button>
+      ) : null}
+    </section>
   )
 }

@@ -122,9 +122,9 @@ function readOutput() {
     body: getBody(doc).toJSON(),
     editor: viewRef.current?.state.doc.toString(),
     memos: memoState(),
-    renderedStates: [...host.querySelectorAll('[role="listitem"]')].map(
-      (item) => item.querySelectorAll('p').item(1).textContent,
-    ),
+    memoFilters: [
+      ...host.querySelectorAll('[aria-label="表示するメモ"] button'),
+    ].map((button) => button.textContent),
   }
 }
 
@@ -213,7 +213,7 @@ function readAdoptionControls() {
         '[aria-label^="メモ「"][aria-label$="」をドラッグ"]',
       ) !== null,
     menu: [...host.querySelectorAll('button')].some((button) =>
-      ['採用先を選ぶ', '採用先を変更'].includes(button.textContent.trim()),
+      ['採用', '変更'].includes(button.textContent.trim()),
     ),
   }
 }
@@ -225,7 +225,7 @@ function findButton(label: string) {
 }
 
 function adoptionMenuIsOpen() {
-  const trigger = findButton('採用先を選ぶ') ?? findButton('採用先を変更')
+  const trigger = findButton('採用') ?? findButton('変更')
   return trigger?.getAttribute('aria-expanded') === 'true'
 }
 
@@ -297,7 +297,7 @@ function dispatchDragWithInterruption(
 }
 
 async function chooseEndInsertion() {
-  const openMenu = findButton('採用先を選ぶ') ?? findButton('採用先を変更')
+  const openMenu = findButton('採用') ?? findButton('変更')
   if (!openMenu) throw new Error('The memo target menu is missing')
   await act(async () => {
     await userEvent.click(openMenu)
@@ -370,13 +370,13 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterUndo: {
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       afterRedo: {
         body: '# First\n\none\n\n# Add a summary\n\n# Second\n\ntwo',
@@ -390,7 +390,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
     })
   })
@@ -431,7 +431,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: New'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       })
     },
   )
@@ -462,7 +462,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Write summary with details later'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       selection: 35,
     })
@@ -488,7 +488,7 @@ describe('memo adoption', () => {
       body: '# B\n\n# A\n\n# C',
       editor: '# B\n\n# A\n\n# C',
       memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-      renderedStates: ['未整理'],
+      memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
     })
   })
 
@@ -544,7 +544,7 @@ describe('memo adoption', () => {
               },
             },
           ],
-          renderedStates: ['採用済み: B'],
+          memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
         },
         afterUndo: {
           body: initial,
@@ -558,7 +558,7 @@ describe('memo adoption', () => {
               },
             },
           ],
-          renderedStates: ['採用済み: B'],
+          memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
         },
         afterRedo: {
           body: afterMove,
@@ -572,7 +572,7 @@ describe('memo adoption', () => {
               },
             },
           ],
-          renderedStates: ['採用済み: B'],
+          memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
         },
       })
     },
@@ -623,7 +623,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: New'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterUndoMove: {
         body: afterInsert,
@@ -637,13 +637,13 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: New'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterUndoInsert: {
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       afterRedoInsert: {
         body: afterInsert,
@@ -657,7 +657,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: New'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterRedoMove: {
         body: afterMove,
@@ -671,7 +671,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: New'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
     })
   })
@@ -689,7 +689,7 @@ describe('memo adoption', () => {
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'dismissed' } }],
-        renderedStates: ['見送り'],
+        memoFilters: ['未整理 0', '採用済み 0', '見送り 1'],
       },
       controls: { dragHandle: false, menu: false },
     })
@@ -719,7 +719,7 @@ describe('memo adoption', () => {
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'dismissed' } }],
-        renderedStates: ['見送り'],
+        memoFilters: ['未整理 0', '採用済み 0', '見送り 1'],
       },
     })
     remote.destroy()
@@ -751,7 +751,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterRemoteEdit: {
         body: '# First\n\nbody\n\n# Add a summary\n\n\nRemote edit',
@@ -765,13 +765,13 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterUndo: {
         body: '# First\n\nbody\nRemote edit',
         editor: '# First\n\nbody\nRemote edit',
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       afterRedo: {
         body: '# First\n\nbody\n\n# Add a summary\n\n\nRemote edit',
@@ -785,7 +785,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
     })
   })
@@ -829,7 +829,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: memo'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterRemoteAdoption: {
         body: '# Target\n\nbody\n\n# memo\n\n',
@@ -843,7 +843,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Target'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterUndo: {
         body: initial,
@@ -857,7 +857,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Target'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterRedo: {
         body: '# Target\n\nbody\n\n# memo\n\n',
@@ -871,7 +871,7 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Target'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
     })
     remote.destroy()
@@ -911,19 +911,19 @@ describe('memo adoption', () => {
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterUndoInsert: {
         body: '# First!',
         editor: '# First!',
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       afterUndoTyping: {
         body: '# First',
         editor: '# First',
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
     })
   })
@@ -988,7 +988,7 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterRemoteEdit: {
         body: `R
@@ -1016,7 +1016,7 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       failure: {
         output: {
@@ -1045,7 +1045,7 @@ body
               },
             },
           ],
-          renderedStates: ['採用済み: Add a summary'],
+          memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
         },
         alert: '元に戻せませんでした。',
       },
@@ -1104,13 +1104,13 @@ body
 # First
 `,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       afterUndo: {
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       afterRemoteEdit: {
         body: `R
@@ -1126,7 +1126,7 @@ body
 # Second
 `,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       failure: {
         output: {
@@ -1143,7 +1143,7 @@ body
 # Second
 `,
           memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-          renderedStates: ['未整理'],
+          memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
         },
         alert: 'やり直せませんでした。',
       },
@@ -1169,13 +1169,13 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterUndo: {
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       afterRedo: {
         body: '# First\n\nbody\n\n# Add a summary\n\n',
@@ -1189,7 +1189,7 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
     })
   })
@@ -1204,6 +1204,11 @@ body
         initial.indexOf('# B'),
       )
       if (result.isErr()) throw result.error
+    })
+    const adoptedFilter = findButton('採用済み 1')
+    if (!adoptedFilter) throw new Error('The adopted memo filter is missing')
+    await act(async () => {
+      await userEvent.click(adoptedFilter)
     })
     await chooseEndInsertion()
     const afterInsert = readOutput()
@@ -1221,7 +1226,7 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: memo'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterUndo: {
         body: initial,
@@ -1235,7 +1240,7 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: B'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       afterRedo: {
         body: '# A\n\n# B\n\n# C\n\n# memo\n\n',
@@ -1249,7 +1254,7 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: memo'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
     })
   })
@@ -1282,19 +1287,19 @@ body
           },
         },
       ],
-      renderedStates: ['採用済み: Second'],
+      memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
     })
   })
 
   it('adopts a memo to an existing heading chosen from the memo panel', async () => {
     const initial = '# First\n\none\n\n# Second\n\ntwo'
     mount(initial, 'Add a summary')
-    const chooseTarget = findButton('採用先を選ぶ')
+    const chooseTarget = findButton('採用')
     if (!chooseTarget) throw new Error('The memo target menu is missing')
     await act(async () => {
       await userEvent.click(chooseTarget)
     })
-    const secondHeading = findButton('Second')
+    const secondHeading = findButton('# Second')
     if (!secondHeading)
       throw new Error('The existing heading is missing from the memo menu')
     await act(async () => {
@@ -1314,13 +1319,13 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: Second'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       menuOpen: false,
     })
   })
 
-  it('scrolls to the end insertion action after three headings', async () => {
+  it('scrolls the adoption menu to its last target after three headings', async () => {
     const initial = `# First
 
 # Second
@@ -1329,23 +1334,24 @@ body
 
 body`
     mount(initial, 'Add a summary')
-    const chooseTarget = findButton('採用先を選ぶ')
+    const chooseTarget = findButton('採用')
     if (!chooseTarget) throw new Error('The memo target menu is missing')
     await act(async () => {
       await userEvent.click(chooseTarget)
     })
     const insertAtEnd = findButton('末尾に追加')
-    if (!insertAtEnd)
-      throw new Error('The end insertion target is missing from the memo menu')
+    const lastTarget = findButton('# Third')
+    if (!insertAtEnd || !lastTarget)
+      throw new Error('The memo menu targets are missing')
     const menu = insertAtEnd.closest<HTMLElement>(
-      '[data-slot="popover-content"]',
+      '[data-slot="popover-content"] > div',
     )
     if (!menu) throw new Error('The memo target menu is missing')
     menu.style.maxHeight = '6rem'
     menu.style.overflowY = 'auto'
     const actionVisibility = () => {
       const menuBounds = menu.getBoundingClientRect()
-      const actionBounds = insertAtEnd.getBoundingClientRect()
+      const actionBounds = lastTarget.getBoundingClientRect()
       return {
         hasScrollClasses:
           menu.classList.contains('max-h-80') &&
@@ -1409,7 +1415,7 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       menuOpen: false,
     })
@@ -1418,7 +1424,7 @@ body
   it('offers the same existing and new heading targets from the memo panel', async () => {
     const initial = '# First\n\none\n\n# Second\n\ntwo'
     mount(initial, 'Add a summary')
-    const chooseTarget = findButton('採用先を選ぶ')
+    const chooseTarget = findButton('採用')
     if (!chooseTarget) throw new Error('The memo target menu is missing')
     await act(async () => {
       await userEvent.click(chooseTarget)
@@ -1442,14 +1448,14 @@ body
           },
         },
       ],
-      renderedStates: ['採用済み: Add a summary'],
+      memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
     })
   })
 
   it('inserts a memo at the end from the memo panel', async () => {
     const initial = '# First\n\nbody'
     mount(initial, 'Add a summary')
-    const chooseTarget = findButton('採用先を選ぶ')
+    const chooseTarget = findButton('採用')
     if (!chooseTarget) throw new Error('The memo target menu is missing')
     await act(async () => {
       await userEvent.click(chooseTarget)
@@ -1474,7 +1480,7 @@ body
             },
           },
         ],
-        renderedStates: ['採用済み: Add a summary'],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       },
       menuOpen: false,
     })
@@ -1482,7 +1488,7 @@ body
 
   it('uses level 2 when inserting the first heading into an article', async () => {
     mount('body', 'memo')
-    const openMenu = findButton('採用先を選ぶ')
+    const openMenu = findButton('採用')
     if (!openMenu) throw new Error('The memo target menu is missing')
     await act(async () => {
       await userEvent.click(openMenu)
@@ -1506,7 +1512,7 @@ body
           },
         },
       ],
-      renderedStates: ['採用済み: memo'],
+      memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
     })
   })
 
@@ -1541,7 +1547,7 @@ body
             },
           },
         ],
-        renderedStates: [`採用済み: ${expectedHeadingText}`],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
       })
     },
   )
@@ -1556,7 +1562,7 @@ body
         body: initial,
         editor: '# First\nbody',
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       alert: 'メモを更新できませんでした。',
     })
@@ -1565,12 +1571,12 @@ body
   it('adopts an existing heading in a CRLF article with an empty heading name', async () => {
     const initial = '# First\r\nbody'
     mount(initial, 'Memo')
-    const openMenu = findButton('採用先を選ぶ')
+    const openMenu = findButton('採用')
     if (!openMenu) throw new Error('The memo target menu is missing')
     await act(async () => {
       await userEvent.click(openMenu)
     })
-    const heading = findButton('無題の見出し')
+    const heading = findButton('# 無題の見出し')
     if (!heading)
       throw new Error('The existing heading is missing from the menu')
     await act(async () => {
@@ -1589,7 +1595,7 @@ body
           },
         },
       ],
-      renderedStates: ['採用済み: '],
+      memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
     })
   })
 
@@ -1612,7 +1618,7 @@ body
         body: '# First',
         editor: '# First',
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
     })
   })
@@ -1643,7 +1649,7 @@ body
         body: '# First',
         editor: '# First',
         memos: [{ id: 'memo-a', state: { kind: 'dismissed' } }],
-        renderedStates: ['見送り'],
+        memoFilters: ['未整理 0', '採用済み 0', '見送り 1'],
       },
     })
   })
@@ -1669,7 +1675,7 @@ body
         body: '# First',
         editor: '# First',
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
     })
   })
@@ -1697,7 +1703,7 @@ body
         body: '# First',
         editor: '# First',
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
     })
   })
@@ -1722,7 +1728,7 @@ body
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'dismissed' } }],
-        renderedStates: ['見送り'],
+        memoFilters: ['未整理 0', '採用済み 0', '見送り 1'],
       },
     })
   })
@@ -1747,7 +1753,7 @@ body
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       alert: 'メモを更新できませんでした。',
     })
@@ -1777,7 +1783,7 @@ body
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'dismissed' } }],
-        renderedStates: ['見送り'],
+        memoFilters: ['未整理 0', '採用済み 0', '見送り 1'],
       },
       alert: 'メモを更新できませんでした。',
     })
@@ -1786,7 +1792,7 @@ body
   it('leaves a memo unchanged when insertion would land inside a code fence', async () => {
     const initial = '# First\n\n```md\nbody'
     mount(initial, 'Add a summary')
-    const chooseTarget = findButton('採用先を選ぶ')
+    const chooseTarget = findButton('採用')
     if (!chooseTarget) throw new Error('The memo target menu is missing')
     await act(async () => {
       await userEvent.click(chooseTarget)
@@ -1803,7 +1809,7 @@ body
         body: initial,
         editor: initial,
         memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
-        renderedStates: ['未整理'],
+        memoFilters: ['未整理 1', '採用済み 0', '見送り 0'],
       },
       alert: 'メモを更新できませんでした。',
     })

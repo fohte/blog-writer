@@ -3,12 +3,12 @@ import { err, ok } from 'neverthrow'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { page, userEvent } from 'vitest/browser'
+import { page } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import { getBody, setBody } from '#article/body'
 import type { ArticleEditorContext } from '#components/article-editor-view'
-import { ArticleFileSyncPopover } from '#components/article-file-sync-popover'
+import { ArticleFileSyncSection } from '#components/article-file-sync-section'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { replaceBody as replaceEditorBody } from '#editor/replace-body'
 import { createMoveHistory } from '#outline/move-history'
@@ -155,7 +155,7 @@ function mount(
             text={getBody(testDoc)}
           />
         ) : null}
-        <ArticleFileSyncPopover
+        <ArticleFileSyncSection
           articleId="story-article"
           doc={testDoc}
           initialPath={initialPath}
@@ -177,7 +177,7 @@ function rerenderWithIndexState(
   if (!root || !doc) throw new Error('The article sync view is not mounted')
 
   root.render(
-    <ArticleFileSyncPopover
+    <ArticleFileSyncSection
       articleId="story-article"
       doc={doc}
       initialPath={initialPath}
@@ -213,9 +213,7 @@ function readFailureOutput() {
 function readOperationOutput() {
   return {
     alert: document.querySelector('[role="alert"]')?.textContent,
-    path: document.querySelector<HTMLInputElement>(
-      '[aria-label="同期ファイルの相対パス"]',
-    )?.value,
+    path: document.querySelector<HTMLInputElement>('input')?.value,
     statuses: [...document.querySelectorAll('[role="status"]')].map(
       (element) => element.textContent,
     ),
@@ -252,10 +250,21 @@ function resolveNextGetResponse() {
   resolve()
 }
 
+// Clicking inside act() cannot wait for the file request, because act() holds back the re-render that enables the controls.
+async function waitForFileLoaded() {
+  await vi.waitFor(() => {
+    if (
+      requests.length === 0 ||
+      document.querySelector('input')?.disabled === true
+    )
+      throw new Error('Waiting for the file')
+  })
+}
+
 async function waitForImportReady() {
   await vi.waitFor(() => {
     const button = [...document.querySelectorAll('button')].find(
-      (candidate) => candidate.textContent === '取り込む',
+      (candidate) => candidate.textContent === 'ファイルの内容を取り込む',
     )
     if (!button || button.disabled) throw new Error('Waiting for import')
   })
@@ -286,7 +295,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('ArticleFileSyncPopover', () => {
+describe('ArticleFileSyncSection', () => {
   it('imports only changed text in one undo step and resumes with its hash', async () => {
     const viewHolder: { current?: EditorView } = {}
     const testDoc = mount(true, viewHolder, (value) => {
@@ -295,12 +304,12 @@ describe('ArticleFileSyncPopover', () => {
       replaceEditorBody(viewHolder.current, value)
       return ok(undefined)
     })
+    await waitForFileLoaded()
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
-    })
-    await act(async () => {
-      await page.getByRole('button', { name: '取り込む' }).click()
+      await page
+        .getByRole('button', { name: 'ファイルの内容を取り込む' })
+        .click()
       await vi.waitFor(() => {
         if (getBody(testDoc).toJSON() !== importedBody)
           throw new Error('Waiting for the imported body')
@@ -334,12 +343,12 @@ describe('ArticleFileSyncPopover', () => {
 
   it('does not resume when the editor cannot replace the body', async () => {
     mount(false, {}, () => err(new Error('The article editor is not ready')))
+    await waitForFileLoaded()
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
-    })
-    await act(async () => {
-      await page.getByRole('button', { name: '取り込む' }).click()
+      await page
+        .getByRole('button', { name: 'ファイルの内容を取り込む' })
+        .click()
       await vi.waitFor(() => {
         if (
           document.querySelector('[role="alert"]')?.textContent !==
@@ -370,13 +379,11 @@ describe('ArticleFileSyncPopover', () => {
       () => err(new Error('The article editor is not ready')),
       'unset',
     )
+    await waitForFileLoaded()
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
-    })
-    await act(async () => {
       await page
-        .getByRole('textbox', { name: '同期ファイルの相対パス' })
+        .getByRole('textbox', { name: '同期フォルダー配下のパス' })
         .fill('notes/updated.md')
     })
     await act(async () => {
@@ -406,12 +413,10 @@ describe('ArticleFileSyncPopover', () => {
 
   it('overwrites the selected synchronization file', async () => {
     mount(false, {}, () => err(new Error('The article editor is not ready')))
+    await waitForFileLoaded()
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
-    })
-    await act(async () => {
-      await page.getByRole('button', { name: '上書き' }).click()
+      await page.getByRole('button', { name: 'アプリの内容で上書き' }).click()
       await waitForRequestCount(2)
     })
 
@@ -435,7 +440,7 @@ describe('ArticleFileSyncPopover', () => {
     })
   })
 
-  it('reloads the file when its indexed status changes while the popover is open', async () => {
+  it('reloads the file when its indexed status changes while the section is shown', async () => {
     deferredGetCount = 1
     responseQueues.get = [
       { status: 200, payload: { ...syncResponse, status: 'synced' } },
@@ -459,9 +464,6 @@ describe('ArticleFileSyncPopover', () => {
       'notes/example.md',
     )
 
-    await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
-    })
     await waitForRequestCount(1)
     await waitForPendingGetCount(1)
     act(() => {
@@ -477,7 +479,9 @@ describe('ArticleFileSyncPopover', () => {
     await waitForImportReady()
     resolveNextGetResponse()
     await act(async () => {
-      await page.getByRole('button', { name: '取り込む' }).click()
+      await page
+        .getByRole('button', { name: 'ファイルの内容を取り込む' })
+        .click()
     })
     await waitForRequestCount(3)
     act(() => {
@@ -532,18 +536,19 @@ describe('ArticleFileSyncPopover', () => {
       return ok(undefined)
     })
 
-    await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
-    })
     await waitForImportReady()
     await act(async () => {
-      await page.getByRole('button', { name: '取り込む' }).click()
+      await page
+        .getByRole('button', { name: 'ファイルの内容を取り込む' })
+        .click()
     })
     await waitForRequestCount(3)
     await waitForImportReady()
     const outputAfterFailure = readOperationOutput()
     await act(async () => {
-      await page.getByRole('button', { name: '取り込む' }).click()
+      await page
+        .getByRole('button', { name: 'ファイルの内容を取り込む' })
+        .click()
     })
     await waitForRequestCount(4)
 

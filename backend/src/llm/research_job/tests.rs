@@ -241,6 +241,11 @@ async fn streams_progress_and_returns_source_backed_result(
     let actual = response_body(response).await;
     let expected_events = vec![
         json!({"event": "progress", "data": {"query": "sample search query"}}),
+        json!({"event": "progress", "data": {"query": "資料を取得中: https://source-1.example.test/article"}}),
+        json!({"event": "progress", "data": {"query": "資料を取得中: https://source-2.example.test/article"}}),
+        json!({"event": "progress", "data": {"query": "資料を取得中: https://source-3.example.test/article"}}),
+        json!({"event": "progress", "data": {"query": "資料を取得中: https://source-4.example.test/article"}}),
+        json!({"event": "progress", "data": {"query": "資料を取得中: https://source-5.example.test/article"}}),
         json!({
             "event": "result",
             "data": {
@@ -332,6 +337,7 @@ async fn streams_claim_evidence_with_a_verified_quote(
     let actual = response_body(response).await;
     let expected_events = vec![
         json!({"event": "progress", "data": {"query": "sample search query"}}),
+        json!({"event": "progress", "data": {"query": "資料を取得中: https://source.example.test/article"}}),
         json!({
             "event": "result",
             "data": {

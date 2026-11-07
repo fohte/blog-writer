@@ -40,6 +40,11 @@ export const SelectedHeading: Story = {
   args: { activeFrom: 13 },
 }
 
+export const AdoptedMemoCounts: Story = {
+  name: 'the outline shows how many memos each heading has adopted.',
+  args: { memoCounts: { 0: 2, 23: 1 } },
+}
+
 export const OpenMoveMenu: Story = {
   name: 'the outline shows the available moves for a heading.',
   args: { openMenuFrom: 13 },
@@ -84,8 +89,9 @@ export const MoveError: Story = {
 }
 
 export const HeadingSuggestions: Story = {
-  name: 'the outline shows heading additions and edits with accept and reject actions.',
+  name: 'the outline shows heading additions and edits with accept and reject actions, keeping the memo count on a renamed heading.',
   args: {
+    memoCounts: { 13: 1 },
     proposalState: {
       generating: false,
       suggestions: [

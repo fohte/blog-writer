@@ -15,25 +15,25 @@ export function MoveConflictNotice({
 }: MoveConflictNoticeProps) {
   return (
     <section
-      aria-label="Text remains at its previous location"
-      className="my-2 flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50"
+      aria-label="移動前の場所に残った文"
+      className="my-2 flex flex-col gap-2 border border-dashed border-muted-foreground px-3 py-2.5"
       role="status"
     >
-      <p className="font-medium">
-        This text was written in a section that has moved.
-      </p>
-      <p className="whitespace-pre-wrap rounded bg-background/70 px-2 py-1 font-mono">
-        {text}
+      <p className="text-sm leading-loose whitespace-pre-wrap">{text}</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        この文は、移動前のセクションに書き足されたものです。
       </p>
       {status !== undefined && status.length > 0 && (
-        <p role="alert">{status}</p>
+        <p className="text-xs text-destructive" role="alert">
+          {status}
+        </p>
       )}
       <div className="flex flex-wrap gap-2">
-        <Button onClick={onMove} size="sm" type="button">
-          Move it with the section
+        <Button onClick={onMove} size="sm" type="button" variant="solid">
+          移動先へ移す
         </Button>
         <Button onClick={onKeep} size="sm" type="button" variant="outline">
-          Keep it here
+          その場に残す
         </Button>
       </div>
     </section>

@@ -2,13 +2,56 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 
 import { MemoPanelView } from '#components/memo-panel-view'
 
+const headings = [
+  {
+    level: 1,
+    text: 'Overview',
+    from: 0,
+    to: 11,
+    children: [{ level: 2, text: 'Goals', from: 13, to: 21, children: [] }],
+  },
+  { level: 1, text: 'Details', from: 23, to: 33, children: [] },
+]
+
+const mixedMemos = [
+  {
+    id: 'memo-a',
+    text: '記事の導入を簡潔にする',
+    order: 0,
+    state: { kind: 'unorganized' as const },
+  },
+  {
+    id: 'memo-b',
+    text: '背景にある課題を説明する',
+    order: 1,
+    state: {
+      kind: 'adopted' as const,
+      heading: { level: 2, text: '課題の背景', from: 10, to: 18, children: [] },
+    },
+  },
+  {
+    id: 'memo-c',
+    text: '補足資料を追加する',
+    order: 2,
+    state: { kind: 'dismissed' as const },
+  },
+  {
+    id: 'memo-d',
+    text: '読者がつまずきやすい手順を先に示す',
+    order: 3,
+    state: { kind: 'unorganized' as const },
+  },
+]
+
 const meta = {
   component: MemoPanelView,
   args: {
     draft: '',
+    filter: 'unorganized',
     headings: [],
     onDraftChange: () => {},
     onAddMemo: () => {},
+    onFilterChange: () => {},
     onMoveMemo: () => {},
     onDismissMemo: () => {},
     onRestoreMemo: () => {},
@@ -35,117 +78,30 @@ export const DraftReady: Story = {
 }
 
 export const Unorganized: Story = {
-  name: 'an unorganized memo can be dismissed',
-  args: {
-    headings: [
-      { level: 1, text: 'Overview', from: 0, to: 11, children: [] },
-      { level: 1, text: 'Details', from: 13, to: 23, children: [] },
-    ],
-    memos: [
-      {
-        id: 'memo-a',
-        text: '記事の導入を簡潔にする',
-        order: 0,
-        state: { kind: 'unorganized' },
-      },
-    ],
-  },
+  name: 'the unorganized memos each show a button to adopt them.',
+  args: { headings, memos: mixedMemos },
 }
 
 export const AdoptionMenuOpen: Story = {
   name: 'the adoption menu offers existing and new heading targets',
-  args: {
-    headings: [
-      {
-        level: 1,
-        text: 'Overview',
-        from: 0,
-        to: 11,
-        children: [{ level: 2, text: 'Goals', from: 13, to: 21, children: [] }],
-      },
-      { level: 1, text: 'Details', from: 23, to: 33, children: [] },
-    ],
-    memos: [
-      {
-        id: 'memo-a',
-        text: '記事の導入を簡潔にする',
-        order: 0,
-        state: { kind: 'unorganized' },
-      },
-    ],
-    openAdoptionMenuId: 'memo-a',
-  },
+  args: { headings, memos: mixedMemos, openAdoptionMenuId: 'memo-a' },
 }
 
 export const Adopted: Story = {
   name: 'an adopted memo shows its heading',
-  args: {
-    memos: [
-      {
-        id: 'memo-a',
-        text: '記事の導入を簡潔にする',
-        order: 0,
-        state: {
-          kind: 'adopted',
-          heading: {
-            level: 2,
-            text: '導入の構成',
-            from: 0,
-            to: 8,
-            children: [],
-          },
-        },
-      },
-    ],
-  },
+  args: { filter: 'adopted', memos: mixedMemos },
 }
 
 export const Dismissed: Story = {
   name: 'a dismissed memo can return to unorganized',
-  args: {
-    memos: [
-      {
-        id: 'memo-a',
-        text: '記事の導入を簡潔にする',
-        order: 0,
-        state: { kind: 'dismissed' },
-      },
-    ],
-  },
+  args: { filter: 'dismissed', memos: mixedMemos },
 }
 
-export const MixedMemoStates: Story = {
-  name: 'unorganized, adopted, and dismissed memos are listed together',
+export const NoAdoptedMemos: Story = {
+  name: 'the adopted filter explains that no memo has been adopted yet.',
   args: {
-    memos: [
-      {
-        id: 'memo-a',
-        text: '記事の導入を簡潔にする',
-        order: 0,
-        state: { kind: 'unorganized' },
-      },
-      {
-        id: 'memo-b',
-        text: '背景にある課題を説明する',
-        order: 1,
-        state: {
-          kind: 'adopted',
-          heading: {
-            level: 2,
-            text: '課題の背景',
-            from: 10,
-            to: 18,
-            children: [],
-          },
-        },
-      },
-      {
-        id: 'memo-c',
-        text: '補足資料を追加する',
-        order: 2,
-        state: { kind: 'dismissed' },
-      },
-    ],
+    filter: 'adopted',
+    memos: mixedMemos.filter((memo) => memo.state.kind !== 'adopted'),
   },
 }
 

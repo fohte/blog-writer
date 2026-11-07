@@ -10,6 +10,6 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const AccessSessionExpired: Story = {
-  name: 'Cloudflare Access asks the reader to sign in again.',
+  name: 'the prompt asks the writer to log in again while edits stay on this device.',
   args: { onLoginAgain: () => undefined },
 }

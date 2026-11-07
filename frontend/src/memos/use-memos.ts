@@ -122,15 +122,24 @@ export function useMemos(doc: Y.Doc) {
     },
     move: (id: string, direction: 'up' | 'down'): string | undefined => {
       const current = listMemos(doc)
-      const index = current.findIndex((memo) => memo.id === id)
-      const nextIndex = direction === 'up' ? index - 1 : index + 1
-      if (index < 0 || nextIndex < 0 || nextIndex >= current.length)
-        return undefined
-
-      const reordered = [...current]
-      const [memo] = reordered.splice(index, 1)
+      const memo = current.find((candidate) => candidate.id === id)
       if (memo === undefined) return undefined
-      reordered.splice(nextIndex, 0, memo)
+      // The panel lists one state at a time, so a move passes over memos in
+      // the other states instead of swapping with an invisible neighbor.
+      const peers = current.filter(
+        (candidate) => candidate.state.kind === memo.state.kind,
+      )
+      const peerIndex = peers.indexOf(memo)
+      const neighbor = peers[direction === 'up' ? peerIndex - 1 : peerIndex + 1]
+      if (neighbor === undefined) return undefined
+
+      const reordered = current.filter((candidate) => candidate !== memo)
+      const neighborIndex = reordered.indexOf(neighbor)
+      reordered.splice(
+        direction === 'up' ? neighborIndex : neighborIndex + 1,
+        0,
+        memo,
+      )
 
       const results = doc.transact(() =>
         reordered.map((orderedMemo, order) =>

@@ -12,6 +12,7 @@ import { err, ok, type Result } from 'neverthrow'
 import {
   focusForSelection,
   hasOverlappingRange,
+  type InFlightSuggestion,
   isRangeValid,
   mapRange,
   rangesOverlap,
@@ -24,10 +25,21 @@ import {
   type TrackedSuggestionRange,
   validateSuggestions,
 } from '#editor/suggestion-layer-range'
+import {
+  type GetSuggestionLayerSnapshot,
+  registerSuggestionLayer,
+  suggestionLayerSnapshots,
+} from '#editor/suggestion-layer-registry'
 import { SuggestionRangeTracker } from '#editor/suggestion-layer-tracking'
-import { createSuggestionDecorations } from '#editor/suggestion-layer-view'
+import {
+  createSuggestionDecorations,
+  suggestionActionsPresentation,
+  type SuggestionDisplay,
+  suggestionLayerTheme,
+} from '#editor/suggestion-layer-view'
 
 export type {
+  InFlightSuggestion,
   SuggestionDecision,
   SuggestionLayerError,
   SuggestionLayerState,
@@ -39,25 +51,14 @@ export type {
 
 type ScopedEffect<Value> = { scope: symbol; value: Value }
 
-type SuggestionLayerSnapshot = {
-  suggestions: readonly SuggestionPosition[]
-  inFlight: SuggestionPosition | null
-}
-
-type GetSuggestionLayerSnapshot = () => SuggestionLayerSnapshot
-
-const mountedSuggestionLayers = new WeakMap<
-  EditorView,
-  Set<GetSuggestionLayerSnapshot>
->()
-
 const replaceInFlight =
-  StateEffect.define<ScopedEffect<SuggestionPosition | null>>()
+  StateEffect.define<ScopedEffect<InFlightSuggestion | null>>()
 const removeSuggestion = StateEffect.define<ScopedEffect<string>>()
 
 export interface SuggestionLayerOptions<Metadata = unknown> {
   initialSuggestions?: readonly TextSuggestion<Metadata>[]
-  initialInFlight?: SuggestionPosition
+  initialInFlight?: InFlightSuggestion
+  display?: SuggestionDisplay
   trackAcceptedRanges?: boolean
   onResolve?: (
     suggestion: TextSuggestion<Metadata>,
@@ -160,7 +161,8 @@ export class SuggestionLayerController<Metadata = unknown> {
           })
 
           if (inFlight) {
-            inFlight = mapRange(inFlight, transaction.changes, changedRanges)
+            const range = mapRange(inFlight, transaction.changes, changedRanges)
+            inFlight = range ? { ...inFlight, ...range } : null
           }
         }
 
@@ -184,8 +186,15 @@ export class SuggestionLayerController<Metadata = unknown> {
         }
       },
       provide: (field) => {
-        return EditorView.decorations.compute([field], (state) =>
-          createSuggestionDecorations(state.field(field), state, this),
+        return EditorView.decorations.compute(
+          [field, suggestionActionsPresentation],
+          (state) =>
+            createSuggestionDecorations(
+              state.field(field),
+              state,
+              this,
+              options.display ?? 'marker',
+            ),
         )
       },
     })
@@ -194,20 +203,13 @@ export class SuggestionLayerController<Metadata = unknown> {
       this.stateField,
       ViewPlugin.define((view) => {
         this.view = view
-        const viewLayers = mountedSuggestionLayers.get(view)
-        if (viewLayers) {
-          viewLayers.add(this.getSuggestionLayerSnapshot)
-        } else {
-          mountedSuggestionLayers.set(
-            view,
-            new Set([this.getSuggestionLayerSnapshot]),
-          )
-        }
+        const unregister = registerSuggestionLayer(
+          view,
+          this.getSuggestionLayerSnapshot,
+        )
         return {
           destroy: () => {
-            const viewLayers = mountedSuggestionLayers.get(view)
-            viewLayers?.delete(this.getSuggestionLayerSnapshot)
-            if (viewLayers?.size === 0) mountedSuggestionLayers.delete(view)
+            unregister()
             if (this.view === view) {
               this.view = null
               this.trackedRanges.clear()
@@ -247,11 +249,7 @@ export class SuggestionLayerController<Metadata = unknown> {
           { key: 'Escape', run: () => this.rejectFocusedSuggestion() },
         ]),
       ),
-      EditorView.baseTheme({
-        '.cm-suggestion-widget': {
-          whiteSpace: 'normal',
-        },
-      }),
+      suggestionLayerTheme,
     ]
   }
 
@@ -276,6 +274,14 @@ export class SuggestionLayerController<Metadata = unknown> {
     return ok(undefined)
   }
 
+  addSuggestion(
+    suggestion: TextSuggestion<Metadata>,
+  ): Result<void, SuggestionLayerError> {
+    const suggestions =
+      this.view?.state.field(this.stateField, false)?.suggestions ?? []
+    return this.setSuggestions([...suggestions, suggestion])
+  }
+
   resolveInFlight(
     replacement: string | ((position: SuggestionPosition) => string),
     details?: {
@@ -287,19 +293,19 @@ export class SuggestionLayerController<Metadata = unknown> {
     const state = view?.state.field(this.stateField, false)
     if (!view || !state?.inFlight) return ok(undefined)
 
+    const { label, ...position } = state.inFlight
     const id = this.createSuggestionId(state.suggestions)
     const replacementText =
-      typeof replacement === 'string'
-        ? replacement
-        : replacement(state.inFlight)
+      typeof replacement === 'string' ? replacement : replacement(position)
     // The pending range is itself the replacement, so it is not a conflict.
     const validation = validateSuggestions(
       [
         ...state.suggestions,
         {
-          ...state.inFlight,
+          ...position,
           id,
           replacement: replacementText,
+          ...(label === undefined ? {} : { label }),
           ...(details?.metadata === undefined
             ? {}
             : { metadata: details.metadata }),
@@ -324,7 +330,7 @@ export class SuggestionLayerController<Metadata = unknown> {
   }
 
   setInFlight(
-    position: SuggestionPosition | null,
+    position: InFlightSuggestion | null,
   ): Result<void, SuggestionLayerError> {
     const view = this.view
     if (!view) return err({ type: 'not-mounted' })
@@ -345,11 +351,16 @@ export class SuggestionLayerController<Metadata = unknown> {
     return ok(undefined)
   }
 
+  getInFlight(): InFlightSuggestion | null {
+    const view = this.view
+    return view?.state.field(this.stateField, false)?.inFlight ?? null
+  }
+
   overlapsOtherLayer(position: SuggestionPosition): boolean {
     const view = this.view
     if (!view) return false
 
-    for (const getRanges of mountedSuggestionLayers.get(view) ?? []) {
+    for (const getRanges of suggestionLayerSnapshots(view)) {
       if (getRanges === this.getSuggestionLayerSnapshot) continue
       const { inFlight, suggestions } = getRanges()
       if (
@@ -426,7 +437,7 @@ export class SuggestionLayerController<Metadata = unknown> {
       return true
     }
 
-    const suggestions = Array.from(mountedSuggestionLayers.get(view) ?? [])
+    const suggestions = suggestionLayerSnapshots(view)
       .flatMap((getSnapshot) => getSnapshot().suggestions)
       .sort((left, right) => left.from - right.from || left.to - right.to)
     if (suggestions.length === 0) return false
@@ -440,7 +451,12 @@ export class SuggestionLayerController<Metadata = unknown> {
     return true
   }
 
-  private cancelInFlight(): boolean {
+  // Without a handler, cancelling only hides the marker while the work keeps running.
+  get inFlightCancellable(): boolean {
+    return this.options.onCancelInFlight !== undefined
+  }
+
+  cancelInFlight(): boolean {
     const view = this.view
     const state = view?.state.field(this.stateField, false)
     if (!state?.inFlight) return false

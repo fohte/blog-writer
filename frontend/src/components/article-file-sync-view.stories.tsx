@@ -14,7 +14,6 @@ const meta = {
   args: {
     body: '# A small article\n\nThe article body.\n',
     onImport: () => {},
-    onOpenChange: () => {},
     onOverwrite: () => {},
     onPathChange: () => {},
     onSetPath: () => {},
@@ -27,7 +26,6 @@ type Story = StoryObj<typeof meta>
 export const Unset: Story = {
   name: 'the article has no synchronization file',
   args: {
-    open: true,
     path: '',
     status: 'unset',
   },
@@ -36,7 +34,6 @@ export const Unset: Story = {
 export const Synced: Story = {
   name: 'the article is synchronized with its file',
   args: {
-    open: true,
     path: 'notes/example.md',
     status: 'synced',
   },
@@ -48,7 +45,6 @@ export const ExternalChanges: Story = {
     body: articleBody,
     content: fileContent,
     contentHash: 'sample-hash',
-    open: true,
     path: 'notes/example.md',
     status: 'external_changed',
   },
@@ -58,7 +54,6 @@ export const MissingFile: Story = {
   name: 'the selected file is missing and can be recreated',
   args: {
     content: null,
-    open: true,
     path: 'notes/example.md',
     status: 'external_changed',
   },
@@ -68,7 +63,6 @@ export const RequestError: Story = {
   name: 'the synchronization request shows an error',
   args: {
     error: 'Synchronization file changed; reload it before continuing',
-    open: true,
     path: 'notes/example.md',
     status: 'external_changed',
   },
@@ -81,7 +75,6 @@ export const Busy: Story = {
     body: articleBody,
     content: fileContent,
     contentHash: 'sample-hash',
-    open: true,
     path: 'notes/example.md',
     status: 'external_changed',
   },

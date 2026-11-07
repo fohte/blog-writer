@@ -9,6 +9,7 @@ export interface TextSuggestion<Metadata = unknown> {
   replacementMarks?: readonly SuggestionReplacementMark[]
   metadata?: Metadata
   note?: string
+  label?: string
 }
 
 export type SuggestionReplacementMark = {
@@ -20,6 +21,10 @@ export type SuggestionReplacementMark = {
 export interface SuggestionPosition {
   from: number
   to: number
+}
+
+export interface InFlightSuggestion extends SuggestionPosition {
+  label?: string
 }
 
 export interface TrackedSuggestionRange {
@@ -36,7 +41,7 @@ export type SuggestionLayerError =
 
 export interface SuggestionLayerState<Metadata = unknown> {
   suggestions: readonly TextSuggestion<Metadata>[]
-  inFlight: SuggestionPosition | null
+  inFlight: InFlightSuggestion | null
   focusedId: string | null
 }
 

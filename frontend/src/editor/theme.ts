@@ -50,7 +50,7 @@ export const editorTheme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
     fontFamily: 'inherit',
-    lineHeight: '1.7',
+    lineHeight: '1.95',
     overflow: 'auto',
   },
   '.cm-gutters': {
@@ -59,49 +59,58 @@ export const editorTheme = EditorView.theme({
   },
   '.cm-content': {
     caretColor: 'var(--foreground)',
-    padding: '1rem 1.25rem 4rem',
+    // The wider start padding holds the suggestion markers beside each line.
+    padding: '1rem 1.25rem 4rem 3rem',
   },
   '.cm-line': { padding: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
     backgroundColor: 'color-mix(in srgb, var(--primary) 22%, transparent)',
   },
-  '.cm-md-heading-1': { fontSize: '2rem', fontWeight: '700' },
-  '.cm-md-heading-2': { fontSize: '1.65rem', fontWeight: '700' },
-  '.cm-md-heading-3': { fontSize: '1.35rem', fontWeight: '650' },
-  '.cm-md-heading-4': { fontSize: '1.15rem', fontWeight: '650' },
-  '.cm-md-heading-5': { fontSize: '1.05rem', fontWeight: '600' },
-  '.cm-md-heading-6': { fontSize: '1rem', fontWeight: '600' },
+  '.cm-md-heading': { fontWeight: '700', lineHeight: '1.5' },
+  '.cm-md-heading-1': { fontSize: '1.75rem' },
+  '.cm-md-heading-2': { fontSize: '1.25rem' },
+  '.cm-md-heading-3': { fontSize: '1.0625rem' },
+  '.cm-md-header-mark, .cm-md-header-mark *': {
+    color: 'var(--primary)',
+    fontFamily: 'var(--font-mono)',
+    fontWeight: '400',
+  },
   '.cm-md-hidden-markup': { display: 'none' },
   '.cm-md-inline-code': {
-    backgroundColor: 'color-mix(in srgb, var(--muted) 75%, transparent)',
+    backgroundColor: 'var(--accent)',
     borderRadius: '0.25rem',
     color: 'var(--foreground)',
-    fontFamily: 'var(--font-code)',
-    fontSize: '0.9em',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.875em',
+    padding: '1px 4px',
   },
+  '.cm-md-code-mark, .cm-md-code-mark *': { color: 'var(--muted-foreground)' },
   '.cm-md-code-text': {
     backgroundColor: 'color-mix(in srgb, var(--muted) 35%, transparent)',
     color: 'var(--primary)',
     fontFamily: 'var(--font-code)',
   },
-  '.cm-evidence-text-supported': {
-    textDecoration: 'underline dotted var(--tint-green-foreground)',
+  '.cm-evidence-text-needs-review': {
+    backgroundColor: 'var(--card)',
+    textDecoration: 'underline dotted var(--foreground)',
+    textUnderlineOffset: '5px',
   },
-  '.cm-evidence-text-insufficient, .cm-evidence-text-outdated, .cm-evidence-text-contradicted, .cm-evidence-text-edited':
-    {
-      textDecoration: 'underline dotted var(--tint-yellow-foreground)',
-    },
   '.cm-evidence-marker': {
     border: '0',
     background: 'transparent',
+    color: 'var(--muted-foreground)',
     cursor: 'pointer',
-    fontSize: '0.72rem',
-    padding: '0 0.1rem',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '11px',
+    lineHeight: '1',
+    marginLeft: '2px',
+    padding: '0 2px',
+    verticalAlign: 'super',
   },
-  '.cm-evidence-supported': { color: 'var(--tint-green-foreground)' },
   '.cm-evidence-needs-review, .cm-evidence-edited': {
-    color: 'var(--tint-yellow-foreground)',
+    border: '1px solid var(--muted-foreground)',
+    color: 'var(--foreground)',
   },
 })
 

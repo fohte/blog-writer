@@ -1,42 +1,43 @@
 import { EditorView } from '@codemirror/view'
-import { Button } from '@fohte/ui/button'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useEffect, useMemo } from 'react'
 import * as Y from 'yjs'
 
-import { getBody, setBody, setPremise } from '#article/index'
+import { setBody, setPremise } from '#article/index'
 import {
-  type ArticleEditorLayout,
   type ArticleEditorPanel,
   ArticleEditorView,
+  type ArticleEditorViewProps,
 } from '#components/article-editor-view'
-import { PremiseProposalView } from '#components/premise-proposal-view'
+import { ArticleFileSyncBannerView } from '#components/article-file-sync-banner-view'
+import { ArticlePremisePanel } from '#components/article-premise-panel'
 import { ArticleOutline } from '#outline/article-outline'
 
 type StoryArgs = {
-  layout: ArticleEditorLayout
-  initialMobilePanel: ArticleEditorPanel
+  layout: NonNullable<ArticleEditorViewProps['layout']>
+  initialPanel: ArticleEditorPanel
   sources: boolean
   status: 'ready' | 'loading' | 'error'
   integrations: boolean
   showSyncIssue: boolean
   longOutline: boolean
-  premiseOpen: boolean
+  empty: boolean
 }
 
 function ArticleEditorPreview({
   layout,
-  initialMobilePanel,
+  initialPanel,
   sources,
   status,
   integrations,
   showSyncIssue,
   longOutline,
-  premiseOpen,
+  empty,
 }: StoryArgs) {
   const doc = useMemo(() => {
     if (status !== 'ready') return undefined
     const nextDoc = new Y.Doc()
+    if (empty) return nextDoc
     const articleBody = longOutline
       ? Array.from(
           { length: 24 },
@@ -48,7 +49,7 @@ function ArticleEditorPreview({
     setPremise(nextDoc, 'purpose', 'Explain one useful idea')
     setPremise(nextDoc, 'claim', 'A focused article is easier to follow')
     return nextDoc
-  }, [longOutline, status])
+  }, [empty, longOutline, status])
 
   useEffect(() => {
     if (!doc) return
@@ -74,28 +75,28 @@ function ArticleEditorPreview({
         editorExtensions={
           integrations ? () => [EditorView.lineWrapping] : undefined
         }
-        headerActions={
+        articleNotice={
           integrations
-            ? ({ doc: articleDoc, replaceBody }) => (
-                <Button
-                  onClick={() => {
-                    const body = getBody(articleDoc).toJSON()
-                    replaceBody(body).match(
-                      () => undefined,
-                      () => undefined,
-                    )
-                  }}
-                  type="button"
-                  variant="outline"
-                >
-                  Export
-                </Button>
+            ? () => (
+                <ArticleFileSyncBannerView
+                  canImport
+                  onChangePath={() => {}}
+                  onImport={() => {}}
+                  onOverwrite={() => {}}
+                  onShowDiff={() => {}}
+                  onUndo={() => {}}
+                  path="notes/example.md"
+                  state="external_changed"
+                />
               )
             : undefined
         }
-        initialMobilePanel={initialMobilePanel}
+        exportScreen={integrations ? () => null : undefined}
+        onRequest={integrations ? () => {} : undefined}
+        initialPanel={initialPanel}
         layout={layout}
         onBack={() => {}}
+        onOpenSettings={() => {}}
         onViewChange={integrations ? () => {} : undefined}
         outlineRenderer={
           integrations
@@ -117,39 +118,38 @@ function ArticleEditorPreview({
             : undefined
         }
         onTitleChange={() => {}}
-        premiseAccessory={
-          premiseOpen
-            ? () => (
-                <PremiseProposalView
-                  draft=""
-                  messages={[
-                    {
-                      role: 'user',
-                      content: 'Make the claim more specific.',
-                    },
-                    {
-                      role: 'assistant',
-                      content: 'Which decision should the article clarify?',
-                    },
-                  ]}
-                  onAccept={() => {}}
-                  onDraftChange={() => {}}
-                  onReject={() => {}}
-                  onSubmit={() => {}}
-                  proposals={[
-                    {
-                      field: 'claim',
-                      label: 'Claim',
-                      original: 'A focused article is easier to follow',
-                      replacement:
+        premisePanel={
+          initialPanel === 'premise'
+            ? ({ doc: articleDoc }) => (
+                <ArticlePremisePanel
+                  discussion={{
+                    draft: '',
+                    error: undefined,
+                    generating: false,
+                    messages: [
+                      {
+                        role: 'user',
+                        content: 'Make the claim more specific.',
+                      },
+                      {
+                        role: 'assistant',
+                        content: 'Which decision should the article clarify?',
+                      },
+                    ],
+                    onAccept: () => {},
+                    onDraftChange: () => {},
+                    onReject: () => {},
+                    onSubmit: () => {},
+                    proposals: {
+                      claim:
                         'A short checklist helps new maintainers catch risky changes.',
                     },
-                  ]}
+                  }}
+                  doc={articleDoc}
                 />
               )
             : undefined
         }
-        initialPremiseOpen={premiseOpen}
         status={
           status === 'loading'
             ? { kind: 'loading' }
@@ -186,14 +186,14 @@ const meta = {
   title: 'Editor/ArticleEditorView',
   component: ArticleEditorPreview,
   args: {
-    initialMobilePanel: 'body',
+    initialPanel: 'body',
     layout: 'desktop',
     sources: false,
     status: 'ready',
     integrations: false,
     showSyncIssue: false,
     longOutline: false,
-    premiseOpen: false,
+    empty: false,
   },
 } satisfies Meta<StoryArgs>
 
@@ -201,17 +201,17 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const Desktop: Story = {
-  name: 'the desktop layout shows the workspace without injected controls.',
+  name: 'the desktop layout shows the outline, the article, and the memo tab side by side.',
 }
 
 export const DesktopWithIntegrations: Story = {
-  name: 'the desktop layout places injected controls near their related content.',
-  args: { integrations: true, sources: true, premiseOpen: true },
+  name: 'the desktop layout places injected controls near their related content with the sources tab open.',
+  args: { integrations: true, sources: true, initialPanel: 'sources' },
 }
 
 export const DesktopPremiseConversation: Story = {
-  name: 'the open premise shows a reply and a field-level suggestion.',
-  args: { premiseOpen: true },
+  name: 'the premise tab shows the premise fields, a reply, and a field-level suggestion.',
+  args: { initialPanel: 'premise' },
 }
 
 export const DesktopSyncIssue: Story = {
@@ -225,7 +225,7 @@ export const DesktopLongOutline: Story = {
 }
 
 export const TabletLongOutline: Story = {
-  name: 'the tablet layout places a long outline above the article body.',
+  name: 'the tablet layout places a long outline above the article body',
   args: { layout: 'responsive', longOutline: true },
   globals: { viewport: { value: 'tablet' } },
   parameters: {
@@ -242,53 +242,58 @@ export const TabletLongOutline: Story = {
 }
 
 export const MobileArticle: Story = {
-  name: 'the mobile layout opens on the article tab without injected controls.',
-  args: { layout: 'mobile', initialMobilePanel: 'body' },
+  name: 'the mobile layout shows the article full screen with the toolbar at the bottom.',
+  args: { layout: 'mobile', initialPanel: 'body' },
 }
 
 export const MobileMemo: Story = {
-  name: 'the mobile layout opens the memo tab with its empty state.',
-  args: { layout: 'mobile', initialMobilePanel: 'memo' },
+  name: 'the mobile memo screen covers the article and shows its empty state.',
+  args: { layout: 'mobile', initialPanel: 'memo' },
 }
 
 export const MobileArticleWithIntegrations: Story = {
-  name: 'the mobile article tab keeps the injected request inside the article panel.',
+  name: 'the mobile article keeps the injected request inside the article and offers a request in the toolbar.',
   args: {
     integrations: true,
     layout: 'mobile',
-    initialMobilePanel: 'body',
+    initialPanel: 'body',
   },
 }
 
 export const MobileOutline: Story = {
-  name: 'the mobile layout opens on the outline tab without injected controls.',
-  args: { layout: 'mobile', initialMobilePanel: 'outline' },
+  name: 'the mobile outline screen covers the article with a way back to the body.',
+  args: { layout: 'mobile', initialPanel: 'outline' },
 }
 
 export const MobileOutlineWithIntegrations: Story = {
-  name: 'the mobile outline tab places outline suggestions above the outline.',
+  name: 'the mobile outline screen places outline suggestions above the outline.',
   args: {
     integrations: true,
     layout: 'mobile',
-    initialMobilePanel: 'outline',
+    initialPanel: 'outline',
   },
 }
 
 export const MobileSources: Story = {
-  name: 'the mobile layout adds a sources tab when reference material is available.',
+  name: 'the mobile sources screen shows the reference material.',
   args: {
     layout: 'mobile',
-    initialMobilePanel: 'sources',
+    initialPanel: 'sources',
     sources: true,
   },
 }
 
 export const Opening: Story = {
-  name: 'the editor shows a loading message while the article opens.',
+  name: 'the editor shows gray placeholder lines in the article column while the article opens.',
   args: { status: 'loading' },
 }
 
 export const OpenFailed: Story = {
   name: 'the editor shows an error when the article cannot be opened.',
   args: { status: 'error' },
+}
+
+export const EmptyArticle: Story = {
+  name: 'the empty article invites the writer to start with a memo or the premise.',
+  args: { empty: true },
 }

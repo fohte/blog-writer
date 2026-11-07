@@ -2,13 +2,24 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 
 import { LlmSettingsView } from '#components/llm-settings-view'
 
+const localSettings = {
+  route: 'local',
+  bridgeUrl: 'http://127.0.0.1:4312',
+} as const
+
 const meta = {
   component: LlmSettingsView,
   args: {
+    settings: { route: 'server', bridgeUrl: '' },
+    status: 'ready',
+    locked: false,
+    unsaved: false,
+    bridgeUnreachable: false,
+    storageError: undefined,
     onBack: () => {},
     onRouteChange: () => {},
     onBridgeUrlChange: () => {},
-    storageError: undefined,
+    onSave: () => {},
   },
 } satisfies Meta<typeof LlmSettingsView>
 
@@ -17,86 +28,54 @@ type Story = StoryObj<typeof meta>
 
 export const Loading: Story = {
   name: 'the settings page is loading LLM availability',
-  args: {
-    settings: { route: 'server', bridgeUrl: '' },
-    status: 'loading',
-    locked: false,
-  },
+  args: { status: 'loading' },
 }
 
 export const ServerRoute: Story = {
-  name: 'the server route is selected by default',
-  args: {
-    settings: { route: 'server', bridgeUrl: '' },
-    status: 'ready',
-    locked: false,
-  },
+  name: 'the saved server route leaves nothing to save',
 }
 
 export const LocalRoute: Story = {
   name: 'the local route shows its bridge URL',
-  args: {
-    settings: { route: 'local', bridgeUrl: 'http://localhost:4141' },
-    status: 'ready',
-    locked: false,
-  },
+  args: { settings: localSettings },
+}
+
+export const UnsavedChanges: Story = {
+  name: 'an edited route waits for the save button',
+  args: { settings: localSettings, unsaved: true },
+}
+
+export const BridgeUnreachable: Story = {
+  name: 'the saved bridge URL cannot be reached',
+  args: { settings: localSettings, bridgeUnreachable: true },
 }
 
 export const Locked: Story = {
   name: 'the server controls the LLM settings',
-  args: {
-    settings: { route: 'server', bridgeUrl: '' },
-    status: 'ready',
-    locked: true,
-  },
+  args: { locked: true },
 }
 
 export const LoadError: Story = {
   name: 'the LLM status request failed',
-  args: {
-    settings: { route: 'server', bridgeUrl: '' },
-    status: 'error',
-    locked: false,
-    error: 'Unable to load LLM settings.',
-  },
+  args: { status: 'error' },
 }
 
 export const StorageUnavailable: Story = {
   name: 'the settings cannot be saved on this device',
-  args: {
-    settings: { route: 'local', bridgeUrl: 'http://localhost:4141' },
-    status: 'ready',
-    locked: false,
-    storageError: 'save',
-  },
+  args: { settings: localSettings, unsaved: true, storageError: 'save' },
 }
 
 export const StorageLoadUnavailable: Story = {
   name: 'the settings could not be loaded from this device',
-  args: {
-    settings: { route: 'server', bridgeUrl: '' },
-    status: 'ready',
-    locked: false,
-    storageError: 'load',
-  },
+  args: { storageError: 'load' },
 }
 
 export const FileSyncConfigured: Story = {
   name: 'the settings page shows its synchronization folder',
-  args: {
-    fileSyncDirectory: '/workspace/articles',
-    settings: { route: 'server', bridgeUrl: '' },
-    status: 'ready',
-    locked: false,
-  },
+  args: { fileSyncDirectory: '/workspace/articles' },
 }
 
 export const FileSyncConfigurationError: Story = {
   name: 'the settings page shows a synchronization configuration error',
-  args: {
-    fileSyncConfigurationError: '同期設定を読み込めませんでした。',
-    settings: { route: 'server', bridgeUrl: '' },
-    status: 'ready',
-    locked: false,
-  },
+  args: { fileSyncConfigurationError: '同期設定を読み込めませんでした。' },
 }

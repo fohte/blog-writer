@@ -1,45 +1,57 @@
 import type { Extension } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { Button } from '@fohte/ui/button'
-import { Input } from '@fohte/ui/input'
-import { Panel } from '@fohte/ui/panel'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@fohte/ui/tabs'
-import { Textarea } from '@fohte/ui/textarea'
 import { err, ok, type Result } from 'neverthrow'
 import type { ReactNode } from 'react'
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
-import * as Y from 'yjs'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
+import type * as Y from 'yjs'
 
-import { getBody, getPremise, setPremise } from '#article/index'
-import type { PremiseField } from '#article/types'
+import { getBody } from '#article/index'
+import { ArticleBody } from '#components/article-body'
+import {
+  getCachedEditorExtensions,
+  getMoveHistory,
+  useEmptyArticle,
+} from '#components/article-editor-document'
+import { ArticleEditorHeader } from '#components/article-editor-header'
+import { ArticleEditorMobileToolbar } from '#components/article-editor-mobile-toolbar'
+import type { ArticleExportSection } from '#components/article-export-screen'
+import { ArticlePremisePanel } from '#components/article-premise-panel'
+import { EditorStatusBar } from '#components/editor-status-bar'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
-import { SyncStatus } from '#components/sync-status'
-import { moveConflictExtension } from '#editor/index'
+import {
+  moveConflictExtension,
+  suggestionActionsPresentation,
+} from '#editor/index'
+import { useMobileViewport } from '#hooks/use-mobile-viewport'
+import { useVisualViewportArea } from '#hooks/use-visual-viewport-area'
 import type { SyncState } from '#lib/sync-client'
 import { MemoPanel } from '#memos/memo-panel'
 import {
   ArticleOutline,
-  createMoveHistory,
   createOutlineEditorExtension,
   type MoveHistory,
 } from '#outline/index'
 
-export type ArticleEditorPanel = 'memo' | 'outline' | 'body' | 'sources'
-export type ArticleEditorLayout = 'responsive' | 'mobile' | 'desktop'
+export type ArticleEditorPanel =
+  'memo' | 'outline' | 'body' | 'premise' | 'sources'
+type ArticleEditorLayout = 'responsive' | 'mobile' | 'desktop'
 export type ArticleEditorContext = {
   articleId: string
   doc: Y.Doc
   history: MoveHistory
   view: EditorView | null
   replaceBody: (value: string) => Result<void, EditorNotReadyError>
+  showSources: () => void
+  openExport: (section?: ArticleExportSection) => void
+}
+export type ArticleExportContext = ArticleEditorContext & {
+  section: ArticleExportSection | undefined
+  syncStatus: SyncState | undefined
+  onBack: () => void
 }
 type ArticleOutlineRenderContext = ArticleEditorContext & {
   onHeadingSelected: () => void
@@ -57,8 +69,13 @@ function isArticleEditorPanel(value: string): value is ArticleEditorPanel {
     value === 'memo' ||
     value === 'outline' ||
     value === 'body' ||
+    value === 'premise' ||
     value === 'sources'
   )
+}
+
+function isSidePanel(value: ArticleEditorPanel) {
+  return value === 'memo' || value === 'premise' || value === 'sources'
 }
 
 export interface ArticleEditorViewProps {
@@ -67,16 +84,19 @@ export interface ArticleEditorViewProps {
   doc?: Y.Doc | undefined
   status?: { kind: 'loading' } | { kind: 'error'; message: string } | undefined
   layout?: ArticleEditorLayout
-  initialMobilePanel?: ArticleEditorPanel
-  initialPremiseOpen?: boolean
+  initialPanel?: ArticleEditorPanel
   /** Keeps extension instances stable by calling the factory once per article document. */
   editorExtensions?:
     ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
   bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  /** Opens the body request from the mobile toolbar; the toolbar hides the request button without it. */
+  onRequest?: ((context: ArticleEditorContext) => void) | undefined
   outlineRenderer?:
     ((context: ArticleOutlineRenderContext) => ReactNode) | undefined
-  premiseAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  headerActions?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  premisePanel?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  /** Renders above every panel so the writer notices it whichever panel is open. */
+  articleNotice?: ((context: ArticleEditorContext) => ReactNode) | undefined
+  exportScreen?: ((context: ArticleExportContext) => ReactNode) | undefined
   sourcesPanel?:
     ReactNode | ((context: ArticleEditorContext) => ReactNode) | undefined
   onViewChange?: ((view: EditorView | null) => void) | undefined
@@ -86,70 +106,23 @@ export interface ArticleEditorViewProps {
   onLoginAgain?: (() => void) | undefined
   onTitleChange: (title: string) => void
   onBack: () => void
+  onOpenSettings: () => void
 }
 
 export type ArticleEditorIntegrationProps = Pick<
   ArticleEditorViewProps,
   | 'bodyAccessory'
   | 'editorExtensions'
-  | 'headerActions'
+  | 'exportScreen'
+  | 'articleNotice'
+  | 'onRequest'
   | 'onViewChange'
   | 'outlineRenderer'
-  | 'premiseAccessory'
+  | 'premisePanel'
   | 'sourcesPanel'
 >
 
-const premiseFields: Array<{ field: PremiseField; label: string }> = [
-  { field: 'audience', label: 'Reader' },
-  { field: 'purpose', label: 'Purpose' },
-  { field: 'claim', label: 'Claim' },
-]
-
 const emptyExtensions: Extension[] = []
-// Extension instances may hold article state and must survive StrictMode replays.
-const moveHistoriesByDocument = new WeakMap<Y.Doc, MoveHistory>()
-const extensionsByDocument = new WeakMap<Y.Doc, Extension[]>()
-
-function getMoveHistory(doc: Y.Doc) {
-  const existing = moveHistoriesByDocument.get(doc)
-  if (existing) return existing
-  const history = createMoveHistory(doc)
-  moveHistoriesByDocument.set(doc, history)
-  return history
-}
-
-function getCachedEditorExtensions(
-  doc: Y.Doc,
-  history: MoveHistory,
-  factory: (context: { doc: Y.Doc; history: MoveHistory }) => Extension[],
-) {
-  const existing = extensionsByDocument.get(doc)
-  if (existing) return existing
-  const extensions = factory({ doc, history })
-  extensionsByDocument.set(doc, extensions)
-  return extensions
-}
-
-function subscribeToViewportChange(listener: () => void) {
-  const media = window.matchMedia('(max-width: 767px)')
-  media.addEventListener('change', listener)
-  return () => {
-    media.removeEventListener('change', listener)
-  }
-}
-
-function getMobileViewport() {
-  return window.matchMedia('(max-width: 767px)').matches
-}
-
-function useIsMobile(layout: ArticleEditorLayout) {
-  const viewportIsMobile = useSyncExternalStore(
-    subscribeToViewportChange,
-    getMobileViewport,
-    () => false,
-  )
-  return layout === 'mobile' || (layout === 'responsive' && viewportIsMobile)
-}
 
 export function ArticleEditorView({
   articleId,
@@ -157,13 +130,14 @@ export function ArticleEditorView({
   doc,
   status,
   layout = 'responsive',
-  initialMobilePanel = 'body',
-  initialPremiseOpen = false,
+  initialPanel = 'body',
   editorExtensions,
   bodyAccessory,
+  onRequest,
   outlineRenderer,
-  premiseAccessory,
-  headerActions,
+  premisePanel,
+  articleNotice,
+  exportScreen,
   sourcesPanel,
   onViewChange,
   syncStatus,
@@ -172,14 +146,18 @@ export function ArticleEditorView({
   onLoginAgain,
   onTitleChange,
   onBack,
+  onOpenSettings,
 }: ArticleEditorViewProps) {
-  const isMobile = useIsMobile(layout)
-  const [mobilePanel, setMobilePanel] =
-    useState<ArticleEditorPanel>(initialMobilePanel)
-  const [premise, setPremiseValue] = useState(() =>
-    doc ? getPremise(doc) : { audience: null, purpose: null, claim: null },
-  )
-  const [premiseOpen, setPremiseOpen] = useState(initialPremiseOpen)
+  const viewportIsMobile = useMobileViewport()
+  const isMobile =
+    layout === 'mobile' || (layout === 'responsive' && viewportIsMobile)
+  const visibleArea = useVisualViewportArea()
+  const mobileVisibleArea = isMobile ? visibleArea : undefined
+  const [panel, setPanel] = useState<ArticleEditorPanel>(initialPanel)
+  const [exportView, setExportView] = useState<{
+    section: ArticleExportSection | undefined
+  }>()
+  const isEmpty = useEmptyArticle(doc)
   const history = doc ? getMoveHistory(doc) : undefined
   const body = doc ? getBody(doc) : undefined
   const [view, setView] = useState<EditorView | null>(null)
@@ -195,36 +173,18 @@ export function ArticleEditorView({
         ? [
             moveConflictExtension(doc),
             createOutlineEditorExtension(history),
+            ...(isMobile ? [suggestionActionsPresentation.of('sheet')] : []),
             ...suppliedExtensions,
           ]
         : [],
-    [doc, history, suppliedExtensions],
+    [doc, history, isMobile, suppliedExtensions],
   )
-
-  useEffect(() => {
-    if (!doc) return
-    const premiseMap = doc.getMap('premise')
-    const refresh = () => {
-      setPremiseValue(getPremise(doc))
-    }
-    premiseMap.observe(refresh)
-    refresh()
-    return () => {
-      premiseMap.unobserve(refresh)
-    }
-  }, [doc])
 
   useEffect(() => {
     return () => {
       history?.destroy()
     }
   }, [history])
-
-  const setPremiseField = (field: PremiseField, value: string) => {
-    if (!doc) return
-    setPremise(doc, field, value.length > 0 ? value : null)
-    setPremiseValue(getPremise(doc))
-  }
 
   const replaceBody = (value: string) => {
     if (!editorViewRef.current || !editorRef.current)
@@ -233,8 +193,27 @@ export function ArticleEditorView({
     return ok(undefined)
   }
 
+  const showSources = () => {
+    setPanel('sources')
+  }
+  const openExport = (section?: ArticleExportSection) => {
+    setExportView({ section })
+  }
   const context =
-    doc && history ? { articleId, doc, history, view, replaceBody } : undefined
+    doc && history
+      ? { articleId, doc, history, view, replaceBody, showSources, openExport }
+      : undefined
+  const exportContent =
+    exportView && context && exportScreen
+      ? exportScreen({
+          ...context,
+          section: exportView.section,
+          syncStatus,
+          onBack: () => {
+            setExportView(undefined)
+          },
+        })
+      : undefined
 
   const handleViewChange = (nextView: EditorView | null) => {
     editorViewRef.current = nextView
@@ -242,13 +221,22 @@ export function ArticleEditorView({
     onViewChange?.(nextView)
   }
 
-  const renderPanel = (panel: ArticleEditorPanel) => {
-    if (panel === 'memo')
-      return doc ? <MemoPanel doc={doc} {...(view ? { view } : {})} /> : null
-    if (panel === 'outline') {
+  const writeMemo = () => {
+    flushSync(() => {
+      setPanel('memo')
+    })
+    document.getElementById('new-memo')?.focus()
+  }
+
+  const renderPanel = (target: ArticleEditorPanel) => {
+    if (target === 'memo')
+      return doc ? (
+        <MemoPanel doc={doc} mobile={isMobile} {...(view ? { view } : {})} />
+      ) : null
+    if (target === 'outline') {
       if (!context || (!view && !outlineRenderer)) return null
       const onHeadingSelected = () => {
-        if (isMobile) setMobilePanel('body')
+        if (isMobile) setPanel('body')
       }
       const outlineContext = { ...context, onHeadingSelected }
       return outlineRenderer ? (
@@ -262,211 +250,244 @@ export function ArticleEditorView({
         />
       ) : null
     }
-    if (panel === 'sources')
+    if (target === 'premise') {
+      if (context && premisePanel) return premisePanel(context)
+      return doc ? <ArticlePremisePanel doc={doc} /> : null
+    }
+    if (target === 'sources')
       return typeof sourcesPanel === 'function'
         ? context
           ? sourcesPanel(context)
           : null
         : (sourcesPanel ?? null)
-    return doc && body && history ? (
-      <Panel className="min-h-96 overflow-auto rounded-lg p-4">
-        <div className="relative">
-          <MarkdownEditor
-            ariaLabel="Article body"
-            articleId={articleId}
-            className="min-h-96"
-            extensions={extensions}
-            history={history}
-            onViewChange={handleViewChange}
-            ref={editorRef}
-            text={body}
-          />
-          {context ? bodyAccessory?.(context) : null}
-        </div>
-      </Panel>
-    ) : null
+    return (
+      <ArticleBody
+        empty={isEmpty}
+        loading={status?.kind === 'loading'}
+        onDecidePremise={() => {
+          setPanel('premise')
+        }}
+        onTitleChange={onTitleChange}
+        onWriteMemo={writeMemo}
+        title={title}
+      >
+        {doc && body && history ? (
+          <div className="relative">
+            <MarkdownEditor
+              ariaLabel="本文"
+              articleId={articleId}
+              // The negative margin offsets the editor's wide start padding, which holds the suggestion markers in the page margin.
+              className="min-h-96 -ms-7"
+              extensions={extensions}
+              history={history}
+              onViewChange={handleViewChange}
+              ref={editorRef}
+              text={body}
+            />
+            {context ? bodyAccessory?.(context) : null}
+          </div>
+        ) : null}
+      </ArticleBody>
+    )
   }
 
   const availablePanels: Array<{ value: ArticleEditorPanel; label: string }> = [
-    { value: 'memo', label: 'Memo' },
-    { value: 'outline', label: 'Outline' },
-    { value: 'body', label: 'Article' },
+    { value: 'memo', label: 'メモ' },
+    { value: 'outline', label: '構成' },
+    { value: 'body', label: '本文' },
+    { value: 'premise', label: '前提' },
     ...(sourcesPanel == null
       ? []
-      : [{ value: 'sources' as const, label: 'Sources' }]),
+      : [{ value: 'sources' as const, label: '資料' }]),
   ]
-  const selectedMobilePanel = availablePanels.some(
-    ({ value }) => value === mobilePanel,
-  )
-    ? mobilePanel
+  const sidePanels = availablePanels.filter(({ value }) => isSidePanel(value))
+  const selectedPanel = availablePanels.some(({ value }) => value === panel)
+    ? panel
     : 'body'
+  const selectedSidePanel = sidePanels.some(({ value }) => value === panel)
+    ? panel
+    : 'memo'
   const desktopPanelProps = isMobile
     ? {}
     : { hidden: false, inert: false, style: { display: 'block' } }
-  const layoutClasses = {
-    pagePadding: isMobile ? 'px-4' : 'px-4 sm:px-6',
-    premiseColumns: isMobile ? '' : 'sm:grid-cols-3',
-    premiseAccessorySpan: isMobile ? '' : 'sm:col-span-3',
-    workspaceColumns: isMobile ? '' : 'lg:grid-cols-3',
-    sidebar: isMobile
-      ? ''
-      : 'lg:self-start lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto lg:col-span-1',
-    panelSpacing: isMobile ? 'pt-4' : 'pt-4 lg:pt-0',
-    bodyColumns: isMobile ? '' : 'lg:col-span-2',
-  }
+  const renderTabs = (panels: typeof availablePanels) => (
+    <TabsList aria-label="表示する欄">
+      {panels.map(({ value, label }) => (
+        <TabsTab key={value} value={value}>
+          {label}
+        </TabsTab>
+      ))}
+    </TabsList>
+  )
 
   return (
-    <main
-      className={`mx-auto flex min-h-screen max-w-7xl flex-col gap-6 py-6 ${layoutClasses.pagePadding}`}
-    >
-      <header className="flex flex-col gap-4">
-        <div className="flex items-center justify-between gap-3">
-          <Button onClick={onBack} type="button" variant="outline">
-            Back to articles
-          </Button>
-          <div className="flex items-center gap-2">
-            {context ? headerActions?.(context) : null}
-          </div>
-        </div>
-        <div className="flex flex-col gap-4">
-          <label
-            className="flex flex-col gap-2 text-sm font-medium"
-            htmlFor="article-title"
-          >
-            Article title
-            <Input
-              id="article-title"
-              onChange={(event) => {
-                onTitleChange(event.currentTarget.value)
-              }}
-              value={title}
-            />
-          </label>
-          {doc ? (
-            <section
-              aria-label="Article premise"
-              className="flex flex-col gap-3"
-            >
-              <button
-                aria-controls="article-premise-fields"
-                aria-expanded={premiseOpen}
-                className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-left text-sm"
-                onClick={() => {
-                  setPremiseOpen((open) => !open)
-                }}
-                type="button"
-              >
-                <span className="min-w-0 truncate">
-                  Premise: Reader {premise.audience ?? 'unset'} · Purpose{' '}
-                  {premise.purpose ?? 'unset'} · Claim{' '}
-                  {premise.claim ?? 'unset'}
-                </span>
-                <span aria-hidden="true">{premiseOpen ? 'Hide' : 'Edit'}</span>
-              </button>
-              {premiseOpen ? (
-                <div
-                  className={`grid gap-3 ${layoutClasses.premiseColumns}`}
-                  id="article-premise-fields"
-                >
-                  {premiseFields.map(({ field, label }) => (
-                    <label
-                      className="flex flex-col gap-2 text-sm font-medium"
-                      htmlFor={`premise-${field}`}
-                      key={field}
-                    >
-                      {label}
-                      <Textarea
-                        id={`premise-${field}`}
-                        onChange={(event) => {
-                          setPremiseField(field, event.currentTarget.value)
-                        }}
-                        placeholder={`${label} for this article`}
-                        value={premise[field] ?? ''}
-                      />
-                    </label>
-                  ))}
-                  {context ? (
-                    <div className={layoutClasses.premiseAccessorySpan}>
-                      {premiseAccessory?.(context)}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </section>
+    <>
+      {exportContent}
+      {/* Hidden instead of unmounted so the editor keeps its undo history and can still take imported text. */}
+      {/* On mobile the transform makes this the containing block of the fixed suggestion sheet, so the sheet follows it above the keyboard. */}
+      <div
+        className={`flex min-h-dvh flex-col ${isMobile ? 'h-dvh transform-gpu' : 'lg:h-dvh'}`}
+        hidden={exportContent !== undefined}
+        style={
+          mobileVisibleArea
+            ? {
+                position: 'fixed',
+                insetInline: 0,
+                top: mobileVisibleArea.top,
+                height: mobileVisibleArea.height,
+                minHeight: 0,
+              }
+            : undefined
+        }
+      >
+        <ArticleEditorHeader
+          mobile={isMobile}
+          mobilePanel={
+            selectedPanel === 'body'
+              ? undefined
+              : {
+                  title:
+                    availablePanels.find(({ value }) => value === selectedPanel)
+                      ?.label ?? '',
+                  closeLabel: selectedPanel === 'outline' ? '本文へ' : '閉じる',
+                  onClose: () => {
+                    setPanel('body')
+                  },
+                }
+          }
+          onBack={onBack}
+          onExport={
+            context && exportScreen
+              ? () => {
+                  openExport()
+                }
+              : undefined
+          }
+          onOpenSettings={onOpenSettings}
+          onShowPremise={() => {
+            setPanel('premise')
+          }}
+          onShowSources={
+            sourcesPanel == null
+              ? undefined
+              : () => {
+                  setPanel('sources')
+                }
+          }
+          syncStatus={syncStatus}
+          title={title}
+        />
+        <div className="flex flex-col gap-2 border-b border-border px-4 py-3 text-sm empty:hidden">
+          {status?.kind === 'error' ? (
+            <p className="text-destructive" role="alert">
+              {status.message}
+            </p>
           ) : null}
+          {syncError !== undefined ? (
+            <p className="text-destructive" role="alert">
+              {syncError}
+            </p>
+          ) : null}
+          {requiresAuthentication && onLoginAgain ? (
+            <ReauthenticationPrompt onLoginAgain={onLoginAgain} />
+          ) : null}
+          {context ? articleNotice?.(context) : null}
         </div>
-      </header>
 
-      {status ? (
-        <p
-          aria-live="polite"
-          role={status.kind === 'error' ? 'alert' : 'status'}
-        >
-          {status.kind === 'loading' ? 'Opening article…' : status.message}
-        </p>
-      ) : null}
-      {syncError !== undefined ? <p role="alert">{syncError}</p> : null}
-      {requiresAuthentication && onLoginAgain ? (
-        <ReauthenticationPrompt onLoginAgain={onLoginAgain} />
-      ) : null}
-      {syncStatus ? <SyncStatus state={syncStatus} /> : null}
-
-      {doc ? (
         <Tabs
           onValueChange={(value) => {
             const nextValue: unknown = value
             if (
               typeof nextValue === 'string' &&
               isArticleEditorPanel(nextValue)
-            ) {
-              setMobilePanel(nextValue)
-            }
+            )
+              setPanel(nextValue)
           }}
-          value={selectedMobilePanel}
+          // The tabs root wraps the columns, so it must not break the page's flex column that lets each column scroll on its own.
+          style={{ display: 'contents' }}
+          value={isMobile ? selectedPanel : selectedSidePanel}
         >
-          <div className={isMobile ? 'block' : 'hidden'}>
-            <TabsList aria-label="Article sections">
-              {availablePanels.map(({ value, label }) => (
-                <TabsTab key={value} value={value}>
-                  {label}
-                </TabsTab>
-              ))}
-            </TabsList>
-          </div>
           <div
-            className={`grid min-w-0 gap-6 ${layoutClasses.workspaceColumns}`}
+            className={`flex flex-col ${isMobile ? 'min-h-0 flex-1 overflow-y-auto' : 'lg:min-h-0 lg:flex-1 lg:flex-row'}`}
           >
-            <aside
-              className={`flex min-w-0 flex-col gap-6 ${layoutClasses.sidebar}`}
+            <nav
+              aria-label="構成"
+              className={
+                isMobile
+                  ? ''
+                  : 'border-b border-border lg:w-66 lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-b-0'
+              }
             >
-              {(['outline', 'memo', 'sources'] as const).map((value) =>
-                availablePanels.some((panel) => panel.value === value) ? (
-                  <TabsPanel
-                    {...desktopPanelProps}
-                    key={value}
-                    keepMounted
-                    value={value}
-                  >
-                    <div className={layoutClasses.panelSpacing}>
-                      {renderPanel(value)}
-                    </div>
-                  </TabsPanel>
-                ) : null,
-              )}
-            </aside>
-            <section
-              aria-label="Article body"
-              className={`min-w-0 ${layoutClasses.bodyColumns}`}
+              <TabsPanel {...desktopPanelProps} keepMounted value="outline">
+                <div className={isMobile ? 'p-4' : 'px-3 py-5'}>
+                  {renderPanel('outline')}
+                </div>
+              </TabsPanel>
+            </nav>
+            <main
+              className={`min-w-0 ${isMobile ? '' : 'lg:flex-1 lg:overflow-y-auto'}`}
             >
               <TabsPanel {...desktopPanelProps} keepMounted value="body">
-                <div className={layoutClasses.panelSpacing}>
+                <div
+                  className={
+                    isMobile ? 'px-4.5 py-5' : 'px-8 py-6 lg:pt-10 lg:pb-24'
+                  }
+                >
                   {renderPanel('body')}
                 </div>
               </TabsPanel>
-            </section>
+            </main>
+            <aside
+              className={
+                isMobile
+                  ? ''
+                  : 'flex flex-col border-t border-border lg:w-85 lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-l'
+              }
+            >
+              {isMobile ? null : renderTabs(sidePanels)}
+              <TabsPanel keepMounted value="memo">
+                <div className={isMobile ? 'p-4' : 'p-3.5'}>
+                  {renderPanel('memo')}
+                </div>
+              </TabsPanel>
+              {/* Unmounting the premise panel discards its unsaved LLM conversation when the writer leaves the tab. */}
+              <TabsPanel value="premise">
+                <div className={isMobile ? 'p-4' : 'p-3.5'}>
+                  {renderPanel('premise')}
+                </div>
+              </TabsPanel>
+              {sourcesPanel == null ? null : (
+                <TabsPanel keepMounted value="sources">
+                  <div className={isMobile ? 'p-4' : 'p-3.5'}>
+                    {renderPanel('sources')}
+                  </div>
+                </TabsPanel>
+              )}
+            </aside>
           </div>
         </Tabs>
-      ) : null}
-    </main>
+        {!isMobile ? (
+          <EditorStatusBar syncStatus={syncStatus} />
+        ) : selectedPanel === 'body' && context && view ? (
+          <ArticleEditorMobileToolbar
+            history={context.history}
+            onRequest={
+              onRequest
+                ? () => {
+                    onRequest(context)
+                  }
+                : undefined
+            }
+            onShowMemo={() => {
+              setPanel('memo')
+            }}
+            onShowOutline={() => {
+              setPanel('outline')
+            }}
+            view={view}
+          />
+        ) : null}
+      </div>
+    </>
   )
 }

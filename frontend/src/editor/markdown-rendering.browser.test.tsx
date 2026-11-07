@@ -66,6 +66,47 @@ describe('Markdown rendering', () => {
     },
   )
 
+  it.each([
+    {
+      name: 'heading',
+      markdown: 'text\n\n## Heading',
+      expected: 'text## Heading',
+    },
+    { name: 'inline code', markdown: 'text `code`', expected: 'text `code`' },
+  ])(
+    'keeps $name markers visible while the cursor is elsewhere',
+    ({ markdown, expected }) => {
+      const { content } = mountMarkdownEditor(markdown)
+
+      expect(content?.textContent).toEqual(expected)
+    },
+  )
+
+  it('draws heading markers in the primary color at regular weight', async () => {
+    const { content } = mountMarkdownEditor('text\n\n## Heading')
+    content?.style.setProperty('--primary', '#123456')
+    const marker = await vi.waitUntil(() => {
+      const walker = document.createTreeWalker(
+        content ?? document.body,
+        NodeFilter.SHOW_TEXT,
+      )
+      for (let node = walker.nextNode(); node; node = walker.nextNode())
+        if (node.textContent === '##') return node.parentElement
+      return undefined
+    })
+    const readOutput = () => ({
+      text: marker.textContent,
+      color: getComputedStyle(marker).color,
+      fontWeight: getComputedStyle(marker).fontWeight,
+    })
+
+    expect(readOutput()).toEqual({
+      text: '##',
+      color: 'rgb(18, 52, 86)',
+      fontWeight: '400',
+    })
+  })
+
   it('shows all markers when the selection is inside formatted text', () => {
     const { content } = mountMarkdownEditor('**bold**')
     const view = content ? EditorView.findFromDOM(content) : null

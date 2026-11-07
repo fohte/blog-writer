@@ -11,6 +11,7 @@ type ArticleEditorPageProps = {
   article: Article
   client: SyncClientApi
   onBack: () => void
+  onOpenSettings: () => void
   error?: string | undefined
   syncStatus?: SyncState | undefined
   requiresAuthentication: boolean
@@ -21,16 +22,19 @@ export function ArticleEditorPage({
   article,
   client,
   onBack,
+  onOpenSettings,
   error: syncError,
   syncStatus,
   requiresAuthentication,
   onLoginAgain,
   bodyAccessory,
+  onRequest,
   editorExtensions,
-  headerActions,
+  articleNotice,
+  exportScreen,
   onViewChange,
   outlineRenderer,
-  premiseAccessory,
+  premisePanel,
   sourcesPanel,
 }: ArticleEditorPageProps) {
   const [doc, setDoc] = useState<Y.Doc>()
@@ -54,14 +58,17 @@ export function ArticleEditorPage({
       key={article.id}
       articleId={article.id}
       bodyAccessory={bodyAccessory}
+      onRequest={onRequest}
       doc={doc}
       editorExtensions={editorExtensions}
-      headerActions={headerActions}
+      articleNotice={articleNotice}
+      exportScreen={exportScreen}
       onBack={onBack}
+      onOpenSettings={onOpenSettings}
       onViewChange={onViewChange}
       onLoginAgain={onLoginAgain}
       outlineRenderer={outlineRenderer}
-      premiseAccessory={premiseAccessory}
+      premisePanel={premisePanel}
       onTitleChange={(title) => {
         client.updateArticleTitle(article.id, title).match(
           () => {

@@ -1,8 +1,8 @@
 import { Button } from '@fohte/ui/button'
 import { Input } from '@fohte/ui/input'
-import { Panel } from '@fohte/ui/panel'
 import { SegmentedControl } from '@fohte/ui/segmented-control'
 
+import { AppHeader } from '#components/app-header'
 import { FileSyncSettingsSection } from '#components/file-sync-settings-section'
 import type { LlmRoute, LlmSettings } from '#lib/llm-settings'
 
@@ -10,105 +10,147 @@ type LlmSettingsViewProps = {
   settings: LlmSettings
   status: 'loading' | 'ready' | 'error'
   locked: boolean
+  unsaved: boolean
+  bridgeUnreachable: boolean
   storageError: 'load' | 'save' | undefined
-  error?: string | undefined
   onBack: () => void
   onRouteChange: (route: LlmRoute) => void
   onBridgeUrlChange: (url: string) => void
+  onSave: () => void
   fileSyncDirectory?: string | undefined
   fileSyncConfigurationError?: string | undefined
 }
 
 const routeOptions = [
-  { value: 'server', label: 'Server' },
-  { value: 'local', label: 'Local' },
+  { value: 'server', label: 'サーバー (既定)' },
+  { value: 'local', label: 'ローカル (この PC の中継)' },
 ] as const
 
 export function LlmSettingsView({
   settings,
   status,
   locked,
+  unsaved,
+  bridgeUnreachable,
   storageError,
-  error,
   onBack,
   onRouteChange,
   onBridgeUrlChange,
+  onSave,
   fileSyncDirectory,
   fileSyncConfigurationError,
 }: LlmSettingsViewProps) {
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-6 py-12">
-      <header className="flex items-center gap-4">
-        <Button onClick={onBack} type="button" variant="outline">
-          Back
-        </Button>
-        <h1 className="text-3xl font-bold">Settings</h1>
-      </header>
+    <div className="flex min-h-screen flex-col">
+      <AppHeader onHome={onBack} />
+      <main className="mx-auto flex w-full max-w-xl flex-col gap-6 px-6 py-8">
+        <h1 className="text-sm font-bold">
+          設定{' '}
+          <span className="font-normal text-muted-foreground">
+            (この端末だけ)
+          </span>
+        </h1>
 
-      <section
-        aria-labelledby="llm-settings-heading"
-        className="flex flex-col gap-4"
-      >
-        <h2 className="text-xl font-semibold" id="llm-settings-heading">
-          LLM
-        </h2>
-
-        {status === 'loading' ? (
-          <p aria-live="polite" className="text-muted-foreground" role="status">
-            Loading LLM settings…
-          </p>
-        ) : status === 'error' ? (
-          <p role="alert">{error ?? 'Unable to load LLM settings.'}</p>
-        ) : locked ? (
-          <Panel className="rounded-lg p-4">
-            <p className="text-muted-foreground">
-              LLM settings are managed by the server.
+        <section
+          aria-labelledby="llm-route-heading"
+          className="flex flex-col gap-2 text-xs"
+        >
+          <h2
+            className="font-bold text-muted-foreground"
+            id="llm-route-heading"
+          >
+            LLM の経路
+          </h2>
+          {status === 'loading' ? (
+            <p className="text-muted-foreground" role="status">
+              読み込み中…
             </p>
-          </Panel>
-        ) : (
-          <Panel className="flex flex-col gap-5 rounded-lg p-4">
-            <div className="flex flex-col gap-2">
-              <span className="font-medium" id="llm-route-label">
-                Execution route
-              </span>
-              <SegmentedControl
-                aria-labelledby="llm-route-label"
-                onValueChange={onRouteChange}
-                options={routeOptions}
-                value={settings.route}
-              />
-            </div>
-
-            {settings.route === 'local' ? (
-              <div className="flex flex-col gap-2">
-                <label className="font-medium" htmlFor="llm-bridge-url">
-                  Bridge URL
-                </label>
-                <Input
-                  autoComplete="url"
-                  id="llm-bridge-url"
-                  onChange={(event) => {
-                    onBridgeUrlChange(event.currentTarget.value)
-                  }}
-                  placeholder="http://localhost:4141"
-                  type="url"
-                  value={settings.bridgeUrl}
+          ) : status === 'error' ? (
+            <p className="text-destructive" role="alert">
+              LLM の設定を読み込めませんでした。
+            </p>
+          ) : locked ? (
+            <p className="text-muted-foreground">
+              この環境では経路が決められています。
+            </p>
+          ) : (
+            <>
+              {/* SegmentedControl takes no className, and a flex column would stretch it. */}
+              <div>
+                <SegmentedControl
+                  aria-labelledby="llm-route-heading"
+                  onValueChange={onRouteChange}
+                  options={routeOptions}
+                  value={settings.route}
                 />
               </div>
-            ) : null}
-          </Panel>
+              {settings.route === 'local' ? (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-muted-foreground" htmlFor="bridge-url">
+                    中継の URL
+                  </label>
+                  <Input
+                    aria-describedby={
+                      bridgeUnreachable ? 'bridge-url-error' : undefined
+                    }
+                    aria-invalid={bridgeUnreachable}
+                    autoComplete="url"
+                    className="font-mono"
+                    id="bridge-url"
+                    onChange={(event) => {
+                      onBridgeUrlChange(event.currentTarget.value)
+                    }}
+                    placeholder="http://127.0.0.1:4312"
+                    type="url"
+                    value={settings.bridgeUrl}
+                  />
+                  {bridgeUnreachable ? (
+                    <p id="bridge-url-error" role="alert">
+                      <span
+                        aria-hidden="true"
+                        className="font-mono text-destructive"
+                      >
+                        !{' '}
+                      </span>
+                      接続できません
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          )}
+        </section>
+
+        <FileSyncSettingsSection
+          directory={fileSyncDirectory}
+          error={fileSyncConfigurationError}
+        />
+
+        {storageError === undefined ? null : (
+          <p className="text-xs text-destructive" role="alert">
+            {storageError === 'load'
+              ? 'この端末から設定を読み込めませんでした。'
+              : 'この端末に設定を保存できませんでした。'}
+          </p>
         )}
 
-        {storageError === 'load' ? (
-          <p role="alert">Settings could not be loaded from this device.</p>
-        ) : storageError === 'save' ? (
-          <p role="alert">Settings could not be saved on this device.</p>
+        {status === 'ready' && !locked ? (
+          <div className="flex items-center gap-3 border-t border-border pt-3 text-xs">
+            <span className="flex-1 text-muted-foreground" role="status">
+              {unsaved ? '未保存の変更あり' : '保存済み'}
+            </span>
+            <Button
+              disabled={!unsaved}
+              onClick={onSave}
+              size="sm"
+              type="button"
+              variant="solid"
+            >
+              保存
+            </Button>
+          </div>
         ) : null}
-      </section>
-      <FileSyncSettingsSection
-        directory={fileSyncDirectory}
-        error={fileSyncConfigurationError}
-      />
-    </main>
+      </main>
+    </div>
   )
 }

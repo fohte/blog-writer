@@ -1,5 +1,3 @@
-import { Panel } from '@fohte/ui/panel'
-
 type FileSyncSettingsSectionProps = {
   directory?: string | undefined
   error?: string | undefined
@@ -14,27 +12,20 @@ export function FileSyncSettingsSection({
   return (
     <section
       aria-labelledby="file-sync-settings-heading"
-      className="flex flex-col gap-4"
+      className="flex flex-col gap-1 text-xs"
     >
-      <h2 className="text-xl font-semibold" id="file-sync-settings-heading">
-        ローカルファイル同期
+      <h2
+        className="font-bold text-muted-foreground"
+        id="file-sync-settings-heading"
+      >
+        本文ファイルの同期先フォルダー
       </h2>
       {error !== undefined ? (
-        <Panel
-          aria-live="assertive"
-          className="rounded-lg border-destructive/40 bg-destructive/10 text-sm text-destructive"
-          padding="sm"
-          role="alert"
-        >
+        <p className="text-destructive" role="alert">
           {error}
-        </Panel>
+        </p>
       ) : (
-        <Panel className="flex flex-col gap-2 rounded-lg p-4">
-          <span className="font-medium">同期フォルダー</span>
-          <code className="break-all text-sm text-muted-foreground">
-            {directory}
-          </code>
-        </Panel>
+        <code className="break-all font-mono">{directory}</code>
       )}
     </section>
   )

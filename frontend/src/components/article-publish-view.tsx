@@ -1,6 +1,5 @@
 import { Button } from '@fohte/ui/button'
 import { Input } from '@fohte/ui/input'
-import { Panel } from '@fohte/ui/panel'
 import {
   Select,
   SelectContent,
@@ -32,6 +31,11 @@ export type ArticlePublishViewProps = {
   onPublish: () => void
 }
 
+const formatLabels: Record<ExportDestination['format'], string> = {
+  markdown: 'Markdown',
+  mdx: 'MDX',
+}
+
 export function ArticlePublishView({
   destinations,
   selectedDestinationId,
@@ -50,67 +54,135 @@ export function ArticlePublishView({
   onPublish,
 }: ArticlePublishViewProps) {
   const busy = busyAction !== undefined
+  const selectedDestination = destinations.find(
+    ({ id }) => id === selectedDestinationId,
+  )
 
   return (
-    <section aria-label="PR を作成" className="flex flex-col gap-3">
-      <h2 className="font-semibold">PR を作成</h2>
+    <section aria-label="PR を作成" className="flex flex-col gap-5">
       {destinationUnavailable ? (
-        <p className="text-sm text-muted-foreground" role="status">
+        <p className="text-sm text-muted-foreground-strong" role="status">
           保存済みの公開先は利用できません。公開先を選び直してください。
         </p>
       ) : null}
-      <label className="flex flex-col gap-1 text-sm">
-        公開先
-        <Select
-          disabled={busy}
-          onValueChange={(value) => {
-            if (value !== null) onDestinationChange(value)
-          }}
-          value={selectedDestinationId ?? null}
+      <div className="flex flex-col gap-2 border border-border px-3.5 py-3 font-mono text-xs text-muted-foreground-strong">
+        <label className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          公開先
+          <Select
+            disabled={busy}
+            onValueChange={(value) => {
+              if (value !== null) onDestinationChange(value)
+            }}
+            value={selectedDestinationId ?? null}
+          >
+            <SelectTrigger aria-label="公開先" className="min-w-48">
+              <SelectValue placeholder="公開先を選択" />
+            </SelectTrigger>
+            <SelectContent>
+              {destinations.map(({ id }) => (
+                <SelectItem key={id} value={id}>
+                  {id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+        {selectedDestination === undefined ? null : (
+          <p>
+            形式{' '}
+            <span className="text-foreground">
+              {formatLabels[selectedDestination.format]}
+            </span>
+          </p>
+        )}
+      </div>
+      <div className="grid gap-5 md:grid-cols-2">
+        <label className="flex flex-col gap-1.5 text-xs font-bold text-muted-foreground-strong">
+          slug
+          <Input
+            autoComplete="off"
+            className="font-mono font-normal text-foreground"
+            disabled={busy}
+            onChange={(event) => {
+              onSlugChange(event.currentTarget.value)
+            }}
+            placeholder="example-post"
+            value={slug}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5 text-xs font-bold text-muted-foreground-strong">
+          frontmatter
+          <Textarea
+            className="font-mono text-xs leading-relaxed font-normal text-foreground"
+            disabled={busy}
+            onChange={(event) => {
+              onFrontmatterChange(event.currentTarget.value)
+            }}
+            rows={5}
+            value={frontmatter}
+          />
+        </label>
+      </div>
+      {diff !== undefined ? (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-base font-bold">
+            公開先の現在のファイルとの差分
+          </h2>
+          <TextDiffView
+            modified={diff.modified}
+            modifiedLabel="公開する内容"
+            original={diff.original}
+            originalLabel="公開先の内容"
+          />
+        </section>
+      ) : null}
+      {busy ? (
+        <p
+          aria-live="polite"
+          className="text-sm text-muted-foreground-strong"
+          role="status"
         >
-          <SelectTrigger aria-label="公開先">
-            <SelectValue placeholder="公開先を選択" />
-          </SelectTrigger>
-          <SelectContent>
-            {destinations.map(({ id }) => (
-              <SelectItem key={id} value={id}>
-                {id}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        公開 slug
-        <Input
-          autoComplete="off"
-          disabled={busy}
-          onChange={(event) => {
-            onSlugChange(event.currentTarget.value)
-          }}
-          placeholder="example-post"
-          value={slug}
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        frontmatter
-        <Textarea
-          disabled={busy}
-          onChange={(event) => {
-            onFrontmatterChange(event.currentTarget.value)
-          }}
-          rows={5}
-          value={frontmatter}
-        />
-      </label>
-      <div className="flex flex-wrap gap-2">
+          {busyAction === 'publish'
+            ? 'PR を作成しています…'
+            : '公開先を確認しています…'}
+        </p>
+      ) : null}
+      {error !== undefined && error.length > 0 ? (
+        <p
+          aria-live="assertive"
+          className="text-sm text-destructive"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+        <span className="flex-1 basis-75 text-sm leading-relaxed text-muted-foreground-strong">
+          {publishedUrl !== undefined ? (
+            <>
+              PR を作成しました。{' '}
+              <a
+                className="text-primary underline-offset-4 hover:underline"
+                href={publishedUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                PR を開く
+              </a>
+            </>
+          ) : diff === undefined ? (
+            '作成する前に、公開先の現在のファイルとの差分を確認します。'
+          ) : (
+            '差分の確認後に公開先が変わっていたら、差分の確認からやり直します。'
+          )}
+        </span>
         <Button
           disabled={
             busy || selectedDestinationId == null || !isValidArticleSlug(slug)
           }
           onClick={onShowDiff}
           type="button"
-          variant="outline"
+          variant={diff === undefined ? 'solid' : 'outline'}
         >
           差分を見る
         </Button>
@@ -119,43 +191,12 @@ export function ArticlePublishView({
             disabled={busy || !canPublish}
             onClick={onPublish}
             type="button"
+            variant="solid"
           >
             PR を作成
           </Button>
         ) : null}
       </div>
-      {diff !== undefined ? (
-        <TextDiffView
-          modified={diff.modified}
-          modifiedLabel="公開する内容"
-          original={diff.original}
-          originalLabel="公開先の内容"
-        />
-      ) : null}
-      {busy ? (
-        <p aria-live="polite" className="text-muted-foreground" role="status">
-          {busyAction === 'publish'
-            ? 'PR を作成しています…'
-            : '公開先を確認しています…'}
-        </p>
-      ) : null}
-      {publishedUrl !== undefined ? (
-        <Panel className="rounded-md p-3">
-          <a href={publishedUrl} rel="noreferrer" target="_blank">
-            PR を開く
-          </a>
-        </Panel>
-      ) : null}
-      {error !== undefined && error.length > 0 ? (
-        <Panel
-          aria-live="assertive"
-          className="rounded-md border-destructive/40 bg-destructive/10 text-sm text-destructive"
-          padding="sm"
-          role="alert"
-        >
-          {error}
-        </Panel>
-      ) : null}
     </section>
   )
 }

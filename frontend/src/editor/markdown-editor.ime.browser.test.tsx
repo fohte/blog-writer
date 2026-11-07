@@ -9,7 +9,6 @@ import { getBody, setBody } from '#article/index'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
 import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
-import { nextFrame } from '#test-support/browser.test-support.test'
 
 type MarkdownEditorOutput = {
   body: string
@@ -18,8 +17,8 @@ type MarkdownEditorOutput = {
 }
 
 interface ComposeOutput {
-  composingImmediately?: boolean
-  duringComposition?: MarkdownEditorOutput
+  composingImmediately: boolean
+  duringComposition: MarkdownEditorOutput
   committed: MarkdownEditorOutput
 }
 
@@ -43,6 +42,14 @@ function readOutput(
     ),
     visible: content?.textContent,
   }
+}
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      resolve()
+    })
+  })
 }
 
 const webkitDriver: ImeDriver = {
@@ -200,13 +207,13 @@ plain`,
     text: '日本語',
     duringComposition: {
       body: '`code`日本語',
-      lines: ['code`日本語'],
-      visible: 'code`日本語',
+      lines: ['`code`日本語'],
+      visible: '`code`日本語',
     },
     committed: {
       body: '`code`日本語',
-      lines: ['code日本語'],
-      visible: 'code日本語',
+      lines: ['`code`日本語'],
+      visible: '`code`日本語',
     },
   },
   {
@@ -329,21 +336,21 @@ const value = 1
     text: '日本語',
     duringComposition: {
       body: '## Heading日本語',
-      lines: ['Heading日本語'],
-      visible: 'Heading日本語',
+      lines: ['## Heading日本語'],
+      visible: '## Heading日本語',
     },
     committed: {
       body: '## Heading日本語',
-      lines: ['Heading日本語'],
-      visible: 'Heading日本語',
+      lines: ['## Heading日本語'],
+      visible: '## Heading日本語',
     },
     afterComposition: {
       key: 'Backspace',
       capture: 'afterBackspace',
       output: {
         body: '## Heading日本',
-        lines: ['Heading日本'],
-        visible: 'Heading日本',
+        lines: ['## Heading日本'],
+        visible: '## Heading日本',
       },
     },
   },

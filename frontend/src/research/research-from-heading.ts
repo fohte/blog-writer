@@ -28,6 +28,11 @@ import {
   ResearchJobInterruptedError,
   runResearchJob,
 } from '#research/research-job'
+import {
+  captureSavedResearchSources,
+  restoreResearchSources,
+  snapshotResearchSources,
+} from '#research/research-source-rollback'
 import { getSourceHost } from '#research/source-format'
 
 type ResearchJobSource = components['schemas']['ResearchJobSource']
@@ -47,6 +52,20 @@ type SourcePlan = {
 
 type SourceBodySnapshot = { sourceId: string; body?: string }
 type SourceBodyRollback = SourceBodySnapshot & { expectedBody: string }
+
+export type SavedResearchSource = {
+  id: string
+  researchId: string
+  title: string
+  url: string
+  status: ResearchJobSource['status']
+  body?: string
+}
+
+export type SavedResearchJobResult = {
+  sources: SavedResearchSource[]
+  rollback: () => ResultAsync<string[], Error>
+}
 
 class ResearchBodyRollbackError extends Error {
   constructor(cause: Error) {
@@ -331,40 +350,90 @@ export function researchFromHeading(
   return runResearchJob(
     fetcher,
     settings,
-    question,
+    { task: 'key_points', question },
     signal,
     onProgress,
-  ).andThen((result) => {
-    const plans = planSources(doc, result)
-    const validationError = validateSourceChanges(doc, plans)
-    if (validationError) return errAsync(validationError)
-    onSaving()
-    return saveBodies(fetcher, articleId, plans, signal).andThen(
-      (savedSourceRollbacks) => {
-        if (signal.aborted)
-          return rollbackSourceBodies(
-            fetcher,
-            articleId,
-            savedSourceRollbacks,
-          ).andThen(() =>
-            errAsync(new ResearchJobInterruptedError('調査を中断しました。')),
+  ).andThen((result) =>
+    saveResearchJobResult(
+      fetcher,
+      articleId,
+      doc,
+      result,
+      researchedHeading,
+      signal,
+      onSaving,
+    ).map(() => undefined),
+  )
+}
+
+export function saveResearchJobResult(
+  fetcher: typeof fetch,
+  articleId: string,
+  doc: Y.Doc,
+  result: ResearchJobResult,
+  researchedHeading: string | undefined,
+  signal: AbortSignal,
+  onSaving: () => void,
+): ResultAsync<SavedResearchJobResult, Error> {
+  const plans = planSources(doc, result)
+  const sourceSnapshots = snapshotResearchSources(plans)
+  const validationError = validateSourceChanges(doc, plans)
+  if (validationError) return errAsync(validationError)
+  onSaving()
+  return saveBodies(fetcher, articleId, plans, signal).andThen(
+    (savedSourceRollbacks) => {
+      if (signal.aborted)
+        return rollbackSourceBodies(
+          fetcher,
+          articleId,
+          savedSourceRollbacks,
+        ).andThen(() =>
+          errAsync(new ResearchJobInterruptedError('調査を中断しました。')),
+        )
+      const error = validateSourceChanges(doc, plans)
+      if (error)
+        return rollbackSourceBodies(
+          fetcher,
+          articleId,
+          savedSourceRollbacks,
+        ).andThen(() => errAsync(error))
+      const saveResult = saveResultInDocument(doc, plans, researchedHeading)
+      if (saveResult.isErr())
+        return rollbackSourceBodies(
+          fetcher,
+          articleId,
+          savedSourceRollbacks,
+        ).andThen(() => err(saveResult.error))
+      const savedSourceSnapshots = captureSavedResearchSources(
+        doc,
+        sourceSnapshots,
+      )
+      const sources = plans.map(({ id, title, url, source }) => ({
+        id,
+        researchId: source.id,
+        title,
+        url,
+        status: source.status,
+        ...(typeof source.body === 'string' ? { body: source.body } : {}),
+      }))
+      return okAsync({
+        sources,
+        rollback: () => {
+          const documentRollback = restoreResearchSources(
+            doc,
+            savedSourceSnapshots,
           )
-        const error = validateSourceChanges(doc, plans)
-        if (error)
+          if (documentRollback.isErr()) return errAsync(documentRollback.error)
+          const preservedSourceIds = new Set(documentRollback.value)
           return rollbackSourceBodies(
             fetcher,
             articleId,
-            savedSourceRollbacks,
-          ).andThen(() => errAsync(error))
-        const saveResult = saveResultInDocument(doc, plans, researchedHeading)
-        if (saveResult.isErr())
-          return rollbackSourceBodies(
-            fetcher,
-            articleId,
-            savedSourceRollbacks,
-          ).andThen(() => err(saveResult.error))
-        return ok(undefined)
-      },
-    )
-  })
+            savedSourceRollbacks.filter(
+              ({ sourceId }) => !preservedSourceIds.has(sourceId),
+            ),
+          ).map(() => documentRollback.value)
+        },
+      })
+    },
+  )
 }

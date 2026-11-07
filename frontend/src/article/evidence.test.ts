@@ -13,6 +13,7 @@ import {
   readBody,
   reverseBlockMove,
   setBody,
+  setEvidence,
 } from '#article/index'
 
 function makeSource(doc: Y.Doc): void {
@@ -76,6 +77,59 @@ describe('listEvidenceOverlapping', () => {
         quote: 'same range',
         sourceId: 'source-a',
         to: '<position>',
+        verdict: 'supported',
+      },
+    ])
+    doc.destroy()
+  })
+})
+
+describe('setEvidence', () => {
+  it('updates and deduplicates evidence for the same claim range', () => {
+    const doc = new Y.Doc()
+    const claim = 'A claim.'
+    setBody(doc, claim)
+    makeSource(doc)
+    for (const id of ['evidence-a', 'evidence-b']) {
+      addEvidence(doc, {
+        id,
+        from: 0,
+        to: claim.length,
+        claim,
+        sourceId: 'source-a',
+        quote: 'An earlier quote.',
+        verdict: 'outdated',
+        checkedAt: '2026-01-01T00:00:00.000Z',
+      })._unsafeUnwrap()
+    }
+    setEvidence(doc, {
+      from: 0,
+      to: claim.length,
+      claim,
+      sourceId: 'source-a',
+      quote: 'A current quote.',
+      verdict: 'supported',
+      checkedAt: '2026-02-01T00:00:00.000Z',
+    })._unsafeUnwrap()
+
+    expect(
+      listEvidence(doc).map(
+        ({ checkedAt, currentClaim, edited, id, quote, verdict }) => ({
+          checkedAt,
+          currentClaim,
+          edited,
+          id,
+          quote,
+          verdict,
+        }),
+      ),
+    ).toEqual([
+      {
+        checkedAt: '2026-02-01T00:00:00.000Z',
+        currentClaim: claim,
+        edited: false,
+        id: 'evidence-a',
+        quote: 'A current quote.',
         verdict: 'supported',
       },
     ])

@@ -26,9 +26,14 @@ const meta = {
     memo,
     headings,
     open: true,
+    canMoveUp: false,
+    canMoveDown: true,
     onOpenChange: () => {},
     onAdoptToHeading: () => {},
     onInsertAsHeading: () => {},
+    onMove: () => {},
+    onDismiss: () => {},
+    onRestore: () => {},
   },
 } satisfies Meta<typeof MemoAdoptionMenu>
 
@@ -47,4 +52,23 @@ export const Closed: Story = {
 export const NoHeadings: Story = {
   name: 'the menu can add a memo as the first heading.',
   args: { headings: [] },
+}
+
+export const Sheet: Story = {
+  name: 'on a phone, the adoption targets open in a bottom sheet with touch-sized rows.',
+  args: { presentation: 'sheet' },
+}
+
+export const AdoptedMemo: Story = {
+  name: 'the menu for an adopted memo can also return it to unorganized.',
+  args: {
+    canMoveUp: true,
+    memo: {
+      ...memo,
+      state: {
+        kind: 'adopted',
+        heading: { level: 2, text: 'Goals', from: 13, to: 21, children: [] },
+      },
+    },
+  },
 }

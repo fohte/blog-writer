@@ -17,6 +17,7 @@ import { getBody, setBody } from '#article/body'
 import { blockMoved } from '#article/index'
 import {
   MarkdownEditor,
+  suggestionActionsPresentation,
   transitionProposalEditorExtensions,
 } from '#editor/index'
 import {
@@ -126,12 +127,45 @@ function createInsertionEditor() {
   return { ...editor, content, from }
 }
 
+// An unfocused suggestion shows only a margin marker (one per line) or a seam
+// button; only the focused suggestion renders its diff.
+function hasSuggestion(host: HTMLElement): boolean {
+  return (
+    host.querySelector(
+      '.cm-suggestion-marker, .cm-suggestion-seam-button, .suggestion-diff',
+    ) !== null
+  )
+}
+
+function readTargets(host: HTMLElement): string[] {
+  return Array.from(
+    host.querySelectorAll('.cm-suggestion-target'),
+    (target) => target.textContent,
+  )
+}
+
+function readActions(host: HTMLElement): string[] {
+  return Array.from(
+    host.querySelectorAll('[aria-label="提案の操作"] button'),
+    (button) => button.textContent,
+  )
+}
+
+function findButton(host: HTMLElement, name: string): HTMLButtonElement {
+  const button = Array.from(host.querySelectorAll('button')).find((candidate) =>
+    candidate.textContent.startsWith(name),
+  )
+  if (!button) throw new Error(`Could not find the ${name} button`)
+  return button
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 })
 
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -150,9 +184,9 @@ describe('suggestion layer', () => {
 
     const readOutput = () => ({
       content: host.querySelector('.cm-content')?.textContent,
-      suggestionWidgets: host.querySelectorAll('.cm-suggestion-widget').length,
+      suggestionVisible: hasSuggestion(host),
     })
-    expect(readOutput()).toEqual({ content: 'short', suggestionWidgets: 0 })
+    expect(readOutput()).toEqual({ content: 'short', suggestionVisible: false })
   })
 
   it('uses the editor selection to focus an initial suggestion', () => {
@@ -172,10 +206,42 @@ describe('suggestion layer', () => {
     })
 
     const readOutput = () => ({
-      focused: host.querySelector('[data-focused="true"]') !== null,
+      diff: host.querySelector('.suggestion-diff-text')?.textContent ?? null,
+      actions: readActions(host),
       buttonCount: host.querySelectorAll('button').length,
     })
-    expect(readOutput()).toEqual({ focused: true, buttonCount: 2 })
+    expect(readOutput()).toEqual({
+      diff: 'selectedrevised sentence',
+      actions: ['却下 Esc', '採用 Tab'],
+      buttonCount: 2,
+    })
+  })
+
+  it('carries the in-flight label over to the resolved suggestion', () => {
+    const from = initialText.indexOf('selected')
+    const { host, layer } = createEditor(initialText, undefined, [], {
+      layerOptions: {
+        initialInFlight: {
+          from,
+          to: from + 'selected sentence'.length,
+          label: 'Shorten it',
+        },
+      },
+      selection: from,
+    })
+
+    act(() => {
+      layer.resolveInFlight('revised sentence').match(
+        () => undefined,
+        () => {
+          throw new Error('Could not resolve the in-flight suggestion')
+        },
+      )
+    })
+
+    expect(
+      host.querySelector('[aria-label="提案の操作"]')?.textContent ?? null,
+    ).toEqual('> Shorten it段落を置き換え却下 Esc採用 Tab')
   })
 
   it('maps a suggestion after an outside edit and removes it after an edit inside the range', () => {
@@ -191,7 +257,7 @@ describe('suggestion layer', () => {
     act(() => {
       view.dispatch({ changes: { from: 0, insert: 'new ' } })
     })
-    const tracked = host.querySelector('.cm-suggestion-widget')?.textContent
+    const tracked = readTargets(host)
     act(() => {
       view.dispatch({
         changes: { from: from + 4 + 2, insert: 'x' },
@@ -200,12 +266,11 @@ describe('suggestion layer', () => {
 
     const readOutput = () => ({
       afterOutsideEdit: tracked,
-      afterInsideEdit:
-        host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
+      afterInsideEdit: hasSuggestion(host),
     })
     expect(readOutput()).toEqual({
-      afterOutsideEdit: 'selectedrevised sentence',
-      afterInsideEdit: null,
+      afterOutsideEdit: ['selected sentence'],
+      afterInsideEdit: false,
     })
   })
 
@@ -258,8 +323,10 @@ describe('suggestion layer', () => {
 
   it('keeps an inline suggestion on the same paragraph line', () => {
     const content = 'A sentence with selected words in the middle.'
-    const { host, setSuggestion } = createEditor(content)
     const from = content.indexOf('selected')
+    const { host, setSuggestion } = createEditor(content, undefined, [], {
+      selection: from,
+    })
     setSuggestion({
       id: 'suggestion-a',
       from,
@@ -269,7 +336,7 @@ describe('suggestion layer', () => {
 
     const readOutput = () => ({
       lineCount: host.querySelectorAll('.cm-line').length,
-      text: host.querySelector('.cm-content')?.textContent,
+      text: host.querySelector('.cm-line')?.textContent,
     })
     expect(readOutput()).toEqual({
       lineCount: 1,
@@ -278,8 +345,10 @@ describe('suggestion layer', () => {
   })
 
   it('updates a suggestion note when only the note changes', () => {
-    const { host, setSuggestion } = createEditor()
     const from = initialText.indexOf('selected sentence')
+    const { host, setSuggestion } = createEditor(initialText, undefined, [], {
+      selection: from,
+    })
     const suggestion = {
       id: 'suggestion-with-note',
       from,
@@ -299,13 +368,17 @@ describe('suggestion layer', () => {
     })
   })
 
-  it('shows a non-empty in-flight range inline within one editor line', () => {
+  it('underlines a non-empty in-flight range and shows its label below the line', () => {
     const content = 'A sentence with a pending phrase in the middle.'
     const { host, layer } = createEditor(content)
     const from = content.indexOf('pending')
     let result: ReturnType<typeof layer.setInFlight> | undefined
     act(() => {
-      result = layer.setInFlight({ from, to: from + 1 })
+      result = layer.setInFlight({
+        from,
+        to: from + 'pending'.length,
+        label: 'Shorten it',
+      })
     })
     if (!result) throw new Error('Could not set in-flight state')
     if (result.isErr()) throw new Error('Could not set in-flight state')
@@ -315,21 +388,101 @@ describe('suggestion layer', () => {
     const readOutput = () => ({
       lineCount: host.querySelectorAll('.cm-line').length,
       lineText: line?.textContent ?? null,
+      underlined:
+        host.querySelector('.cm-suggestion-in-flight-target')?.textContent ??
+        null,
       widgetTag: widget?.tagName ?? null,
-      widgetIsInLine: line?.contains(widget) ?? false,
+      widgetFollowsLine: line?.nextElementSibling === widget,
+      label:
+        widget?.querySelector('.suggestion-generating-label')?.textContent ??
+        null,
       status: widget?.querySelector('[role="status"]')?.textContent ?? null,
     })
     expect(readOutput()).toEqual({
       lineCount: 1,
-      lineText: `${content.slice(0, from)}作成中${content.slice(from)}`,
-      widgetTag: 'SPAN',
-      widgetIsInLine: true,
+      lineText: content,
+      underlined: 'pending',
+      widgetTag: 'DIV',
+      widgetFollowsLine: true,
+      label: '> Shorten it',
       status: '作成中',
     })
   })
 
-  it('focuses an unfocused suggestion when it is clicked', async () => {
-    const { host, setSuggestion } = createEditor()
+  it('keeps the label and the elapsed time of an in-flight range moved by an outside edit', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    const { host, layer, view } = createEditor()
+    const from = initialText.indexOf('selected')
+    act(() => {
+      layer
+        .setInFlight({
+          from,
+          to: from + 'selected sentence'.length,
+          label: 'Shorten it',
+        })
+        .match(
+          () => undefined,
+          () => undefined,
+        )
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(2000)
+      view.dispatch({ changes: { from: 0, insert: 'new ' } })
+      vi.advanceTimersByTime(1000)
+    })
+
+    const readOutput = () => ({
+      inFlight: layer.getInFlight(),
+      bar: host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
+    })
+    expect(readOutput()).toEqual({
+      inFlight: {
+        from: from + 'new '.length,
+        to: from + 'new selected sentence'.length,
+        label: 'Shorten it',
+      },
+      bar: '> Shorten it作成中 ··· 3s中止 Esc',
+    })
+  })
+
+  it('cancels the in-flight work from the cancel button', async () => {
+    const events: string[] = []
+    const { host, layer } = createEditor(initialText, (event) =>
+      events.push(event),
+    )
+    const inFlightResult = layer.setInFlight({ from: 0, to: 7 })
+    if (inFlightResult.isErr()) throw new Error('Could not set in-flight state')
+    const cancelButton = await vi.waitFor(() => {
+      const button = Array.from(host.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent.startsWith('中止'),
+      )
+      if (!button) throw new Error('The cancel button was not rendered')
+      return button
+    })
+
+    act(() => {
+      cancelButton.click()
+    })
+
+    const readOutput = () => ({
+      events,
+      inFlight: layer.getInFlight(),
+      generatingWidgets: host.querySelectorAll('.suggestion-diff-generating')
+        .length,
+    })
+    expect(readOutput()).toEqual({
+      events: ['cancel'],
+      inFlight: null,
+      generatingWidgets: 0,
+    })
+  })
+
+  it('focuses an unfocused suggestion when its margin marker is clicked', async () => {
+    // The marker sits in the content's start padding, which the app's editor theme provides.
+    const { host, setSuggestion } = createEditor(initialText, undefined, [
+      EditorView.theme({ '.cm-content': { paddingInlineStart: '3rem' } }),
+    ])
     const from = initialText.indexOf('selected')
     setSuggestion({
       id: 'suggestion-a',
@@ -337,21 +490,59 @@ describe('suggestion layer', () => {
       to: from + 'selected sentence'.length,
       replacement: 'revised sentence',
     })
-    const widget = host.querySelector<HTMLElement>('.cm-suggestion-widget')
-    if (!widget) throw new Error('Could not find suggestion widget')
+    const unfocused = {
+      targets: readTargets(host),
+      actions: readActions(host),
+    }
 
-    await userEvent.click(widget)
+    await userEvent.click(findButton(host, '提案'))
 
     const readOutput = () => ({
+      unfocused,
       editorFocused:
         host.querySelector('.cm-content') === document.activeElement,
-      focused: host.querySelector('[data-focused="true"]') !== null,
-      buttonCount: host.querySelectorAll('button').length,
+      targets: readTargets(host),
+      actions: readActions(host),
+      markerCount: host.querySelectorAll('.cm-suggestion-marker').length,
     })
     expect(readOutput()).toEqual({
+      unfocused: { targets: ['selected sentence'], actions: [] },
       editorFocused: true,
-      focused: true,
-      buttonCount: 2,
+      targets: [],
+      actions: ['却下 Esc', '採用 Tab'],
+      markerCount: 0,
+    })
+  })
+
+  it('focuses a transition suggestion when its seam button is clicked', async () => {
+    const content = 'First paragraph.\n\nSecond paragraph.\n\nLast paragraph.'
+    const { host, setSuggestion } = createEditor(content, undefined, [], {
+      layerOptions: { display: 'seam' },
+      selection: content.length,
+    })
+    setSuggestion({
+      id: 'transition-a',
+      from: 0,
+      to: content.indexOf('\n\nLast'),
+      replacement: 'First paragraph, then.\n\nSecond paragraph.',
+    })
+    const seams = Array.from(
+      host.querySelectorAll('.cm-suggestion-seam-button'),
+      (button) => button.textContent,
+    )
+
+    await userEvent.click(findButton(host, '↕'))
+
+    const readOutput = () => ({
+      seams,
+      seamsAfterClick: host.querySelectorAll('.cm-suggestion-seam-button')
+        .length,
+      actions: readActions(host),
+    })
+    expect(readOutput()).toEqual({
+      seams: ['↕ つなぎの文の修正案'],
+      seamsAfterClick: 0,
+      actions: ['却下', '採用 (前後 2 文)'],
     })
   })
 
@@ -363,12 +554,12 @@ describe('suggestion layer', () => {
 
     const readOutput = () => ({
       body: body.toJSON(),
-      focused: host.querySelector('[data-focused="true"]') !== null,
+      actions: readActions(host),
       text: host.querySelector('.suggestion-diff-text')?.textContent,
     })
     expect(readOutput()).toEqual({
       body: content,
-      focused: true,
+      actions: ['却下 Esc', '採用 Tab'],
       text: 'new ',
     })
   })
@@ -597,7 +788,7 @@ describe('suggestion layer', () => {
 
     const readOutput = () => ({
       body: body.toJSON(),
-      visible: host.querySelector('.cm-suggestion-widget') !== null,
+      visible: hasSuggestion(host),
     })
     expect(readOutput()).toEqual({ body: content, visible: false })
   })
@@ -625,8 +816,7 @@ describe('suggestion layer', () => {
           changes: { from: insertionPosition, insert: insertion },
         })
       })
-      const diff =
-        host.querySelector('.suggestion-diff-text')?.textContent ?? null
+      const targets = readTargets(host)
       act(() => {
         layer.accept('suggestion-a')
       })
@@ -635,9 +825,9 @@ describe('suggestion layer', () => {
         boundary === 'start'
           ? initialText.replace('selected sentence', 'prefix revised sentence')
           : initialText.replace('selected sentence', 'revised sentence suffix')
-      const readOutput = () => ({ diff, body: body.toJSON() })
+      const readOutput = () => ({ targets, body: body.toJSON() })
       expect(readOutput()).toEqual({
-        diff: 'selectedrevised sentence',
+        targets: ['selected sentence'],
         body: expected,
       })
     },
@@ -692,8 +882,7 @@ describe('suggestion layer', () => {
     act(() => {
       view.dispatch({ changes: { from, to, insert } })
     })
-    const visibleAfterEdit =
-      host.querySelector('.cm-suggestion-widget') !== null
+    const visibleAfterEdit = hasSuggestion(host)
     if (visibleAfterEdit) {
       act(() => {
         layer.accept('suggestion-boundary')
@@ -717,7 +906,7 @@ describe('suggestion layer', () => {
       view.dispatch({ changes: { from, insert: 'edited ' } })
     })
 
-    expect(host.querySelector('.cm-suggestion-widget') !== null).toEqual(false)
+    expect(hasSuggestion(host)).toEqual(false)
   })
 
   it('drops a suggestion when a remote Yjs edit changes its range', () => {
@@ -742,9 +931,7 @@ describe('suggestion layer', () => {
       )
     })
 
-    expect(
-      host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
-    ).toEqual(null)
+    expect(hasSuggestion(host)).toEqual(false)
     peer.destroy()
   })
 
@@ -801,13 +988,12 @@ describe('suggestion layer', () => {
         (error) => error.type,
       ),
       generating: host.querySelector('.suggestion-diff-generating') !== null,
-      suggestionText:
-        host.querySelector('.suggestion-diff-text')?.textContent ?? null,
+      targets: readTargets(host),
     })
     expect(readOutput()).toEqual({
       error: 'overlapping-ranges',
       generating: false,
-      suggestionText: 'selectedrevised sentence',
+      targets: ['selected sentence'],
     })
   })
 
@@ -845,7 +1031,7 @@ describe('suggestion layer', () => {
       ),
       generating:
         host.querySelector('.suggestion-diff-generating')?.textContent ?? null,
-      suggestionVisible: host.querySelector('.suggestion-diff-text') !== null,
+      suggestionVisible: hasSuggestion(host),
     })
     expect(readOutput()).toEqual({
       error: 'overlapping-ranges',
@@ -856,7 +1042,7 @@ describe('suggestion layer', () => {
 
   it('resolves an in-flight insertion at a suggestion end boundary', () => {
     const content = 'keep proposal'
-    const { body, host, setSuggestion, layer } = createEditor(content)
+    const { body, host, setSuggestion, layer, view } = createEditor(content)
     const from = content.indexOf('proposal')
     setSuggestion({
       id: 'suggestion-a',
@@ -882,6 +1068,10 @@ describe('suggestion layer', () => {
     if (!resolveResult)
       throw new Error('Could not resolve in-flight suggestion')
     const resolutionResult = resolveResult
+    // Both suggestions share one line, which has a single margin marker until one is focused.
+    act(() => {
+      view.dispatch({ selection: { anchor: from } })
+    })
 
     const readOutput = () => ({
       inFlightError: setInFlightResult.match(
@@ -893,7 +1083,9 @@ describe('suggestion layer', () => {
         (error) => error.type,
       ),
       body: body.toJSON(),
-      suggestionCount: host.querySelectorAll('.cm-suggestion-widget').length,
+      suggestionCount: host.querySelectorAll(
+        '.suggestion-diff, .cm-suggestion-marker',
+      ).length,
       pendingCount: host.querySelectorAll('.suggestion-diff-generating').length,
     })
     expect(readOutput()).toEqual({
@@ -1062,14 +1254,13 @@ describe('suggestion layer', () => {
       body: body.toJSON(),
       cancellations,
       rangeEdits,
-      suggestion:
-        host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
+      suggestion: hasSuggestion(host),
     })
     expect(readOutput()).toEqual({
       body: initialText.replace('selected sentence', 'sexlected sentence'),
       cancellations: [],
       rangeEdits: ['edited'],
-      suggestion: null,
+      suggestion: false,
     })
   })
 
@@ -1185,6 +1376,10 @@ describe('suggestion layer', () => {
       )
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
+    // An unfocused transition shows only its seam button, so focus it to read the diff.
+    act(() => {
+      editorView.dispatch({ selection: { anchor: seam2.from } })
+    })
 
     const readOutput = () => ({
       body: body.toJSON(),
@@ -1236,9 +1431,7 @@ describe('suggestion layer', () => {
       })
     })
 
-    expect(
-      host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
-    ).toEqual(null)
+    expect(hasSuggestion(host)).toEqual(false)
   })
 
   it('keeps a suggestion when a different block moves before its range', () => {
@@ -1260,14 +1453,14 @@ describe('suggestion layer', () => {
         body.insert(0, movedText)
       })
     })
-    const afterMove = host.querySelector('.cm-suggestion-widget') !== null
+    const afterMove = hasSuggestion(host)
     act(() => {
       body.insert(movedText.length + from + 2, 'x')
     })
 
     const readOutput = () => ({
       afterMove,
-      afterEdit: host.querySelector('.cm-suggestion-widget') !== null,
+      afterEdit: hasSuggestion(host),
     })
     expect(readOutput()).toEqual({ afterMove: true, afterEdit: false })
   })
@@ -1438,7 +1631,7 @@ describe('suggestion layer', () => {
 
     const readOutput = () => ({
       cursor: view.state.selection.main.head,
-      focusedCount: host.querySelectorAll('[data-focused="true"]').length,
+      focusedCount: host.querySelectorAll('.suggestion-diff').length,
     })
     expect(readOutput()).toEqual({ cursor: first, focusedCount: 1 })
   })
@@ -1480,13 +1673,9 @@ describe('suggestion layer', () => {
     const readOutput = () => ({
       body: body.toJSON(),
       cursor: view.state.selection.main.head,
-      focusedProposalCount: host.querySelectorAll(
-        '.suggestion-diff[data-focused="true"]',
-      ).length,
+      focusedProposalCount: host.querySelectorAll('.suggestion-diff').length,
       focusedAddedText: Array.from(
-        host.querySelectorAll(
-          '.suggestion-diff[data-focused="true"] .suggestion-diff-added',
-        ),
+        host.querySelectorAll('.suggestion-diff-added'),
         (node) => node.textContent,
       ),
     })
@@ -1539,13 +1728,9 @@ describe('suggestion layer', () => {
     const readOutput = () => ({
       body: body.toJSON(),
       cursor: view.state.selection.main.head,
-      focusedProposalCount: host.querySelectorAll(
-        '.suggestion-diff[data-focused="true"]',
-      ).length,
+      focusedProposalCount: host.querySelectorAll('.suggestion-diff').length,
       focusedAddedText: Array.from(
-        host.querySelectorAll(
-          '.suggestion-diff[data-focused="true"] .suggestion-diff-added',
-        ),
+        host.querySelectorAll('.suggestion-diff-added'),
         (node) => node.textContent,
       ),
     })
@@ -1593,15 +1778,44 @@ describe('suggestion layer', () => {
     act(() => {
       view.dispatch({ selection: { anchor: from } })
     })
-    const button = host.querySelector<HTMLButtonElement>('button')
-    if (!button) throw new Error('Could not find accept button')
-    await userEvent.click(button)
+    await userEvent.click(findButton(host, '採用'))
 
     const readOutput = () => ({
       body: body.toJSON(),
       editorFocused: view.hasFocus,
     })
     expect(readOutput()).toEqual({
+      body: initialText.replace('selected sentence', 'revised sentence'),
+      editorFocused: true,
+    })
+  })
+
+  it('accepts a focused suggestion from the bottom sheet on a phone', async () => {
+    const { body, host, setSuggestion, view } = createEditor(
+      initialText,
+      undefined,
+      [suggestionActionsPresentation.of('sheet')],
+    )
+    const from = initialText.indexOf('selected')
+    setSuggestion({
+      id: 'suggestion-a',
+      from,
+      to: from + 'selected sentence'.length,
+      replacement: 'revised sentence',
+    })
+    act(() => {
+      view.dispatch({ selection: { anchor: from } })
+    })
+    const actionsBeforeAccept = readActions(host)
+    await userEvent.click(findButton(host, '採用'))
+
+    const readOutput = () => ({
+      actionsBeforeAccept,
+      body: body.toJSON(),
+      editorFocused: view.hasFocus,
+    })
+    expect(readOutput()).toEqual({
+      actionsBeforeAccept: ['却下', '採用'],
       body: initialText.replace('selected sentence', 'revised sentence'),
       editorFocused: true,
     })
@@ -1619,13 +1833,11 @@ describe('suggestion layer', () => {
     act(() => {
       view.dispatch({ selection: { anchor: from } })
     })
-    const button = host.querySelectorAll<HTMLButtonElement>('button')[1]
-    if (!button) throw new Error('Could not find reject button')
-    await userEvent.click(button)
+    await userEvent.click(findButton(host, '却下'))
 
     const readOutput = () => ({
       body: body.toJSON(),
-      visible: host.querySelector('.cm-suggestion-widget') !== null,
+      visible: hasSuggestion(host),
       editorFocused: view.hasFocus,
     })
     expect(readOutput()).toEqual({
@@ -1747,15 +1959,14 @@ describe('suggestion layer', () => {
 
     const readOutput = () => ({
       afterCancel,
-      afterReject:
-        host.querySelector('.cm-suggestion-widget')?.textContent ?? null,
+      afterReject: hasSuggestion(host),
       body: body.toJSON(),
       events,
       rangeEdits,
     })
     expect(readOutput()).toEqual({
       afterCancel: 'selectedrevised sentence',
-      afterReject: null,
+      afterReject: false,
       body: initialText,
       events: ['cancel', 'reject'],
       rangeEdits: [],

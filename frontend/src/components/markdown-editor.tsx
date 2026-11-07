@@ -288,7 +288,6 @@ export const MarkdownEditor = forwardRef<
                 removeEvidence(text.doc, activeEvidence.evidence.id)
                 setActiveEvidenceId(undefined)
               }}
-              showMarker={false}
             />
           </div>
         ) : null}

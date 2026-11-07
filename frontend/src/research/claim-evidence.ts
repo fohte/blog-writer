@@ -8,8 +8,11 @@ import { postLlmResult } from '#lib/llm-sse'
 import { fetchSourceUrl, getSourceBody } from '#lib/source-api'
 import { getSourceHost } from '#research/source-format'
 
-type ClaimEvidenceResult = components['schemas']['JudgeClaimEvidenceResult']
+export type ClaimEvidenceResult =
+  components['schemas']['JudgeClaimEvidenceResult']
 type ClaimEvidenceRequest = components['schemas']['JudgeClaimEvidenceRequest']
+type ClaimEvidenceSourceInput =
+  components['schemas']['ClaimEvidenceSourceInput']
 
 export type ImportedClaimEvidence = {
   title: string
@@ -49,6 +52,38 @@ function isClaimEvidenceResult(value: unknown): value is ClaimEvidenceResult {
 function apiUrl(settings: LlmSettings): string {
   if (settings.route === 'server') return '/api/research/claim-evidence'
   return `${settings.bridgeUrl.replace(/\/+$/, '')}/api/research/claim-evidence`
+}
+
+export function judgeClaimEvidenceFromSources(
+  fetcher: typeof fetch,
+  claim: string,
+  sources: ClaimEvidenceSourceInput[],
+  settings: LlmSettings,
+  signal: AbortSignal,
+  before?: string,
+  after?: string,
+): ResultAsync<ClaimEvidenceResult, Error> {
+  if (settings.route === 'local' && settings.bridgeUrl.trim().length === 0)
+    return errAsync(new Error('ローカル LLM の接続先を設定してください。'))
+  return postLlmResult<ClaimEvidenceRequest, ClaimEvidenceResult>({
+    url: apiUrl(settings),
+    body: {
+      claim,
+      ...(before === undefined ? {} : { before }),
+      ...(after === undefined ? {} : { after }),
+      sources,
+    },
+    signal,
+    fetcher,
+    isResult: isClaimEvidenceResult,
+  }).andThen((result) => {
+    if (
+      result.quote &&
+      !sources.some(({ id }) => id === result.quote?.source_id)
+    )
+      return errAsync(new Error('判定 API が別の資料を引用しました。'))
+    return okAsync(result)
+  })
 }
 
 export function importClaimEvidence(

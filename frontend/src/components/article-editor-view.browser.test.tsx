@@ -25,6 +25,7 @@ type WorkspaceOptions = ArticleEditorIntegrationProps & {
   error?: string
   requiresAuthentication?: boolean
   syncStatus?: 'saved' | 'unsynced' | 'syncing' | 'synced'
+  onOpenSettings?: () => void
 }
 
 function renderWorkspace(
@@ -34,6 +35,7 @@ function renderWorkspace(
     error,
     requiresAuthentication = false,
     syncStatus = 'synced',
+    onOpenSettings = () => {},
     ...integrations
   }: WorkspaceOptions = {},
 ) {
@@ -76,7 +78,7 @@ function renderWorkspace(
           client={client}
           error={error}
           onCreateArticle={() => undefined}
-          onOpenSettings={() => {}}
+          onOpenSettings={onOpenSettings}
           ready
           requiresAuthentication={requiresAuthentication}
           statuses={{ [article.id]: syncStatus }}
@@ -110,6 +112,7 @@ afterEach(() => {
   for (const additionalDoc of additionalDocs) additionalDoc.destroy()
   additionalDocs = []
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('article editor screen', () => {
@@ -155,16 +158,13 @@ describe('article editor screen', () => {
     )
     const bodyAfterUndo = body.toJSON()
     await act(async () => {
-      await userEvent.click(
-        page.getByRole('button', { name: 'Back to articles' }),
-      )
+      await userEvent.click(page.getByRole('button', { name: 'blog-writer' }))
     })
 
     const readScreenOutput = () => ({
       bodyAfterMove,
       bodyAfterUndo,
-      listTitle: host?.querySelector('[role="listitem"] button span')
-        ?.textContent,
+      listTitle: host?.querySelector('li button')?.textContent,
       editorCount: host?.querySelectorAll('.cm-content').length,
     })
     expect(readScreenOutput()).toEqual({
@@ -192,17 +192,14 @@ describe('article editor screen', () => {
     })
     const renamedTitle = 'A more useful article'
     await act(async () => {
-      const titleInput = page.getByRole('textbox', { name: 'Article title' })
+      const titleInput = page.getByRole('textbox', { name: 'タイトル' })
       await userEvent.clear(titleInput)
       await userEvent.type(titleInput, renamedTitle)
-      await userEvent.click(
-        page.getByRole('button', { name: 'Back to articles' }),
-      )
+      await userEvent.click(page.getByRole('button', { name: 'blog-writer' }))
     })
 
     const readScreenOutput = () => ({
-      listTitle: host?.querySelector('[role="listitem"] button span')
-        ?.textContent,
+      listTitle: host?.querySelector('li button')?.textContent,
       editorCount: host?.querySelectorAll('.cm-content').length,
     })
     expect(readScreenOutput()).toEqual({
@@ -236,9 +233,7 @@ describe('article editor screen', () => {
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
     await act(async () => {
-      await userEvent.click(
-        page.getByRole('button', { name: 'Back to articles' }),
-      )
+      await userEvent.click(page.getByRole('button', { name: 'blog-writer' }))
     })
 
     const readIntegrationOutput = () => ({
@@ -320,7 +315,7 @@ First paragraph.
     })
   })
 
-  it('shows all desktop panels with the application stylesheet loaded', async () => {
+  it('shows the outline, the article, and the selected side tab on desktop', async () => {
     await page.viewport(1280, 800)
     const article: Article = {
       id: 'article-desktop-panels',
@@ -343,22 +338,39 @@ First paragraph.
     const widthOf = (selector: string) =>
       host?.querySelector<HTMLElement>(selector)?.getBoundingClientRect()
         .width ?? 0
-    const readDesktopPanelOutput = () => ({
+    const readPanels = () => ({
       outlineVisible: widthOf('[aria-label="Article outline"]') > 0,
-      memoVisible: widthOf('[aria-labelledby="memo-panel-heading"]') > 0,
+      memoVisible: widthOf('section[aria-label="メモ"]') > 0,
       sourcesVisible: widthOf('[aria-label="Reference sources"]') > 0,
       bodyVisible: widthOf('.cm-content') > 0,
-      tabListDisplay: getComputedStyle(
-        host?.querySelector('[data-slot="tabs-list"]')?.parentElement ??
-          document.createElement('div'),
-      ).display,
+      tabs: [...(host?.querySelectorAll('[role="tab"]') ?? [])].map(
+        (tab) => tab.textContent,
+      ),
+    })
+    const initialPanels = readPanels()
+    await act(async () => {
+      await userEvent.click(page.getByRole('tab', { name: '資料' }))
+    })
+
+    const readDesktopPanelOutput = () => ({
+      initialPanels,
+      panelsWithSources: readPanels(),
     })
     expect(readDesktopPanelOutput()).toEqual({
-      outlineVisible: true,
-      memoVisible: true,
-      sourcesVisible: true,
-      bodyVisible: true,
-      tabListDisplay: 'none',
+      initialPanels: {
+        outlineVisible: true,
+        memoVisible: true,
+        sourcesVisible: false,
+        bodyVisible: true,
+        tabs: ['メモ', '前提', '資料'],
+      },
+      panelsWithSources: {
+        outlineVisible: true,
+        memoVisible: false,
+        sourcesVisible: true,
+        bodyVisible: true,
+        tabs: ['メモ', '前提', '資料'],
+      },
     })
   })
 
@@ -388,7 +400,7 @@ Details.`,
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
 
-    const sidebar = host?.querySelector<HTMLElement>('aside')
+    const sidebar = host?.querySelector<HTMLElement>('nav[aria-label="構成"]')
     const readLongOutlineOutput = () => ({
       overflowY: sidebar ? getComputedStyle(sidebar).overflowY : null,
       contentExceedsVisibleHeight:
@@ -432,10 +444,8 @@ Details.`,
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
 
-    const sidebar = host?.querySelector<HTMLElement>('aside')
-    const body = host?.querySelector<HTMLElement>(
-      'section[aria-label="Article body"]',
-    )
+    const sidebar = host?.querySelector<HTMLElement>('nav[aria-label="構成"]')
+    const body = host?.querySelector<HTMLElement>('main')
     const readTabletLayoutOutput = () => ({
       overflowY: sidebar ? getComputedStyle(sidebar).overflowY : null,
       bodyStartsAfterSidebarContent:
@@ -453,7 +463,7 @@ Details.`,
     })
   })
 
-  it('shows the article panel after widening from the mobile outline tab', async () => {
+  it('shows the article panel after widening from the mobile outline screen', async () => {
     await page.viewport(375, 812)
     const article: Article = {
       id: 'article-mobile-resize',
@@ -475,15 +485,18 @@ First paragraph.
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('tab', { name: 'Outline' }))
+      await userEvent.click(
+        page
+          .getByRole('toolbar', { name: '入力補助' })
+          .getByRole('button', { name: '構成' }),
+      )
     })
     const editor = host?.querySelector('.cm-content')
-    const selectedMobileTab = host?.querySelector(
-      '[role="tab"][aria-selected="true"]',
-    )?.textContent
-    const tabList = host?.querySelector(
-      '[data-slot="tabs-list"]',
-    )?.parentElement
+    const readTabs = () =>
+      [...(host?.querySelectorAll('[role="tab"]') ?? [])].map(
+        (tab) => tab.textContent,
+      )
+    const mobileScreenTitle = host?.querySelector('header h2')?.textContent
 
     await act(async () => {
       await page.viewport(1280, 800)
@@ -495,30 +508,25 @@ First paragraph.
       (host
         ?.querySelector('[aria-label="Article outline"]')
         ?.getBoundingClientRect().width ?? 0) > 0
-    const desktopTabListDisplay = tabList
-      ? getComputedStyle(tabList).display
-      : null
+    const desktopTabs = readTabs()
 
     await act(async () => {
       await page.viewport(375, 812)
     })
-    const mobileTabListDisplay = tabList
-      ? getComputedStyle(tabList).display
-      : null
     const readResizeOutput = () => ({
-      selectedMobileTab,
+      mobileScreenTitle,
       desktopBodyVisible,
       desktopOutlineVisible,
-      desktopTabListDisplay,
-      mobileTabListDisplay,
+      desktopTabs,
+      mobileTabs: readTabs(),
       editorRetained: host?.querySelector('.cm-content') === editor,
     })
     expect(readResizeOutput()).toEqual({
-      selectedMobileTab: 'Outline',
+      mobileScreenTitle: '構成',
       desktopBodyVisible: true,
       desktopOutlineVisible: true,
-      desktopTabListDisplay: 'none',
-      mobileTabListDisplay: 'block',
+      desktopTabs: ['メモ', '前提'],
+      mobileTabs: [],
       editorRetained: true,
     })
   })
@@ -623,7 +631,7 @@ First paragraph.
     mover.destroy()
   })
 
-  it('shows mobile memo and outline tabs and returns to the article after heading selection', async () => {
+  it('opens mobile memo and outline screens from the toolbar and returns to the article after heading selection', async () => {
     await page.viewport(375, 812)
     const article: Article = {
       id: 'article-f',
@@ -634,43 +642,163 @@ First paragraph.
     doc = articleDoc
     setBody(articleDoc, '# First section\n\nFirst paragraph.\n')
     renderWorkspace(article, articleDoc, { sourcesPanel: null })
+    const toolbarButton = (name: string) =>
+      page
+        .getByRole('toolbar', { name: '入力補助' })
+        .getByRole('button', { name })
+    const readScreen = () => ({
+      title: host?.querySelector('header h2')?.textContent ?? 'article',
+      toolbar: host?.querySelector('[role="toolbar"]') !== null,
+    })
 
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
     const editor = host?.querySelector('.cm-content')
     await act(async () => {
-      await userEvent.click(page.getByRole('tab', { name: 'Memo' }))
+      await userEvent.click(toolbarButton('メモ'))
     })
-    const memoPanelVisible = page.getByRole('textbox', { name: '新しいメモ' })
+    const memoScreen = readScreen()
     await act(async () => {
-      await userEvent.type(memoPanelVisible, 'A useful note')
-      await userEvent.click(page.getByRole('button', { name: '追加' }))
-      await userEvent.click(page.getByRole('tab', { name: 'Outline' }))
+      await userEvent.type(
+        page.getByRole('textbox', { name: 'メモを足す' }),
+        'A useful note',
+      )
+      await userEvent.keyboard('{Enter}')
+      await userEvent.click(page.getByRole('button', { name: '閉じる' }))
     })
-    const heading = page.getByRole('option', { name: /First section/u })
+    const screenAfterClose = readScreen()
     await act(async () => {
-      await userEvent.click(heading)
+      await userEvent.click(toolbarButton('構成'))
+    })
+    const outlineScreen = readScreen()
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('option', { name: /First section/u }),
+      )
     })
     const articleVisible =
       (host?.querySelector('.cm-content')?.getBoundingClientRect().width ?? 0) >
       0
-
-    const readMobileTabsOutput = () => ({
-      editorRetained: host?.querySelector('.cm-content') === editor,
-      memoText: listMemos(articleDoc).length,
-      selectedTab: host
-        ?.querySelector('[role="tab"][aria-selected="true"]')
-        ?.textContent.trim(),
-      articleVisible,
-      sourcesTabCount: host?.querySelectorAll('[role="tab"]').length,
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'その他' }))
     })
-    expect(readMobileTabsOutput()).toEqual({
+
+    const readMobileScreensOutput = () => ({
+      editorRetained: host?.querySelector('.cm-content') === editor,
+      memoCount: listMemos(articleDoc).length,
+      memoScreen,
+      screenAfterClose,
+      outlineScreen,
+      screenAfterHeading: readScreen(),
+      articleVisible,
+      menuItems: [...document.querySelectorAll('[role="menuitem"]')].map(
+        (item) => item.textContent,
+      ),
+    })
+    expect(readMobileScreensOutput()).toEqual({
       editorRetained: true,
-      memoText: 1,
-      selectedTab: 'Article',
+      memoCount: 1,
+      memoScreen: { title: 'メモ', toolbar: false },
+      screenAfterClose: { title: 'article', toolbar: true },
+      outlineScreen: { title: '構成', toolbar: false },
+      screenAfterHeading: { title: 'article', toolbar: true },
       articleVisible: true,
-      sourcesTabCount: 3,
+      menuItems: ['前提', '設定'],
+    })
+  })
+
+  it('moves the block at the cursor, undoes, and redoes it from the mobile toolbar', async () => {
+    await page.viewport(375, 812)
+    const article: Article = {
+      id: 'article-mobile-move',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, 'First paragraph.\n\nSecond paragraph.\n')
+    let currentView: EditorView | null = null
+    renderWorkspace(article, articleDoc, {
+      onViewChange: (view) => {
+        if (view) currentView = view
+      },
+    })
+    const toolbarButton = (name: string) =>
+      page
+        .getByRole('toolbar', { name: '入力補助' })
+        .getByRole('button', { name })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const view = currentView as EditorView | null
+    if (!view) throw new Error('The article editor did not mount')
+    view.dispatch({
+      selection: EditorSelection.cursor('First paragraph.\n\nSec'.length),
+    })
+    await act(async () => {
+      await userEvent.click(toolbarButton('移動'))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('menuitem', { name: 'Move up' }))
+    })
+    const movedBody = getBody(articleDoc).toJSON()
+    await act(async () => {
+      await userEvent.click(toolbarButton('取り消す'))
+    })
+    const undoneBody = getBody(articleDoc).toJSON()
+    await act(async () => {
+      await userEvent.click(toolbarButton('やり直す'))
+    })
+
+    const readToolbarOutput = () => ({
+      movedBody,
+      undoneBody,
+      redoneBody: getBody(articleDoc).toJSON(),
+    })
+    expect(readToolbarOutput()).toEqual({
+      movedBody: 'Second paragraph.\n\nFirst paragraph.\n',
+      undoneBody: 'First paragraph.\n\nSecond paragraph.\n',
+      redoneBody: 'Second paragraph.\n\nFirst paragraph.\n',
+    })
+  })
+
+  it('fits the mobile editor to the visible area while the on-screen keyboard is open', async () => {
+    await page.viewport(375, 812)
+    const visualViewport = Object.assign(new EventTarget(), {
+      offsetTop: 0,
+      height: 812,
+    })
+    vi.stubGlobal('visualViewport', visualViewport)
+    const article: Article = {
+      id: 'article-mobile-keyboard',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    doc = new Y.Doc()
+    renderWorkspace(article, doc)
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const resizeVisualViewport = (offsetTop: number, height: number) => {
+      act(() => {
+        Object.assign(visualViewport, { offsetTop, height })
+        visualViewport.dispatchEvent(new Event('resize'))
+      })
+      const editorRoot = page
+        .getByRole('toolbar', { name: '入力補助' })
+        .element().parentElement
+      return { top: editorRoot?.style.top, height: editorRoot?.style.height }
+    }
+
+    const readAreas = () => ({
+      keyboardOpen: resizeVisualViewport(120, 400),
+      keyboardClosed: resizeVisualViewport(0, 812),
+    })
+    expect(readAreas()).toEqual({
+      keyboardOpen: { top: '120px', height: '400px' },
+      keyboardClosed: { top: '', height: '' },
     })
   })
 
@@ -701,7 +829,9 @@ First paragraph.
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '採用先を選ぶ' }))
+      await userEvent.click(
+        page.getByRole('button', { name: '採用', exact: true }),
+      )
     })
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
@@ -817,16 +947,13 @@ First paragraph.
       bodyAccessory: () => (
         <div data-testid="body-accessory">Draft request</div>
       ),
-      headerActions: ({ articleId, history }) => {
+      articleNotice: ({ articleId, history }) => {
         capturedArticleId = articleId
         contextHistory = history
         return null
       },
       outlineRenderer: () => (
         <div data-testid="outline-renderer">Outline renderer</div>
-      ),
-      premiseAccessory: () => (
-        <div data-testid="premise-accessory">Premise accessory</div>
       ),
       sourcesPanel: <div data-testid="source-material">Source material</div>,
     })
@@ -835,9 +962,9 @@ First paragraph.
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: /^Premise:/u }))
+      await userEvent.click(page.getByRole('tab', { name: '前提' }))
     })
-    const reader = page.getByRole('textbox', { name: 'Reader' })
+    const reader = page.getByRole('textbox', { name: '想定読者' })
     await act(async () => {
       await userEvent.clear(reader)
       await userEvent.type(reader, 'Designers')
@@ -852,8 +979,6 @@ First paragraph.
         ?.querySelector('[data-testid="body-accessory"]')
         ?.parentElement?.classList.contains('relative'),
       outlineRenderer: host?.querySelector('[data-testid="outline-renderer"]')
-        ?.textContent,
-      premiseAccessory: host?.querySelector('[data-testid="premise-accessory"]')
         ?.textContent,
       sourceMaterial: host?.querySelector('[data-testid="source-material"]')
         ?.textContent,
@@ -870,13 +995,12 @@ First paragraph.
       bodyAccessory: 'Draft request',
       relativeBodyContainer: true,
       outlineRenderer: 'Outline renderer',
-      premiseAccessory: 'Premise accessory',
       sourceMaterial: 'Source material',
       savedPremise: 'Designers',
     })
   })
 
-  it('mounts premise discussion only while the premise row is open', async () => {
+  it('replaces the premise fields with the injected panel only while the premise tab is selected', async () => {
     const article: Article = {
       id: 'article-premise-toggle',
       title: 'A useful article',
@@ -886,39 +1010,36 @@ First paragraph.
     doc = articleDoc
     setBody(articleDoc, '# Starting point\n')
     renderWorkspace(article, articleDoc, {
-      premiseAccessory: () => (
-        <div data-testid="premise-accessory">Discussion</div>
-      ),
+      premisePanel: () => <div data-testid="premise-panel">Discussion</div>,
     })
 
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: article.title }))
     })
     const readPremiseState = () => ({
-      expanded: host
-        ?.querySelector('[aria-label="Article premise"] button')
-        ?.getAttribute('aria-expanded'),
+      selectedTab: host?.querySelector('[role="tab"][aria-selected="true"]')
+        ?.textContent,
       fieldCount:
-        host?.querySelectorAll('#article-premise-fields textarea').length ?? 0,
-      accessory:
-        host?.querySelector('[data-testid="premise-accessory"]')?.textContent ??
+        host?.querySelectorAll('textarea[id^="premise-"]').length ?? 0,
+      panel:
+        host?.querySelector('[data-testid="premise-panel"]')?.textContent ??
         null,
     })
     const states = [readPremiseState()]
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: /^Premise:/u }))
+      await userEvent.click(page.getByRole('tab', { name: '前提' }))
     })
     states.push(readPremiseState())
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: /^Premise:/u }))
+      await userEvent.click(page.getByRole('tab', { name: 'メモ' }))
     })
     states.push(readPremiseState())
 
     expect(states).toEqual([
-      { expanded: 'false', fieldCount: 0, accessory: null },
-      { expanded: 'true', fieldCount: 3, accessory: 'Discussion' },
-      { expanded: 'false', fieldCount: 0, accessory: null },
+      { selectedTab: 'メモ', fieldCount: 0, panel: null },
+      { selectedTab: '前提', fieldCount: 0, panel: 'Discussion' },
+      { selectedTab: 'メモ', fieldCount: 0, panel: null },
     ])
   })
 
@@ -935,7 +1056,7 @@ First paragraph.
     setBody(articleDoc, initialBody)
     let attemptInvalidMove: (() => string) | undefined
     renderWorkspace(article, articleDoc, {
-      headerActions: ({ history, view }) => {
+      articleNotice: ({ history, view }) => {
         if (!view) return null
         attemptInvalidMove = () =>
           history
@@ -963,9 +1084,7 @@ First paragraph.
         ?.textContent ?? null
 
     await act(async () => {
-      await userEvent.click(
-        page.getByRole('button', { name: 'Back to articles' }),
-      )
+      await userEvent.click(page.getByRole('button', { name: 'blog-writer' }))
     })
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: article.title }))
@@ -985,6 +1104,175 @@ First paragraph.
       invalidMoveResult: 'No Markdown block at position',
       outlineErrorAfterMove: 'この位置には移動できません。',
       outlineErrorAfterReopen: null,
+    })
+  })
+
+  it('guides an empty article to the premise or a new memo until a memo exists', async () => {
+    const article: Article = {
+      id: 'article-empty',
+      title: 'A fresh draft',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    renderWorkspace(article, articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const readSelectedTab = () =>
+      host?.querySelector('[role="tab"][aria-selected="true"]')?.textContent
+    const hasStartButtons = () =>
+      [...(host?.querySelectorAll('button') ?? [])].some(
+        (button) => button.textContent === 'メモを書く',
+      )
+    const startButtonsBeforeMemo = hasStartButtons()
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '前提を決める' }))
+    })
+    const tabAfterPremise = readSelectedTab()
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'メモを書く' }))
+    })
+    const tabAfterMemo = readSelectedTab()
+    const focusedElementId = document.activeElement?.id
+    await act(async () => {
+      await userEvent.keyboard('A first thought')
+      await userEvent.keyboard('{Enter}')
+    })
+
+    const readEmptyArticleOutput = () => ({
+      startButtonsBeforeMemo,
+      tabAfterPremise,
+      tabAfterMemo,
+      focusedElementId,
+      startButtonsAfterMemo: hasStartButtons(),
+    })
+    expect(readEmptyArticleOutput()).toEqual({
+      startButtonsBeforeMemo: true,
+      tabAfterPremise: '前提',
+      tabAfterMemo: 'メモ',
+      focusedElementId: 'new-memo',
+      startButtonsAfterMemo: false,
+    })
+  })
+
+  it('hides the empty article guide once the body has text', async () => {
+    const article: Article = {
+      id: 'article-empty-body',
+      title: 'A fresh draft',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    renderWorkspace(article, articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const hasStartButtons = () =>
+      [...(host?.querySelectorAll('button') ?? [])].some(
+        (button) => button.textContent === 'メモを書く',
+      )
+    const startButtonsBeforeTyping = hasStartButtons()
+    const editor = host?.querySelector<HTMLElement>('.cm-content')
+    if (!editor) throw new Error('The article editor did not open')
+    await act(async () => {
+      await userEvent.type(editor, 'A first line')
+    })
+
+    const readGuideOutput = () => ({
+      startButtonsBeforeTyping,
+      startButtonsAfterTyping: hasStartButtons(),
+    })
+    expect(readGuideOutput()).toEqual({
+      startButtonsBeforeTyping: true,
+      startButtonsAfterTyping: false,
+    })
+  })
+
+  it('opens the settings from the editor header', async () => {
+    const article: Article = {
+      id: 'article-settings',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    const onOpenSettings = vi.fn()
+    renderWorkspace(article, articleDoc, { onOpenSettings })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '設定' }))
+    })
+
+    expect(onOpenSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the export screen over the hidden editor and returns to the article', async () => {
+    const article: Article = {
+      id: 'article-export',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    renderWorkspace(article, articleDoc, {
+      articleNotice: ({ openExport }) => (
+        <button
+          onClick={() => {
+            openExport('sync')
+          }}
+          type="button"
+        >
+          Compare file
+        </button>
+      ),
+      exportScreen: ({ section, syncStatus, onBack }) => (
+        <button onClick={onBack} type="button">
+          {`Export ${section ?? 'default'} ${syncStatus ?? 'unknown'}`}
+        </button>
+      ),
+    })
+    const readScreen = () => ({
+      exportScreen:
+        [...(host?.querySelectorAll('button') ?? [])].find(({ textContent }) =>
+          textContent.startsWith('Export '),
+        )?.textContent ?? null,
+      editorHidden:
+        host?.querySelector('.cm-editor')?.closest('[hidden]') !== null,
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '書き出し' }))
+    })
+    const fromHeader = readScreen()
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: /^Export / }))
+    })
+    const afterBack = readScreen()
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'Compare file' }))
+    })
+
+    const readExportOutput = () => ({
+      fromHeader,
+      afterBack,
+      fromNotice: readScreen(),
+    })
+    expect(readExportOutput()).toEqual({
+      fromHeader: { exportScreen: 'Export default synced', editorHidden: true },
+      afterBack: { exportScreen: null, editorHidden: false },
+      fromNotice: { exportScreen: 'Export sync synced', editorHidden: true },
     })
   })
 
@@ -1015,8 +1303,37 @@ First paragraph.
     })
     expect(readSyncOutput()).toEqual({
       syncError: 'Sync needs attention.',
-      reauthentication: 'Log in again',
-      syncState: '未同期',
+      reauthentication: 'ログインし直す',
+      syncState: '○ 未同期',
+    })
+  })
+
+  it('shows the offline banner while the browser is offline and removes it after reconnecting', () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    const article: Article = {
+      id: 'article-offline',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    renderWorkspace(article, articleDoc)
+
+    const readBanner = () => host?.querySelector('[role="status"]')?.textContent
+    const offlineBanner = readBanner()
+    onLine.mockReturnValue(true)
+    act(() => {
+      window.dispatchEvent(new Event('online'))
+    })
+
+    const readBannerOutput = () => ({
+      offlineBanner,
+      onlineBanner: readBanner(),
+    })
+    expect(readBannerOutput()).toEqual({
+      offlineBanner:
+        'オフラインです。すべての記事を開いて編集できます。変更は端末に保存され、つながったら同期します。LLM はつながってから使えます。',
+      onlineBanner: undefined,
     })
   })
 
@@ -1034,7 +1351,7 @@ First paragraph.
     let liveReplacement: string | undefined
     let staleReplaceBody: ((value: string) => Result<void, Error>) | undefined
     renderWorkspace(article, articleDoc, {
-      headerActions: ({ replaceBody }) => {
+      articleNotice: ({ replaceBody }) => {
         staleReplaceBody ??= replaceBody
         if (initialReplacementResult === undefined) {
           initialReplacementResult = replaceBody('# Too early\n').match(
@@ -1066,9 +1383,7 @@ First paragraph.
       await userEvent.click(page.getByRole('button', { name: 'Replace body' }))
     })
     await act(async () => {
-      await userEvent.click(
-        page.getByRole('button', { name: 'Back to articles' }),
-      )
+      await userEvent.click(page.getByRole('button', { name: 'blog-writer' }))
     })
     const staleReplacement = staleReplaceBody?.('# Stale replacement\n')
     const staleReplacementResult = staleReplacement?.match(
@@ -1142,7 +1457,7 @@ First paragraph.
         <ArticleEditorPage
           article={article}
           client={client}
-          headerActions={({ replaceBody }) => {
+          articleNotice={({ replaceBody }) => {
             if (article.id === firstArticle.id) {
               staleReplaceBody ??= replaceBody
             }
@@ -1150,6 +1465,7 @@ First paragraph.
           }}
           onBack={() => {}}
           onLoginAgain={() => {}}
+          onOpenSettings={() => {}}
           requiresAuthentication={false}
         />
       )
