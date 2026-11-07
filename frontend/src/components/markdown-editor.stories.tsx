@@ -14,7 +14,6 @@ interface StoryArgs {
   className?: string
   initialSelection?: { anchor: number; head?: number }
   evidenceVerdict?: EvidenceVerdict
-  evidenceEdited?: boolean
   showMoveHandles?: boolean
 }
 
@@ -51,7 +50,6 @@ function MarkdownEditorPreview({
   className,
   initialSelection,
   evidenceVerdict,
-  evidenceEdited,
   showMoveHandles = false,
 }: StoryArgs) {
   const { body, doc, history, extensions } = useMemo(() => {
@@ -73,7 +71,7 @@ function MarkdownEditorPreview({
         id: 'evidence-example',
         from: 0,
         to: content.length,
-        claim: evidenceEdited === true ? 'An earlier sentence.' : content,
+        claim: content,
         sourceId: 'source-example',
         quote: 'The measured value changed during the study period.',
         verdict: evidenceVerdict,
@@ -85,7 +83,7 @@ function MarkdownEditorPreview({
       ? [createOutlineEditorExtension(history)]
       : []
     return { body, doc, history, extensions }
-  }, [content, evidenceEdited, evidenceVerdict, showMoveHandles])
+  }, [content, evidenceVerdict, showMoveHandles])
 
   useEffect(() => {
     return () => {
@@ -162,13 +160,9 @@ export const SupportedEvidenceMarker: Story = {
   args: { content: evidenceContent, evidenceVerdict: 'supported' },
 }
 
-export const EditedEvidenceMarker: Story = {
-  name: 'the sentence ends with a yellow marker after it changes.',
-  args: {
-    content: evidenceContent,
-    evidenceVerdict: 'supported',
-    evidenceEdited: true,
-  },
+export const NeedsReviewEvidenceMarker: Story = {
+  name: 'the sentence ends with a yellow marker for a contradiction.',
+  args: { content: evidenceContent, evidenceVerdict: 'contradicted' },
 }
 
 export const BlockMoveHandles: Story = {
