@@ -1,6 +1,6 @@
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { ok } from 'neverthrow'
+import { ok, okAsync } from 'neverthrow'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -275,7 +275,7 @@ describe('body request', () => {
     })
     expect(readOutput()).toEqual({
       chooserOpen: true,
-      error: '本文エディターを準備できませんでした。',
+      error: '作成できませんでした · 本文エディターを準備できませんでした。',
       selected: false,
     })
   })
@@ -433,7 +433,7 @@ describe('body request', () => {
       await vi.waitFor(() => {
         if (
           document.querySelector('[role="alert"]')?.textContent !==
-          'LLM API returned status 503'
+          '作成できませんでした · LLM API returned status 503'
         ) {
           throw new Error('The failed request has not been announced')
         }
@@ -448,7 +448,7 @@ describe('body request', () => {
     })
     expect(readOutput()).toEqual({
       body: content,
-      error: 'LLM API returned status 503',
+      error: '作成できませんでした · LLM API returned status 503',
       inFlight: null,
     })
   })
@@ -493,7 +493,7 @@ describe('body request', () => {
     })
     expect(readOutput()).toEqual({
       body: content,
-      error: '本文エディターを準備できませんでした。',
+      error: '作成できませんでした · 本文エディターを準備できませんでした。',
       fetchCalls: 0,
       inFlight: null,
     })
@@ -551,7 +551,7 @@ describe('body request', () => {
     })
     expect(readOutput()).toEqual({
       body: content,
-      error: 'この範囲には別の提案が表示されています',
+      error: '作成できませんでした · この範囲には別の提案が表示されています',
       fetchCalls: 0,
       proposal: [
         {
@@ -593,7 +593,7 @@ describe('body request', () => {
     })
     expect(readOutput()).toEqual({
       body: content,
-      error: 'この範囲には別の提案が表示されています',
+      error: '作成できませんでした · この範囲には別の提案が表示されています',
       fetchCalls: 0,
       inFlight: '作成中',
     })
@@ -649,6 +649,183 @@ describe('body request', () => {
         added: ['A shorter'],
         actions: ['✓ 採用', '× 却下'],
       },
+    })
+  })
+
+  it.each([
+    {
+      name: 'a selection',
+      article: content,
+      anchor: undefined,
+      expected: { placeholder: '選択した範囲への依頼', target: '選択範囲' },
+    },
+    {
+      name: 'the paragraph at the cursor',
+      article: content,
+      anchor: content.indexOf('this'),
+      expected: { placeholder: 'この段落への依頼', target: '段落' },
+    },
+    {
+      name: 'an insertion on a blank line',
+      article: `${content}\n\n`,
+      anchor: `${content}\n\n`.length,
+      expected: { placeholder: 'ここに書く文への依頼', target: '挿入' },
+    },
+  ])(
+    'names $name as the request target',
+    async ({ article, anchor, expected }) => {
+      const { view } = createRequestEditor([], article)
+      if (anchor !== undefined) view.dispatch({ selection: { anchor } })
+
+      const input = await openRequestInput(view)
+
+      const readOutput = () => ({
+        placeholder: input.placeholder,
+        target: input.nextElementSibling?.textContent ?? null,
+      })
+      expect(readOutput()).toEqual(expected)
+    },
+  )
+
+  it.each([
+    {
+      name: 'clicking it',
+      choose: async () => {
+        const button = Array.from(document.querySelectorAll('button')).find(
+          (candidate) => candidate.textContent === '簡潔にする',
+        )
+        if (!button) throw new Error('The edit candidate was not rendered')
+        await userEvent.click(button)
+      },
+      expected: { instructions: ['簡潔にする'], label: '> 簡潔にする' },
+    },
+    {
+      name: 'the arrow keys and Enter',
+      choose: async () => {
+        await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+      },
+      expected: { instructions: ['例を 1 つ足す'], label: '> 例を 1 つ足す' },
+    },
+  ])(
+    'sends an edit candidate chosen by $name as the instruction',
+    async ({ choose, expected }) => {
+      const { view } = createRequestEditor()
+      const instructions: unknown[] = []
+      const fetcher: typeof fetch = (_input, init) => {
+        const request: unknown = JSON.parse(
+          typeof init?.body === 'string' ? init.body : 'null',
+        )
+        if (typeof request === 'object' && request !== null)
+          instructions.push(Reflect.get(request, 'instruction'))
+        return new Promise<Response>(() => undefined)
+      }
+      vi.stubGlobal('fetch', fetcher)
+      const input = await openRequestInput(view)
+
+      await act(async () => {
+        input.focus()
+        await choose()
+        await vi.waitFor(() => {
+          if (instructions.length === 0)
+            throw new Error('The candidate request did not start')
+        })
+      })
+
+      const readOutput = () => ({
+        instructions,
+        label:
+          view.dom.querySelector('.suggestion-generating-label')?.textContent ??
+          null,
+      })
+      expect(readOutput()).toEqual(expected)
+    },
+  )
+
+  it('returns to the request input with the typed text after a failure', async () => {
+    const { view } = createRequestEditor()
+    let requestCount = 0
+    vi.stubGlobal('fetch', () => {
+      requestCount += 1
+      return Promise.resolve(new Response(null, { status: 503 }))
+    })
+    await submitRequest(view, 'make it concise', () => requestCount === 1)
+    const retryButton = await vi.waitFor(() => {
+      const button = Array.from(document.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === '依頼し直す',
+      )
+      if (!button) throw new Error('The failure was not shown')
+      return button
+    })
+
+    await act(async () => {
+      await userEvent.click(retryButton)
+    })
+
+    const readOutput = () => ({
+      alert: document.querySelector('[role="alert"]')?.textContent ?? null,
+      instruction:
+        document.querySelector<HTMLInputElement>('#body-request')?.value ??
+        null,
+    })
+    expect(readOutput()).toEqual({
+      alert: null,
+      instruction: 'make it concise',
+    })
+  })
+
+  it('keeps an accepted proposal and explains when its evidence cannot be saved', async () => {
+    const { body, view } = createRequestEditor([], content, true, [
+      {
+        id: 'write-from-sources',
+        label: '資料をもとに書く',
+        createProposal: () =>
+          okAsync({
+            replacement: 'Sourced sentence.',
+            metadata: {
+              sentences: [
+                {
+                  from: 0,
+                  to: 1000,
+                  claim: 'Sourced sentence.',
+                  sourceId: null,
+                  quote: '',
+                  verdict: 'insufficient',
+                },
+              ],
+            },
+            replacementMarks: [],
+          }),
+      },
+    ])
+    await openRequestInput(view)
+    const presetButton = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('button'),
+    ).find((candidate) => candidate.textContent === '資料をもとに書く')
+    if (!presetButton) throw new Error('The preset request was not rendered')
+    await act(async () => {
+      await userEvent.click(presetButton)
+    })
+    const acceptButton = await vi.waitFor(() => {
+      const button = Array.from(
+        view.dom.querySelectorAll<HTMLButtonElement>(
+          '.cm-suggestion-widget button',
+        ),
+      ).find((candidate) => candidate.textContent.includes('採用'))
+      if (!button) throw new Error('The proposal has no accept action')
+      return button
+    })
+
+    await act(async () => {
+      await userEvent.click(acceptButton)
+    })
+
+    const readOutput = () => ({
+      alert: document.querySelector('[role="alert"]')?.textContent ?? null,
+      body: body.toJSON(),
+    })
+    expect(readOutput()).toEqual({
+      alert: '根拠を保存できませんでした · 提案は本文に採用されています。',
+      body: '# Article\n\n## Section\nSourced sentence.',
     })
   })
 

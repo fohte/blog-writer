@@ -49,15 +49,6 @@ export const Unfocused: Story = {
   },
 }
 
-export const Generating: Story = {
-  name: 'the editor shows a compact creating state while a suggestion is pending.',
-  args: {
-    generating: true,
-    original: '',
-    replacement: '',
-  },
-}
-
 export const Narrow: Story = {
   name: 'the diff wraps within a narrow column.',
   render: (args) => (

@@ -5,12 +5,14 @@ import {
   type EditorView,
   WidgetType,
 } from '@codemirror/view'
+import { useEffect, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { SuggestionDiff } from '#components/suggestion-diff'
+import { SuggestionGeneratingBar } from '#components/suggestion-generating-bar'
 import type {
+  InFlightSuggestion,
   SuggestionLayerState,
-  SuggestionPosition,
   TextSuggestion,
 } from '#editor/suggestion-layer'
 
@@ -18,6 +20,8 @@ const rootsByDOM = new WeakMap<HTMLElement, Root>()
 
 interface SuggestionControllerActions {
   accept(id: string): void
+  cancelInFlight(): boolean
+  readonly inFlightCancellable: boolean
   focus(id: string): void
   reject(id: string): void
 }
@@ -66,34 +70,66 @@ export function createSuggestionDecorations<Metadata = unknown>(
   })
 
   if (state.inFlight) {
-    const block = isFullLineRange(
-      editorState.doc,
-      state.inFlight.from,
-      state.inFlight.to,
-    )
+    const { from, to } = state.inFlight
+    if (from < to) {
+      decorations.push(
+        Decoration.mark({ class: 'cm-suggestion-in-flight-target' }).range(
+          from,
+          to,
+        ),
+      )
+    }
     decorations.push(
       Decoration.widget({
-        block,
+        block: true,
         side: 1,
         widget: new SuggestionDiffWidget(
           null,
           state.inFlight,
           '',
           false,
-          block,
+          true,
           controller,
         ),
-      }).range(state.inFlight.from),
+      }).range(editorState.doc.lineAt(to).to),
     )
   }
 
   return Decoration.set(decorations, true)
 }
 
+function InFlightBar({
+  label,
+  onCancel,
+}: {
+  label: string | undefined
+  onCancel: (() => void) | undefined
+}) {
+  const [startedAt] = useState(() => Date.now())
+  const [now, setNow] = useState(startedAt)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now())
+    }, 1000)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  return (
+    <SuggestionGeneratingBar
+      elapsedSeconds={Math.floor((now - startedAt) / 1000)}
+      label={label}
+      onCancel={onCancel}
+    />
+  )
+}
+
 class SuggestionDiffWidget extends WidgetType {
   constructor(
     readonly suggestion: TextSuggestion | null,
-    readonly position: SuggestionPosition,
+    readonly position: InFlightSuggestion,
     readonly original: string,
     readonly focused: boolean,
     readonly block: boolean,
@@ -124,6 +160,7 @@ class SuggestionDiffWidget extends WidgetType {
       other.suggestion?.replacement === this.suggestion?.replacement &&
       other.suggestion?.note === this.suggestion?.note &&
       other.original === this.original &&
+      other.position.label === this.position.label &&
       other.focused === this.focused &&
       other.block === this.block
     )
@@ -160,11 +197,15 @@ class SuggestionDiffWidget extends WidgetType {
           {...(suggestion.note === undefined ? {} : { note: suggestion.note })}
         />
       ) : (
-        <SuggestionDiff
-          generating
-          inline={!this.block}
-          original=""
-          replacement=""
+        <InFlightBar
+          label={this.position.label}
+          onCancel={
+            this.controller.inFlightCancellable
+              ? () => {
+                  this.controller.cancelInFlight()
+                }
+              : undefined
+          }
         />
       ),
     )

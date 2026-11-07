@@ -6,16 +6,16 @@ import { getBody } from '#article/body'
 import {
   createSuggestionLayer,
   MarkdownEditor,
-  type SuggestionPosition,
   type TextSuggestion,
 } from '#editor/index'
+import type { InFlightSuggestion } from '#editor/suggestion-layer'
 import { createMoveHistory } from '#outline/index'
 
 interface StoryArgs {
   content: string
   suggestion?: TextSuggestion
   initialSelectionHead: number
-  initialInFlight?: SuggestionPosition
+  initialInFlight?: InFlightSuggestion
   width?: string
 }
 
@@ -33,6 +33,7 @@ function SuggestionEditorPreview({
     const history = createMoveHistory(doc)
     const layer = createSuggestionLayer({
       initialSuggestions: suggestion ? [suggestion] : [],
+      onCancelInFlight: () => undefined,
       ...(initialInFlight ? { initialInFlight } : {}),
     })
     return { body, doc, history, layer }
@@ -104,11 +105,15 @@ export const UnfocusedWholeLine: Story = {
 }
 
 export const Generating: Story = {
-  name: 'the editor shows a pending suggestion at the end of the paragraph.',
+  name: 'the editor underlines the requested paragraph and shows its generating bar below it.',
   args: {
     content,
     initialSelectionHead: content.length,
-    initialInFlight: { from: content.length, to: content.length },
+    initialInFlight: {
+      from: content.lastIndexOf('\n') + 1,
+      to: content.length,
+      label: 'Make it concise',
+    },
   },
 }
 

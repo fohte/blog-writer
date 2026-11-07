@@ -12,6 +12,7 @@ import { err, ok, type Result } from 'neverthrow'
 import {
   focusForSelection,
   hasOverlappingRange,
+  type InFlightSuggestion,
   isRangeValid,
   mapRange,
   rangesOverlap,
@@ -28,6 +29,7 @@ import { SuggestionRangeTracker } from '#editor/suggestion-layer-tracking'
 import { createSuggestionDecorations } from '#editor/suggestion-layer-view'
 
 export type {
+  InFlightSuggestion,
   SuggestionDecision,
   SuggestionLayerError,
   SuggestionLayerState,
@@ -41,7 +43,7 @@ type ScopedEffect<Value> = { scope: symbol; value: Value }
 
 type SuggestionLayerSnapshot = {
   suggestions: readonly SuggestionPosition[]
-  inFlight: SuggestionPosition | null
+  inFlight: InFlightSuggestion | null
 }
 
 type GetSuggestionLayerSnapshot = () => SuggestionLayerSnapshot
@@ -52,12 +54,12 @@ const mountedSuggestionLayers = new WeakMap<
 >()
 
 const replaceInFlight =
-  StateEffect.define<ScopedEffect<SuggestionPosition | null>>()
+  StateEffect.define<ScopedEffect<InFlightSuggestion | null>>()
 const removeSuggestion = StateEffect.define<ScopedEffect<string>>()
 
 export interface SuggestionLayerOptions<Metadata = unknown> {
   initialSuggestions?: readonly TextSuggestion<Metadata>[]
-  initialInFlight?: SuggestionPosition
+  initialInFlight?: InFlightSuggestion
   trackAcceptedRanges?: boolean
   onResolve?: (
     suggestion: TextSuggestion<Metadata>,
@@ -160,7 +162,8 @@ export class SuggestionLayerController<Metadata = unknown> {
           })
 
           if (inFlight) {
-            inFlight = mapRange(inFlight, transaction.changes, changedRanges)
+            const range = mapRange(inFlight, transaction.changes, changedRanges)
+            inFlight = range ? { ...inFlight, ...range } : null
           }
         }
 
@@ -251,6 +254,10 @@ export class SuggestionLayerController<Metadata = unknown> {
         '.cm-suggestion-widget': {
           whiteSpace: 'normal',
         },
+        '.cm-suggestion-in-flight-target': {
+          textDecoration: 'underline dotted var(--muted-foreground)',
+          textUnderlineOffset: '5px',
+        },
       }),
     ]
   }
@@ -295,17 +302,16 @@ export class SuggestionLayerController<Metadata = unknown> {
     const state = view?.state.field(this.stateField, false)
     if (!view || !state?.inFlight) return ok(undefined)
 
+    const position = { from: state.inFlight.from, to: state.inFlight.to }
     const id = this.createSuggestionId(state.suggestions)
     const replacementText =
-      typeof replacement === 'string'
-        ? replacement
-        : replacement(state.inFlight)
+      typeof replacement === 'string' ? replacement : replacement(position)
     // The pending range is itself the replacement, so it is not a conflict.
     const validation = validateSuggestions(
       [
         ...state.suggestions,
         {
-          ...state.inFlight,
+          ...position,
           id,
           replacement: replacementText,
           ...(details?.metadata === undefined
@@ -332,7 +338,7 @@ export class SuggestionLayerController<Metadata = unknown> {
   }
 
   setInFlight(
-    position: SuggestionPosition | null,
+    position: InFlightSuggestion | null,
   ): Result<void, SuggestionLayerError> {
     const view = this.view
     if (!view) return err({ type: 'not-mounted' })
@@ -353,7 +359,7 @@ export class SuggestionLayerController<Metadata = unknown> {
     return ok(undefined)
   }
 
-  getInFlight(): SuggestionPosition | null {
+  getInFlight(): InFlightSuggestion | null {
     const view = this.view
     return view?.state.field(this.stateField, false)?.inFlight ?? null
   }
@@ -453,7 +459,12 @@ export class SuggestionLayerController<Metadata = unknown> {
     return true
   }
 
-  private cancelInFlight(): boolean {
+  // Without a handler, cancelling only hides the marker while the work keeps running.
+  get inFlightCancellable(): boolean {
+    return this.options.onCancelInFlight !== undefined
+  }
+
+  cancelInFlight(): boolean {
     const view = this.view
     const state = view?.state.field(this.stateField, false)
     if (!state?.inFlight) return false

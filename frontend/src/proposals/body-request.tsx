@@ -7,8 +7,11 @@ import type * as Y from 'yjs'
 import { listEvidenceOverlapping, listSources } from '#article/index'
 import { getPremise } from '#article/premise'
 import {
+  type BodyRequestCandidate,
+  type BodyRequestFailure,
   type BodyRequestPhase,
   type BodyRequestPresetOption,
+  type BodyRequestTarget,
   BodyRequestView,
 } from '#components/body-request-view'
 import { loadLlmSettings } from '#lib/llm-settings'
@@ -25,6 +28,12 @@ import {
 import type { WriteFromKeyPointsProposal } from '#proposals/write-from-key-points'
 
 const overlappingSuggestionError = 'この範囲には別の提案が表示されています'
+
+const editCandidates: readonly BodyRequestCandidate[] = [
+  { id: 'concise', label: '簡潔にする', group: 'edit' },
+  { id: 'add-example', label: '例を 1 つ足す', group: 'edit' },
+  { id: 'smooth-flow', label: '前後とのつながりを直す', group: 'edit' },
+]
 
 type BodyRequestProposalResult = Pick<
   WriteFromKeyPointsProposal,
@@ -104,6 +113,21 @@ export function bodyRequestExtensions(
   ]
 }
 
+function readSelectionContext(view: EditorView) {
+  const selection = view.state.selection.main
+  return getBodyRequestContext(view.state.doc.toString(), {
+    from: selection.from,
+    to: selection.to,
+  })
+}
+
+function readTarget(view: EditorView | null): BodyRequestTarget {
+  if (!view) return 'paragraph'
+  if (!view.state.selection.main.empty) return 'selection'
+  const { range } = readSelectionContext(view)
+  return range.from === range.to ? 'insertion' : 'paragraph'
+}
+
 export function BodyRequestAccessory({
   doc,
   view,
@@ -114,8 +138,19 @@ export function BodyRequestAccessory({
   const [phase, setPhase] = useState<BodyRequestPhase>('input')
   const [requestActive, setRequestActive] = useState(false)
   const [instruction, setInstruction] = useState('')
-  const [error, setError] = useState<string>()
+  const [failure, setFailure] = useState<BodyRequestFailure>()
   const [touchDevice, setTouchDevice] = useState(false)
+  // The editor keeps its selection while the request input has focus, so typing does not change the target.
+  const target = useMemo(
+    () => (open ? readTarget(view) : 'paragraph'),
+    [open, view],
+  )
+
+  const fail = useCallback((reason: string, title = '作成できませんでした') => {
+    setFailure({ title, reason })
+    setPhase('error')
+    setOpen(true)
+  }, [])
 
   useEffect(() => {
     const media = window.matchMedia('(hover: none) and (pointer: coarse)')
@@ -135,7 +170,7 @@ export function BodyRequestAccessory({
         setRequestActive(false)
         if (preserveInput) return
         setOpen(false)
-        setError(undefined)
+        setFailure(undefined)
         setInstruction('')
         setPhase('input')
       }),
@@ -145,7 +180,7 @@ export function BodyRequestAccessory({
   useEffect(
     () =>
       manager.subscribeOpen(() => {
-        setError(undefined)
+        setFailure(undefined)
         setInstruction('')
         setPhase('input')
         setOpen(true)
@@ -156,11 +191,9 @@ export function BodyRequestAccessory({
   useEffect(
     () =>
       manager.subscribeEvidenceError(() => {
-        setError('提案は採用されましたが、根拠を保存できませんでした。')
-        setPhase('error')
-        setOpen(true)
+        fail('提案は本文に採用されています。', '根拠を保存できませんでした')
       }),
-    [manager],
+    [fail, manager],
   )
 
   useEffect(
@@ -173,28 +206,19 @@ export function BodyRequestAccessory({
 
   const readRequestTarget = () => {
     if (!view) {
-      setError('本文エディターを準備できませんでした。')
-      setPhase('error')
-      setOpen(true)
+      fail('本文エディターを準備できませんでした。')
       return undefined
     }
-    const selection = view.state.selection.main
-    return {
-      context: getBodyRequestContext(view.state.doc.toString(), {
-        from: selection.from,
-        to: selection.to,
-      }),
-      view,
-    }
+    return { context: readSelectionContext(view), view }
   }
 
-  const startRequest = () => {
+  const startRequest = (requestInstruction: string) => {
     const requestTarget = readRequestTarget()
     if (!requestTarget) return
     const { context } = requestTarget
     const premise = getPremise(doc)
     const body: BodyRequestInput = {
-      instruction,
+      instruction: requestInstruction,
       premise: {
         audience: premise.audience ?? '',
         purpose: premise.purpose ?? '',
@@ -219,10 +243,11 @@ export function BodyRequestAccessory({
     if (evidenceQuotes.length > 0) body.evidence_quotes = evidenceQuotes
     const selection: BodyRequestPresetSelection = {
       ...requestTarget,
-      instruction,
+      instruction: requestInstruction,
     }
     startProposalRequest(
       selection,
+      requestInstruction,
       (signal) =>
         loadLlmSettings(() => window.localStorage).match(
           (settings) => requestBodyProposal(fetch, settings, body, signal),
@@ -239,6 +264,7 @@ export function BodyRequestAccessory({
 
   const startProposalRequest = (
     requestTarget: BodyRequestPresetSelection,
+    label: string,
     createProposal: (
       signal: AbortSignal,
     ) => ResultAsync<BodyRequestProposalResult, Error>,
@@ -249,33 +275,29 @@ export function BodyRequestAccessory({
   ) => {
     const { context, view } = requestTarget
     if (manager.layer.overlapsOtherLayer(context.range)) {
-      setError(overlappingSuggestionError)
-      setPhase('error')
-      setOpen(true)
+      fail(overlappingSuggestionError)
       return
     }
     const controller = manager.beginRequest()
     manager.clearSuggestions()
     manager.clearInFlight()
-    const pending = manager.layer.setInFlight(context.range)
+    const pending = manager.layer.setInFlight({ ...context.range, label })
     if (pending.isErr()) {
       manager.finishRequest(controller)
       controller.abort()
       manager.clearInFlight()
-      setError(
+      fail(
         pending.error.type === 'not-mounted'
           ? '本文エディターを準備できませんでした。'
           : pending.error.type === 'invalid-range'
             ? '依頼する範囲を特定できませんでした。'
             : overlappingSuggestionError,
       )
-      setPhase('error')
-      setOpen(true)
       return
     }
 
     setOpen(false)
-    setError(undefined)
+    setFailure(undefined)
     setPhase('input')
     setRequestActive(true)
     view.focus()
@@ -297,9 +319,7 @@ export function BodyRequestAccessory({
             () => undefined,
             () => {
               manager.clearInFlight()
-              setError('提案を本文に表示できませんでした。')
-              setPhase('error')
-              setOpen(true)
+              fail('提案を本文に表示できませんでした。')
             },
           )
       },
@@ -308,19 +328,8 @@ export function BodyRequestAccessory({
         if (controller.signal.aborted) return
         setRequestActive(false)
         manager.clearInFlight()
-        setError(cause.message)
-        setPhase('error')
-        setOpen(true)
+        fail(cause.message)
       },
-    )
-  }
-
-  const startPresetRequest = (
-    preset: BodyRequestProposalPreset,
-    selection: BodyRequestPresetSelection,
-  ) => {
-    startProposalRequest(selection, (signal) =>
-      preset.createProposal(selection, signal),
     )
   }
 
@@ -351,46 +360,66 @@ export function BodyRequestAccessory({
     }
   }, [cancelRequest, manager, requestActive, view])
 
+  const selectPreset = (preset: BodyRequestPreset) => {
+    const requestTarget = readRequestTarget()
+    if (!requestTarget) return
+    const selection = { ...requestTarget, instruction }
+    setOpen(false)
+    setFailure(undefined)
+    setInstruction('')
+    setPhase('input')
+    if ('createProposal' in preset) {
+      startProposalRequest(selection, preset.label, (signal) =>
+        preset.createProposal(selection, signal),
+      )
+    } else {
+      preset.onSelect(selection)
+    }
+  }
+
   return (
     <BodyRequestView
       anchor={cursorLineAnchor(view)}
-      error={error}
+      candidates={[
+        ...editCandidates,
+        ...(presets ?? []).map(({ id, label }): BodyRequestCandidate => ({
+          id,
+          label,
+          group: 'research',
+        })),
+      ]}
+      failure={failure}
       instruction={instruction}
+      onCandidateSelect={(id) => {
+        const editCandidate = editCandidates.find((item) => item.id === id)
+        if (editCandidate) {
+          startRequest(editCandidate.label)
+          return
+        }
+        const preset = presets?.find((item) => item.id === id)
+        if (preset) selectPreset(preset)
+      }}
       onInstructionChange={setInstruction}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
         if (nextOpen) {
-          setError(undefined)
+          setFailure(undefined)
           setInstruction('')
           setPhase('input')
         } else if (phase === 'input') {
-          setError(undefined)
+          setFailure(undefined)
         }
       }}
-      onPresetSelect={(id) => {
-        const preset = presets?.find((item) => item.id === id)
-        if (!preset) return
-        const requestTarget = readRequestTarget()
-        if (!requestTarget) return
-        const selectedInstruction = instruction
-        const selection = {
-          ...requestTarget,
-          instruction: selectedInstruction,
-        }
-        setOpen(false)
-        setError(undefined)
-        setInstruction('')
+      onRetry={() => {
+        setFailure(undefined)
         setPhase('input')
-        if ('createProposal' in preset) {
-          startPresetRequest(preset, selection)
-        } else {
-          preset.onSelect(selection)
-        }
       }}
-      onSubmit={startRequest}
+      onSubmit={() => {
+        startRequest(instruction)
+      }}
       open={open}
       phase={phase}
-      {...(presets === undefined ? {} : { presets })}
+      target={target}
       touchDevice={touchDevice}
     />
   )
