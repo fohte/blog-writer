@@ -226,7 +226,7 @@ export const DesktopLongOutline: Story = {
 }
 
 export const TabletLongOutline: Story = {
-  name: 'the tablet layout stacks a long outline above the article and the side tabs below it.',
+  name: 'the tablet layout places a long outline above the article body',
   args: { layout: 'responsive', longOutline: true },
   globals: { viewport: { value: 'tablet' } },
   parameters: {
