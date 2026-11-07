@@ -213,7 +213,7 @@ mod tests {
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
-    use super::{AppState, llm_api_router, router, router_with_frontend_fallback};
+    use super::{AppState, llm_api_router, openapi, router, router_with_frontend_fallback};
     use crate::host_origin::HostOriginPolicy;
     use crate::{
         config::{ExportConfig, ExportDestination, ExportFormat, LlmConfig, ProviderName},
@@ -302,9 +302,12 @@ mod tests {
 
     #[rstest]
     #[case::write_from_key_points("/api/write-from-key-points")]
+    #[case::propose_outline("/api/proposals/outline")]
     #[case::research_key_points("/api/research/key-points")]
     #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[case::research_job("/api/research/jobs")]
+    #[case::proposal_body_request("/api/proposals/body-request")]
+    #[case::proposal_transition("/api/proposals/transition")]
     #[test_attr(tokio::test)]
     async fn includes_llm_use_case_routes_in_api_only_mode(#[case] uri: &'static str) {
         let response = test_llm_api_router(policy())
@@ -337,9 +340,12 @@ mod tests {
 
     #[rstest]
     #[case::write_from_key_points("/api/write-from-key-points")]
+    #[case::propose_outline("/api/proposals/outline")]
     #[case::research_key_points("/api/research/key-points")]
     #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[case::research_job("/api/research/jobs")]
+    #[case::proposal_body_request("/api/proposals/body-request")]
+    #[case::proposal_transition("/api/proposals/transition")]
     #[test_attr(tokio::test)]
     async fn allows_cors_preflight_from_an_allowed_origin(#[case] uri: &'static str) {
         let response = test_llm_api_router(policy())
@@ -402,6 +408,16 @@ mod tests {
                 ]),
             )
         );
+    }
+
+    #[test]
+    fn openapi_contains_transition_proposal_route() {
+        let actual = openapi()
+            .paths
+            .paths
+            .contains_key("/api/proposals/transition");
+
+        assert!(actual);
     }
 
     #[rstest]

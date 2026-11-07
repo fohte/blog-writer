@@ -943,6 +943,117 @@
         }
       }
     },
+    "/api/proposals/body-request": {
+      "post": {
+        "operationId": "propose_body_request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BodyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Proposed replacement text",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/BodyRequestEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/proposals/outline": {
+      "post": {
+        "operationId": "propose_outline",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutlineProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Outline changes proposed as text replacements",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutlineProposalEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/proposals/transition": {
+      "post": {
+        "operationId": "propose_transition",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Transition sentence suggestions",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransitionEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body or target block",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/claim-evidence": {
       "post": {
         "operationId": "judge_claim_evidence",
@@ -1164,6 +1275,21 @@
         "type": "string",
         "enum": ["unset", "synced", "external_changed"]
       },
+      "ArticlePremise": {
+        "type": "object",
+        "required": ["audience", "purpose", "claim"],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "claim": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          }
+        }
+      },
       "ArticlePremiseRequest": {
         "type": "object",
         "required": ["audience", "purpose", "thesis"],
@@ -1175,6 +1301,78 @@
             "type": "string"
           },
           "thesis": {
+            "type": "string"
+          }
+        }
+      },
+      "BodyRequest": {
+        "type": "object",
+        "required": ["instruction", "premise", "headings", "section", "target"],
+        "properties": {
+          "headings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "premise": {
+            "$ref": "#/components/schemas/ArticlePremise"
+          },
+          "section": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      },
+      "BodyRequestError": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "BodyRequestEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/BodyRequestResult"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/BodyRequestError"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "BodyRequestResult": {
+        "type": "object",
+        "required": ["replacement"],
+        "properties": {
+          "replacement": {
             "type": "string"
           }
         }
@@ -1491,6 +1689,135 @@
           },
           "title": {
             "type": ["string", "null"]
+          }
+        }
+      },
+      "OutlineProposalArticleBlockRequest": {
+        "type": "object",
+        "required": ["id", "kind", "markdown", "from", "to"],
+        "properties": {
+          "deletion_from": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          },
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "OutlineProposalError": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "OutlineProposalEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/OutlineProposalResponse"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/OutlineProposalError"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "OutlineProposalPremiseRequest": {
+        "type": "object",
+        "required": ["audience", "purpose", "thesis"],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
+          }
+        }
+      },
+      "OutlineProposalRequest": {
+        "type": "object",
+        "required": ["premise", "body_length", "blocks"],
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutlineProposalArticleBlockRequest"
+            }
+          },
+          "body_length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "premise": {
+            "$ref": "#/components/schemas/OutlineProposalPremiseRequest"
+          }
+        }
+      },
+      "OutlineProposalResponse": {
+        "type": "object",
+        "required": ["suggestions"],
+        "properties": {
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutlineSuggestion"
+            }
+          }
+        }
+      },
+      "OutlineSuggestion": {
+        "type": "object",
+        "required": ["from", "to", "replacement"],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "replacement": {
+            "type": "string"
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -1856,6 +2183,169 @@
           },
           "source_id": {
             "type": "string"
+          }
+        }
+      },
+      "TransitionBlock": {
+        "type": "object",
+        "required": ["id", "kind", "markdown"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "markdown": {
+            "type": "string"
+          }
+        }
+      },
+      "TransitionError": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "TransitionEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/TransitionResponse"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/TransitionError"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "TransitionPremise": {
+        "type": "object",
+        "required": ["audience", "purpose", "thesis"],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
+          }
+        }
+      },
+      "TransitionRequest": {
+        "type": "object",
+        "required": ["premise", "blocks", "seams"],
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransitionBlock"
+            }
+          },
+          "premise": {
+            "$ref": "#/components/schemas/TransitionPremise"
+          },
+          "seams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransitionSeam"
+            }
+          }
+        }
+      },
+      "TransitionResponse": {
+        "type": "object",
+        "required": ["suggestions"],
+        "properties": {
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransitionSuggestion"
+            }
+          }
+        }
+      },
+      "TransitionSeam": {
+        "type": "object",
+        "required": [
+          "id",
+          "from",
+          "to",
+          "before_sentence",
+          "middle",
+          "after_sentence",
+          "before_block_id",
+          "after_block_id"
+        ],
+        "properties": {
+          "after_block_id": {
+            "type": "string"
+          },
+          "after_sentence": {
+            "type": "string"
+          },
+          "before_block_id": {
+            "type": "string"
+          },
+          "before_sentence": {
+            "type": "string"
+          },
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "middle": {
+            "type": "string"
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "TransitionSuggestion": {
+        "type": "object",
+        "required": ["seam_id", "from", "to", "replacement"],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "replacement": {
+            "type": "string"
+          },
+          "seam_id": {
+            "type": "string"
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },

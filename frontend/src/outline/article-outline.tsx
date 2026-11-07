@@ -8,12 +8,17 @@ import { deriveHeadingTree, getBody, readBody } from '#article/index'
 import type { Heading } from '#article/types'
 import { OutlineView } from '#components/outline-view'
 import type { MoveHistory } from '#outline/move-history'
+import type { OutlineProposalState } from '#proposals/outline'
 
 export interface ArticleOutlineProps {
   doc: Y.Doc
   history: MoveHistory
   view: EditorView
   activeFrom?: number
+  onHeadingSelected?: () => void
+  proposalState?: OutlineProposalState
+  onProposalAccept?: (id: string) => void
+  onProposalReject?: (id: string) => void
 }
 
 function activeHeadingFrom(
@@ -37,6 +42,10 @@ export function ArticleOutline({
   history,
   view,
   activeFrom,
+  onHeadingSelected,
+  proposalState,
+  onProposalAccept,
+  onProposalReject,
 }: ArticleOutlineProps) {
   const body = getBody(doc)
   const [markdown, setMarkdown] = useState(() => readBody(doc))
@@ -71,10 +80,12 @@ export function ArticleOutline({
         ),
       )
     })
+    const configured = activeHeadingCompartment.get(view.state)
     view.dispatch({
-      effects: StateEffect.appendConfig.of(
-        activeHeadingCompartment.of(listener),
-      ),
+      effects:
+        configured === undefined
+          ? StateEffect.appendConfig.of(activeHeadingCompartment.of(listener))
+          : activeHeadingCompartment.reconfigure(listener),
     })
     setSelectedFrom(activeHeadingFrom(headings, view.state.selection.main.head))
     return () => {
@@ -117,7 +128,10 @@ export function ArticleOutline({
         ? {}
         : { activeFrom: selectedHeadingFrom })}
       {...(error === undefined ? {} : { error })}
+      {...(proposalState === undefined ? {} : { proposalState })}
       onMove={handleMove}
+      {...(onProposalAccept === undefined ? {} : { onProposalAccept })}
+      {...(onProposalReject === undefined ? {} : { onProposalReject })}
       onSelect={(from) => {
         setError(undefined)
         view.focus()
@@ -125,6 +139,7 @@ export function ArticleOutline({
           selection: EditorSelection.cursor(from),
           effects: EditorView.scrollIntoView(from, { y: 'start' }),
         })
+        onHeadingSelected?.()
       }}
     />
   )
