@@ -103,6 +103,71 @@ describe('outline interactions', () => {
     })
   })
 
+  it('renders outline proposals and reports accept and reject actions', async () => {
+    const markdownText = '# Overview\n\nFirst section.\n'
+    const doc = new Y.Doc()
+    setBody(doc, markdownText)
+    const history = createMoveHistory(doc)
+    const outlineHost = document.createElement('div')
+    document.body.append(outlineHost)
+    const view = new EditorView({
+      state: EditorState.create({ doc: markdownText }),
+    })
+    const root: Root = createRoot(outlineHost)
+    const acceptedIds: string[] = []
+    const rejectedIds: string[] = []
+    cleanups.push(() => {
+      act(() => {
+        root.unmount()
+      })
+      view.destroy()
+      history.destroy()
+      doc.destroy()
+      outlineHost.remove()
+    })
+
+    act(() => {
+      root.render(
+        createElement(ArticleOutline, {
+          doc,
+          history,
+          onProposalAccept: (id) => acceptedIds.push(id),
+          onProposalReject: (id) => rejectedIds.push(id),
+          proposalState: {
+            generating: false,
+            suggestions: [
+              {
+                from: markdownText.length,
+                id: 'suggested-heading',
+                replacement: '## Proposed section',
+                to: markdownText.length,
+              },
+            ],
+          },
+          view,
+        }),
+      )
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+      await userEvent.click(page.getByRole('button', { name: '× 却下' }))
+    })
+
+    const readProposalOutput = () => ({
+      proposalText:
+        outlineHost.querySelector('[aria-label="Proposed section"]')
+          ?.textContent ?? null,
+      acceptedIds,
+      rejectedIds,
+    })
+    expect(readProposalOutput()).toEqual({
+      proposalText: 'Proposed section✓ 採用× 却下',
+      acceptedIds: ['suggested-heading'],
+      rejectedIds: ['suggested-heading'],
+    })
+  })
+
   it('shows move errors and clears them after the next outline action', async () => {
     const markdownText = '# Overview\n\nFirst section.\n'
     const doc = new Y.Doc()

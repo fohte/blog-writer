@@ -53,6 +53,10 @@ export const editorTheme = EditorView.theme({
     lineHeight: '1.7',
     overflow: 'auto',
   },
+  '.cm-gutters': {
+    backgroundColor: 'var(--background)',
+    color: 'var(--muted-foreground)',
+  },
   '.cm-content': {
     caretColor: 'var(--foreground)',
     padding: '1rem 1.25rem 4rem',
@@ -100,3 +104,5 @@ export const editorTheme = EditorView.theme({
     color: 'var(--tint-orange-foreground)',
   },
 })
+
+export const editorDarkMode = EditorView.theme({}, { dark: true })
