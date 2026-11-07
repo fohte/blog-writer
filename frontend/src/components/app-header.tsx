@@ -47,17 +47,20 @@ export function AppHeader({
           記事 / {articleTitle}
         </span>
       )}
-      {status}
-      {actions}
-      <Button
-        aria-label="設定"
-        onClick={onOpenSettings}
-        size="icon"
-        type="button"
-        variant="outline"
-      >
-        <SettingsIcon />
-      </Button>
+      {/* Wrapping as one group keeps the settings button next to the actions on narrow screens. */}
+      <div className="ml-auto flex items-center gap-x-5">
+        {status}
+        {actions}
+        <Button
+          aria-label="設定"
+          onClick={onOpenSettings}
+          size="icon"
+          type="button"
+          variant="outline"
+        >
+          <SettingsIcon />
+        </Button>
+      </div>
     </header>
   )
 }
