@@ -74,6 +74,7 @@ export function useHeadingResearch() {
         doc,
         settings.value,
         question,
+        headingText || undefined,
         controller.signal,
         (query) => {
           setProgress((current) => {

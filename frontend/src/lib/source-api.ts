@@ -6,6 +6,19 @@ import { isRecord } from '#lib/guards'
 type SourceBody = components['schemas']['SourceBodyResponse']
 type FetchSourceBodyResponse = components['schemas']['FetchSourceBodyResponse']
 type ImportFileResponse = components['schemas']['ImportFileResponse']
+type RestoreSourceBodyRequest =
+  components['schemas']['RestoreSourceBodyRequest']
+type SaveSourceBodyIfUnchangedRequest =
+  components['schemas']['SaveSourceBodyIfUnchangedRequest']
+
+export class SourceBodyConflictError extends Error {
+  constructor() {
+    super(
+      '資料本文が別の操作で変更されたため、調査結果を保存できませんでした。',
+    )
+    this.name = 'SourceBodyConflictError'
+  }
+}
 
 function isStringRecord(
   value: unknown,
@@ -149,6 +162,38 @@ export function saveSourceBody(
   )
 }
 
+export function saveSourceBodyIfUnchanged(
+  fetcher: typeof fetch,
+  articleId: string,
+  sourceId: string,
+  expectedBody: string | undefined,
+  body: string,
+  signal: AbortSignal,
+): ResultAsync<void, Error> {
+  const requestBody: SaveSourceBodyIfUnchangedRequest = {
+    expected_body: expectedBody ?? null,
+    body,
+  }
+  return ResultAsync.fromPromise(
+    fetcher(`${sourceBodyUrl(articleId, sourceId)}/save-if-unchanged`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal,
+    }),
+    (cause) => new Error('資料本文を保存できませんでした。', { cause }),
+  ).andThen((response) => {
+    if (response.ok) return okAsync(undefined)
+    return response.status === 409
+      ? errAsync(new SourceBodyConflictError())
+      : errAsync(
+          new Error(
+            `資料本文を保存できませんでした: HTTP ${response.status.toString()}`,
+          ),
+        )
+  })
+}
+
 export function deleteSourceBody(
   fetcher: typeof fetch,
   articleId: string,
@@ -166,4 +211,34 @@ export function deleteSourceBody(
           ),
         ),
   )
+}
+
+export function restoreSourceBody(
+  fetcher: typeof fetch,
+  articleId: string,
+  sourceId: string,
+  expectedBody: string,
+  restoreBody: string | undefined,
+): ResultAsync<void, Error> {
+  const body: RestoreSourceBodyRequest = {
+    expected_body: expectedBody,
+    restore_body: restoreBody ?? null,
+  }
+  return ResultAsync.fromPromise(
+    fetcher(`${sourceBodyUrl(articleId, sourceId)}/restore`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+    (cause) => new Error('資料本文を復元できませんでした。', { cause }),
+  ).andThen((response) => {
+    if (response.ok) return okAsync(undefined)
+    return response.status === 409
+      ? errAsync(new SourceBodyConflictError())
+      : errAsync(
+          new Error(
+            `資料本文を復元できませんでした: HTTP ${response.status.toString()}`,
+          ),
+        )
+  })
 }

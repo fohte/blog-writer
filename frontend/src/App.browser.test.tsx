@@ -90,6 +90,12 @@ function installFetch(
   vi.stubGlobal('fetch', fetchMock)
 }
 
+function parseObjectBody(body: BodyInit | null | undefined) {
+  if (typeof body !== 'string') return undefined
+  const parsed: unknown = JSON.parse(body)
+  return isRecord(parsed) ? parsed : undefined
+}
+
 function exactRoleText(role: string, expectedText: string): string | undefined {
   return [...document.body.querySelectorAll('[role="' + role + '"]')]
     .map((element) => element.textContent.trim())
@@ -204,10 +210,7 @@ describe('the application research and evidence integrations', () => {
           resolveResearch = resolve
         })
       }
-      if (
-        url === '/api/articles/article-a/source-bodies/source-research' &&
-        init.method === 'PUT'
-      ) {
+      if (url.endsWith('/save-if-unchanged')) {
         savedBodies.push({
           url,
           body:
@@ -225,6 +228,14 @@ describe('the application research and evidence integrations', () => {
       await userEvent.click(
         page.getByRole('button', { name: 'Research topic' }),
       )
+    })
+    await act(async () => {
+      await userEvent.fill(
+        page.getByRole('textbox', { name: '調べる問い' }),
+        'Custom research question',
+      )
+    })
+    await act(async () => {
       await userEvent.click(
         page.getByRole('button', { name: 'この見出しについて調べる' }),
       )
@@ -297,19 +308,25 @@ describe('the application research and evidence integrations', () => {
         status,
         summary,
       })),
-      findings: listFindings(doc).map(({ sourceId, text, quote }) => ({
-        sourceId,
-        text,
-        quote,
-      })),
+      findings: listFindings(doc).map(
+        ({ sourceId, text, quote, researchedHeading }) => ({
+          sourceId,
+          text,
+          quote,
+          researchedHeading,
+        }),
+      ),
     })
     expect(readResult()).toEqual({
-      requestQuestion: { task: 'key_points', question: 'Research topic' },
+      requestQuestion: {
+        task: 'key_points',
+        question: 'Custom research question',
+      },
       articleBody: '# Research topic\n\nA sentence to edit. Draft update.\n',
       savedBodies: [
         {
-          url: '/api/articles/article-a/source-bodies/source-research',
-          body: { body: 'Source body.' },
+          url: '/api/articles/article-a/source-bodies/source-research/save-if-unchanged',
+          body: { expected_body: null, body: 'Source body.' },
         },
       ],
       sources: [
@@ -326,6 +343,7 @@ describe('the application research and evidence integrations', () => {
           sourceId: 'source-research',
           text: 'The result changed.',
           quote: 'The result changed.',
+          researchedHeading: 'Research topic',
         },
       ],
     })
@@ -350,7 +368,8 @@ describe('the application research and evidence integrations', () => {
           })
         })
       }
-      if (init.method === 'PUT') putCount += 1
+      if (init.method === 'POST' && url.endsWith('/save-if-unchanged'))
+        putCount += 1
       return new Response('', { status: 404 })
     })
     await renderApp()
@@ -403,7 +422,8 @@ describe('the application research and evidence integrations', () => {
           { event: 'progress', data: { query: 'Research topic' } },
         ])
       }
-      if (init.method === 'PUT') bodySaveCount += 1
+      if (init.method === 'POST' && url.endsWith('/save-if-unchanged'))
+        bodySaveCount += 1
       return new Response('', { status: 404 })
     })
     await renderApp()
@@ -457,6 +477,7 @@ describe('the application research and evidence integrations', () => {
     setFindings(doc, 'source-existing', [
       {
         id: 'finding-existing',
+        researchedHeading: 'Earlier heading',
         text: 'Earlier finding.',
         quote: 'Earlier quote.',
       },
@@ -495,7 +516,7 @@ describe('the application research and evidence integrations', () => {
             },
           },
         ])
-      if (init.method === 'PUT')
+      if (init.method === 'POST' && requestUrl.endsWith('/save-if-unchanged'))
         savedBodies.push({
           url: requestUrl,
           body:
@@ -531,17 +552,20 @@ describe('the application research and evidence integrations', () => {
         status,
         summary,
       })),
-      findings: listFindings(doc).map(({ sourceId, text, quote }) => ({
-        sourceId,
-        text,
-        quote,
-      })),
+      findings: listFindings(doc).map(
+        ({ sourceId, text, quote, researchedHeading }) => ({
+          sourceId,
+          text,
+          quote,
+          researchedHeading,
+        }),
+      ),
     })
     expect(readResult()).toEqual({
       savedBodies: [
         {
-          url: '/api/articles/article-a/source-bodies/source-existing',
-          body: { body: 'New body.' },
+          url: '/api/articles/article-a/source-bodies/source-existing/save-if-unchanged',
+          body: { expected_body: null, body: 'New body.' },
         },
       ],
       sources: [
@@ -558,11 +582,13 @@ describe('the application research and evidence integrations', () => {
           sourceId: 'source-existing',
           text: 'Earlier finding.',
           quote: 'Earlier quote.',
+          researchedHeading: 'Earlier heading',
         },
         {
           sourceId: 'source-existing',
           text: 'New finding.',
           quote: 'New quote.',
+          researchedHeading: 'Research topic',
         },
       ],
     })
@@ -900,6 +926,119 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
+  it('does not write sources when an existing source body cannot be read', async () => {
+    const sourceId = 'source-existing'
+    addSource(doc, {
+      id: sourceId,
+      kind: 'url',
+      title: 'Existing source',
+      url: 'https://example.invalid/research',
+      fileName: null,
+      checkedAt: '2026-02-01T00:00:00.000Z',
+      status: 'unavailable',
+      summary: 'Earlier summary.',
+    })._unsafeUnwrap()
+    setFindings(doc, sourceId, [
+      {
+        id: 'finding-existing',
+        researchedHeading: 'Earlier heading',
+        text: 'Earlier finding.',
+        quote: 'Earlier quote.',
+      },
+    ])._unsafeUnwrap()
+    let bodyReadCount = 0
+    let bodyWriteCount = 0
+    installFetch((url, init) => {
+      if (url === '/api/research/jobs')
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'key_points',
+                data: {
+                  sources: [
+                    {
+                      id: sourceId,
+                      summary: 'New summary.',
+                      key_points: [
+                        { text: 'New finding.', quote: 'New quote.' },
+                      ],
+                    },
+                  ],
+                },
+              },
+              sources: [
+                {
+                  id: sourceId,
+                  url: 'https://example.invalid/research',
+                  final_url: 'https://example.invalid/research',
+                  title: 'Research source',
+                  status: 'available',
+                  body: 'Research body.',
+                },
+              ],
+            },
+          },
+        ])
+      if (init.method === undefined) {
+        bodyReadCount += 1
+        return new Response('', { status: 500 })
+      }
+      if (init.method === 'PUT' || init.method === 'POST') bodyWriteCount += 1
+      return new Response('', { status: 404 })
+    })
+    await renderApp()
+    await openArticle()
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Research topic' }),
+      )
+      await userEvent.click(
+        page.getByRole('button', { name: 'この見出しについて調べる' }),
+      )
+    })
+    const readError = '資料本文を読み込めませんでした: HTTP 500'
+    await waitFor(() => {
+      if (exactRoleText('alert', readError) !== readError)
+        throw new Error('The source body read error was not shown')
+    })
+
+    const readResult = () => ({
+      bodyReadCount,
+      bodyWriteCount,
+      sources: listSources(doc),
+      findings: listFindings(doc),
+      errorMessage: exactRoleText('alert', readError),
+    })
+    expect(readResult()).toEqual({
+      bodyReadCount: 1,
+      bodyWriteCount: 0,
+      sources: [
+        {
+          id: sourceId,
+          kind: 'url',
+          title: 'Existing source',
+          url: 'https://example.invalid/research',
+          fileName: null,
+          checkedAt: '2026-02-01T00:00:00.000Z',
+          status: 'unavailable',
+          summary: 'Earlier summary.',
+        },
+      ],
+      findings: [
+        {
+          id: 'finding-existing',
+          sourceId,
+          researchedHeading: 'Earlier heading',
+          text: 'Earlier finding.',
+          quote: 'Earlier quote.',
+        },
+      ],
+      errorMessage: readError,
+    })
+  })
+
   it('restores an existing source body when a later body save fails', async () => {
     addSource(doc, {
       id: 'source-one',
@@ -919,7 +1058,7 @@ describe('the application research and evidence integrations', () => {
       },
     ])._unsafeUnwrap()
     const savedBodies: Array<{ id: string; body: unknown }> = []
-    const deletedBodyIds: string[] = []
+    const rollbackRequests: Array<{ id: string; body: unknown }> = []
     installFetch((url, init) => {
       if (url === '/api/research/jobs')
         return serverEvents([
@@ -963,19 +1102,20 @@ describe('the application research and evidence integrations', () => {
           },
         ])
       const sourceId = url.split('/source-bodies/')[1] ?? ''
-      if (init.method === 'PUT') {
+      const sourceBaseId = sourceId.split('/')[0] ?? ''
+      if (init.method === 'POST' && url.endsWith('/save-if-unchanged')) {
         savedBodies.push({
-          id: sourceId,
+          id: sourceBaseId,
           body:
             typeof init.body === 'string'
               ? (JSON.parse(init.body) as unknown)
               : init.body,
         })
-        return sourceId === 'source-two'
+        return sourceBaseId === 'source-two'
           ? new Response('error', { status: 500 })
           : new Response(null, { status: 204 })
       }
-      if (init.method === undefined && sourceId === 'source-one')
+      if (init.method === undefined && sourceBaseId === 'source-one')
         return new Response(
           JSON.stringify({
             source_id: sourceId,
@@ -983,8 +1123,14 @@ describe('the application research and evidence integrations', () => {
             body: 'Existing source body.',
           }),
         )
-      if (init.method === 'DELETE') {
-        deletedBodyIds.push(sourceId)
+      if (init.method === 'POST' && url.endsWith('/restore')) {
+        rollbackRequests.push({
+          id: sourceId.split('/')[0] ?? '',
+          body:
+            typeof init.body === 'string'
+              ? (JSON.parse(init.body) as unknown)
+              : init.body,
+        })
         return new Response(null, { status: 204 })
       }
       return new Response('', { status: 404 })
@@ -1007,7 +1153,7 @@ describe('the application research and evidence integrations', () => {
 
     const readResult = () => ({
       savedBodies,
-      deletedBodyIds,
+      rollbackRequests,
       sources: listSources(doc).map(({ id, status, summary }) => ({
         id,
         status,
@@ -1022,11 +1168,34 @@ describe('the application research and evidence integrations', () => {
     })
     expect(readResult()).toEqual({
       savedBodies: [
-        { id: 'source-one', body: { body: 'First source body.' } },
-        { id: 'source-two', body: { body: 'Second source body.' } },
-        { id: 'source-one', body: { body: 'Existing source body.' } },
+        {
+          id: 'source-one',
+          body: {
+            expected_body: 'Existing source body.',
+            body: 'First source body.',
+          },
+        },
+        {
+          id: 'source-two',
+          body: { expected_body: null, body: 'Second source body.' },
+        },
       ],
-      deletedBodyIds: ['source-two'],
+      rollbackRequests: [
+        {
+          id: 'source-one',
+          body: {
+            expected_body: 'First source body.',
+            restore_body: 'Existing source body.',
+          },
+        },
+        {
+          id: 'source-two',
+          body: {
+            expected_body: 'Second source body.',
+            restore_body: null,
+          },
+        },
+      ],
       sources: [
         {
           id: 'source-one',
@@ -1046,7 +1215,7 @@ describe('the application research and evidence integrations', () => {
   })
 
   it('cancels during body saving and leaves no research results', async () => {
-    const deletedBodyIds: string[] = []
+    const rollbackRequests: Array<{ id: string; body: unknown }> = []
     let resolveSecondSave: (() => void) | undefined
     const secondSaveStarted = new Promise<void>((resolve) => {
       resolveSecondSave = resolve
@@ -1097,11 +1266,19 @@ describe('the application research and evidence integrations', () => {
             },
           },
         ])
-      const sourceId = url.split('/source-bodies/')[1] ?? ''
+      const sourceId = url.split('/source-bodies/')[1]?.split('/')[0] ?? ''
       if (init.method === undefined) return new Response('', { status: 404 })
-      if (init.method === 'PUT' && sourceId === 'source-one')
+      if (
+        init.method === 'POST' &&
+        url.endsWith('/save-if-unchanged') &&
+        sourceId === 'source-one'
+      )
         return new Response(null, { status: 204 })
-      if (init.method === 'PUT' && sourceId === 'source-two') {
+      if (
+        init.method === 'POST' &&
+        url.endsWith('/save-if-unchanged') &&
+        sourceId === 'source-two'
+      ) {
         resolveSecondSave?.()
         return new Promise<Response>((_resolve, reject) => {
           init.signal?.addEventListener(
@@ -1113,8 +1290,14 @@ describe('the application research and evidence integrations', () => {
           )
         })
       }
-      if (init.method === 'DELETE') {
-        deletedBodyIds.push(sourceId)
+      if (init.method === 'POST' && url.endsWith('/restore')) {
+        rollbackRequests.push({
+          id: sourceId.split('/')[0] ?? '',
+          body:
+            typeof init.body === 'string'
+              ? (JSON.parse(init.body) as unknown)
+              : init.body,
+        })
         return new Response(null, { status: 204 })
       }
       return new Response('', { status: 404 })
@@ -1148,16 +1331,35 @@ describe('the application research and evidence integrations', () => {
     })
 
     const readResult = () => ({
-      deletedBodyIds,
+      rollbackRequests,
       sources: listSources(doc),
       findings: listFindings(doc),
       interruptedMessage: exactRoleText('status', interruptedText),
+      alerts: [...document.body.querySelectorAll('[role="alert"]')].map(
+        (element) => element.textContent.trim(),
+      ),
     })
     expect(readResult()).toEqual({
-      deletedBodyIds: ['source-one', 'source-two'],
+      rollbackRequests: [
+        {
+          id: 'source-one',
+          body: {
+            expected_body: 'First source body.',
+            restore_body: null,
+          },
+        },
+        {
+          id: 'source-two',
+          body: {
+            expected_body: 'Second source body.',
+            restore_body: null,
+          },
+        },
+      ],
       sources: [],
       findings: [],
       interruptedMessage: interruptedText,
+      alerts: [],
     })
   })
 
@@ -1179,7 +1381,9 @@ describe('the application research and evidence integrations', () => {
     const bodySaveStarted = new Promise<void>((resolve) => {
       resolveSaveStarted = resolve
     })
-    const savedBodies: unknown[] = []
+    const bodyWrites: Array<{ body: string }> = []
+    const rollbackRequests: Array<{ id: string; body: unknown }> = []
+    let currentBody: string | undefined = 'Existing source body.'
     installFetch((requestUrl, init) => {
       if (requestUrl === '/api/research/jobs')
         return serverEvents([
@@ -1218,21 +1422,57 @@ describe('the application research and evidence integrations', () => {
           JSON.stringify({
             source_id: sourceId,
             article_id: article.id,
-            body: 'Existing source body.',
+            body: currentBody,
           }),
         )
-      if (init.method === 'PUT') {
-        savedBodies.push(
-          typeof init.body === 'string'
-            ? (JSON.parse(init.body) as unknown)
-            : init.body,
+      if (init.method === 'POST' && requestUrl.endsWith('/save-if-unchanged')) {
+        const body = parseObjectBody(init.body)
+        const expectedBody = body?.['expected_body']
+        const nextBody = body?.['body']
+        if (
+          typeof nextBody !== 'string' ||
+          !(expectedBody === null || typeof expectedBody === 'string')
         )
-        if (savedBodies.length === 1) {
+          return new Response('', { status: 400 })
+        if (currentBody !== (expectedBody ?? undefined))
+          return new Response('', { status: 409 })
+        bodyWrites.push({ body: nextBody })
+        currentBody = nextBody
+        if (bodyWrites.length === 1) {
           resolveSaveStarted?.()
           return new Promise<Response>((resolve) => {
             resolveBodySave = resolve
           })
         }
+        return new Response(null, { status: 204 })
+      }
+      if (init.method === 'PUT') {
+        const body = parseObjectBody(init.body)?.['body']
+        if (typeof body !== 'string') return new Response('', { status: 400 })
+        bodyWrites.push({ body })
+        currentBody = body
+        return new Response(null, { status: 204 })
+      }
+      if (init.method === 'POST' && requestUrl.endsWith('/restore')) {
+        const body = parseObjectBody(init.body)
+        const expectedBody = body?.['expected_body']
+        const restoreBody = body?.['restore_body']
+        if (
+          typeof expectedBody !== 'string' ||
+          !(restoreBody === null || typeof restoreBody === 'string')
+        )
+          return new Response('', { status: 400 })
+        const requestBody = {
+          expected_body: expectedBody,
+          restore_body: restoreBody,
+        }
+        rollbackRequests.push({
+          id: sourceId.split('/')[0] ?? '',
+          body: requestBody,
+        })
+        if (currentBody !== requestBody.expected_body)
+          return new Response('', { status: 409 })
+        currentBody = requestBody.restore_body ?? undefined
         return new Response(null, { status: 204 })
       }
       return new Response('', { status: 404 })
@@ -1248,7 +1488,12 @@ describe('the application research and evidence integrations', () => {
       )
     })
     await bodySaveStarted
-    act(() => {
+    await act(async () => {
+      await fetch(`/api/articles/${article.id}/source-bodies/${sourceId}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: 'Pasted source body.' }),
+      })
       updateSource(doc, sourceId, {
         status: 'ready',
         summary: 'Concurrent summary.',
@@ -1262,18 +1507,20 @@ describe('the application research and evidence integrations', () => {
       finishBodySave(new Response(null, { status: 204 }))
     })
     await waitFor(() => {
-      if (savedBodies.length !== 2)
-        throw new Error('The original body was not restored')
+      if (rollbackRequests.length !== 1)
+        throw new Error('The changed source body was not checked')
     })
     const changeError =
-      '調査中に資料が変更されたため、結果を保存できませんでした。'
+      '資料本文が別の操作で変更されたため、調査結果を保存できませんでした。'
     await waitFor(() => {
       if (exactRoleText('alert', changeError) !== changeError)
         throw new Error('The concurrent source update was not preserved')
     })
 
     const readResult = () => ({
-      savedBodies,
+      bodyWrites,
+      rollbackRequests,
+      currentBody,
       sources: listSources(doc).map(({ id, status, summary, checkedAt }) => ({
         id,
         status,
@@ -1284,10 +1531,20 @@ describe('the application research and evidence integrations', () => {
       errorMessage: exactRoleText('alert', changeError),
     })
     expect(readResult()).toEqual({
-      savedBodies: [
+      bodyWrites: [
         { body: 'New source body.' },
-        { body: 'Existing source body.' },
+        { body: 'Pasted source body.' },
       ],
+      rollbackRequests: [
+        {
+          id: sourceId,
+          body: {
+            expected_body: 'New source body.',
+            restore_body: 'Existing source body.',
+          },
+        },
+      ],
+      currentBody: 'Pasted source body.',
       sources: [
         {
           id: sourceId,

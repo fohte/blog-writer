@@ -26,6 +26,28 @@ pub(crate) async fn upsert(
     Ok(())
 }
 
+pub(crate) async fn upsert_if_unchanged(
+    pool: &AnyPool,
+    source_id: &str,
+    article_id: &str,
+    expected_body: Option<&str>,
+    body: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "INSERT INTO source_bodies (source_id, article_id, body) VALUES ($1, $2, $3) \
+         ON CONFLICT (article_id, source_id) DO UPDATE SET body = excluded.body \
+         WHERE source_bodies.body = $4",
+    )
+    .bind(source_id)
+    .bind(article_id)
+    .bind(body)
+    .bind(expected_body)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
 pub(crate) async fn get(
     pool: &AnyPool,
     source_id: &str,
@@ -61,4 +83,49 @@ pub(crate) async fn delete(
         .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+pub(crate) async fn restore_if_unchanged(
+    pool: &AnyPool,
+    source_id: &str,
+    article_id: &str,
+    expected_body: &str,
+    restore_body: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let changed = if let Some(restore_body) = restore_body {
+        sqlx::query(
+            "UPDATE source_bodies SET body = $4 \
+             WHERE source_id = $1 AND article_id = $2 AND body = $3",
+        )
+        .bind(source_id)
+        .bind(article_id)
+        .bind(expected_body)
+        .bind(restore_body)
+        .execute(pool)
+        .await?
+        .rows_affected()
+            > 0
+    } else {
+        sqlx::query(
+            "DELETE FROM source_bodies \
+             WHERE source_id = $1 AND article_id = $2 AND body = $3",
+        )
+        .bind(source_id)
+        .bind(article_id)
+        .bind(expected_body)
+        .execute(pool)
+        .await?
+        .rows_affected()
+            > 0
+    };
+    if changed {
+        return Ok(true);
+    }
+
+    let current = get(pool, source_id, article_id).await?;
+    Ok(match (restore_body, current) {
+        (Some(expected), Some(current)) => current.body == expected,
+        (None, None) => true,
+        _ => false,
+    })
 }

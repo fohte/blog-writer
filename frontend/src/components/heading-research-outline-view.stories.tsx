@@ -42,3 +42,8 @@ type Story = StoryObj<typeof meta>
 export const SelectedHeading: Story = {
   name: 'the selected heading and its outline remain visible.',
 }
+
+export const Researching: Story = {
+  name: 'the selected heading has a disabled research button.',
+  args: { busy: true },
+}
