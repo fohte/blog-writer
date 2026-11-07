@@ -114,6 +114,263 @@ const isChromium = navigator.userAgent.includes('Chrome')
 const imeDriver = isChromium ? chromiumDriver : webkitDriver
 const { pressKey, compose } = imeDriver
 
+type ImeScenario = {
+  name: string
+  initial: string
+  beforeComposition: { key: string; capture?: string }[]
+  beforeCompositionOutput?: Record<string, MarkdownEditorOutput>
+  text: string
+  duringComposition: MarkdownEditorOutput
+  committed: MarkdownEditorOutput
+  afterComposition?: {
+    key: string
+    capture: string
+    output: MarkdownEditorOutput
+  }
+}
+
+const imeScenarios: ImeScenario[] = [
+  {
+    name: 'inserts Japanese text after a closed emphasis marker',
+    initial: '**word**',
+    beforeComposition: [{ key: 'End' }],
+    text: '日本語',
+    duringComposition: {
+      body: '**word**日本語',
+      lines: ['word**日本語'],
+      visible: 'word**日本語',
+    },
+    committed: {
+      body: '**word**日本語',
+      lines: ['word日本語'],
+      visible: 'word日本語',
+    },
+  },
+  {
+    name: 'inserts Japanese text at the document start before inline markers',
+    initial: 'plain **bold**',
+    beforeComposition: [{ key: 'Home' }],
+    text: '日本語',
+    duringComposition: {
+      body: '日本語plain **bold**',
+      lines: ['日本語plain bold'],
+      visible: '日本語plain bold',
+    },
+    committed: {
+      body: '日本語plain **bold**',
+      lines: ['日本語plain bold'],
+      visible: '日本語plain bold',
+    },
+  },
+  {
+    name: 'inserts a newline after Japanese text at the start of a line',
+    initial: 'plain',
+    beforeComposition: [{ key: 'Home' }],
+    text: '日本語',
+    duringComposition: {
+      body: '日本語plain',
+      lines: ['日本語plain'],
+      visible: '日本語plain',
+    },
+    committed: {
+      body: '日本語plain',
+      lines: ['日本語plain'],
+      visible: '日本語plain',
+    },
+    afterComposition: {
+      key: 'Enter',
+      capture: 'afterNewline',
+      output: {
+        body: '日本語\nplain',
+        lines: ['日本語', 'plain'],
+        visible: '日本語plain',
+      },
+    },
+  },
+  {
+    name: 'inserts Japanese text after inline code',
+    initial: '`code`',
+    beforeComposition: [{ key: 'End' }],
+    text: '日本語',
+    duringComposition: {
+      body: '`code`日本語',
+      lines: ['code`日本語'],
+      visible: 'code`日本語',
+    },
+    committed: {
+      body: '`code`日本語',
+      lines: ['code日本語'],
+      visible: 'code日本語',
+    },
+  },
+  {
+    name: 'inserts Japanese text after a Markdown link',
+    initial: '[label](url)',
+    beforeComposition: [{ key: 'End' }],
+    text: '日本語',
+    duringComposition: {
+      body: '[label](url)日本語',
+      lines: ['label日本語'],
+      visible: 'label日本語',
+    },
+    committed: {
+      body: '[label](url)日本語',
+      lines: ['label日本語'],
+      visible: 'label日本語',
+    },
+  },
+  {
+    name: 'inserts Japanese text at the end of a line before a code block',
+    initial: 'before\n```ts\nconst value = 1\n```\nafter',
+    beforeComposition: [{ key: 'End' }],
+    text: '日本語',
+    duringComposition: {
+      body: 'before日本語\n```ts\nconst value = 1\n```\nafter',
+      lines: ['before日本語', '```ts', 'const value = 1', '```', 'after'],
+      visible: 'before日本語```tsconst value = 1```after',
+    },
+    committed: {
+      body: 'before日本語\n```ts\nconst value = 1\n```\nafter',
+      lines: ['before日本語', '```ts', 'const value = 1', '```', 'after'],
+      visible: 'before日本語```tsconst value = 1```after',
+    },
+  },
+  {
+    name: 'inserts Japanese text at the start of a line after a code block',
+    initial: 'before\n```ts\nconst value = 1\n```\nafter',
+    beforeComposition: [
+      { key: 'ArrowDown' },
+      { key: 'ArrowDown' },
+      { key: 'ArrowDown' },
+      { key: 'ArrowDown' },
+    ],
+    text: '日本語',
+    duringComposition: {
+      body: 'before\n```ts\nconst value = 1\n```\n日本語after',
+      lines: ['before', '```ts', 'const value = 1', '```', '日本語after'],
+      visible: 'before```tsconst value = 1```日本語after',
+    },
+    committed: {
+      body: 'before\n```ts\nconst value = 1\n```\n日本語after',
+      lines: ['before', '```ts', 'const value = 1', '```', '日本語after'],
+      visible: 'before```tsconst value = 1```日本語after',
+    },
+  },
+  {
+    name: 'inserts Japanese text after deleting a list marker',
+    initial: '- item',
+    beforeComposition: [
+      { key: 'End' },
+      { key: 'Enter', capture: 'afterEnter' },
+      { key: 'Backspace', capture: 'afterBackspace' },
+    ],
+    beforeCompositionOutput: {
+      afterEnter: {
+        body: '- item\n- ',
+        lines: ['- item', '- '],
+        visible: '- item- ',
+      },
+      afterBackspace: {
+        body: '- item\n  ',
+        lines: ['- item', '  '],
+        visible: '- item  ',
+      },
+    },
+    text: '日本語',
+    duringComposition: {
+      body: '- item\n  日本語',
+      lines: ['- item', '  日本語'],
+      visible: '- item  日本語',
+    },
+    committed: {
+      body: '- item\n  日本語',
+      lines: ['- item', '  日本語'],
+      visible: '- item  日本語',
+    },
+  },
+  {
+    name: 'applies Backspace after committing Japanese text in a heading',
+    initial: '## Heading',
+    beforeComposition: [{ key: 'End' }],
+    text: '日本語',
+    duringComposition: {
+      body: '## Heading日本語',
+      lines: ['Heading日本語'],
+      visible: 'Heading日本語',
+    },
+    committed: {
+      body: '## Heading日本語',
+      lines: ['Heading日本語'],
+      visible: 'Heading日本語',
+    },
+    afterComposition: {
+      key: 'Backspace',
+      capture: 'afterBackspace',
+      output: {
+        body: '## Heading日本',
+        lines: ['Heading日本'],
+        visible: 'Heading日本',
+      },
+    },
+  },
+  {
+    name: 'preserves Japanese punctuation and full-width spaces in inserted text',
+    initial: 'prefix',
+    beforeComposition: [{ key: 'End' }],
+    text: '、　日本語。',
+    duringComposition: {
+      body: 'prefix、　日本語。',
+      lines: ['prefix、　日本語。'],
+      visible: 'prefix、　日本語。',
+    },
+    committed: {
+      body: 'prefix、　日本語。',
+      lines: ['prefix、　日本語。'],
+      visible: 'prefix、　日本語。',
+    },
+  },
+]
+
+const webkitImeScenarios = imeScenarios.filter(
+  (scenario) => scenario.afterComposition === undefined,
+)
+
+async function runImeScenario(scenario: ImeScenario) {
+  const { body, content } = mountMarkdownEditor(scenario.initial)
+  content?.focus()
+  const captured: Record<string, MarkdownEditorOutput> = {}
+  for (const { key, capture } of scenario.beforeComposition) {
+    await pressKey(key)
+    if (capture !== undefined) captured[capture] = readOutput(body, content)
+  }
+
+  const composition = await compose(body, content, scenario.text)
+  if (scenario.afterComposition) {
+    await pressKey(scenario.afterComposition.key)
+    await nextFrame()
+    captured[scenario.afterComposition.capture] = readOutput(body, content)
+  }
+  return { ...captured, ...composition }
+}
+
+function expectedImeScenario(scenario: ImeScenario) {
+  return {
+    ...scenario.beforeCompositionOutput,
+    ...(isChromium
+      ? {
+          composingImmediately: true,
+          duringComposition: scenario.duringComposition,
+        }
+      : {}),
+    committed: scenario.committed,
+    ...(scenario.afterComposition
+      ? {
+          [scenario.afterComposition.capture]: scenario.afterComposition.output,
+        }
+      : {}),
+  }
+}
+
 describe('MarkdownEditor IME', () => {
   it.skipIf(!isChromium)(
     'keeps move handles stable and ignores block movement during composition',
@@ -214,273 +471,18 @@ describe('MarkdownEditor IME', () => {
   )
 
   describe.skipIf(!isChromium)('composition', () => {
-    it('keeps a closed emphasis marker visible while composing after it', async () => {
-      const { body, content } = mountMarkdownEditor('**word**')
-      content?.focus()
-      await pressKey('End')
-
-      const actual = await compose(body, content, '日本語')
-      expect(actual).toEqual({
-        composingImmediately: true,
-        duringComposition: {
-          body: '**word**日本語',
-          lines: ['word**日本語'],
-          visible: 'word**日本語',
-        },
-        committed: {
-          body: '**word**日本語',
-          lines: ['word日本語'],
-          visible: 'word日本語',
-        },
-      })
-    })
-
-    it('maps later Markdown markers while composing at the start of the document', async () => {
-      const { body, content } = mountMarkdownEditor('plain **bold**')
-      content?.focus()
-      await pressKey('Home')
-
-      const actual = await compose(body, content, '日本語')
-      expect(actual).toEqual({
-        composingImmediately: true,
-        duringComposition: {
-          body: '日本語plain **bold**',
-          lines: ['日本語plain bold'],
-          visible: '日本語plain bold',
-        },
-        committed: {
-          body: '日本語plain **bold**',
-          lines: ['日本語plain bold'],
-          visible: '日本語plain bold',
-        },
-      })
-    })
-
-    it('inserts a newline immediately after committing at the start of a line', async () => {
-      const { body, content } = mountMarkdownEditor('plain')
-      content?.focus()
-      await pressKey('Home')
-
-      const composition = await compose(body, content, '日本語')
-      await pressKey('Enter')
-      await nextFrame()
-      const actual = Object.assign({}, composition, {
-        afterNewline: readOutput(body, content),
-      })
-      expect(actual).toEqual({
-        composingImmediately: true,
-        duringComposition: {
-          body: '日本語plain',
-          lines: ['日本語plain'],
-          visible: '日本語plain',
-        },
-        committed: {
-          body: '日本語plain',
-          lines: ['日本語plain'],
-          visible: '日本語plain',
-        },
-        afterNewline: {
-          body: '日本語\nplain',
-          lines: ['日本語', 'plain'],
-          visible: '日本語plain',
-        },
-      })
-    })
-
-    it('inserts composed text immediately after inline code', async () => {
-      const { body, content } = mountMarkdownEditor('`code`')
-      content?.focus()
-      await pressKey('End')
-
-      const actual = await compose(body, content, '日本語')
-      expect(actual).toEqual({
-        composingImmediately: true,
-        duringComposition: {
-          body: '`code`日本語',
-          lines: ['code`日本語'],
-          visible: 'code`日本語',
-        },
-        committed: {
-          body: '`code`日本語',
-          lines: ['code日本語'],
-          visible: 'code日本語',
-        },
-      })
-    })
-
-    it('inserts composed text immediately after a Markdown link', async () => {
-      const { body, content } = mountMarkdownEditor('[label](url)')
-      content?.focus()
-      await pressKey('End')
-
-      const actual = await compose(body, content, '日本語')
-      expect(actual).toEqual({
-        composingImmediately: true,
-        duringComposition: {
-          body: '[label](url)日本語',
-          lines: ['label日本語'],
-          visible: 'label日本語',
-        },
-        committed: {
-          body: '[label](url)日本語',
-          lines: ['label日本語'],
-          visible: 'label日本語',
-        },
-      })
-    })
-
-    it('inserts composed text at the end of a line before a code block', async () => {
-      const { body, content } = mountMarkdownEditor(
-        'before\n```ts\nconst value = 1\n```\nafter',
+    it.each(imeScenarios)('$name', async (scenario) => {
+      expect(await runImeScenario(scenario)).toEqual(
+        expectedImeScenario(scenario),
       )
-      content?.focus()
-      await pressKey('End')
-
-      const actual = await compose(body, content, '日本語')
-      expect(actual).toEqual({
-        composingImmediately: true,
-        duringComposition: {
-          body: 'before日本語\n```ts\nconst value = 1\n```\nafter',
-          lines: ['before日本語', '```ts', 'const value = 1', '```', 'after'],
-          visible: 'before日本語```tsconst value = 1```after',
-        },
-        committed: {
-          body: 'before日本語\n```ts\nconst value = 1\n```\nafter',
-          lines: ['before日本語', '```ts', 'const value = 1', '```', 'after'],
-          visible: 'before日本語```tsconst value = 1```after',
-        },
-      })
-    })
-
-    it('inserts composed text at the start of a line after a code block', async () => {
-      const { body, content } = mountMarkdownEditor(
-        'before\n```ts\nconst value = 1\n```\nafter',
-      )
-      content?.focus()
-      for (let line = 0; line < 4; line += 1) await pressKey('ArrowDown')
-
-      const actual = await compose(body, content, '日本語')
-      expect(actual).toEqual({
-        composingImmediately: true,
-        duringComposition: {
-          body: 'before\n```ts\nconst value = 1\n```\n日本語after',
-          lines: ['before', '```ts', 'const value = 1', '```', '日本語after'],
-          visible: 'before```tsconst value = 1```日本語after',
-        },
-        committed: {
-          body: 'before\n```ts\nconst value = 1\n```\n日本語after',
-          lines: ['before', '```ts', 'const value = 1', '```', '日本語after'],
-          visible: 'before```tsconst value = 1```日本語after',
-        },
-      })
-    })
-
-    it('continues a list, deletes its marker, and composes text', async () => {
-      const { body, content } = mountMarkdownEditor('- item')
-      content?.focus()
-      await pressKey('End')
-      await pressKey('Enter')
-      const afterEnter = readOutput(body, content)
-      await pressKey('Backspace')
-      const afterBackspace = readOutput(body, content)
-
-      const composition = await compose(body, content, '日本語')
-      const actual = Object.assign({}, composition, {
-        afterEnter,
-        afterBackspace,
-      })
-      expect(actual).toEqual({
-        composingImmediately: true,
-        afterEnter: {
-          body: '- item\n- ',
-          lines: ['- item', '- '],
-          visible: '- item- ',
-        },
-        afterBackspace: {
-          body: '- item\n  ',
-          lines: ['- item', '  '],
-          visible: '- item  ',
-        },
-        duringComposition: {
-          body: '- item\n  日本語',
-          lines: ['- item', '  日本語'],
-          visible: '- item  日本語',
-        },
-        committed: {
-          body: '- item\n  日本語',
-          lines: ['- item', '  日本語'],
-          visible: '- item  日本語',
-        },
-      })
-    })
-
-    it('composes after a heading before backspacing', async () => {
-      const { body, content } = mountMarkdownEditor('## Heading')
-      content?.focus()
-      await pressKey('End')
-
-      const composition = await compose(body, content, '日本語')
-      await pressKey('Backspace')
-      await nextFrame()
-      const actual = Object.assign({}, composition, {
-        afterBackspace: readOutput(body, content),
-      })
-      expect(actual).toEqual({
-        composingImmediately: true,
-        duringComposition: {
-          body: '## Heading日本語',
-          lines: ['Heading日本語'],
-          visible: 'Heading日本語',
-        },
-        committed: {
-          body: '## Heading日本語',
-          lines: ['Heading日本語'],
-          visible: 'Heading日本語',
-        },
-        afterBackspace: {
-          body: '## Heading日本',
-          lines: ['Heading日本'],
-          visible: 'Heading日本',
-        },
-      })
-    })
-
-    it('preserves Japanese punctuation and full-width spaces in saved text', async () => {
-      const { body, content } = mountMarkdownEditor('prefix')
-      content?.focus()
-      await pressKey('End')
-
-      const actual = await compose(body, content, '、　日本語。')
-      expect(actual).toEqual({
-        composingImmediately: true,
-        duringComposition: {
-          body: 'prefix、　日本語。',
-          lines: ['prefix、　日本語。'],
-          visible: 'prefix、　日本語。',
-        },
-        committed: {
-          body: 'prefix、　日本語。',
-          lines: ['prefix、　日本語。'],
-          visible: 'prefix、　日本語。',
-        },
-      })
     })
   })
 
   describe.skipIf(isChromium)('WebKit input', () => {
-    it('inserts Japanese text at the document start before inline markers', async () => {
-      const { body, content } = mountMarkdownEditor('plain **bold**')
-      content?.focus()
-      await pressKey('Home')
-
-      const actual = await compose(body, content, '日本語')
-      expect(actual).toEqual({
-        committed: {
-          body: '日本語plain **bold**',
-          lines: ['日本語plain bold'],
-          visible: '日本語plain bold',
-        },
-      })
+    it.each(webkitImeScenarios)('$name', async (scenario) => {
+      expect(await runImeScenario(scenario)).toEqual(
+        expectedImeScenario(scenario),
+      )
     })
   })
 })
