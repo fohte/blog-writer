@@ -4,6 +4,7 @@ import { errAsync } from 'neverthrow'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type * as Y from 'yjs'
 
+import { listEvidenceOverlapping, listSources } from '#article/index'
 import { getPremise } from '#article/premise'
 import {
   type BodyRequestPhase,
@@ -269,6 +270,19 @@ export function BodyRequestAccessory({
       section: context.section,
       target: context.target,
     }
+    const sources = listSources(doc).map(
+      ({ checkedAt, summary, title, url }) => ({
+        title,
+        url,
+        summary,
+        checked_at: checkedAt,
+      }),
+    )
+    const evidenceQuotes = listEvidenceOverlapping(doc, context.range)
+      .map(({ quote }) => quote)
+      .filter((quote) => quote.trim().length > 0)
+    if (sources.length > 0) body.sources = sources
+    if (evidenceQuotes.length > 0) body.evidence_quotes = evidenceQuotes
     if (manager.layer.overlapsOtherLayer(context.range)) {
       setError(overlappingSuggestionError)
       setPhase('error')
