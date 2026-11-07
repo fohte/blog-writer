@@ -74,8 +74,12 @@ export function bodyDropInput(
   const markdown = view.state.doc.toString()
   const range = findMoveBlockRange(markdown, position)
   if (!range) return undefined
+  const lastBlock = topLevelBlocks(markdown)
+    .filter(({ from }) => range.from <= from && from < range.to)
+    .at(-1)
   const firstLine = view.coordsAtPos(range.from)
-  const lastLine = view.coordsAtPos(Math.max(range.from, range.to - 1))
+  const lastContentTo = lastBlock?.contentTo ?? range.to
+  const lastLine = view.coordsAtPos(Math.max(range.from, lastContentTo - 1))
   if (!firstLine || !lastLine) return undefined
 
   return {
