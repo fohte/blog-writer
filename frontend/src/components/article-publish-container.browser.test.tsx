@@ -447,6 +447,21 @@ describe('ArticlePublishContainer', () => {
     await clickAndWait('差分を見る', waitForDiff)
     await act(async () => {
       await page.getByRole('combobox', { name: '公開先' }).click()
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+    })
+    await vi.waitFor(() => {
+      if (
+        document
+          .querySelector('[aria-label="公開先"]')
+          ?.getAttribute('aria-expanded') !== 'true' ||
+        !document.querySelector('[role="listbox"]') ||
+        ![...document.querySelectorAll('[role="option"]')].some(
+          (option) => option.textContent.trim() === 'another-site',
+        )
+      )
+        throw new Error('Waiting for the publishing destination options')
+    })
+    await act(async () => {
       await page.getByRole('option', { name: 'another-site' }).click()
     })
 
