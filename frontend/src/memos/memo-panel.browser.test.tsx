@@ -1,6 +1,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import {
@@ -45,27 +46,32 @@ const mountMemoPanel = (doc: Y.Doc) => {
 }
 
 const clickButton = (name: string) => {
-  const button = [...(host?.querySelectorAll('button') ?? [])].find(
+  // The adoption menu renders in a portal outside the panel host.
+  const button = [...document.body.querySelectorAll('button')].find(
     (candidate) => candidate.textContent === name,
   )
+  if (!button) throw new Error(`The button ${name} is missing`)
   act(() => {
-    button?.click()
+    button.click()
   })
 }
 
-const setDraft = (value: string) => {
-  const textarea = host?.querySelector<HTMLTextAreaElement>('textarea')
-
+const openAdoptionMenu = (memoId: string) => {
+  const trigger = [
+    ...(host?.querySelectorAll<HTMLButtonElement>(
+      `[data-memo-id="${memoId}"] button`,
+    ) ?? []),
+  ].find((button) => ['採用', '変更'].includes(button.textContent))
+  if (!trigger) throw new Error(`The adoption menu of ${memoId} is missing`)
   act(() => {
-    if (textarea) {
-      Object.defineProperty(textarea, 'value', {
-        configurable: true,
-        writable: true,
-        value,
-      })
-    }
-    textarea?.dispatchEvent(new Event('input', { bubbles: true }))
+    trigger.click()
   })
+}
+
+const submitDraft = async (value: string) => {
+  const input = page.getByRole('textbox', { name: 'メモを足す' })
+  await userEvent.fill(input, value)
+  await userEvent.keyboard('{Enter}')
 }
 
 const readPanelOutput = (doc: Y.Doc, generatedId?: string) => ({
@@ -73,16 +79,17 @@ const readPanelOutput = (doc: Y.Doc, generatedId?: string) => ({
     ...memo,
     id: id === generatedId ? 'generated-id' : id,
   })),
-  rendered: [...(host?.querySelectorAll('[role="listitem"]') ?? [])].map(
-    (item) => {
-      const paragraphs = item.querySelectorAll('p')
-      return {
-        text: paragraphs.item(0).textContent,
-        state: paragraphs.item(1).textContent,
-      }
-    },
+  filters: [
+    ...(host?.querySelectorAll('[aria-label="表示するメモ"] button') ?? []),
+  ].map((button) =>
+    button.getAttribute('aria-pressed') === 'true'
+      ? `${button.textContent} (selected)`
+      : button.textContent,
   ),
-  draft: host?.querySelector<HTMLTextAreaElement>('textarea')?.value,
+  rendered: [...(host?.querySelectorAll('[role="listitem"]') ?? [])].map(
+    (item) => [...item.querySelectorAll('p')].map((p) => p.textContent),
+  ),
+  draft: host?.querySelector<HTMLInputElement>('#new-memo')?.value,
   alert: host?.querySelector('[role="alert"]')?.textContent,
 })
 
@@ -102,11 +109,10 @@ afterEach(() => {
 })
 
 describe('MemoPanel', () => {
-  it('adds a memo to the article and clears the draft', () => {
+  it('adds a memo with Enter and clears the draft', async () => {
     const doc = new Y.Doc()
     mountMemoPanel(doc)
-    setDraft('記事の導入を簡潔にする')
-    clickButton('追加')
+    await submitDraft('記事の導入を簡潔にする')
     const generatedId = listMemos(doc)[0]?.id
 
     expect(readPanelOutput(doc, generatedId)).toEqual({
@@ -118,8 +124,23 @@ describe('MemoPanel', () => {
           state: { kind: 'unorganized' },
         },
       ],
-      rendered: [{ text: '記事の導入を簡潔にする', state: '未整理' }],
+      filters: ['未整理 1 (selected)', '採用済み 0', '見送り 0'],
+      rendered: [['記事の導入を簡潔にする']],
       draft: '',
+      alert: undefined,
+    })
+  })
+
+  it('ignores Enter while the draft is blank', async () => {
+    const doc = new Y.Doc()
+    mountMemoPanel(doc)
+    await submitDraft('   ')
+
+    expect(readPanelOutput(doc)).toEqual({
+      memos: [],
+      filters: ['未整理 0 (selected)', '採用済み 0', '見送り 0'],
+      rendered: [],
+      draft: '   ',
       alert: undefined,
     })
   })
@@ -130,6 +151,7 @@ describe('MemoPanel', () => {
     mountMemoPanel(doc)
     memoMocks.failNextDismiss = true
 
+    openAdoptionMenu('memo-a')
     clickButton('見送る')
 
     expect(readPanelOutput(doc)).toEqual({
@@ -141,23 +163,25 @@ describe('MemoPanel', () => {
           state: { kind: 'unorganized' },
         },
       ],
-      rendered: [{ text: '最初の案', state: '未整理' }],
+      filters: ['未整理 1 (selected)', '採用済み 0', '見送り 0'],
+      rendered: [['最初の案']],
       draft: '',
       alert: 'メモを更新できませんでした。',
     })
   })
 
-  it('moves a memo up in the article list', () => {
+  it('moves a memo above the previous memo in the same state', () => {
     const doc = new Y.Doc()
     addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
-    addMemo(doc, { id: 'memo-b', text: '次の案', order: 1 })
+    addMemo(doc, { id: 'memo-x', text: '見送った案', order: 1 })
+    addMemo(doc, { id: 'memo-b', text: '次の案', order: 2 })
+    dismissMemo(doc, 'memo-x')
     mountMemoPanel(doc)
 
+    openAdoptionMenu('memo-b')
     act(() => {
-      host
-        ?.querySelector<HTMLButtonElement>(
-          '[aria-label="メモ「次の案」を上へ"]',
-        )
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="メモ「次の案」を上へ"]')
         ?.click()
     })
 
@@ -175,11 +199,15 @@ describe('MemoPanel', () => {
           order: 1,
           state: { kind: 'unorganized' },
         },
+        {
+          id: 'memo-x',
+          text: '見送った案',
+          order: 2,
+          state: { kind: 'dismissed' },
+        },
       ],
-      rendered: [
-        { text: '次の案', state: '未整理' },
-        { text: '最初の案', state: '未整理' },
-      ],
+      filters: ['未整理 2 (selected)', '採用済み 0', '見送り 1'],
+      rendered: [['次の案'], ['最初の案']],
       draft: '',
       alert: undefined,
     })
@@ -190,6 +218,7 @@ describe('MemoPanel', () => {
     addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
     mountMemoPanel(doc)
 
+    openAdoptionMenu('memo-a')
     clickButton('見送る')
 
     expect(readPanelOutput(doc)).toEqual({
@@ -201,7 +230,8 @@ describe('MemoPanel', () => {
           state: { kind: 'dismissed' },
         },
       ],
-      rendered: [{ text: '最初の案', state: '見送り' }],
+      filters: ['未整理 0 (selected)', '採用済み 0', '見送り 1'],
+      rendered: [],
       draft: '',
       alert: undefined,
     })
@@ -214,6 +244,8 @@ describe('MemoPanel', () => {
     setMemoAdoptedTo(doc, 'memo-a', 0)
     mountMemoPanel(doc)
 
+    clickButton('採用済み 1')
+    openAdoptionMenu('memo-a')
     clickButton('見送る')
 
     expect(readPanelOutput(doc)).toEqual({
@@ -225,7 +257,8 @@ describe('MemoPanel', () => {
           state: { kind: 'dismissed' },
         },
       ],
-      rendered: [{ text: '最初の案', state: '見送り' }],
+      filters: ['未整理 0', '採用済み 0 (selected)', '見送り 1'],
+      rendered: [],
       draft: '',
       alert: undefined,
     })
@@ -238,6 +271,8 @@ describe('MemoPanel', () => {
     setMemoAdoptedTo(doc, 'memo-a', 0)
     mountMemoPanel(doc)
 
+    clickButton('採用済み 1')
+    openAdoptionMenu('memo-a')
     clickButton('未整理に戻す')
 
     expect(readPanelOutput(doc)).toEqual({
@@ -249,7 +284,8 @@ describe('MemoPanel', () => {
           state: { kind: 'unorganized' },
         },
       ],
-      rendered: [{ text: '最初の案', state: '未整理' }],
+      filters: ['未整理 1', '採用済み 0 (selected)', '見送り 0'],
+      rendered: [],
       draft: '',
       alert: undefined,
     })
@@ -261,6 +297,7 @@ describe('MemoPanel', () => {
     dismissMemo(doc, 'memo-a')
     mountMemoPanel(doc)
 
+    clickButton('見送り 1')
     clickButton('未整理に戻す')
 
     expect(readPanelOutput(doc)).toEqual({
@@ -272,7 +309,8 @@ describe('MemoPanel', () => {
           state: { kind: 'unorganized' },
         },
       ],
-      rendered: [{ text: '最初の案', state: '未整理' }],
+      filters: ['未整理 1', '採用済み 0', '見送り 0 (selected)'],
+      rendered: [],
       draft: '',
       alert: undefined,
     })
@@ -284,6 +322,7 @@ describe('MemoPanel', () => {
     addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
     setMemoAdoptedTo(doc, 'memo-a', 0)
     mountMemoPanel(doc)
+    clickButton('採用済み 1')
     const body = getBody(doc)
 
     act(() => {
@@ -309,7 +348,8 @@ describe('MemoPanel', () => {
           },
         },
       ],
-      rendered: [{ text: '最初の案', state: '採用済み: Updated' }],
+      filters: ['未整理 0', '採用済み 1 (selected)', '見送り 0'],
+      rendered: [['[x] 最初の案', '→ # Updated']],
       draft: '',
       alert: undefined,
     })

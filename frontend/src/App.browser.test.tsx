@@ -3128,11 +3128,13 @@ describe('the application research and evidence integrations', () => {
     await openArticle()
     await act(async () => {
       await userEvent.fill(
-        page.getByRole('textbox', { name: '新しいメモ' }),
+        page.getByRole('textbox', { name: 'メモを足す' }),
         'A useful thought',
       )
-      await userEvent.click(page.getByRole('button', { name: '追加' }))
-      await userEvent.click(page.getByRole('button', { name: '採用先を選ぶ' }))
+      await userEvent.keyboard('{Enter}')
+      await userEvent.click(
+        page.getByRole('button', { name: '採用', exact: true }),
+      )
       await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
     })
 
