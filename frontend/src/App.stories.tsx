@@ -16,6 +16,12 @@ export const Default: Story = {
   parameters: {
     msw: {
       handlers: [
+        http.get('/api/export/destinations', () =>
+          HttpResponse.json(
+            { error: 'Export is not configured.' },
+            { status: 503 },
+          ),
+        ),
         http.get('/api/file-sync/configuration', () =>
           HttpResponse.json({ enabled: false, directory: null }),
         ),
