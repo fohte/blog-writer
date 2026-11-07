@@ -112,7 +112,7 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const MarkdownBody: Story = {
-  name: 'the editor shows heading markers in red and hides inline markers while the cursor is at the end.',
+  name: 'the editor shows heading and inline code markers while hiding bold and link markers with the cursor at the end.',
   args: {
     content: defaultContent,
     initialSelection: { anchor: defaultContent.length },
