@@ -113,14 +113,18 @@ export function bodyRequestExtensions(
   ]
 }
 
-function readTarget(view: EditorView | null): BodyRequestTarget {
-  if (!view) return 'paragraph'
+function readSelectionContext(view: EditorView) {
   const selection = view.state.selection.main
-  if (!selection.empty) return 'selection'
-  const { range } = getBodyRequestContext(view.state.doc.toString(), {
+  return getBodyRequestContext(view.state.doc.toString(), {
     from: selection.from,
     to: selection.to,
   })
+}
+
+function readTarget(view: EditorView | null): BodyRequestTarget {
+  if (!view) return 'paragraph'
+  if (!view.state.selection.main.empty) return 'selection'
+  const { range } = readSelectionContext(view)
   return range.from === range.to ? 'insertion' : 'paragraph'
 }
 
@@ -136,6 +140,11 @@ export function BodyRequestAccessory({
   const [instruction, setInstruction] = useState('')
   const [failure, setFailure] = useState<BodyRequestFailure>()
   const [touchDevice, setTouchDevice] = useState(false)
+  // The editor keeps its selection while the request input has focus, so typing does not change the target.
+  const target = useMemo(
+    () => (open ? readTarget(view) : 'paragraph'),
+    [open, view],
+  )
 
   const fail = useCallback((reason: string, title = '作成できませんでした') => {
     setFailure({ title, reason })
@@ -200,14 +209,7 @@ export function BodyRequestAccessory({
       fail('本文エディターを準備できませんでした。')
       return undefined
     }
-    const selection = view.state.selection.main
-    return {
-      context: getBodyRequestContext(view.state.doc.toString(), {
-        from: selection.from,
-        to: selection.to,
-      }),
-      view,
-    }
+    return { context: readSelectionContext(view), view }
   }
 
   const startRequest = (requestInstruction: string) => {
@@ -417,7 +419,7 @@ export function BodyRequestAccessory({
       }}
       open={open}
       phase={phase}
-      target={open ? readTarget(view) : 'paragraph'}
+      target={target}
       touchDevice={touchDevice}
     />
   )
