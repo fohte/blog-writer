@@ -1022,7 +1022,7 @@ describe('the application research and evidence integrations', () => {
     const checkedAtBeforeAcceptance = listEvidence(doc)[0]?.checkedAt
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+      await userEvent.click(page.getByRole('button', { name: '採用 Tab' }))
     })
     await waitFor(() => {
       if (
@@ -1246,7 +1246,7 @@ describe('the application research and evidence integrations', () => {
         throw new Error('The source note did not render')
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '× 却下' }))
+      await userEvent.click(page.getByRole('button', { name: '却下 Esc' }))
     })
 
     const readResult = () => ({
@@ -1324,7 +1324,7 @@ describe('the application research and evidence integrations', () => {
         throw new Error('The source note did not render')
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+      await userEvent.click(page.getByRole('button', { name: '採用 Tab' }))
     })
     const errorMessage = '採用後の根拠を再判定できませんでした。'
     await waitFor(() => {
@@ -1469,16 +1469,23 @@ describe('the application research and evidence integrations', () => {
         throw new Error('The first claim proposal did not render')
     })
     await openBodyRequestPreset(secondClaim, '根拠を確かめる')
+    // Only the focused proposal shows its note; the earlier one keeps its underline.
     await waitFor(() => {
-      if (host?.querySelectorAll('.suggestion-diff-note').length !== 2)
+      if (
+        host?.querySelector('.suggestion-diff-note')?.textContent !==
+          '根拠の資料: Source two' ||
+        host.querySelectorAll('.cm-suggestion-target').length !== 1
+      )
         throw new Error('Both claim proposals did not render')
     })
 
     const readResult = () => ({
       researchCount,
-      notes: [...(host?.querySelectorAll('.suggestion-diff-note') ?? [])].map(
-        (note) => note.textContent,
-      ),
+      focusedNote:
+        host?.querySelector('.suggestion-diff-note')?.textContent ?? null,
+      unfocusedTargets: [
+        ...(host?.querySelectorAll('.cm-suggestion-target') ?? []),
+      ].map((target) => target.textContent),
       evidence: listEvidence(doc).map(({ currentClaim, verdict }) => ({
         currentClaim,
         verdict,
@@ -1486,7 +1493,8 @@ describe('the application research and evidence integrations', () => {
     })
     expect(readResult()).toEqual({
       researchCount: 2,
-      notes: ['根拠の資料: Source one', '根拠の資料: Source two'],
+      focusedNote: '根拠の資料: Source two',
+      unfocusedTargets: [firstClaim],
       evidence: [
         { currentClaim: firstClaim, verdict: 'outdated' },
         { currentClaim: secondClaim, verdict: 'outdated' },
@@ -1674,22 +1682,19 @@ describe('the application research and evidence integrations', () => {
     await waitFor(() => {
       if (!activeSignal) throw new Error('The second claim check did not start')
     })
-    const proposalWidget = host
-      ?.querySelector('.suggestion-diff-note')
-      ?.closest<HTMLElement>('.cm-suggestion-widget')
-    if (!proposalWidget) throw new Error('The first claim proposal is missing')
+    const proposalMarker = host?.querySelector<HTMLElement>(
+      '.cm-suggestion-marker',
+    )
+    if (!proposalMarker) throw new Error('The first claim proposal is missing')
     await act(async () => {
-      await userEvent.click(proposalWidget)
+      await userEvent.click(proposalMarker)
     })
     await waitFor(() => {
-      const focusedProposalWidget = host
-        ?.querySelector('.suggestion-diff-note')
-        ?.closest('.cm-suggestion-widget')
-      if (!focusedProposalWidget?.querySelector('[data-focused="true"]'))
+      if (!host?.querySelector('.suggestion-diff-note'))
         throw new Error('The first claim proposal did not regain focus')
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+      await userEvent.click(page.getByRole('button', { name: '採用 Tab' }))
     })
     const lockError = '別の調査が実行中のため、根拠を再判定できませんでした。'
     await waitFor(() => {
@@ -3492,7 +3497,7 @@ describe('App write from key points integration', () => {
       })
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '× 却下' }))
+      await userEvent.click(page.getByRole('button', { name: '却下 Esc' }))
     })
     const rejectedProposal = {
       body: getBody(articleDoc).toJSON(),
@@ -3526,7 +3531,7 @@ describe('App write from key points integration', () => {
       })
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+      await userEvent.click(page.getByRole('button', { name: '採用 Tab' }))
     })
 
     const markers = await vi.waitFor(() => {

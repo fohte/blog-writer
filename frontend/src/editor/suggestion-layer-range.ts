@@ -9,6 +9,7 @@ export interface TextSuggestion<Metadata = unknown> {
   replacementMarks?: readonly SuggestionReplacementMark[]
   metadata?: Metadata
   note?: string
+  label?: string
 }
 
 export type SuggestionReplacementMark = {

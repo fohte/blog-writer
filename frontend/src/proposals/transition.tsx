@@ -90,6 +90,7 @@ function makeRuntime({ doc }: ArticleContext): Runtime {
 
   const runtime: Runtime = {
     layer: createSuggestionLayer({
+      display: 'seam',
       onCancelInFlight: () => {
         runtime.abortController?.abort()
         runtime.abortController = null

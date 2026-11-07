@@ -304,7 +304,8 @@ export function ArticleEditorView({
             <MarkdownEditor
               ariaLabel="本文"
               articleId={articleId}
-              className="min-h-96"
+              // The negative margin offsets the editor's wide start padding, which holds the suggestion markers in the page margin.
+              className="min-h-96 -ms-7"
               extensions={extensions}
               history={history}
               onViewChange={handleViewChange}

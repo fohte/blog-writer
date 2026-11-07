@@ -25,8 +25,17 @@ import {
   type TrackedSuggestionRange,
   validateSuggestions,
 } from '#editor/suggestion-layer-range'
+import {
+  type GetSuggestionLayerSnapshot,
+  registerSuggestionLayer,
+  suggestionLayerSnapshots,
+} from '#editor/suggestion-layer-registry'
 import { SuggestionRangeTracker } from '#editor/suggestion-layer-tracking'
-import { createSuggestionDecorations } from '#editor/suggestion-layer-view'
+import {
+  createSuggestionDecorations,
+  type SuggestionDisplay,
+  suggestionLayerTheme,
+} from '#editor/suggestion-layer-view'
 
 export type {
   InFlightSuggestion,
@@ -41,18 +50,6 @@ export type {
 
 type ScopedEffect<Value> = { scope: symbol; value: Value }
 
-type SuggestionLayerSnapshot = {
-  suggestions: readonly SuggestionPosition[]
-  inFlight: InFlightSuggestion | null
-}
-
-type GetSuggestionLayerSnapshot = () => SuggestionLayerSnapshot
-
-const mountedSuggestionLayers = new WeakMap<
-  EditorView,
-  Set<GetSuggestionLayerSnapshot>
->()
-
 const replaceInFlight =
   StateEffect.define<ScopedEffect<InFlightSuggestion | null>>()
 const removeSuggestion = StateEffect.define<ScopedEffect<string>>()
@@ -60,6 +57,7 @@ const removeSuggestion = StateEffect.define<ScopedEffect<string>>()
 export interface SuggestionLayerOptions<Metadata = unknown> {
   initialSuggestions?: readonly TextSuggestion<Metadata>[]
   initialInFlight?: InFlightSuggestion
+  display?: SuggestionDisplay
   trackAcceptedRanges?: boolean
   onResolve?: (
     suggestion: TextSuggestion<Metadata>,
@@ -188,7 +186,12 @@ export class SuggestionLayerController<Metadata = unknown> {
       },
       provide: (field) => {
         return EditorView.decorations.compute([field], (state) =>
-          createSuggestionDecorations(state.field(field), state, this),
+          createSuggestionDecorations(
+            state.field(field),
+            state,
+            this,
+            options.display ?? 'marker',
+          ),
         )
       },
     })
@@ -197,20 +200,13 @@ export class SuggestionLayerController<Metadata = unknown> {
       this.stateField,
       ViewPlugin.define((view) => {
         this.view = view
-        const viewLayers = mountedSuggestionLayers.get(view)
-        if (viewLayers) {
-          viewLayers.add(this.getSuggestionLayerSnapshot)
-        } else {
-          mountedSuggestionLayers.set(
-            view,
-            new Set([this.getSuggestionLayerSnapshot]),
-          )
-        }
+        const unregister = registerSuggestionLayer(
+          view,
+          this.getSuggestionLayerSnapshot,
+        )
         return {
           destroy: () => {
-            const viewLayers = mountedSuggestionLayers.get(view)
-            viewLayers?.delete(this.getSuggestionLayerSnapshot)
-            if (viewLayers?.size === 0) mountedSuggestionLayers.delete(view)
+            unregister()
             if (this.view === view) {
               this.view = null
               this.trackedRanges.clear()
@@ -250,15 +246,7 @@ export class SuggestionLayerController<Metadata = unknown> {
           { key: 'Escape', run: () => this.rejectFocusedSuggestion() },
         ]),
       ),
-      EditorView.baseTheme({
-        '.cm-suggestion-widget': {
-          whiteSpace: 'normal',
-        },
-        '.cm-suggestion-in-flight-target': {
-          textDecoration: 'underline dotted var(--muted-foreground)',
-          textUnderlineOffset: '5px',
-        },
-      }),
+      suggestionLayerTheme,
     ]
   }
 
@@ -302,7 +290,7 @@ export class SuggestionLayerController<Metadata = unknown> {
     const state = view?.state.field(this.stateField, false)
     if (!view || !state?.inFlight) return ok(undefined)
 
-    const position = { from: state.inFlight.from, to: state.inFlight.to }
+    const { label, ...position } = state.inFlight
     const id = this.createSuggestionId(state.suggestions)
     const replacementText =
       typeof replacement === 'string' ? replacement : replacement(position)
@@ -314,6 +302,7 @@ export class SuggestionLayerController<Metadata = unknown> {
           ...position,
           id,
           replacement: replacementText,
+          ...(label === undefined ? {} : { label }),
           ...(details?.metadata === undefined
             ? {}
             : { metadata: details.metadata }),
@@ -368,7 +357,7 @@ export class SuggestionLayerController<Metadata = unknown> {
     const view = this.view
     if (!view) return false
 
-    for (const getRanges of mountedSuggestionLayers.get(view) ?? []) {
+    for (const getRanges of suggestionLayerSnapshots(view)) {
       if (getRanges === this.getSuggestionLayerSnapshot) continue
       const { inFlight, suggestions } = getRanges()
       if (
@@ -445,7 +434,7 @@ export class SuggestionLayerController<Metadata = unknown> {
       return true
     }
 
-    const suggestions = Array.from(mountedSuggestionLayers.get(view) ?? [])
+    const suggestions = suggestionLayerSnapshots(view)
       .flatMap((getSnapshot) => getSnapshot().suggestions)
       .sort((left, right) => left.from - right.from || left.to - right.to)
     if (suggestions.length === 0) return false

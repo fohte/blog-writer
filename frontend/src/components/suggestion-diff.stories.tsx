@@ -18,31 +18,8 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-export const Focused: Story = {
-  name: 'the focused suggestion shows accept and reject actions.',
-  args: {
-    focused: true,
-    onAccept: () => {},
-    onReject: () => {},
-    original: 'A short draft sentence.',
-    replacement: 'A clearer sentence for the draft.',
-  },
-}
-
-export const Annotated: Story = {
-  name: 'the suggestion shows a one-line note with its diff',
-  args: {
-    focused: true,
-    note: 'The revision reflects the source listed in the article.',
-    onAccept: () => {},
-    onReject: () => {},
-    original: 'A short draft sentence.',
-    replacement: 'A clearer sentence for the draft.',
-  },
-}
-
-export const Unfocused: Story = {
-  name: 'the suggestion shows its changes without actions.',
+export const Block: Story = {
+  name: 'the diff strikes removed text in red and underlines added text in green.',
   args: {
     original: 'A short draft sentence.',
     replacement: 'A clearer sentence for the draft.',
@@ -57,9 +34,6 @@ export const Narrow: Story = {
     </div>
   ),
   args: {
-    focused: true,
-    onAccept: () => {},
-    onReject: () => {},
     original: 'A sentence with a longer phrase that wraps on a narrow screen.',
     replacement:
       'A more specific sentence that still reads clearly on a narrow screen.',
@@ -68,11 +42,13 @@ export const Narrow: Story = {
 
 export const Inline: Story = {
   name: 'an inline diff stays within the sentence.',
+  render: (args) => (
+    <p>
+      The draft keeps <SuggestionDiff {...args} /> around the change.
+    </p>
+  ),
   args: {
-    focused: true,
     inline: true,
-    onAccept: () => {},
-    onReject: () => {},
     original: 'a short phrase',
     replacement: 'a clearer phrase',
   },
@@ -83,7 +59,6 @@ export const WritingFromSources: Story = {
   args: {
     original: 'The previous draft needs a clearer explanation.',
     replacement,
-    focused: true,
     replacementMarks: [
       { from: 0, to: supportedSentence.length, verdict: 'supported' },
       {
@@ -92,7 +67,5 @@ export const WritingFromSources: Story = {
         verdict: 'insufficient',
       },
     ],
-    onAccept: () => undefined,
-    onReject: () => undefined,
   },
 }
