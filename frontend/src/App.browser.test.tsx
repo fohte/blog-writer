@@ -195,8 +195,11 @@ async function renderApp(articleDoc = doc) {
 }
 
 async function waitFor(assertion: () => void) {
-  await act(async () => {
-    await vi.waitFor(assertion)
+  await vi.waitFor(async () => {
+    await act(async () => {
+      await Promise.resolve()
+    })
+    assertion()
   })
 }
 
@@ -484,10 +487,7 @@ describe('the application research and evidence integrations', () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     })
-    await vi.waitFor(async () => {
-      await act(async () => {
-        await Promise.resolve()
-      })
+    await waitFor(() => {
       if (exactRoleText('status', interruptedText) !== interruptedText)
         throw new Error('The interrupted state was not shown')
     })
@@ -1010,7 +1010,8 @@ describe('the application research and evidence integrations', () => {
       if (
         listEvidence(doc)[0]?.verdict !== 'insufficient' ||
         host?.querySelector('.cm-evidence-marker')?.className !==
-          'cm-evidence-marker cm-evidence-needs-review'
+          'cm-evidence-marker cm-evidence-needs-review' ||
+        listEvidence(doc)[0]?.checkedAt === checkedAtBeforeAcceptance
       )
         throw new Error('The adopted claim was not rechecked')
     })
