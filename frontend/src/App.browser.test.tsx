@@ -1425,3 +1425,120 @@ describe('the application research and evidence integrations', () => {
     })
   })
 })
+
+describe('App body request research context', () => {
+  it('sends the source summaries and evidence overlapping the requested paragraph', async () => {
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    const articleBody =
+      '# Starting point\n\nTarget claim.\n\nUnrelated claim.\n'
+    setBody(articleDoc, articleBody)
+    const sourceId = 'source-a'
+    addSource(articleDoc, {
+      id: sourceId,
+      kind: 'pasted',
+      title: 'A source',
+      url: 'https://example.invalid/reference',
+      fileName: null,
+      checkedAt: '2026-01-01T00:00:00Z',
+      summary: 'A concise source summary.',
+    })._unsafeUnwrap()
+    for (const { claim, text, quote } of [
+      {
+        claim: 'Target claim.',
+        text: 'Target claim.',
+        quote: 'Evidence for the target claim.',
+      },
+      {
+        claim: 'Unrelated claim.',
+        text: 'Unrelated claim.',
+        quote: 'Evidence for an unrelated claim.',
+      },
+    ]) {
+      const from = articleBody.indexOf(text)
+      addEvidence(articleDoc, {
+        id: 'evidence-' + text,
+        from,
+        to: from + text.length,
+        claim,
+        sourceId,
+        quote,
+        verdict: 'supported',
+        checkedAt: '2026-01-01T00:00:00Z',
+      })._unsafeUnwrap()
+    }
+    await renderApp(articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const editor = host?.querySelector<HTMLElement>('.cm-content')
+    if (!editor) throw new Error('The article editor did not open')
+    await act(async () => {
+      await userEvent.click(page.getByText('Target claim.'))
+      await userEvent.keyboard('{Home}')
+    })
+
+    let requestBody: unknown
+    const originalFetch = globalThis.fetch
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url
+        if (url === '/api/proposals/body-request') {
+          requestBody = JSON.parse(await new Request(input, init).text())
+          return new Response(
+            'data: {"event":"result","data":{"replacement":"Updated claim."}}\n\n',
+            { headers: { 'content-type': 'text/event-stream' } },
+          )
+        }
+        return originalFetch(input, init)
+      },
+    )
+
+    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    act(() => {
+      editor.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          key: 'k',
+          [modifier === 'Meta' ? 'metaKey' : 'ctrlKey']: true,
+        }),
+      )
+    })
+    const requestInput =
+      document.querySelector<HTMLInputElement>('#body-request')
+    if (!requestInput) throw new Error('The body request input did not open')
+    await act(async () => {
+      await userEvent.fill(requestInput, 'Make the claim clearer.')
+      await userEvent.keyboard('{Enter}')
+      await vi.waitFor(() => {
+        if (requestBody === undefined)
+          throw new Error('The body request was not sent')
+      })
+    })
+
+    expect(requestBody).toEqual({
+      instruction: 'Make the claim clearer.',
+      premise: { audience: '', purpose: '', claim: '' },
+      headings: ['# Starting point'],
+      section:
+        '# Starting point\n\n⟪依頼範囲の開始⟫Target claim.⟪依頼範囲の終了⟫\n\nUnrelated claim.',
+      target: 'Target claim.',
+      sources: [
+        {
+          title: 'A source',
+          url: 'https://example.invalid/reference',
+          summary: 'A concise source summary.',
+          checked_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+      evidence_quotes: ['Evidence for the target claim.'],
+    })
+  })
+})

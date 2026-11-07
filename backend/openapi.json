@@ -1346,6 +1346,12 @@
         "type": "object",
         "required": ["instruction", "premise", "headings", "section", "target"],
         "properties": {
+          "evidence_quotes": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            }
+          },
           "headings": {
             "type": "array",
             "items": {
@@ -1360,6 +1366,12 @@
           },
           "section": {
             "type": "string"
+          },
+          "sources": {
+            "type": ["array", "null"],
+            "items": {
+              "$ref": "#/components/schemas/BodyRequestSource"
+            }
           },
           "target": {
             "type": "string"
@@ -1411,6 +1423,24 @@
         "properties": {
           "replacement": {
             "type": "string"
+          }
+        }
+      },
+      "BodyRequestSource": {
+        "type": "object",
+        "required": ["title", "summary"],
+        "properties": {
+          "checked_at": {
+            "type": ["string", "null"]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": ["string", "null"]
           }
         }
       },
