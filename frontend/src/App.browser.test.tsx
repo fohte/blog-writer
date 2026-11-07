@@ -476,36 +476,6 @@ describe('the application research and evidence integrations', () => {
       ).length
     const captureKeydownListenerCountBeforeResearch =
       captureKeydownListenerCount()
-    await act(async () => {
-      await userEvent.click(
-        page.getByRole('button', { name: 'Research topic' }),
-      )
-      await userEvent.click(
-        page.getByRole('button', { name: 'この見出しについて調べる' }),
-      )
-    })
-    await researchWasStarted
-    await act(async () => {
-      await Promise.resolve()
-    })
-    act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    })
-    let interruptedStateShown = false
-    await act(async () => {
-      interruptedStateShown = await vi
-        .waitFor(
-          () => {
-            if (exactRoleText('status', interruptedText) !== interruptedText)
-              throw new Error('The interrupted state was not shown')
-          },
-          { timeout: 5000 },
-        )
-        .then(
-          () => true,
-          () => false,
-        )
-    })
     const statusLabel = () =>
       [...document.body.querySelectorAll('button')]
         .map((button) => button.textContent.trim())
@@ -518,6 +488,37 @@ describe('the application research and evidence integrations', () => {
             '調査に失敗しました',
           ].includes(text),
         )
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Research topic' }),
+      )
+      await userEvent.click(
+        page.getByRole('button', { name: 'この見出しについて調べる' }),
+      )
+    })
+    await researchWasStarted
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const statusLabelBeforeEscape = statusLabel()
+    const captureKeydownListenerPresentBeforeEscape =
+      captureKeydownListenerCount() > captureKeydownListenerCountBeforeResearch
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    const statusLabelAfterEscape = statusLabel()
+    let interruptedStateShown = false
+    await act(async () => {
+      interruptedStateShown = await vi
+        .waitFor(() => {
+          if (exactRoleText('status', interruptedText) !== interruptedText)
+            throw new Error('The interrupted state was not shown')
+        })
+        .then(
+          () => true,
+          () => false,
+        )
+    })
 
     const readResult = () => ({
       query: requestQuestion,
@@ -529,19 +530,14 @@ describe('the application research and evidence integrations', () => {
         requestHasSignal: requestSignal !== undefined,
         signalAborted: requestSignal?.aborted,
         abortEventReceived,
-        captureKeydownListenerAdded:
-          captureKeydownListenerCount() >
-          captureKeydownListenerCountBeforeResearch,
+        captureKeydownListenerPresentBeforeEscape,
+        statusLabelBeforeEscape,
+        statusLabelAfterEscape,
         statusLabel: statusLabel(),
         interruptedStateShown,
       },
     })
-    const result = readResult()
-    console.error(
-      'heading-research-abort-diagnostics',
-      JSON.stringify(result.diagnostics),
-    )
-    expect(result).toEqual({
+    expect(readResult()).toEqual({
       query: { task: 'key_points', question: 'Research topic' },
       sourceCount: 0,
       findingCount: 0,
@@ -551,7 +547,9 @@ describe('the application research and evidence integrations', () => {
         requestHasSignal: true,
         signalAborted: true,
         abortEventReceived: true,
-        captureKeydownListenerAdded: true,
+        captureKeydownListenerPresentBeforeEscape: true,
+        statusLabelBeforeEscape: '調査中',
+        statusLabelAfterEscape: '調査を中断しています',
         statusLabel: '調査を中断しました',
         interruptedStateShown: true,
       },
