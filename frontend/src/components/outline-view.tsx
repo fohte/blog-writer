@@ -280,6 +280,15 @@ function OutlineRow({
       />
     </>
   )
+  const memoBadge =
+    memoCount > 0 ? (
+      <span
+        className="font-mono text-xs text-muted-foreground"
+        title="採用済みのメモ"
+      >
+        メモ {memoCount}
+      </span>
+    ) : null
 
   return (
     <div
@@ -305,6 +314,7 @@ function OutlineRow({
           original={text}
           proposal={proposal}
           selected={active}
+          trailing={memoBadge}
           {...proposalHandlers(onProposalAccept, onProposalReject)}
         />
       ) : (
@@ -327,14 +337,7 @@ function OutlineRow({
             {'#'.repeat(heading.level)}
           </span>
           <span className="min-w-0 flex-1 truncate">{text}</span>
-          {memoCount > 0 ? (
-            <span
-              className="font-mono text-xs text-muted-foreground"
-              title="採用済みのメモ"
-            >
-              メモ {memoCount}
-            </span>
-          ) : null}
+          {memoBadge}
         </div>
       )}
     </div>

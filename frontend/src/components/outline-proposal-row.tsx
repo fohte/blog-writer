@@ -49,6 +49,7 @@ export function OutlineProposalRow({
   original,
   proposal,
   leading,
+  trailing,
   selected = false,
   onSelect,
   onProposalAccept,
@@ -59,6 +60,7 @@ export function OutlineProposalRow({
   original?: string | undefined
   proposal: OutlineSuggestion
   leading?: ReactNode
+  trailing?: ReactNode
   selected?: boolean
   onSelect?: (() => void) | undefined
   onProposalAccept?: ((id: string) => void) | undefined
@@ -110,6 +112,7 @@ export function OutlineProposalRow({
           </ins>
         ) : null}
       </span>
+      {trailing}
       {onProposalAccept ? (
         <Button
           aria-label={`${label}を採用`}
