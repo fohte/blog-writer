@@ -110,6 +110,7 @@ afterEach(() => {
   for (const additionalDoc of additionalDocs) additionalDoc.destroy()
   additionalDocs = []
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('article editor screen', () => {
@@ -1015,6 +1016,35 @@ First paragraph.
       syncError: 'Sync needs attention.',
       reauthentication: 'ログインし直す',
       syncState: '○ 未同期',
+    })
+  })
+
+  it('shows the offline banner while the browser is offline and removes it after reconnecting', () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    const article: Article = {
+      id: 'article-offline',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    renderWorkspace(article, articleDoc)
+
+    const readBanner = () => host?.querySelector('[role="status"]')?.textContent
+    const offlineBanner = readBanner()
+    onLine.mockReturnValue(true)
+    act(() => {
+      window.dispatchEvent(new Event('online'))
+    })
+
+    const readBannerOutput = () => ({
+      offlineBanner,
+      onlineBanner: readBanner(),
+    })
+    expect(readBannerOutput()).toEqual({
+      offlineBanner:
+        'オフラインです。すべての記事を開いて編集できます。変更は端末に保存され、つながったら同期します。LLM はつながってから使えます。',
+      onlineBanner: undefined,
     })
   })
 
