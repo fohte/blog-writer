@@ -36,8 +36,14 @@ export type BodyRequestAccessoryContext = BodyRequestEditorContext & {
   presets?: readonly BodyRequestPreset[]
 }
 
+export interface BodyRequestPresetSelection {
+  context: ReturnType<typeof getBodyRequestContext>
+  instruction: string
+  view: EditorView
+}
+
 export interface BodyRequestPreset extends BodyRequestPresetOption {
-  onSelect: () => void
+  onSelect: (selection: BodyRequestPresetSelection) => void
 }
 
 function preserveBlankLineSeparators(
@@ -374,11 +380,27 @@ export function BodyRequestAccessory({
       onPresetSelect={(id) => {
         const preset = presets?.find((item) => item.id === id)
         if (!preset) return
+        if (!view) {
+          setError('本文エディターを準備できませんでした。')
+          setPhase('error')
+          setOpen(true)
+          return
+        }
+        const selection = view.state.selection.main
+        const context = getBodyRequestContext(view.state.doc.toString(), {
+          from: selection.from,
+          to: selection.to,
+        })
+        const selectedInstruction = instruction
         setOpen(false)
         setError(undefined)
         setInstruction('')
         setPhase('input')
-        preset.onSelect()
+        preset.onSelect({
+          context,
+          instruction: selectedInstruction,
+          view,
+        })
       }}
       onSubmit={startRequest}
       open={open}

@@ -37,8 +37,8 @@ function isFullLineRange(
   )
 }
 
-export function createSuggestionDecorations(
-  state: SuggestionLayerState,
+export function createSuggestionDecorations<Metadata = unknown>(
+  state: SuggestionLayerState<Metadata>,
   editorState: EditorState,
   controller: SuggestionControllerActions,
 ): DecorationSet {
@@ -122,6 +122,7 @@ class SuggestionDiffWidget extends WidgetType {
     return (
       other.suggestion?.id === this.suggestion?.id &&
       other.suggestion?.replacement === this.suggestion?.replacement &&
+      other.suggestion?.note === this.suggestion?.note &&
       other.original === this.original &&
       other.focused === this.focused &&
       other.block === this.block
