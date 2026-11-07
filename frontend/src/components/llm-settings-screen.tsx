@@ -73,7 +73,8 @@ export function LlmSettingsScreen({
             setUnreachableBridgeUrl,
           )
       },
-      () => {
+      (loadError) => {
+        console.warn('LLM status request failed', loadError)
         if (active) setStatus('error')
       },
     )
