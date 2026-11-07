@@ -25,6 +25,12 @@ import type { WriteFromKeyPointsProposal } from '#proposals/write-from-key-point
 
 const overlappingSuggestionError = 'この範囲には別の提案が表示されています'
 
+type BodyRequestProposalResult = Pick<
+  WriteFromKeyPointsProposal,
+  'replacement'
+> &
+  Partial<Pick<WriteFromKeyPointsProposal, 'metadata' | 'replacementMarks'>>
+
 export type BodyRequestEditorContext = {
   doc: Y.Doc
   history: MoveHistory
@@ -147,6 +153,16 @@ export function BodyRequestAccessory({
   )
 
   useEffect(
+    () =>
+      manager.subscribeEvidenceError(() => {
+        setError('提案は採用されましたが、根拠を保存できませんでした。')
+        setPhase('error')
+        setOpen(true)
+      }),
+    [manager],
+  )
+
+  useEffect(
     () => () => {
       manager.abortActiveRequest()
       manager.clearInFlight()
@@ -174,7 +190,7 @@ export function BodyRequestAccessory({
   const startRequest = () => {
     const requestTarget = readRequestTarget()
     if (!requestTarget) return
-    const { context, view } = requestTarget
+    const { context } = requestTarget
     const premise = getPremise(doc)
     const body: BodyRequestInput = {
       instruction,
@@ -187,6 +203,39 @@ export function BodyRequestAccessory({
       section: context.section,
       target: context.target,
     }
+    const selection: BodyRequestPresetSelection = {
+      ...requestTarget,
+      instruction,
+    }
+    startProposalRequest(
+      selection,
+      (signal) =>
+        loadLlmSettings(() => window.localStorage).match(
+          (settings) => requestBodyProposal(fetch, settings, body, signal),
+          (cause) => errAsync(cause),
+        ),
+      (proposal, target) => ({
+        ...proposal,
+        replacement: preserveBlankLineSeparators(
+          target.view.state.doc.toString(),
+          target.context.range,
+          proposal.replacement,
+        ),
+      }),
+    )
+  }
+
+  const startProposalRequest = (
+    requestTarget: BodyRequestPresetSelection,
+    createProposal: (
+      signal: AbortSignal,
+    ) => ResultAsync<BodyRequestProposalResult, Error>,
+    prepareProposal: (
+      proposal: BodyRequestProposalResult,
+      target: BodyRequestPresetSelection,
+    ) => BodyRequestProposalResult = (proposal) => proposal,
+  ) => {
+    const { context, view } = requestTarget
     if (manager.layer.overlapsOtherLayer(context.range)) {
       setError(overlappingSuggestionError)
       setPhase('error')
@@ -218,25 +267,21 @@ export function BodyRequestAccessory({
     setPhase('input')
     setRequestActive(true)
     view.focus()
-
-    const result = loadLlmSettings(() => window.localStorage).match(
-      (settings) =>
-        requestBodyProposal(fetch, settings, body, controller.signal),
-      (cause) => errAsync(cause),
-    )
-    void result.match(
+    void createProposal(controller.signal).match(
       (response) => {
         if (controller.signal.aborted) return
         manager.finishRequest(controller)
         setRequestActive(false)
+        const proposal = prepareProposal(response, requestTarget)
         manager.layer
-          .resolveInFlight((range) =>
-            preserveBlankLineSeparators(
-              view.state.doc.toString(),
-              range,
-              response.replacement,
-            ),
-          )
+          .resolveInFlight(proposal.replacement, {
+            ...(proposal.metadata === undefined
+              ? {}
+              : { metadata: proposal.metadata }),
+            ...(proposal.replacementMarks === undefined
+              ? {}
+              : { replacementMarks: proposal.replacementMarks }),
+          })
           .match(
             () => undefined,
             () => {
@@ -263,67 +308,8 @@ export function BodyRequestAccessory({
     preset: BodyRequestProposalPreset,
     selection: BodyRequestPresetSelection,
   ) => {
-    const { context, view } = selection
-    if (manager.layer.overlapsOtherLayer(context.range)) {
-      setError(overlappingSuggestionError)
-      setPhase('error')
-      setOpen(true)
-      return
-    }
-    const controller = manager.beginRequest()
-    manager.clearSuggestions()
-    manager.clearInFlight()
-    const pending = manager.layer.setInFlight(context.range)
-    if (pending.isErr()) {
-      manager.finishRequest(controller)
-      controller.abort()
-      manager.clearInFlight()
-      setError(
-        pending.error.type === 'not-mounted'
-          ? '本文エディターを準備できませんでした。'
-          : pending.error.type === 'invalid-range'
-            ? '依頼する範囲を特定できませんでした。'
-            : overlappingSuggestionError,
-      )
-      setPhase('error')
-      setOpen(true)
-      return
-    }
-
-    setOpen(false)
-    setError(undefined)
-    setPhase('input')
-    setRequestActive(true)
-    view.focus()
-    void preset.createProposal(selection, controller.signal).match(
-      (proposal) => {
-        if (controller.signal.aborted) return
-        manager.finishRequest(controller)
-        setRequestActive(false)
-        manager.layer
-          .resolveInFlight(proposal.replacement, {
-            metadata: proposal.metadata,
-            replacementMarks: proposal.replacementMarks,
-          })
-          .match(
-            () => undefined,
-            () => {
-              manager.clearInFlight()
-              setError('提案を本文に表示できませんでした。')
-              setPhase('error')
-              setOpen(true)
-            },
-          )
-      },
-      (cause) => {
-        manager.finishRequest(controller)
-        if (controller.signal.aborted) return
-        setRequestActive(false)
-        manager.clearInFlight()
-        setError(cause.message)
-        setPhase('error')
-        setOpen(true)
-      },
+    startProposalRequest(selection, (signal) =>
+      preset.createProposal(selection, signal),
     )
   }
 
