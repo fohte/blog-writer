@@ -9,6 +9,7 @@ import { getBody, setBody } from '#article/index'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
 import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
+import { nextFrame } from '#test-support/browser.test-support.test'
 
 type MarkdownEditorOutput = {
   body: string
@@ -42,14 +43,6 @@ function readOutput(
     ),
     visible: content?.textContent,
   }
-}
-
-function nextFrame(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      resolve()
-    })
-  })
 }
 
 const webkitDriver: ImeDriver = {
