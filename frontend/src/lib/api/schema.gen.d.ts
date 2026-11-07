@@ -372,10 +372,12 @@ export interface components {
       thesis: string
     }
     BodyRequest: {
+      evidence_quotes?: string[] | null
       headings: string[]
       instruction: string
       premise: components['schemas']['ArticlePremise']
       section: string
+      source_summaries?: string[] | null
       target: string
     }
     BodyRequestError: {

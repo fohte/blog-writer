@@ -1346,6 +1346,12 @@
         "type": "object",
         "required": ["instruction", "premise", "headings", "section", "target"],
         "properties": {
+          "evidence_quotes": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            }
+          },
           "headings": {
             "type": "array",
             "items": {
@@ -1360,6 +1366,12 @@
           },
           "section": {
             "type": "string"
+          },
+          "source_summaries": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            }
           },
           "target": {
             "type": "string"
