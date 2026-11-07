@@ -90,6 +90,10 @@ function renderWorkspace(
   })
 }
 
+function modifierKey() {
+  return navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+}
+
 beforeEach(async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   await page.viewport(1280, 800)
@@ -139,7 +143,7 @@ describe('article editor screen', () => {
     })
     const bodyAfterMove = body.toJSON()
 
-    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    const modifier = modifierKey()
     await act(async () => {
       await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
     })
@@ -548,7 +552,7 @@ First paragraph.
     const bodyAfterOutlineMove = getBody(articleDoc).toJSON()
     const editor = host?.querySelector<HTMLElement>('.cm-content')
     if (!editor) throw new Error('The article editor did not render')
-    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    const modifier = modifierKey()
     await act(async () => {
       await userEvent.click(editor)
       await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
@@ -719,63 +723,75 @@ First paragraph.
             : { kind: state.kind },
       })),
     })
-    const readMemoHeadingInsertionHistoryOutput = (previousStates: {
-      afterInsert: ReturnType<typeof readMemoHeadingInsertionOutput>
-      afterUndo: ReturnType<typeof readMemoHeadingInsertionOutput>
-    }) => ({
-      ...previousStates,
-      afterRedo: readMemoHeadingInsertionOutput(),
+    const historyOutput: {
+      action: 'insert' | 'undo' | 'redo'
+      state: ReturnType<typeof readMemoHeadingInsertionOutput>
+    }[] = []
+    historyOutput.push({
+      action: 'insert',
+      state: readMemoHeadingInsertionOutput(),
     })
-    const afterInsert = readMemoHeadingInsertionOutput()
     const editor = host?.querySelector<HTMLElement>('.cm-content')
     if (!editor) throw new Error('The article editor did not render')
-    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    const modifier = modifierKey()
     await act(async () => {
       await userEvent.click(editor)
       await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
     })
-    const afterUndo = readMemoHeadingInsertionOutput()
+    historyOutput.push({
+      action: 'undo',
+      state: readMemoHeadingInsertionOutput(),
+    })
     await act(async () => {
       await userEvent.keyboard(`{${modifier}>}{Shift>}Z{/Shift}{/${modifier}}`)
     })
-    const actualOutput = readMemoHeadingInsertionHistoryOutput({
-      afterInsert,
-      afterUndo,
+    historyOutput.push({
+      action: 'redo',
+      state: readMemoHeadingInsertionOutput(),
     })
-    const expectedOutput = {
-      afterInsert: {
-        body: `${initialBody}\n\n# Add a summary\n\n`,
-        editor: `${initialBody}\n\n# Add a summary\n\n`,
-        memos: [
-          {
-            id: 'memo-a',
-            state: {
-              kind: 'adopted',
-              heading: { from: 18, level: 1, text: 'Add a summary' },
+    const expectedOutput = [
+      {
+        action: 'insert',
+        state: {
+          body: `${initialBody}\n\n# Add a summary\n\n`,
+          editor: `${initialBody}\n\n# Add a summary\n\n`,
+          memos: [
+            {
+              id: 'memo-a',
+              state: {
+                kind: 'adopted',
+                heading: { from: 18, level: 1, text: 'Add a summary' },
+              },
             },
-          },
-        ],
+          ],
+        },
       },
-      afterUndo: {
-        body: initialBody,
-        editor: initialBody,
-        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+      {
+        action: 'undo',
+        state: {
+          body: initialBody,
+          editor: initialBody,
+          memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+        },
       },
-      afterRedo: {
-        body: `${initialBody}\n\n# Add a summary\n\n`,
-        editor: `${initialBody}\n\n# Add a summary\n\n`,
-        memos: [
-          {
-            id: 'memo-a',
-            state: {
-              kind: 'adopted',
-              heading: { from: 18, level: 1, text: 'Add a summary' },
+      {
+        action: 'redo',
+        state: {
+          body: `${initialBody}\n\n# Add a summary\n\n`,
+          editor: `${initialBody}\n\n# Add a summary\n\n`,
+          memos: [
+            {
+              id: 'memo-a',
+              state: {
+                kind: 'adopted',
+                heading: { from: 18, level: 1, text: 'Add a summary' },
+              },
             },
-          },
-        ],
+          ],
+        },
       },
-    }
-    expect(actualOutput).toEqual(expectedOutput)
+    ]
+    expect(historyOutput).toEqual(expectedOutput)
   })
 
   it('passes article context and persists premise changes', async () => {
