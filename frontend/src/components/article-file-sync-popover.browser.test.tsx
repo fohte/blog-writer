@@ -1,4 +1,4 @@
-import type { EditorView } from '@codemirror/view'
+import { EditorView } from '@codemirror/view'
 import { err, ok } from 'neverthrow'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -19,9 +19,36 @@ let root: Root | undefined
 let doc: Y.Doc | undefined
 let history: MoveHistory | undefined
 let requests: Array<{ url: string; method: string; body: unknown }> = []
+let getResponses: unknown[] = []
+let resumeResponses: Array<{ status: number; payload: unknown }> = []
+let replacements: string[] = []
+let editorChangeRange: unknown
+
+const originalBody =
+  '# Article\n\nThe original text.\n\nThis paragraph stays untouched.\n'
+const importedBody =
+  '# Article\n\nText from the file.\n\nThis paragraph stays untouched.\n'
+
+const captureEditorChanges = EditorView.updateListener.of((update) => {
+  for (const transaction of update.transactions) {
+    if (transaction.isUserEvent('input.replace')) {
+      const ranges: Array<{ from: number; to: number }> = []
+      transaction.changes.iterChanges((from, to) => {
+        ranges.push({ from, to })
+      })
+      if (ranges.length > 0) {
+        editorChangeRange = {
+          from: Math.min(...ranges.map(({ from }) => from)),
+          to: Math.max(...ranges.map(({ to }) => to)),
+        }
+      }
+    }
+  }
+})
 
 const syncResponse = {
-  content: '# Article\r\n\r\nText from the file.\r\n',
+  content:
+    '# Article\r\n\r\nText from the file.\r\n\r\nThis paragraph stays untouched.\r\n',
   content_hash: 'file-hash',
   path: 'notes/example.md',
   status: 'external_changed',
@@ -51,21 +78,34 @@ function mockFetch() {
           ? body.path
           : syncResponse.path
 
-      return Promise.resolve(
-        Response.json(
-          method === 'POST' && url.endsWith('/resume')
-            ? {
-                ...syncResponse,
-                content: '# Article\n\nText from the file.\n',
-                status: 'synced',
-              }
-            : method === 'POST' && url.endsWith('/overwrite')
-              ? { ...syncResponse, status: 'synced' }
-              : method === 'PUT'
-                ? { ...syncResponse, path }
-                : syncResponse,
-        ),
-      )
+      let payload: unknown
+      let status = 200
+      if (method === 'GET') {
+        const requestIndex =
+          requests.filter((request) => request.method === 'GET').length - 1
+        payload = getResponses[requestIndex] ?? syncResponse
+      } else if (method === 'POST' && url.endsWith('/resume')) {
+        const requestIndex =
+          requests.filter(
+            (request) =>
+              request.method === 'POST' && request.url.endsWith('/resume'),
+          ).length - 1
+        const response = resumeResponses[requestIndex]
+        if (response) {
+          payload = response.payload
+          status = response.status
+        } else {
+          payload = { ...syncResponse, content: importedBody, status: 'synced' }
+        }
+      } else if (method === 'POST' && url.endsWith('/overwrite')) {
+        payload = { ...syncResponse, status: 'synced' }
+      } else if (method === 'PUT') {
+        payload = { ...syncResponse, path }
+      } else {
+        payload = syncResponse
+      }
+
+      return Promise.resolve(Response.json(payload, { status }))
     }),
   )
 }
@@ -75,13 +115,14 @@ function mount(
   viewHolder: { current?: EditorView },
   replaceBody: ArticleEditorContext['replaceBody'],
   initialStatus: 'unset' | 'synced' | 'external_changed' = 'external_changed',
+  initialPath?: string,
 ) {
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
   const testDoc = new Y.Doc()
   doc = testDoc
-  setBody(testDoc, '# Article\n\nThe original text.\n')
+  setBody(testDoc, originalBody)
   const testHistory = createMoveHistory(testDoc)
   history = testHistory
 
@@ -90,6 +131,7 @@ function mount(
       <>
         {withEditor ? (
           <MarkdownEditor
+            extensions={[captureEditorChanges]}
             history={testHistory}
             onViewChange={(nextView) => {
               if (nextView) viewHolder.current = nextView
@@ -101,6 +143,7 @@ function mount(
         <ArticleFileSyncPopover
           articleId="story-article"
           doc={testDoc}
+          initialPath={initialPath}
           initialStatus={initialStatus}
           replaceBody={replaceBody}
         />
@@ -111,14 +154,33 @@ function mount(
   return testDoc
 }
 
+function rerenderWithIndexState(
+  initialPath: string,
+  initialStatus: 'unset' | 'synced' | 'external_changed',
+  replaceBody: ArticleEditorContext['replaceBody'],
+) {
+  if (!root || !doc) throw new Error('The article sync view is not mounted')
+
+  root.render(
+    <ArticleFileSyncPopover
+      articleId="story-article"
+      doc={doc}
+      initialPath={initialPath}
+      initialStatus={initialStatus}
+      replaceBody={replaceBody}
+    />,
+  )
+}
+
 function readImportOutput(testDoc: Y.Doc, bodyAfterImport: string) {
   return {
     bodyAfterImport,
     bodyAfterUndo: getBody(testDoc).toJSON(),
+    editorChangeRange,
     statuses: [...document.querySelectorAll('[role="status"]')].map(
       (element) => element.textContent,
     ),
-    requests,
+    requests: [...requests],
   }
 }
 
@@ -128,19 +190,31 @@ function readFailureOutput() {
     statuses: [...document.querySelectorAll('[role="status"]')].map(
       (element) => element.textContent,
     ),
-    requests,
+    replacements: [...replacements],
+    requests: [...requests],
   }
 }
 
 function readOperationOutput() {
   return {
+    alert: document.querySelector('[role="alert"]')?.textContent,
     path: document.querySelector<HTMLInputElement>(
       '[aria-label="同期ファイルの相対パス"]',
     )?.value,
     statuses: [...document.querySelectorAll('[role="status"]')].map(
       (element) => element.textContent,
     ),
-    requests,
+    replacements: [...replacements],
+    requests: [...requests],
+  }
+}
+
+function readResumeRecoveryOutput(
+  afterFailure: ReturnType<typeof readOperationOutput>,
+) {
+  return {
+    afterFailure,
+    afterRetry: readOperationOutput(),
   }
 }
 
@@ -150,9 +224,32 @@ async function waitForRequestCount(count: number) {
   })
 }
 
+async function waitForImportReady() {
+  await vi.waitFor(() => {
+    const button = [...document.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === '取り込む',
+    )
+    if (!button || button.disabled) throw new Error('Waiting for import')
+  })
+}
+
+async function waitForStatus(label: string) {
+  await vi.waitFor(() => {
+    const statuses = [...document.querySelectorAll('[role="status"]')].map(
+      (element) => element.textContent,
+    )
+    if (statuses.includes('同期しています…') || !statuses.includes(label))
+      throw new Error('Waiting for synchronization to finish')
+  })
+}
+
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   requests = []
+  getResponses = []
+  resumeResponses = []
+  replacements = []
+  editorChangeRange = undefined
   mockFetch()
 })
 
@@ -171,7 +268,7 @@ afterEach(() => {
 })
 
 describe('ArticleFileSyncPopover', () => {
-  it('imports the displayed LF content in one undo step and resumes with its hash', async () => {
+  it('imports only changed text in one undo step and resumes with its hash', async () => {
     const viewHolder: { current?: EditorView } = {}
     const testDoc = mount(true, viewHolder, (value) => {
       if (!viewHolder.current)
@@ -186,7 +283,7 @@ describe('ArticleFileSyncPopover', () => {
     await act(async () => {
       await page.getByRole('button', { name: '取り込む' }).click()
       await vi.waitFor(() => {
-        if (getBody(testDoc).toJSON() !== '# Article\n\nText from the file.\n')
+        if (getBody(testDoc).toJSON() !== importedBody)
           throw new Error('Waiting for the imported body')
       })
     })
@@ -197,8 +294,9 @@ describe('ArticleFileSyncPopover', () => {
     })
 
     expect(readImportOutput(testDoc, bodyAfterImport)).toEqual({
-      bodyAfterImport: '# Article\n\nText from the file.\n',
-      bodyAfterUndo: '# Article\n\nThe original text.\n',
+      bodyAfterImport: importedBody,
+      bodyAfterUndo: originalBody,
+      editorChangeRange: { from: 12, to: 28 },
       statuses: ['同期済み'],
       requests: [
         {
@@ -235,6 +333,7 @@ describe('ArticleFileSyncPopover', () => {
     expect(readFailureOutput()).toEqual({
       alert: 'The article editor is not ready',
       statuses: ['外部で変更あり'],
+      replacements: [],
       requests: [
         {
           body: null,
@@ -267,8 +366,10 @@ describe('ArticleFileSyncPopover', () => {
     })
 
     expect(readOperationOutput()).toEqual({
+      alert: undefined,
       path: 'notes/updated.md',
       statuses: ['外部で変更あり'],
+      replacements: [],
       requests: [
         {
           body: null,
@@ -296,8 +397,10 @@ describe('ArticleFileSyncPopover', () => {
     })
 
     expect(readOperationOutput()).toEqual({
+      alert: undefined,
       path: 'notes/example.md',
       statuses: ['同期済み'],
+      replacements: [],
       requests: [
         {
           body: null,
@@ -310,6 +413,164 @@ describe('ArticleFileSyncPopover', () => {
           url: '/api/articles/story-article/file-sync/overwrite',
         },
       ],
+    })
+  })
+
+  it('reloads the file when its indexed status changes while the popover is open', async () => {
+    getResponses = [
+      { ...syncResponse, status: 'synced' },
+      {
+        ...syncResponse,
+        content: '# Article\r\n\r\nUpdated outside.\r\n',
+        content_hash: 'updated-hash',
+      },
+    ]
+    mount(
+      false,
+      {},
+      (value) => {
+        replacements.push(value)
+        return ok(undefined)
+      },
+      'synced',
+      'notes/example.md',
+    )
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
+    })
+    await waitForRequestCount(1)
+    await waitForStatus('同期済み')
+    act(() => {
+      rerenderWithIndexState(
+        'notes/example.md',
+        'external_changed',
+        (value) => {
+          replacements.push(value)
+          return ok(undefined)
+        },
+      )
+    })
+    await waitForImportReady()
+    await act(async () => {
+      await page.getByRole('button', { name: '取り込む' }).click()
+    })
+    await waitForRequestCount(3)
+    await waitForStatus('同期済み')
+
+    expect(readOperationOutput()).toEqual({
+      alert: undefined,
+      path: 'notes/example.md',
+      statuses: ['同期済み'],
+      replacements: ['# Article\n\nUpdated outside.\n'],
+      requests: [
+        {
+          body: null,
+          method: 'GET',
+          url: '/api/articles/story-article/file-sync',
+        },
+        {
+          body: null,
+          method: 'GET',
+          url: '/api/articles/story-article/file-sync',
+        },
+        {
+          body: { hash: 'updated-hash' },
+          method: 'POST',
+          url: '/api/articles/story-article/file-sync/resume',
+        },
+      ],
+    })
+  })
+
+  it('reloads changed file content after resume fails and keeps the error visible', async () => {
+    const latestResponse = {
+      ...syncResponse,
+      content:
+        '# Article\r\n\r\nThe latest file text.\r\n\r\nThis paragraph stays untouched.\r\n',
+      content_hash: 'latest-hash',
+    }
+    getResponses = [syncResponse, latestResponse]
+    resumeResponses = [
+      { status: 409, payload: { error: 'The file changed after reading.' } },
+      { status: 200, payload: { ...latestResponse, status: 'synced' } },
+    ]
+    mount(false, {}, (value) => {
+      replacements.push(value)
+      return ok(undefined)
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'ローカル同期' }))
+    })
+    await waitForImportReady()
+    await act(async () => {
+      await page.getByRole('button', { name: '取り込む' }).click()
+    })
+    await waitForRequestCount(3)
+    await waitForImportReady()
+    const outputAfterFailure = readOperationOutput()
+    await act(async () => {
+      await page.getByRole('button', { name: '取り込む' }).click()
+    })
+    await waitForRequestCount(4)
+    await waitForStatus('同期済み')
+
+    expect(readResumeRecoveryOutput(outputAfterFailure)).toEqual({
+      afterFailure: {
+        alert: '同期を再開できませんでした: The file changed after reading.',
+        path: 'notes/example.md',
+        statuses: ['外部で変更あり'],
+        replacements: [importedBody],
+        requests: [
+          {
+            body: null,
+            method: 'GET',
+            url: '/api/articles/story-article/file-sync',
+          },
+          {
+            body: { hash: 'file-hash' },
+            method: 'POST',
+            url: '/api/articles/story-article/file-sync/resume',
+          },
+          {
+            body: null,
+            method: 'GET',
+            url: '/api/articles/story-article/file-sync',
+          },
+        ],
+      },
+      afterRetry: {
+        alert: undefined,
+        path: 'notes/example.md',
+        statuses: ['同期済み'],
+        replacements: [
+          importedBody,
+          '# Article\n\nThe latest file text.\n\nThis paragraph stays untouched.\n',
+        ],
+        requests: [
+          {
+            body: null,
+            method: 'GET',
+            url: '/api/articles/story-article/file-sync',
+          },
+          {
+            body: { hash: 'file-hash' },
+            method: 'POST',
+            url: '/api/articles/story-article/file-sync/resume',
+          },
+          {
+            body: null,
+            method: 'GET',
+            url: '/api/articles/story-article/file-sync',
+          },
+          {
+            body: { hash: 'latest-hash' },
+            method: 'POST',
+            url: '/api/articles/story-article/file-sync/resume',
+          },
+        ],
+      },
     })
   })
 })

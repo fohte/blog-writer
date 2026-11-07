@@ -1,5 +1,5 @@
 import type { ResultAsync } from 'neverthrow'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as Y from 'yjs'
 
 import { readBody } from '#article/body'
@@ -26,6 +26,12 @@ type ArticleFileSyncPopoverProps = {
   initialError?: string | undefined
 }
 
+type FileSyncRequestOptions = {
+  clearError?: boolean | undefined
+  clearResponse?: boolean
+  beforeRequest?: () => Error | undefined
+}
+
 export function ArticleFileSyncPopover({
   articleId,
   doc,
@@ -44,6 +50,48 @@ export function ArticleFileSyncPopover({
   const [body, setBody] = useState(() => readBody(doc))
   const status = response?.status ?? initialStatus
   const lastIndexState = useRef({ path: initialPath, status: initialStatus })
+
+  const runRequest = useCallback(
+    async (
+      makeRequest: () => ResultAsync<ArticleFileSyncResponse, Error>,
+      options: FileSyncRequestOptions = {},
+    ): Promise<Error | undefined> => {
+      setBusy(true)
+      if (options.clearError !== false) setError(undefined)
+      if (options.clearResponse === true) setResponse(undefined)
+
+      const beforeRequestError = options.beforeRequest?.()
+      if (beforeRequestError) {
+        setError(beforeRequestError.message)
+        setBusy(false)
+        return undefined
+      }
+
+      const requestError = await makeRequest().match(
+        (nextResponse) => {
+          setResponse(nextResponse)
+          setPath(nextResponse.path ?? '')
+          return undefined
+        },
+        (error) => {
+          setError(error.message)
+          return error
+        },
+      )
+      setBusy(false)
+      return requestError
+    },
+    [],
+  )
+
+  const loadFileState = useCallback(
+    (options: { clearError?: boolean } = {}) =>
+      runRequest(() => getArticleFileSync(fetch, articleId), {
+        clearError: options.clearError,
+        clearResponse: true,
+      }),
+    [articleId, runRequest],
+  )
 
   useEffect(() => {
     const articleBody = doc.getText('body')
@@ -72,44 +120,9 @@ export function ArticleFileSyncPopover({
           : undefined,
       )
       lastIndexState.current = { path: initialPath, status: initialStatus }
+      if (open) void loadFileState()
     }
-  }, [initialPath, initialStatus])
-
-  async function runRequest(
-    makeRequest: () => ResultAsync<ArticleFileSyncResponse, Error>,
-    options: {
-      clearResponse?: boolean
-      beforeRequest?: () => Error | undefined
-    } = {},
-  ) {
-    setBusy(true)
-    setError(undefined)
-    if (options.clearResponse === true) setResponse(undefined)
-
-    const beforeRequestError = options.beforeRequest?.()
-    if (beforeRequestError) {
-      setError(beforeRequestError.message)
-      setBusy(false)
-      return
-    }
-
-    await makeRequest().match(
-      (nextResponse) => {
-        setResponse(nextResponse)
-        setPath(nextResponse.path ?? '')
-      },
-      (requestError) => {
-        setError(requestError.message)
-      },
-    )
-    setBusy(false)
-  }
-
-  function loadFileState() {
-    return runRequest(() => getArticleFileSync(fetch, articleId), {
-      clearResponse: true,
-    })
-  }
+  }, [initialPath, initialStatus, loadFileState, open])
 
   function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen)
@@ -122,13 +135,13 @@ export function ArticleFileSyncPopover({
     })
   }
 
-  function handleImport() {
+  async function handleImport() {
     const currentResponse = response
     const content = currentResponse?.content
     const contentHash = currentResponse?.content_hash
     if (content == null || contentHash == null) return
 
-    return runRequest(
+    const requestError = await runRequest(
       () => resumeArticleFileSync(fetch, articleId, contentHash),
       {
         beforeRequest: () => {
@@ -137,6 +150,7 @@ export function ArticleFileSyncPopover({
         },
       },
     )
+    if (requestError) await loadFileState({ clearError: false })
   }
 
   function handleOverwrite() {
