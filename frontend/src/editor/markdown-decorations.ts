@@ -35,6 +35,10 @@ function selectionIntersects(
   )
 }
 
+function isAtxHeading(name: string | undefined): boolean {
+  return name !== undefined && /^ATXHeading[1-6]$/u.test(name)
+}
+
 function shouldHideMark(
   state: EditorState,
   name: string,
@@ -46,16 +50,10 @@ function shouldHideMark(
 
   switch (name) {
     case 'HeaderMark':
-      if (!parent || !/^ATXHeading[1-6]$/u.test(parent.name)) return true
-      return !selectionIntersects(state, parent.from, parent.to)
+      return !isAtxHeading(parent?.name)
     case 'EmphasisMark':
     case 'StrikethroughMark':
       return !parent || !selectionIntersects(state, parent.from, parent.to)
-    case 'CodeMark':
-      return (
-        parent?.name === 'InlineCode' &&
-        !selectionIntersects(state, parent.from, parent.to)
-      )
     case 'LinkMark': {
       if (parent?.name !== 'Link') return true
 
@@ -73,7 +71,7 @@ function buildDecorations(state: EditorState): DecorationSet {
   const cursor = syntaxTree(state).cursor()
 
   while (cursor.next()) {
-    if (/^ATXHeading[1-6]$/u.test(cursor.name)) {
+    if (isAtxHeading(cursor.name)) {
       const level = Number(cursor.name.slice('ATXHeading'.length))
       const line = state.doc.lineAt(cursor.from)
       decorations.push(
@@ -146,6 +144,25 @@ function buildDecorations(state: EditorState): DecorationSet {
     if (cursor.name === 'CodeText') {
       decorations.push(
         Decoration.mark({ class: 'cm-md-code-text' }).range(
+          cursor.from,
+          cursor.to,
+        ),
+      )
+    }
+
+    const parentName = cursor.node.parent?.name ?? ''
+    if (cursor.name === 'HeaderMark' && isAtxHeading(parentName)) {
+      decorations.push(
+        Decoration.mark({ class: 'cm-md-header-mark' }).range(
+          cursor.from,
+          cursor.to,
+        ),
+      )
+    }
+
+    if (cursor.name === 'CodeMark' && parentName === 'InlineCode') {
+      decorations.push(
+        Decoration.mark({ class: 'cm-md-code-mark' }).range(
           cursor.from,
           cursor.to,
         ),

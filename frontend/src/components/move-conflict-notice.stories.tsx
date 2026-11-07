@@ -18,7 +18,7 @@ export const ChangedBeforeSelection: Story = {
   name: 'The text changes before its selection can be applied.',
   args: {
     status:
-      'This text changed before the choice could be applied. Review the updated text.',
+      '選択を反映する前にこの文が変わりました。変わった文を確認してください。',
     text: 'A sentence written while the section was offline.',
   },
 }
