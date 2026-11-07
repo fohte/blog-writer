@@ -1,10 +1,16 @@
 import type { EditorState } from '@codemirror/state'
-import { Decoration, type DecorationSet, WidgetType } from '@codemirror/view'
+import {
+  Decoration,
+  type DecorationSet,
+  type EditorView,
+  WidgetType,
+} from '@codemirror/view'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { SuggestionDiff } from '#components/suggestion-diff'
 import type {
   SuggestionLayerState,
+  SuggestionPosition,
   TextSuggestion,
 } from '#editor/suggestion-layer'
 
@@ -44,6 +50,7 @@ export function createSuggestionDecorations(
     )
     const widget = new SuggestionDiffWidget(
       suggestion,
+      { from: suggestion.from, to: suggestion.to },
       editorState.doc.sliceString(suggestion.from, suggestion.to),
       suggestion.id === state.focusedId,
       block,
@@ -68,7 +75,14 @@ export function createSuggestionDecorations(
       Decoration.widget({
         block,
         side: 1,
-        widget: new SuggestionDiffWidget(null, '', false, block, controller),
+        widget: new SuggestionDiffWidget(
+          null,
+          state.inFlight,
+          '',
+          false,
+          block,
+          controller,
+        ),
       }).range(state.inFlight.from),
     )
   }
@@ -79,6 +93,7 @@ export function createSuggestionDecorations(
 class SuggestionDiffWidget extends WidgetType {
   constructor(
     readonly suggestion: TextSuggestion | null,
+    readonly position: SuggestionPosition,
     readonly original: string,
     readonly focused: boolean,
     readonly block: boolean,
@@ -90,6 +105,21 @@ class SuggestionDiffWidget extends WidgetType {
   override eq(other: WidgetType): boolean {
     return (
       other instanceof SuggestionDiffWidget &&
+      this.sameContent(other) &&
+      other.position.from === this.position.from &&
+      other.position.to === this.position.to
+    )
+  }
+
+  override updateDOM(dom: HTMLElement, _view: EditorView, from: this): boolean {
+    if (!this.sameContent(from)) return false
+    dom.dataset['suggestionFrom'] = String(this.position.from)
+    dom.dataset['suggestionTo'] = String(this.position.to)
+    return true
+  }
+
+  private sameContent(other: SuggestionDiffWidget): boolean {
+    return (
       other.suggestion?.id === this.suggestion?.id &&
       other.suggestion?.replacement === this.suggestion?.replacement &&
       other.original === this.original &&
@@ -101,6 +131,8 @@ class SuggestionDiffWidget extends WidgetType {
   override toDOM(): HTMLElement {
     const dom = document.createElement(this.block ? 'div' : 'span')
     dom.className = 'cm-suggestion-widget'
+    dom.dataset['suggestionFrom'] = String(this.position.from)
+    dom.dataset['suggestionTo'] = String(this.position.to)
     const root = createRoot(dom)
     const suggestion = this.suggestion
     rootsByDOM.set(dom, root)

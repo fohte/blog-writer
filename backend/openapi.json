@@ -943,6 +943,43 @@
         }
       }
     },
+    "/api/proposals/body-request": {
+      "post": {
+        "operationId": "propose_body_request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BodyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Proposed replacement text",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/BodyRequestEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/proposals/outline": {
       "post": {
         "operationId": "propose_outline",
@@ -1238,6 +1275,21 @@
         "type": "string",
         "enum": ["unset", "synced", "external_changed"]
       },
+      "ArticlePremise": {
+        "type": "object",
+        "required": ["audience", "purpose", "claim"],
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "claim": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          }
+        }
+      },
       "ArticlePremiseRequest": {
         "type": "object",
         "required": ["audience", "purpose", "thesis"],
@@ -1249,6 +1301,78 @@
             "type": "string"
           },
           "thesis": {
+            "type": "string"
+          }
+        }
+      },
+      "BodyRequest": {
+        "type": "object",
+        "required": ["instruction", "premise", "headings", "section", "target"],
+        "properties": {
+          "headings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "premise": {
+            "$ref": "#/components/schemas/ArticlePremise"
+          },
+          "section": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        }
+      },
+      "BodyRequestError": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "BodyRequestEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/BodyRequestResult"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["result"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/BodyRequestError"
+              },
+              "event": {
+                "type": "string",
+                "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "BodyRequestResult": {
+        "type": "object",
+        "required": ["replacement"],
+        "properties": {
+          "replacement": {
             "type": "string"
           }
         }

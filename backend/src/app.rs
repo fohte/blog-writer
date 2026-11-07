@@ -306,6 +306,7 @@ mod tests {
     #[case::research_key_points("/api/research/key-points")]
     #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[case::research_job("/api/research/jobs")]
+    #[case::proposal_body_request("/api/proposals/body-request")]
     #[case::proposal_transition("/api/proposals/transition")]
     #[test_attr(tokio::test)]
     async fn includes_llm_use_case_routes_in_api_only_mode(#[case] uri: &'static str) {
@@ -343,6 +344,7 @@ mod tests {
     #[case::research_key_points("/api/research/key-points")]
     #[case::research_claim_evidence("/api/research/claim-evidence")]
     #[case::research_job("/api/research/jobs")]
+    #[case::proposal_body_request("/api/proposals/body-request")]
     #[case::proposal_transition("/api/proposals/transition")]
     #[test_attr(tokio::test)]
     async fn allows_cors_preflight_from_an_allowed_origin(#[case] uri: &'static str) {
