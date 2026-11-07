@@ -1,0 +1,102 @@
+name: Recheck browser failures
+
+on:
+  push:
+    branches:
+      - scratch/recheck-non-ime
+
+permissions:
+  contents: read
+
+jobs:
+  unit-test:
+    name: 'unit-test (frontend, ${{ matrix.job }})'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+          ]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.10.17
+
+      - run: |
+          corepack enable
+          mise reshim
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        run: |
+          store_path=$(pnpm store path)
+          echo "path=$store_path" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
+
+      - run: pnpm install --filter "{./frontend}..." --frozen-lockfile
+
+      - name: Get Playwright version
+        id: playwright-version
+        working-directory: frontend
+        run: echo "version=$(pnpm exec playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-webkit-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium webkit
+
+      - name: Install Playwright system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: frontend
+        run: pnpm exec playwright install-deps chromium webkit
+
+      - name: Run tests
+        working-directory: frontend
+        run: pnpm exec vitest run --project browser-unit-webkit src/App.browser.test.tsx
