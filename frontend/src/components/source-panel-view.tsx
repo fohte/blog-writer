@@ -93,13 +93,13 @@ export function SourcePanelView({
         <p className="text-sm text-muted-foreground">
           URL またはファイルをドロップ、または URL を貼り付け
         </p>
-        {researchProgress === undefined ? null : (
-          <ResearchProgress {...researchProgress} />
-        )}
         {researchError === undefined ? null : (
           <p role="alert">{researchError}</p>
         )}
         {error === undefined ? null : <p role="alert">{error}</p>}
+        {researchProgress === undefined ? null : (
+          <ResearchProgress {...researchProgress} />
+        )}
         {sources.length === 0 && pending.length === 0 ? (
           <p className="py-3 text-sm text-muted-foreground">
             資料はありません。
