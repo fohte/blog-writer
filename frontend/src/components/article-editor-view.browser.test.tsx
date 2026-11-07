@@ -669,7 +669,7 @@ First paragraph.
     })
   })
 
-  it('adds a memo as a heading from the article editor', async () => {
+  it('adds a memo as a heading from the article editor and restores it with undo and redo', async () => {
     const article: Article = {
       id: 'article-m',
       title: 'A draft to explore',
@@ -701,7 +701,6 @@ First paragraph.
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
     })
-
     const readMemoHeadingInsertionOutput = () => ({
       body: getBody(articleDoc).toJSON(),
       editor: editorRef.current?.state.doc.toString() ?? null,
@@ -720,19 +719,63 @@ First paragraph.
             : { kind: state.kind },
       })),
     })
-    expect(readMemoHeadingInsertionOutput()).toEqual({
-      body: `${initialBody}\n\n# Add a summary\n\n`,
-      editor: `${initialBody}\n\n# Add a summary\n\n`,
-      memos: [
-        {
-          id: 'memo-a',
-          state: {
-            kind: 'adopted',
-            heading: { from: 18, level: 1, text: 'Add a summary' },
-          },
-        },
-      ],
+    const readMemoHeadingInsertionHistoryOutput = (previousStates: {
+      afterInsert: ReturnType<typeof readMemoHeadingInsertionOutput>
+      afterUndo: ReturnType<typeof readMemoHeadingInsertionOutput>
+    }) => ({
+      ...previousStates,
+      afterRedo: readMemoHeadingInsertionOutput(),
     })
+    const afterInsert = readMemoHeadingInsertionOutput()
+    const editor = host?.querySelector<HTMLElement>('.cm-content')
+    if (!editor) throw new Error('The article editor did not render')
+    const modifier = navigator.platform.includes('Mac') ? 'Meta' : 'Control'
+    await act(async () => {
+      await userEvent.click(editor)
+      await userEvent.keyboard(`{${modifier}>}z{/${modifier}}`)
+    })
+    const afterUndo = readMemoHeadingInsertionOutput()
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}{Shift>}Z{/Shift}{/${modifier}}`)
+    })
+    const actualOutput = readMemoHeadingInsertionHistoryOutput({
+      afterInsert,
+      afterUndo,
+    })
+    const expectedOutput = {
+      afterInsert: {
+        body: `${initialBody}\n\n# Add a summary\n\n`,
+        editor: `${initialBody}\n\n# Add a summary\n\n`,
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 18, level: 1, text: 'Add a summary' },
+            },
+          },
+        ],
+      },
+      afterUndo: {
+        body: initialBody,
+        editor: initialBody,
+        memos: [{ id: 'memo-a', state: { kind: 'unorganized' } }],
+      },
+      afterRedo: {
+        body: `${initialBody}\n\n# Add a summary\n\n`,
+        editor: `${initialBody}\n\n# Add a summary\n\n`,
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 18, level: 1, text: 'Add a summary' },
+            },
+          },
+        ],
+      },
+    }
+    expect(actualOutput).toEqual(expectedOutput)
   })
 
   it('passes article context and persists premise changes', async () => {
