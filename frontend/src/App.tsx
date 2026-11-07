@@ -23,6 +23,7 @@ import {
 import { useSyncClient } from '#lib/use-sync-client'
 import { ArticleWorkspace } from '#pages/article-workspace'
 import { PremiseProposalAccessory } from '#proposals/premise'
+import { writeFromKeyPoints } from '#proposals/write-from-key-points'
 
 export function App() {
   const [showSettings, setShowSettings] = useState(false)
@@ -112,6 +113,14 @@ export function App() {
           doc={context.doc}
           history={context.history}
           view={context.view}
+          presets={[
+            {
+              id: 'write-from-key-points',
+              label: '資料をもとに書く',
+              createProposal: (selection, signal) =>
+                writeFromKeyPoints(context.doc, selection, signal),
+            },
+          ]}
         />
       )}
       editorExtensions={({ doc, history }) => [

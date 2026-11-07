@@ -3,7 +3,7 @@ import { Button } from '@fohte/ui/button'
 import type { EvidenceVerdict, Source } from '#article/types'
 
 type ClaimEvidenceCardProps = {
-  source: Source
+  source: Source | null
   quote: string
   verdict: EvidenceVerdict
   checkedAt: string
@@ -57,7 +57,7 @@ export function ClaimEvidenceCard({
         className="cm-evidence-card flex w-80 flex-col gap-3 rounded-md border bg-popover p-3 text-popover-foreground shadow-md"
         hidden={!open}
       >
-        <h3 className="font-semibold">{source.title}</h3>
+        <h3 className="font-semibold">{source?.title ?? '資料なし'}</h3>
         <p className="text-sm text-muted-foreground">
           {verdictLabels[verdict]}
         </p>
@@ -67,16 +67,18 @@ export function ClaimEvidenceCard({
         <blockquote className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
           {quote || '引用箇所はありません。'}
         </blockquote>
-        <p className="whitespace-pre-wrap text-sm">
-          {source.summary || '要約はありません。'}
-        </p>
+        {source ? (
+          <p className="whitespace-pre-wrap text-sm">
+            {source.summary || '要約はありません。'}
+          </p>
+        ) : null}
         <p className="text-xs text-muted-foreground">
           確認日: {checkedAt.slice(0, 10)}
         </p>
         <p className="text-xs text-muted-foreground">
           公開日: {publishedAt ?? '不明'}
         </p>
-        {source.url !== null ? (
+        {source?.url !== null && source?.url !== undefined ? (
           <a href={source.url} rel="noreferrer" target="_blank">
             資料を開く
           </a>

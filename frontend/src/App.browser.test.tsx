@@ -9,6 +9,7 @@ import * as Y from 'yjs'
 
 import { App } from '#App'
 import { getBody, setBody } from '#article/body'
+import { addSource, listEvidence, setFindings } from '#article/index'
 import { listMemos } from '#article/memos'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
@@ -23,6 +24,10 @@ vi.mock('#lib/use-sync-client', () => ({
 let host: HTMLDivElement | undefined
 let root: Root | undefined
 let doc: Y.Doc | undefined
+let writeRequest: unknown
+let writeRequestCount: number
+let holdWriteResponse = false
+let writeRequestSignal: AbortSignal | undefined
 
 const article: Article = {
   id: 'article-outline-proposal',
@@ -36,6 +41,39 @@ function proposalResponse(): Response {
       event: 'result',
       data: {
         suggestions: [{ from: 0, to: 17, replacement: '# Revised section' }],
+      },
+    })}\n\n`,
+    { headers: { 'content-type': 'text/event-stream' } },
+  )
+}
+
+function writeFromKeyPointsResponse(): Response {
+  return new Response(
+    `data: ${JSON.stringify({
+      event: 'result',
+      data: {
+        sentences: [
+          {
+            text: 'The report records an annual increase.',
+            is_factual: true,
+            key_point_ids: ['finding-sample'],
+          },
+          {
+            text: 'The program reached a national record.',
+            is_factual: true,
+            key_point_ids: [],
+          },
+          {
+            text: 'The plan stayed ahead of schedule.',
+            is_factual: true,
+            key_point_ids: ['finding-other-50'],
+          },
+          {
+            text: 'This may encourage more participation.',
+            is_factual: false,
+            key_point_ids: [],
+          },
+        ],
       },
     })}\n\n`,
     { headers: { 'content-type': 'text/event-stream' } },
@@ -74,9 +112,13 @@ function renderApp(articleDoc: Y.Doc) {
 }
 
 beforeEach(async () => {
+  writeRequest = undefined
+  writeRequestCount = 0
+  holdWriteResponse = false
+  writeRequestSignal = undefined
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   await page.viewport(375, 812)
-  const fetcher: typeof fetch = (input) => {
+  const fetcher: typeof fetch = (input, init) => {
     const url =
       typeof input === 'string'
         ? input
@@ -91,6 +133,24 @@ beforeEach(async () => {
     }
     if (url === '/api/proposals/outline') {
       return Promise.resolve(proposalResponse())
+    }
+    if (url === '/api/write-from-key-points') {
+      if (typeof init?.body === 'string') writeRequest = JSON.parse(init.body)
+      writeRequestCount += 1
+      if (holdWriteResponse && init?.signal instanceof AbortSignal) {
+        const signal = init.signal
+        writeRequestSignal = signal
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              reject(new DOMException('Aborted', 'AbortError'))
+            },
+            { once: true },
+          )
+        })
+      }
+      return Promise.resolve(writeFromKeyPointsResponse())
     }
     return Promise.resolve(new Response('unexpected request', { status: 500 }))
   }
@@ -229,6 +289,283 @@ describe('App outline proposal integration', () => {
     expect(readOutput()).toEqual({
       body: '# Second section\n\ntwo\n\n# First section\n\none\n',
       menuOpened: true,
+    })
+  })
+})
+
+describe('App write from key points integration', () => {
+  it('keeps the article unchanged when a writing request is canceled', async () => {
+    holdWriteResponse = true
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Target section\n\nA starter paragraph.')
+    renderApp(articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const appHost = host
+    if (!appHost) throw new Error('The app did not render')
+    await vi.waitFor(() => {
+      if (!appHost.querySelector('.cm-content')) {
+        throw new Error('The article editor did not open')
+      }
+    })
+    await act(async () => {
+      await userEvent.click(page.getByText('A starter paragraph.'))
+    })
+    const editorContent = appHost.querySelector<HTMLElement>('.cm-content')
+    if (!editorContent) throw new Error('The article editor did not render')
+    const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
+    await act(async () => {
+      editorContent.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          key: 'k',
+          [modifier]: true,
+        }),
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: '資料をもとに書く' }),
+      )
+    })
+    await vi.waitFor(() => {
+      if (writeRequestSignal === undefined) {
+        throw new Error('The writing request did not start')
+      }
+    })
+    await act(async () => {
+      editorContent.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' }),
+      )
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => {
+      if (writeRequestSignal?.aborted !== true) {
+        throw new Error('The writing request was not canceled')
+      }
+    })
+
+    const readOutput = () => ({
+      body: getBody(articleDoc).toJSON(),
+      evidenceIds: [...articleDoc.getMap('evidence').keys()],
+      requestCount: writeRequestCount,
+      aborted: writeRequestSignal?.aborted,
+    })
+    expect(readOutput()).toEqual({
+      body: '# Target section\n\nA starter paragraph.',
+      evidenceIds: [],
+      requestCount: 1,
+      aborted: true,
+    })
+  })
+
+  it('saves evidence only after accepting generated factual sentences', async () => {
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Target section\n\nA starter paragraph.')
+    addSource(articleDoc, {
+      id: 'source-sample',
+      kind: 'url',
+      title: 'Sample report',
+      url: 'https://example.invalid/report',
+      fileName: null,
+      checkedAt: '2026-03-01T00:00:00.000Z',
+      summary: 'A sample summary.',
+    })._unsafeUnwrap()
+    const otherFindings = Array.from({ length: 51 }, (_, index) => ({
+      id: `finding-other-${String(index)}`,
+      researchedHeadingId: 'block-9',
+      text: `A note from another section ${String(index)}.`,
+      quote: `A quotation from another section ${String(index)}.`,
+    }))
+    setFindings(articleDoc, 'source-sample', [
+      ...otherFindings,
+      {
+        id: 'finding-sample',
+        researchedHeadingId: 'block-0',
+        text: 'The measure increased each year.',
+        quote: 'The recorded value increased each year.',
+      },
+    ])._unsafeUnwrap()
+    renderApp(articleDoc)
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const appHost = host
+    if (!appHost) throw new Error('The app did not render')
+    await vi.waitFor(() => {
+      if (!appHost.querySelector('.cm-content')) {
+        throw new Error('The article editor did not open')
+      }
+    })
+    await act(async () => {
+      await userEvent.click(page.getByText('A starter paragraph.'))
+    })
+    const editorContent = appHost.querySelector<HTMLElement>('.cm-content')
+    if (!editorContent) throw new Error('The article editor did not render')
+    const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
+    await act(async () => {
+      editorContent.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          key: 'k',
+          [modifier]: true,
+        }),
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: '資料をもとに書く' }),
+      )
+      await vi.waitFor(() => {
+        if (
+          writeRequestCount !== 1 ||
+          writeRequest === undefined ||
+          !appHost.querySelector('.cm-suggestion-widget')
+        ) {
+          throw new Error('The writing proposal was not rendered')
+        }
+      })
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '× 却下' }))
+    })
+    const rejectedProposal = {
+      body: getBody(articleDoc).toJSON(),
+      evidenceIds: [...articleDoc.getMap('evidence').keys()],
+    }
+
+    await act(async () => {
+      editorContent.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          key: 'k',
+          [modifier]: true,
+        }),
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: '資料をもとに書く' }),
+      )
+      await vi.waitFor(() => {
+        if (
+          writeRequestCount !== 2 ||
+          !appHost.querySelector('.cm-suggestion-widget')
+        ) {
+          throw new Error('The second writing proposal was not rendered')
+        }
+      })
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '✓ 採用' }))
+    })
+
+    const markers = await vi.waitFor(() => {
+      const rendered = [
+        ...(host?.querySelectorAll<HTMLButtonElement>('.cm-evidence-marker') ??
+          []),
+      ]
+      if (rendered.length !== 3) {
+        throw new Error(
+          'The accepted factual sentences did not receive markers',
+        )
+      }
+      return rendered
+    })
+    const insufficientMarker = markers[1]
+    if (!insufficientMarker)
+      throw new Error('The insufficient marker is missing')
+    await act(async () => {
+      await userEvent.click(insufficientMarker)
+    })
+
+    const readOutput = () => ({
+      rejectedProposal,
+      body: getBody(articleDoc).toJSON(),
+      request: writeRequest,
+      evidence: listEvidence(articleDoc).map(
+        ({ currentClaim, edited, quote, sourceId, verdict }) => ({
+          currentClaim,
+          edited,
+          quote,
+          sourceId,
+          verdict,
+        }),
+      ),
+      card: appHost.querySelector('[aria-label="根拠"]')?.textContent ?? null,
+    })
+    expect(readOutput()).toEqual({
+      rejectedProposal: {
+        body: '# Target section\n\nA starter paragraph.',
+        evidenceIds: [],
+      },
+      body: '# Target section\n\nThe report records an annual increase. The program reached a national record. The plan stayed ahead of schedule. This may encourage more participation.',
+      request: {
+        premise: { audience: '', purpose: '', thesis: '' },
+        target_heading_id: 'block-0',
+        blocks: [
+          { id: 'block-0', kind: 'heading', markdown: '# Target section' },
+          {
+            id: 'block-1',
+            kind: 'paragraph',
+            markdown: 'A starter paragraph.',
+          },
+        ],
+        sources: [
+          {
+            title: 'Sample report',
+            url: 'https://example.invalid/report',
+            fetched_at: '2026-03-01T00:00:00.000Z',
+            summary: 'A sample summary.',
+            key_points: [
+              {
+                id: 'finding-sample',
+                researched_heading_id: 'block-0',
+                text: 'The measure increased each year.',
+                quote: 'The recorded value increased each year.',
+              },
+              ...Array.from({ length: 49 }, (_, index) => ({
+                id: `finding-other-${String(index)}`,
+                researched_heading_id: 'block-9',
+                text: `A note from another section ${String(index)}.`,
+                quote: `A quotation from another section ${String(index)}.`,
+              })),
+            ],
+          },
+        ],
+      },
+      evidence: [
+        {
+          currentClaim: 'The report records an annual increase.',
+          edited: false,
+          quote: 'The recorded value increased each year.',
+          sourceId: 'source-sample',
+          verdict: 'supported',
+        },
+        {
+          currentClaim: 'The program reached a national record.',
+          edited: false,
+          quote: '',
+          sourceId: null,
+          verdict: 'insufficient',
+        },
+        {
+          currentClaim: 'The plan stayed ahead of schedule.',
+          edited: false,
+          quote: '',
+          sourceId: null,
+          verdict: 'insufficient',
+        },
+      ],
+      card: '資料なし不足引用箇所はありません。確認日: 2026-11-07公開日: 不明外す',
     })
   })
 })

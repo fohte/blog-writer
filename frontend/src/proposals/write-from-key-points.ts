@@ -1,0 +1,274 @@
+import type { EditorView } from '@codemirror/view'
+import { errAsync, okAsync, type ResultAsync } from 'neverthrow'
+import * as Y from 'yjs'
+
+import {
+  addEvidence,
+  getPremise,
+  listFindings,
+  listSources,
+  topLevelBlocks,
+} from '#article/index'
+import type { EvidenceVerdict } from '#article/types'
+import type { SuggestionReplacementMark } from '#editor/suggestion-layer'
+import { loadLlmSettings } from '#lib/llm-settings'
+import { getBlankLineInsertionSeparators } from '#proposals/body-request-context'
+import {
+  requestWriteFromKeyPoints,
+  type WriteFromKeyPointsRequest,
+  type WrittenSentence,
+} from '#proposals/write-from-key-points-api'
+
+type Range = { from: number; to: number }
+
+export type AcceptedSentenceEvidence = {
+  from: number
+  to: number
+  claim: string
+  sourceId: string | null
+  quote: string
+  verdict: EvidenceVerdict
+}
+
+export type WriteFromKeyPointsMetadata = {
+  sentences: AcceptedSentenceEvidence[]
+}
+
+export type WriteFromKeyPointsProposal = {
+  replacement: string
+  metadata: WriteFromKeyPointsMetadata
+  replacementMarks: SuggestionReplacementMark[]
+}
+
+export type WriteFromKeyPointsSelection = {
+  context: { range: Range }
+  instruction: string
+  view: EditorView
+}
+
+type PointReference = {
+  sourceId: string
+  quote: string
+}
+
+type CandidatePoint = {
+  sourceId: string
+  id: string
+  researchedHeadingId: string
+  text: string
+  quote: string
+  targetMatch: boolean
+}
+
+const maximumKeyPoints = 50
+
+function isHeadingBlock(name: string): boolean {
+  return name.startsWith('ATXHeading') || name.startsWith('SetextHeading')
+}
+
+function requestBlocks(markdown: string) {
+  return topLevelBlocks(markdown).map((block, index) => ({
+    id: `block-${String(index)}`,
+    kind: isHeadingBlock(block.name)
+      ? 'heading'
+      : block.name === 'Paragraph'
+        ? 'paragraph'
+        : 'other',
+    markdown: markdown.slice(block.from, block.contentTo),
+  }))
+}
+
+function targetHeadingId(markdown: string, range: Range): string | undefined {
+  const blocks = topLevelBlocks(markdown)
+  const index = blocks.findLastIndex(
+    (block) => isHeadingBlock(block.name) && block.from <= range.from,
+  )
+  return index === -1 ? undefined : `block-${String(index)}`
+}
+
+function requestSources(
+  doc: Y.Doc,
+  targetId: string,
+): {
+  sources: WriteFromKeyPointsRequest['sources']
+  points: Map<string, PointReference>
+} {
+  const availableSources = new Map(
+    listSources(doc)
+      .filter((source) => source.status === 'ready' && source.url !== null)
+      .map((source) => [source.id, source]),
+  )
+  const pointsBySource = new Map<string, CandidatePoint[]>()
+  for (const finding of listFindings(doc)) {
+    if (!availableSources.has(finding.sourceId)) continue
+    const sourcePoints = pointsBySource.get(finding.sourceId) ?? []
+    sourcePoints.push({
+      sourceId: finding.sourceId,
+      id: finding.id,
+      researchedHeadingId: finding.researchedHeadingId ?? '',
+      text: finding.text,
+      quote: finding.quote,
+      targetMatch: finding.researchedHeadingId === targetId,
+    })
+    pointsBySource.set(finding.sourceId, sourcePoints)
+  }
+
+  const candidates = [...pointsBySource.values()].flat()
+  candidates.sort(
+    (left, right) => Number(right.targetMatch) - Number(left.targetMatch),
+  )
+  const selected = new Set(
+    candidates.slice(0, maximumKeyPoints).map(({ id }) => id),
+  )
+  const points = new Map<string, PointReference>(
+    candidates
+      .filter(({ id }) => selected.has(id))
+      .map(({ id, sourceId, quote }) => [id, { sourceId, quote }]),
+  )
+
+  return {
+    sources: [...availableSources.values()].flatMap((source) => {
+      const keyPoints = (pointsBySource.get(source.id) ?? [])
+        .filter(({ id }) => selected.has(id))
+        .sort(
+          (left, right) => Number(right.targetMatch) - Number(left.targetMatch),
+        )
+        .map((point) => ({
+          id: point.id,
+          researched_heading_id: point.researchedHeadingId,
+          text: point.text,
+          quote: point.quote.length === 0 ? null : point.quote,
+        }))
+      if (keyPoints.length === 0 || source.url === null) return []
+      return [
+        {
+          title: source.title,
+          url: source.url,
+          fetched_at: source.checkedAt ?? '',
+          summary: source.summary,
+          key_points: keyPoints,
+        },
+      ]
+    }),
+    points,
+  }
+}
+
+function buildProposal(
+  sentences: WrittenSentence[],
+  points: Map<string, PointReference>,
+  markdown: string,
+  range: Range,
+): WriteFromKeyPointsProposal | undefined {
+  const written = sentences.filter(({ text }) => text.trim().length > 0)
+  if (written.length === 0) return undefined
+
+  const baseReplacement = written.map(({ text }) => text).join(' ')
+  const separators =
+    range.from === range.to
+      ? getBlankLineInsertionSeparators(
+          markdown.slice(0, range.from),
+          markdown.slice(range.to),
+          baseReplacement,
+        )
+      : { before: '', after: '' }
+  const replacement = `${separators.before}${baseReplacement}${separators.after}`
+  const prefixLength = separators.before.length
+  const metadata: WriteFromKeyPointsMetadata = { sentences: [] }
+  const replacementMarks: SuggestionReplacementMark[] = []
+  let from = prefixLength
+
+  for (const sentence of written) {
+    const to = from + sentence.text.length
+    if (sentence.is_factual) {
+      const point = sentence.key_point_ids
+        .map((id) => points.get(id))
+        .find((candidate) => candidate !== undefined)
+      const verdict = point ? 'supported' : 'insufficient'
+      metadata.sentences.push({
+        from,
+        to,
+        claim: sentence.text,
+        sourceId: point?.sourceId ?? null,
+        quote: point?.quote ?? '',
+        verdict,
+      })
+      replacementMarks.push({ from, to, verdict })
+    }
+    from = to + 1
+  }
+
+  return { replacement, metadata, replacementMarks }
+}
+
+export function writeFromKeyPoints(
+  doc: Y.Doc,
+  selection: WriteFromKeyPointsSelection,
+  signal: AbortSignal,
+): ResultAsync<WriteFromKeyPointsProposal, Error> {
+  const markdown = selection.view.state.doc.toString()
+  const targetId = targetHeadingId(markdown, selection.context.range)
+  if (targetId === undefined) {
+    return errAsync(new Error('対象の見出しを特定できませんでした。'))
+  }
+  const premise = getPremise(doc)
+  const { sources, points } = requestSources(doc, targetId)
+  const body: WriteFromKeyPointsRequest = {
+    premise: {
+      audience: premise.audience ?? '',
+      purpose: premise.purpose ?? '',
+      thesis: premise.claim ?? '',
+    },
+    target_heading_id: targetId,
+    blocks: requestBlocks(markdown),
+    sources,
+  }
+
+  const settings = loadLlmSettings(() => window.localStorage)
+  return settings.match(
+    (value) =>
+      requestWriteFromKeyPoints(fetch, value, body, signal).andThen(
+        (result) => {
+          const proposal = buildProposal(
+            result.sentences,
+            points,
+            markdown,
+            selection.context.range,
+          )
+          return proposal
+            ? okAsync(proposal)
+            : errAsync(new Error('文章の提案を作成できませんでした。'))
+        },
+      ),
+    (cause) => errAsync(cause),
+  )
+}
+
+export function persistAcceptedEvidence(
+  doc: Y.Doc,
+  metadata: WriteFromKeyPointsMetadata | undefined,
+  acceptedRange: { current(): Range | undefined; dispose(): void } | undefined,
+): void {
+  if (!acceptedRange) return
+  const range = acceptedRange.current()
+  acceptedRange.dispose()
+  if (!metadata || !range) return
+
+  doc.transact(() => {
+    for (const sentence of metadata.sentences) {
+      addEvidence(doc, {
+        id: crypto.randomUUID(),
+        from: range.from + sentence.from,
+        to: range.from + sentence.to,
+        claim: sentence.claim,
+        sourceId: sentence.sourceId,
+        quote: sentence.quote,
+        verdict: sentence.verdict,
+        checkedAt: new Date().toISOString(),
+      }).match(
+        () => undefined,
+        () => undefined,
+      )
+    }
+  })
+}

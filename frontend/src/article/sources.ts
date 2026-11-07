@@ -20,7 +20,10 @@ export type AddSourceInput = Omit<Source, 'status' | 'summary'> & {
   summary?: string
 }
 
-export type AddFindingInput = Omit<Finding, 'id' | 'sourceId'> & { id?: string }
+export type AddFindingInput = Omit<
+  Finding,
+  'id' | 'sourceId' | 'researchedHeadingId'
+> & { id?: string; researchedHeadingId?: string | null }
 
 function getSourcesMap(doc: Y.Doc): Y.Map<SourceData> {
   return doc.getMap('sources')
@@ -62,9 +65,13 @@ function readSource(id: string, source: SourceData): Source {
 }
 
 function readFinding(id: string, finding: FindingData): Finding {
+  const researchedHeadingId = asNullableString(
+    finding.get('researchedHeadingId'),
+  )
   return {
     id,
     sourceId: asString(finding.get('sourceId')),
+    ...(researchedHeadingId === null ? {} : { researchedHeadingId }),
     text: asString(finding.get('text')),
     quote: asString(finding.get('quote')),
   }
@@ -152,6 +159,9 @@ export function setFindings(
   for (const finding of normalized) {
     const data = new Y.Map<unknown>()
     data.set('sourceId', sourceId)
+    if (finding.researchedHeadingId != null) {
+      data.set('researchedHeadingId', finding.researchedHeadingId)
+    }
     data.set('text', finding.text)
     data.set('quote', finding.quote)
     findingMap.set(finding.id, data)

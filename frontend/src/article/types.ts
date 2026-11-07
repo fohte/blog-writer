@@ -44,6 +44,7 @@ export type Source = {
 export type Finding = {
   id: string
   sourceId: string
+  researchedHeadingId?: string | null
   text: string
   quote: string
 }
@@ -59,7 +60,7 @@ export type Evidence = {
   from: Y.RelativePosition
   to: Y.RelativePosition
   claim: string
-  sourceId: string
+  sourceId: string | null
   quote: string
   verdict: EvidenceVerdict
   checkedAt: string

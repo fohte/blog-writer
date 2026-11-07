@@ -1,6 +1,6 @@
 import { type Extension, Prec } from '@codemirror/state'
 import { type EditorView, keymap } from '@codemirror/view'
-import { errAsync } from 'neverthrow'
+import { errAsync, type ResultAsync } from 'neverthrow'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type * as Y from 'yjs'
 
@@ -10,17 +10,18 @@ import {
   type BodyRequestPresetOption,
   BodyRequestView,
 } from '#components/body-request-view'
-import { createSuggestionLayer } from '#editor/suggestion-layer'
 import { loadLlmSettings } from '#lib/llm-settings'
 import type { MoveHistory } from '#outline/move-history'
 import {
   type BodyRequestInput,
   requestBodyProposal,
 } from '#proposals/body-request-api'
+import { getBodyRequestContext } from '#proposals/body-request-context'
 import {
-  getBlankLineInsertionSeparators,
-  getBodyRequestContext,
-} from '#proposals/body-request-context'
+  getBodyRequestManager,
+  preserveBlankLineSeparators,
+} from '#proposals/body-request-manager'
+import type { WriteFromKeyPointsProposal } from '#proposals/write-from-key-points'
 
 const overlappingSuggestionError = 'この範囲には別の提案が表示されています'
 
@@ -40,101 +41,18 @@ export interface BodyRequestPresetSelection {
   view: EditorView
 }
 
-export interface BodyRequestPreset extends BodyRequestPresetOption {
-  onSelect: (selection: BodyRequestPresetSelection) => void
+interface BodyRequestProposalPreset extends BodyRequestPresetOption {
+  createProposal: (
+    selection: BodyRequestPresetSelection,
+    signal: AbortSignal,
+  ) => ResultAsync<WriteFromKeyPointsProposal, Error>
 }
 
-function preserveBlankLineSeparators(
-  text: string,
-  range: { from: number; to: number },
-  replacement: string,
-): string {
-  if (range.from !== range.to || replacement.length === 0) return replacement
-
-  const before = text.slice(0, range.from)
-  const after = text.slice(range.to)
-  const separators = getBlankLineInsertionSeparators(before, after, replacement)
-  return `${separators.before}${replacement}${separators.after}`
-}
-
-class BodyRequestManager {
-  readonly layer = createSuggestionLayer({
-    onCancelInFlight: () => {
-      this.cancelRequest()
-    },
-    onInFlightRangeEdited: () => {
-      this.cancelRequest(true)
-    },
-  })
-
-  private activeRequest: AbortController | null = null
-  private readonly listeners = new Set<(preserveInput: boolean) => void>()
-  private readonly openListeners = new Set<() => void>()
-
-  subscribe(listener: (preserveInput: boolean) => void): () => void {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
-  }
-
-  subscribeOpen(listener: () => void): () => void {
-    this.openListeners.add(listener)
-    return () => this.openListeners.delete(listener)
-  }
-
-  openRequest(): void {
-    this.openListeners.forEach((listener) => {
-      listener()
+export type BodyRequestPreset =
+  | (BodyRequestPresetOption & {
+      onSelect: (selection: BodyRequestPresetSelection) => void
     })
-  }
-
-  beginRequest(): AbortController {
-    this.abortActiveRequest()
-    const controller = new AbortController()
-    this.activeRequest = controller
-    return controller
-  }
-
-  finishRequest(controller: AbortController): void {
-    if (this.activeRequest === controller) this.activeRequest = null
-  }
-
-  clearInFlight(): void {
-    this.layer.setInFlight(null).match(
-      () => undefined,
-      () => undefined,
-    )
-  }
-
-  clearSuggestions(): void {
-    this.layer.setSuggestions([]).match(
-      () => undefined,
-      () => undefined,
-    )
-  }
-
-  abortActiveRequest(): void {
-    this.activeRequest?.abort()
-    this.activeRequest = null
-  }
-
-  cancelRequest(preserveInput = false): void {
-    this.abortActiveRequest()
-    this.listeners.forEach((listener) => {
-      listener(preserveInput)
-    })
-  }
-}
-
-const managers = new WeakMap<Y.Doc, BodyRequestManager>()
-
-function getManager(doc: Y.Doc): BodyRequestManager {
-  let manager = managers.get(doc)
-  if (!manager) {
-    manager = new BodyRequestManager()
-    managers.set(doc, manager)
-  }
-  return manager
-}
+  | BodyRequestProposalPreset
 
 function cursorLineAnchor(view: EditorView | null): HTMLElement | null {
   if (!view) return null
@@ -162,7 +80,7 @@ function cursorLineAnchor(view: EditorView | null): HTMLElement | null {
 export function bodyRequestExtensions(
   context: BodyRequestEditorContext,
 ): Extension[] {
-  const manager = getManager(context.doc)
+  const manager = getBodyRequestManager(context.doc)
   return [
     manager.layer.extension,
     Prec.high(
@@ -184,7 +102,7 @@ export function BodyRequestAccessory({
   view,
   presets,
 }: BodyRequestAccessoryContext) {
-  const manager = useMemo(() => getManager(doc), [doc])
+  const manager = useMemo(() => getBodyRequestManager(doc), [doc])
   const [open, setOpen] = useState(false)
   const [phase, setPhase] = useState<BodyRequestPhase>('input')
   const [requestActive, setRequestActive] = useState(false)
@@ -341,6 +259,74 @@ export function BodyRequestAccessory({
     )
   }
 
+  const startPresetRequest = (
+    preset: BodyRequestProposalPreset,
+    selection: BodyRequestPresetSelection,
+  ) => {
+    const { context, view } = selection
+    if (manager.layer.overlapsOtherLayer(context.range)) {
+      setError(overlappingSuggestionError)
+      setPhase('error')
+      setOpen(true)
+      return
+    }
+    const controller = manager.beginRequest()
+    manager.clearSuggestions()
+    manager.clearInFlight()
+    const pending = manager.layer.setInFlight(context.range)
+    if (pending.isErr()) {
+      manager.finishRequest(controller)
+      controller.abort()
+      manager.clearInFlight()
+      setError(
+        pending.error.type === 'not-mounted'
+          ? '本文エディターを準備できませんでした。'
+          : pending.error.type === 'invalid-range'
+            ? '依頼する範囲を特定できませんでした。'
+            : overlappingSuggestionError,
+      )
+      setPhase('error')
+      setOpen(true)
+      return
+    }
+
+    setOpen(false)
+    setError(undefined)
+    setPhase('input')
+    setRequestActive(true)
+    view.focus()
+    void preset.createProposal(selection, controller.signal).match(
+      (proposal) => {
+        if (controller.signal.aborted) return
+        manager.finishRequest(controller)
+        setRequestActive(false)
+        manager.layer
+          .resolveInFlight(proposal.replacement, {
+            metadata: proposal.metadata,
+            replacementMarks: proposal.replacementMarks,
+          })
+          .match(
+            () => undefined,
+            () => {
+              manager.clearInFlight()
+              setError('提案を本文に表示できませんでした。')
+              setPhase('error')
+              setOpen(true)
+            },
+          )
+      },
+      (cause) => {
+        manager.finishRequest(controller)
+        if (controller.signal.aborted) return
+        setRequestActive(false)
+        manager.clearInFlight()
+        setError(cause.message)
+        setPhase('error')
+        setOpen(true)
+      },
+    )
+  }
+
   const cancelRequest = useCallback(() => {
     manager.cancelRequest()
     manager.clearInFlight()
@@ -390,14 +376,19 @@ export function BodyRequestAccessory({
         const requestTarget = readRequestTarget()
         if (!requestTarget) return
         const selectedInstruction = instruction
+        const selection = {
+          ...requestTarget,
+          instruction: selectedInstruction,
+        }
         setOpen(false)
         setError(undefined)
         setInstruction('')
         setPhase('input')
-        preset.onSelect({
-          ...requestTarget,
-          instruction: selectedInstruction,
-        })
+        if ('createProposal' in preset) {
+          startPresetRequest(preset, selection)
+        } else {
+          preset.onSelect(selection)
+        }
       }}
       onSubmit={startRequest}
       open={open}

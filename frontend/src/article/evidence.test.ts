@@ -110,6 +110,27 @@ function readAddEvidenceOutput(
   }
 }
 
+function readSourceLessEvidenceOutput(
+  doc: Y.Doc,
+  result: ReturnType<typeof addEvidence>,
+) {
+  return {
+    result: result.match(
+      () => 'ok',
+      (error) => error.name,
+    ),
+    evidence: listEvidence(doc).map(
+      ({ currentClaim, quote, sourceId, verdict }) => ({
+        currentClaim,
+        quote,
+        sourceId,
+        verdict,
+      }),
+    ),
+    storedEvidenceIds: [...doc.getMap('evidence').keys()],
+  }
+}
+
 function readDelayedBodyOutput(
   visibleBeforeBody: ReturnType<typeof listEvidence>,
   storedBeforeBody: string[],
@@ -154,6 +175,37 @@ function readPartialEvidenceOutput(
 }
 
 describe('article evidence', () => {
+  it('retains insufficient evidence without a source when pruning', () => {
+    const doc = new Y.Doc()
+    const claim = 'The measure reached a record.'
+    setBody(doc, claim)
+    const result = addEvidence(doc, {
+      id: 'evidence-without-source',
+      from: 0,
+      to: claim.length,
+      claim,
+      sourceId: null,
+      quote: '',
+      verdict: 'insufficient',
+      checkedAt: '2026-03-01T00:00:00.000Z',
+    })
+    pruneEvidence(doc)
+
+    expect(readSourceLessEvidenceOutput(doc, result)).toEqual({
+      result: 'ok',
+      evidence: [
+        {
+          currentClaim: claim,
+          quote: '',
+          sourceId: null,
+          verdict: 'insufficient',
+        },
+      ],
+      storedEvidenceIds: ['evidence-without-source'],
+    })
+    doc.destroy()
+  })
+
   it.each([
     {
       name: 'empty ID',
