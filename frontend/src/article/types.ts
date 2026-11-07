@@ -50,3 +50,24 @@ export type Finding = {
 
 export type SourceData = Y.Map<unknown>
 export type FindingData = Y.Map<unknown>
+
+export type EvidenceVerdict =
+  'supported' | 'insufficient' | 'outdated' | 'contradicted'
+
+export type Evidence = {
+  id: string
+  from: Y.RelativePosition
+  to: Y.RelativePosition
+  claim: string
+  sourceId: string
+  quote: string
+  verdict: EvidenceVerdict
+  checkedAt: string
+}
+
+export type EvidenceView = Evidence & {
+  currentClaim: string
+  edited: boolean
+}
+
+export type EvidenceData = Y.Map<unknown>

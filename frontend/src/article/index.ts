@@ -2,6 +2,7 @@ export { getBody, readBody, setBody } from '#article/body'
 export {
   ArticleError,
   InvalidBlockMoveError,
+  InvalidEvidenceError,
   InvalidHeadingError,
   InvalidMemoError,
   InvalidSourceError,
@@ -10,6 +11,14 @@ export {
   SourceAlreadyExistsError,
   SourceNotFoundError,
 } from '#article/errors'
+export type { AddEvidenceInput } from '#article/evidence'
+export {
+  addEvidence,
+  listEvidence,
+  observeEvidence,
+  pruneEvidence,
+  removeEvidence,
+} from '#article/evidence'
 export { deriveHeadingTree } from '#article/headings'
 export {
   addMemo,
@@ -62,6 +71,9 @@ export {
   updateSource,
 } from '#article/sources'
 export type {
+  Evidence,
+  EvidenceVerdict,
+  EvidenceView,
   Finding,
   Heading,
   Memo,
