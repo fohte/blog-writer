@@ -15,7 +15,7 @@ import * as Y from 'yjs'
 
 import { setBody } from '#article/body'
 import { downloadArticleFile, exportArticleBody } from '#article/export'
-import { ArticleExportPopover } from '#components/article-export-popover'
+import { ArticleFileSaveSection } from '#components/article-file-save-section'
 
 const exportFailure = vi.hoisted(() => ({ active: false }))
 
@@ -50,27 +50,6 @@ function readConversionError() {
     alert: document.querySelector('[role="alert"]')?.textContent ?? null,
     filename: filename ?? null,
     downloadStarted: blob !== undefined,
-  }
-}
-
-function readInitialFocusState() {
-  return {
-    focusedButton:
-      document.activeElement instanceof HTMLButtonElement
-        ? document.activeElement.textContent
-        : null,
-    selectedFormat: document.querySelector<HTMLButtonElement>(
-      '[data-slot="segmented-control-item"][aria-pressed="true"]',
-    )?.textContent,
-  }
-}
-
-function readDestinationState() {
-  return {
-    publishSection: document.querySelector('[aria-label="PR を作成"]') !== null,
-    alerts: [...document.querySelectorAll('[role="alert"]')].map(
-      ({ textContent }) => textContent,
-    ),
   }
 }
 
@@ -113,75 +92,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('ArticleExportPopover', () => {
-  it.each([
-    {
-      name: 'publishing is disabled',
-      destinationError: undefined,
-      expected: { publishSection: false, alerts: [] },
-    },
-    {
-      name: 'destination loading failed',
-      destinationError: '公開先を読み込めませんでした。',
-      expected: {
-        publishSection: false,
-        alerts: ['公開先を読み込めませんでした。'],
-      },
-    },
-  ])(
-    'shows the destination state when $name',
-    ({ destinationError, expected }) => {
-      host = document.createElement('div')
-      document.body.append(host)
-      const testDoc = new Y.Doc()
-      doc = testDoc
-      root = createRoot(host)
-
-      act(() => {
-        root?.render(
-          <ArticleExportPopover
-            articleId="sample-article"
-            articleTitle="Sample article"
-            defaultOpen
-            destinationError={destinationError}
-            doc={testDoc}
-          />,
-        )
-      })
-
-      expect(readDestinationState()).toEqual(expected)
-    },
-  )
-
-  it('focuses the download button when the options open', async () => {
-    host = document.createElement('div')
-    document.body.append(host)
-    const testDoc = new Y.Doc()
-    doc = testDoc
-    setBody(testDoc, 'A short article body.')
-    root = createRoot(host)
-
-    act(() => {
-      root?.render(
-        <ArticleExportPopover
-          articleId="sample-article"
-          articleTitle="Sample article"
-          defaultFormat="mdx"
-          doc={testDoc}
-        />,
-      )
-    })
-
-    await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '書き出す' }))
-    })
-
-    expect(readInitialFocusState()).toEqual({
-      focusedButton: 'ダウンロード',
-      selectedFormat: 'MDX',
-    })
-  })
-
+describe('ArticleFileSaveSection', () => {
   it('shows an MDX conversion error without starting a download', async () => {
     exportFailure.active = true
     host = document.createElement('div')
@@ -193,7 +104,7 @@ describe('ArticleExportPopover', () => {
 
     act(() => {
       root?.render(
-        <ArticleExportPopover
+        <ArticleFileSaveSection
           articleId="sample-article"
           articleTitle="Sample article"
           doc={testDoc}
@@ -202,7 +113,6 @@ describe('ArticleExportPopover', () => {
     })
 
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '書き出す' }))
       await userEvent.click(page.getByRole('button', { name: 'MDX' }))
       await userEvent.click(page.getByRole('button', { name: 'ダウンロード' }))
     })
@@ -239,16 +149,12 @@ describe('ArticleExportPopover', () => {
 
     act(() => {
       root?.render(
-        <ArticleExportPopover
+        <ArticleFileSaveSection
           articleId="sample-article"
           articleTitle="Sample article"
           doc={testDoc}
         />,
       )
-    })
-
-    await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '書き出す' }))
     })
     setBody(testDoc, 'Literal {x} and 1<2.')
 
@@ -264,10 +170,7 @@ describe('ArticleExportPopover', () => {
     })
   })
 
-  it.each([
-    { name: 'format changes', changeFormat: true },
-    { name: 'closing and reopening', changeFormat: false },
-  ])('clears an initial error after $name', async ({ changeFormat }) => {
+  it('clears an initial error after the format changes', async () => {
     host = document.createElement('div')
     document.body.append(host)
     const testDoc = new Y.Doc()
@@ -277,10 +180,9 @@ describe('ArticleExportPopover', () => {
 
     act(() => {
       root?.render(
-        <ArticleExportPopover
+        <ArticleFileSaveSection
           articleId="sample-article"
           articleTitle="Sample article"
-          defaultOpen
           doc={testDoc}
           initialError="MDX 形式に変換できませんでした。"
         />,
@@ -288,12 +190,7 @@ describe('ArticleExportPopover', () => {
     })
 
     await act(async () => {
-      if (changeFormat) {
-        await userEvent.click(page.getByRole('button', { name: 'MDX' }))
-      } else {
-        await userEvent.click(page.getByRole('button', { name: '書き出す' }))
-        await userEvent.click(page.getByRole('button', { name: '書き出す' }))
-      }
+      await userEvent.click(page.getByRole('button', { name: 'MDX' }))
     })
 
     expect(document.querySelectorAll('[role="alert"]').length).toEqual(0)

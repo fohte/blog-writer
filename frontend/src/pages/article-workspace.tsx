@@ -28,7 +28,8 @@ export function ArticleWorkspace({
   onOpenSettings,
   bodyAccessory,
   editorExtensions,
-  headerActions,
+  articleNotice,
+  exportScreen,
   onViewChange,
   outlineRenderer,
   premisePanel,
@@ -47,7 +48,8 @@ export function ArticleWorkspace({
         client={client}
         editorExtensions={editorExtensions}
         error={error}
-        headerActions={headerActions}
+        articleNotice={articleNotice}
+        exportScreen={exportScreen}
         onLoginAgain={() => {
           window.location.reload()
         }}

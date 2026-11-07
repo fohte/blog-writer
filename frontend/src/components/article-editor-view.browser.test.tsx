@@ -825,7 +825,7 @@ First paragraph.
       bodyAccessory: () => (
         <div data-testid="body-accessory">Draft request</div>
       ),
-      headerActions: ({ articleId, history }) => {
+      articleNotice: ({ articleId, history }) => {
         capturedArticleId = articleId
         contextHistory = history
         return null
@@ -934,7 +934,7 @@ First paragraph.
     setBody(articleDoc, initialBody)
     let attemptInvalidMove: (() => string) | undefined
     renderWorkspace(article, articleDoc, {
-      headerActions: ({ history, view }) => {
+      articleNotice: ({ history, view }) => {
         if (!view) return null
         attemptInvalidMove = () =>
           history
@@ -1092,6 +1092,68 @@ First paragraph.
     expect(onOpenSettings).toHaveBeenCalledTimes(1)
   })
 
+  it('opens the export screen over the hidden editor and returns to the article', async () => {
+    const article: Article = {
+      id: 'article-export',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Starting point\n')
+    renderWorkspace(article, articleDoc, {
+      articleNotice: ({ openExport }) => (
+        <button
+          onClick={() => {
+            openExport('sync')
+          }}
+          type="button"
+        >
+          Compare file
+        </button>
+      ),
+      exportScreen: ({ section, syncStatus, onBack }) => (
+        <button onClick={onBack} type="button">
+          {`Export ${section ?? 'default'} ${syncStatus ?? 'unknown'}`}
+        </button>
+      ),
+    })
+    const readScreen = () => ({
+      exportScreen:
+        [...(host?.querySelectorAll('button') ?? [])].find(({ textContent }) =>
+          textContent.startsWith('Export '),
+        )?.textContent ?? null,
+      editorHidden:
+        host?.querySelector('.cm-editor')?.closest('[hidden]') !== null,
+    })
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '書き出し' }))
+    })
+    const fromHeader = readScreen()
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: /^Export / }))
+    })
+    const afterBack = readScreen()
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'Compare file' }))
+    })
+
+    const readExportOutput = () => ({
+      fromHeader,
+      afterBack,
+      fromNotice: readScreen(),
+    })
+    expect(readExportOutput()).toEqual({
+      fromHeader: { exportScreen: 'Export default synced', editorHidden: true },
+      afterBack: { exportScreen: null, editorHidden: false },
+      fromNotice: { exportScreen: 'Export sync synced', editorHidden: true },
+    })
+  })
+
   it('shows sync errors, reauthentication, and the unsynced state', async () => {
     const article: Article = {
       id: 'article-i',
@@ -1167,7 +1229,7 @@ First paragraph.
     let liveReplacement: string | undefined
     let staleReplaceBody: ((value: string) => Result<void, Error>) | undefined
     renderWorkspace(article, articleDoc, {
-      headerActions: ({ replaceBody }) => {
+      articleNotice: ({ replaceBody }) => {
         staleReplaceBody ??= replaceBody
         if (initialReplacementResult === undefined) {
           initialReplacementResult = replaceBody('# Too early\n').match(
@@ -1273,7 +1335,7 @@ First paragraph.
         <ArticleEditorPage
           article={article}
           client={client}
-          headerActions={({ replaceBody }) => {
+          articleNotice={({ replaceBody }) => {
             if (article.id === firstArticle.id) {
               staleReplaceBody ??= replaceBody
             }

@@ -1,15 +1,15 @@
 import { EditorView } from '@codemirror/view'
-import { Button } from '@fohte/ui/button'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useEffect, useMemo } from 'react'
 import * as Y from 'yjs'
 
-import { getBody, setBody, setPremise } from '#article/index'
+import { setBody, setPremise } from '#article/index'
 import {
   type ArticleEditorPanel,
   ArticleEditorView,
   type ArticleEditorViewProps,
 } from '#components/article-editor-view'
+import { ArticleFileSyncBannerView } from '#components/article-file-sync-banner-view'
 import { ArticlePremisePanel } from '#components/article-premise-panel'
 import { ArticleOutline } from '#outline/article-outline'
 
@@ -75,25 +75,23 @@ function ArticleEditorPreview({
         editorExtensions={
           integrations ? () => [EditorView.lineWrapping] : undefined
         }
-        headerActions={
+        articleNotice={
           integrations
-            ? ({ doc: articleDoc, replaceBody }) => (
-                <Button
-                  onClick={() => {
-                    const body = getBody(articleDoc).toJSON()
-                    replaceBody(body).match(
-                      () => undefined,
-                      () => undefined,
-                    )
-                  }}
-                  type="button"
-                  variant="outline"
-                >
-                  Export
-                </Button>
+            ? () => (
+                <ArticleFileSyncBannerView
+                  canImport
+                  onChangePath={() => {}}
+                  onImport={() => {}}
+                  onOverwrite={() => {}}
+                  onShowDiff={() => {}}
+                  onUndo={() => {}}
+                  path="notes/example.md"
+                  state="external_changed"
+                />
               )
             : undefined
         }
+        exportScreen={integrations ? () => null : undefined}
         initialPanel={initialPanel}
         layout={layout}
         onBack={() => {}}

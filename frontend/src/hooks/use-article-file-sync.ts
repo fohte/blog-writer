@@ -1,10 +1,7 @@
 import type { ResultAsync } from 'neverthrow'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type * as Y from 'yjs'
 
-import { readBody } from '#article/body'
 import type { ArticleEditorContext } from '#components/article-editor-view'
-import { ArticleFileSyncView } from '#components/article-file-sync-view'
 import {
   type ArticleFileSyncResponse,
   type ArticleFileSyncStatus,
@@ -15,15 +12,13 @@ import {
 } from '#lib/file-sync-api'
 import { normalizeLineEndings } from '#lib/normalize-line-endings'
 
-type ArticleFileSyncPopoverProps = {
+type UseArticleFileSyncOptions = {
   articleId: string
-  doc: Y.Doc
   initialPath?: string | undefined
   initialStatus: ArticleFileSyncStatus
   replaceBody: ArticleEditorContext['replaceBody']
-  defaultOpen?: boolean | undefined
-  initialResponse?: ArticleFileSyncResponse | undefined
-  initialError?: string | undefined
+  /** Loads the file while true, and reloads it when the indexed path or status changes. */
+  active: boolean
 }
 
 type FileSyncRequestOptions = {
@@ -38,24 +33,20 @@ type FileSyncRequestOutcome =
   | { kind: 'request-failed'; error: Error }
   | { kind: 'superseded'; error?: Error }
 
-export function ArticleFileSyncPopover({
+type IndexState = { path: string | undefined; status: ArticleFileSyncStatus }
+
+export function useArticleFileSync({
   articleId,
-  doc,
   initialPath,
   initialStatus,
   replaceBody,
-  defaultOpen = false,
-  initialResponse,
-  initialError,
-}: ArticleFileSyncPopoverProps) {
-  const [open, setOpen] = useState(defaultOpen)
+  active,
+}: UseArticleFileSyncOptions) {
   const [busy, setBusy] = useState(false)
-  const [response, setResponse] = useState(initialResponse)
-  const [path, setPath] = useState(initialResponse?.path ?? initialPath ?? '')
-  const [error, setError] = useState(initialError)
-  const [body, setBody] = useState(() => readBody(doc))
-  const status = response?.status ?? initialStatus
-  const lastIndexState = useRef({ path: initialPath, status: initialStatus })
+  const [response, setResponse] = useState<ArticleFileSyncResponse>()
+  const [path, setPath] = useState(initialPath ?? '')
+  const [error, setError] = useState<string>()
+  const loadedIndex = useRef<IndexState | undefined>(undefined)
   const requestSequence = useRef(0)
 
   const runRequest = useCallback(
@@ -109,49 +100,40 @@ export function ArticleFileSyncPopover({
   )
 
   useEffect(() => {
-    const articleBody = doc.getText('body')
-    const updateBody = () => {
-      setBody(articleBody.toJSON())
-    }
-    articleBody.observe(updateBody)
-    updateBody()
-    return () => {
-      articleBody.unobserve(updateBody)
-    }
-  }, [doc])
-
-  useEffect(() => {
     setPath(initialPath ?? '')
   }, [initialPath])
 
   useEffect(() => {
-    const previous = lastIndexState.current
-    if (previous.path !== initialPath || previous.status !== initialStatus) {
-      const responseMatchesIndex =
-        (response?.path ?? undefined) === initialPath &&
-        response?.status === initialStatus
-      if (!responseMatchesIndex) setResponse(undefined)
-      lastIndexState.current = { path: initialPath, status: initialStatus }
-      if (open && !responseMatchesIndex) void loadFileState()
+    if (!active) {
+      loadedIndex.current = undefined
+      return
     }
-  }, [initialPath, initialStatus, loadFileState, open, response])
+    const previous = loadedIndex.current
+    if (
+      previous !== undefined &&
+      previous.path === initialPath &&
+      previous.status === initialStatus
+    )
+      return
+    loadedIndex.current = { path: initialPath, status: initialStatus }
+    // The index catches up with this hook's own requests; reloading then would discard the file just read.
+    const responseMatchesIndex =
+      previous !== undefined &&
+      (response?.path ?? undefined) === initialPath &&
+      response?.status === initialStatus
+    if (!responseMatchesIndex) void loadFileState()
+  }, [active, initialPath, initialStatus, loadFileState, response])
 
-  function handleOpenChange(nextOpen: boolean) {
-    setOpen(nextOpen)
-    if (nextOpen) void loadFileState()
-  }
-
-  function handleSetPath() {
+  function setSyncPath() {
     return runRequest(() => setArticleFileSync(fetch, articleId, path), {
       clearResponse: true,
     })
   }
 
-  async function handleImport() {
-    const currentResponse = response
-    const content = currentResponse?.content
-    const contentHash = currentResponse?.content_hash
-    if (content == null || contentHash == null) return
+  async function importFile() {
+    const content = response?.content
+    const contentHash = response?.content_hash
+    if (content == null || contentHash == null) return false
 
     const outcome = await runRequest(
       () => resumeArticleFileSync(fetch, articleId, contentHash),
@@ -170,33 +152,23 @@ export function ArticleFileSyncPopover({
         setError(outcome.error.message)
       await loadFileState({ clearError: false })
     }
+    return outcome.kind === 'success'
   }
 
-  function handleOverwrite() {
+  function overwrite() {
     return runRequest(() => overwriteArticleFileSync(fetch, articleId))
   }
 
-  return (
-    <ArticleFileSyncView
-      body={body}
-      content={response?.content}
-      contentHash={response?.content_hash}
-      error={error}
-      onImport={() => {
-        void handleImport()
-      }}
-      onOpenChange={handleOpenChange}
-      onOverwrite={() => {
-        void handleOverwrite()
-      }}
-      onPathChange={setPath}
-      onSetPath={() => {
-        void handleSetPath()
-      }}
-      open={open}
-      path={path}
-      status={status}
-      busy={busy}
-    />
-  )
+  return {
+    status: response?.status ?? initialStatus,
+    path,
+    content: response?.content,
+    contentHash: response?.content_hash,
+    busy,
+    error,
+    setPath,
+    setSyncPath,
+    importFile,
+    overwrite,
+  }
 }

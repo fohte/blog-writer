@@ -29,7 +29,8 @@ export function ArticleEditorPage({
   onLoginAgain,
   bodyAccessory,
   editorExtensions,
-  headerActions,
+  articleNotice,
+  exportScreen,
   onViewChange,
   outlineRenderer,
   premisePanel,
@@ -58,7 +59,8 @@ export function ArticleEditorPage({
       bodyAccessory={bodyAccessory}
       doc={doc}
       editorExtensions={editorExtensions}
-      headerActions={headerActions}
+      articleNotice={articleNotice}
+      exportScreen={exportScreen}
       onBack={onBack}
       onOpenSettings={onOpenSettings}
       onViewChange={onViewChange}
