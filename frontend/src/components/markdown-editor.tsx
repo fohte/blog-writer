@@ -25,6 +25,7 @@ import {
 } from '#article/evidence'
 import { listSources } from '#article/sources'
 import { ClaimEvidenceCard } from '#components/claim-evidence-card'
+import { MarkdownEditorImageUploadError } from '#components/markdown-editor-image-upload-error'
 import { evidenceDecorations } from '#editor/evidence-decorations'
 import { evidenceDrop } from '#editor/evidence-drop'
 import {
@@ -315,9 +316,7 @@ export const MarkdownEditor = forwardRef<
         </p>
       ) : null}
       {imageUploadError !== undefined ? (
-        <p className="text-sm text-destructive" role="alert">
-          {imageUploadError}
-        </p>
+        <MarkdownEditorImageUploadError message={imageUploadError} />
       ) : null}
     </>
   )

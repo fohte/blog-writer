@@ -175,7 +175,7 @@ function buildBlockWidgetDecorations(state: EditorState): DecorationSet {
           .trimEnd()
         const diagramId = `markdown-mermaid-${String(cursor.from)}`
         const widget = new DomWidget(
-          () => createMermaidPreviewElement(diagramId, source),
+          () => createMermaidPreviewElement({ id: diagramId, source }),
           `mermaid:${String(cursor.from)}:${source}`,
         )
         if (selectionTouches(state, cursor.from, cursor.to)) {

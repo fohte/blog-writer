@@ -1,13 +1,25 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { useLayoutEffect, useRef } from 'react'
 
 import {
-  MarkdownTablePreview,
+  createMarkdownTablePreview,
   type MarkdownTablePreviewProps,
 } from '#components/markdown-table-preview'
 
+function MarkdownTablePreviewStory(props: MarkdownTablePreviewProps) {
+  const container = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    if (container.current)
+      container.current.replaceChildren(createMarkdownTablePreview(props))
+  }, [props])
+
+  return <div ref={container} />
+}
+
 const meta = {
   title: 'Editor/MarkdownTablePreview',
-  component: MarkdownTablePreview,
+  component: MarkdownTablePreviewStory,
 } satisfies Meta<MarkdownTablePreviewProps>
 
 export default meta

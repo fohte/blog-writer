@@ -4,6 +4,8 @@ import { act } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
+import { DomWidget } from '#editor/dom-widget'
+import { evidenceDrop } from '#editor/evidence-drop'
 import type { ArticleImageUploader } from '#editor/image-upload'
 
 const tableSource = [
@@ -97,6 +99,100 @@ describe('Markdown block previews', () => {
         sourceVisible: true,
       },
     })
+  })
+
+  it('renders inline GFM syntax in table cells', () => {
+    const source = [
+      '| Feature | Guide | Code |',
+      '| --- | --- | --- |',
+      '| **Bold** | [site](https://assets.example.test/guide?w=320&h=200) | `code` |',
+      '| *Italic* | ~~Old~~ | ![Sample](https://assets.example.test/images/sample.webp?w=20&h=10) |',
+    ].join('\n')
+    const { body, content } = mountMarkdownEditor(source)
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      cells: [...(content?.querySelectorAll('tbody td') ?? [])].map((cell) => ({
+        alt: cell.querySelector('img')?.getAttribute('alt') ?? null,
+        href: cell.querySelector('a')?.getAttribute('href') ?? null,
+        tags: [...cell.children].map(({ tagName }) => tagName),
+        text: cell.textContent,
+        src: cell.querySelector('img')?.getAttribute('src') ?? null,
+      })),
+    })
+
+    expect(readOutput()).toEqual({
+      body: source,
+      cells: [
+        {
+          alt: null,
+          href: null,
+          tags: ['STRONG'],
+          text: 'Bold',
+          src: null,
+        },
+        {
+          alt: null,
+          href: 'https://assets.example.test/guide?w=320&h=200',
+          tags: ['A'],
+          text: 'site',
+          src: null,
+        },
+        {
+          alt: null,
+          href: null,
+          tags: ['CODE'],
+          text: 'code',
+          src: null,
+        },
+        {
+          alt: null,
+          href: null,
+          tags: ['EM'],
+          text: 'Italic',
+          src: null,
+        },
+        {
+          alt: null,
+          href: null,
+          tags: ['DEL'],
+          text: 'Old',
+          src: null,
+        },
+        {
+          alt: 'Sample',
+          href: null,
+          tags: ['IMG'],
+          text: '',
+          src: 'https://assets.example.test/images/sample.webp?w=20&h=10',
+        },
+      ],
+    })
+  })
+
+  it('keeps block widgets while a composition is changing the document', () => {
+    const source = `before\n\n${tableSource}\n\nafter`
+    const { body, content } = mountMarkdownEditor(source)
+    const view = content ? EditorView.findFromDOM(content) : null
+    const toDOM = vi.spyOn(DomWidget.prototype, 'toDOM')
+    const initialWidgetCount = toDOM.mock.calls.length
+
+    act(() => {
+      content?.dispatchEvent(
+        new CompositionEvent('compositionstart', { bubbles: true }),
+      )
+      view?.dispatch({ changes: { from: 0, insert: 'changed ' } })
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      widgetRecreated: toDOM.mock.calls.length !== initialWidgetCount,
+    })
+    expect(readOutput()).toEqual({
+      body: `changed ${source}`,
+      widgetRecreated: false,
+    })
+    toDOM.mockRestore()
   })
 
   it('draws an image outside its source and keeps the preview below editable source', () => {
@@ -199,12 +295,61 @@ describe('Markdown block previews', () => {
 })
 
 describe('image paste and drop uploads', () => {
+  it('leaves non-image file drops to CodeMirror with an image uploader configured', async () => {
+    const uploadedFiles: string[] = []
+    const uploader: ArticleImageUploader = (file) => {
+      uploadedFiles.push(file.name)
+      return okAsync({
+        src: 'https://assets.example.test/images/uploaded.webp?w=320&h=200',
+      })
+    }
+    const { body, content } = mountMarkdownEditor(
+      'A research sentence.',
+      [],
+      (doc) => [
+        evidenceDrop(
+          doc,
+          'article-example',
+          () => undefined,
+          () => undefined,
+        ),
+      ],
+      { uploadArticleImage: uploader },
+    )
+    vi.spyOn(EditorView.prototype, 'posAtCoords').mockReturnValue(5)
+    const transfer = new DataTransfer()
+    transfer.items.add(
+      new File(['source text'], 'source.txt', { type: 'text/plain' }),
+    )
+    const drop = new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    })
+    content?.dispatchEvent(drop)
+
+    await vi.waitUntil(
+      () => body.toJSON() === 'A ressource textearch sentence.',
+    )
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      defaultPrevented: drop.defaultPrevented,
+      uploadedFiles,
+    })
+    expect(readOutput()).toEqual({
+      body: 'A ressource textearch sentence.',
+      defaultPrevented: true,
+      uploadedFiles: [],
+    })
+  })
+
   it.each([
-    { method: 'paste', succeeds: true },
-    { method: 'paste', succeeds: false },
-    { method: 'drop', succeeds: true },
-    { method: 'drop', succeeds: false },
-  ])('$method handles a file upload result', async ({ method, succeeds }) => {
+    { name: 'paste succeeds', method: 'paste', succeeds: true },
+    { name: 'paste displays a failure', method: 'paste', succeeds: false },
+    { name: 'drop succeeds', method: 'drop', succeeds: true },
+    { name: 'drop displays a failure', method: 'drop', succeeds: false },
+  ])('$name', async ({ method, succeeds }) => {
     const uploadedFiles: string[] = []
     const uploader: ArticleImageUploader = (file) => {
       uploadedFiles.push(file.name)
