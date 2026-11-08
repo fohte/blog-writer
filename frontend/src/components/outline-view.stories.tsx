@@ -65,6 +65,11 @@ export const AfterDropTarget: Story = {
   args: { dropTarget: { kind: 'move', from: 13, placement: 'after' } },
 }
 
+export const MoveConflictMark: Story = {
+  name: 'the outline marks the heading that holds text left behind by a move.',
+  args: { moveConflictCounts: { 13: 1 } },
+}
+
 export const MemoHeadingDropTarget: Story = {
   name: 'the outline highlights a heading that will adopt a memo.',
   args: {

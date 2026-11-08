@@ -129,7 +129,7 @@ describe('moveConflictExtension', () => {
         { notice: null, highlightedText: null },
         {
           notice:
-            'xyこの文は、移動前のセクションに書き足されたものです。移動先へ移すその場に残す',
+            'xyこの文が書かれた箇所は、「## Brindle」へ移動されています。移動先へ移すその場に残す',
           highlightedText: 'xy',
         },
       ],
@@ -262,7 +262,7 @@ describe('moveConflictExtension', () => {
 
     expect(readOutput()).toEqual({
       notice:
-        'xyこの文は、移動前のセクションに書き足されたものです。移動先へ移すその場に残す',
+        'xyこの文が書かれた箇所は、「## Brindle」へ移動されています。移動先へ移すその場に残す',
       highlightedText: 'xy',
     })
   })

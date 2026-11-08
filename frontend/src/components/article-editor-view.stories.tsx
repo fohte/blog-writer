@@ -100,7 +100,13 @@ function ArticleEditorPreview({
         onViewChange={integrations ? () => {} : undefined}
         outlineRenderer={
           integrations
-            ? ({ doc: articleDoc, history, onHeadingSelected, view }) => (
+            ? ({
+                doc: articleDoc,
+                history,
+                mobile,
+                onHeadingSelected,
+                view,
+              }) => (
                 <div className="flex flex-col gap-4">
                   <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
                     Outline suggestion
@@ -109,6 +115,7 @@ function ArticleEditorPreview({
                     <ArticleOutline
                       doc={articleDoc}
                       history={history}
+                      mobile={mobile}
                       onHeadingSelected={onHeadingSelected}
                       view={view}
                     />

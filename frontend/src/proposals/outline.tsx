@@ -53,6 +53,7 @@ export type OutlineProposalEditorContext = {
 
 export type OutlineProposalAccessoryContext = OutlineProposalEditorContext & {
   view: EditorView | null
+  mobile?: boolean
   onHeadingSelected: () => void
   onActiveHeadingChange?: ((heading: Heading | undefined) => void) | undefined
 }
@@ -451,6 +452,7 @@ export function OutlineProposalAccessory({
   doc,
   history,
   view,
+  mobile = false,
   onHeadingSelected,
   onActiveHeadingChange,
 }: OutlineProposalAccessoryContext) {
@@ -474,6 +476,7 @@ export function OutlineProposalAccessory({
       doc={doc}
       history={history}
       view={view}
+      mobile={mobile}
       onHeadingSelected={onHeadingSelected}
       onActiveHeadingChange={onActiveHeadingChange}
       proposalState={state}

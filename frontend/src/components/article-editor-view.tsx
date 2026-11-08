@@ -54,6 +54,7 @@ export type ArticleExportContext = ArticleEditorContext & {
   onBack: () => void
 }
 type ArticleOutlineRenderContext = ArticleEditorContext & {
+  mobile: boolean
   onHeadingSelected: () => void
 }
 
@@ -234,13 +235,15 @@ export function ArticleEditorView({
       const onHeadingSelected = () => {
         if (isMobile) setPanel('body')
       }
-      const outlineContext = { ...context, onHeadingSelected }
+      const mobile = isMobile && selectedPanel === 'outline'
+      const outlineContext = { ...context, mobile, onHeadingSelected }
       return outlineRenderer ? (
         outlineRenderer(outlineContext)
       ) : view ? (
         <ArticleOutline
           doc={context.doc}
           history={context.history}
+          mobile={mobile}
           onHeadingSelected={onHeadingSelected}
           view={view}
         />
