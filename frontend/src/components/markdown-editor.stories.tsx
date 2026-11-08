@@ -211,6 +211,17 @@ const imageDataUrl =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='180'%3E%3Crect width='320' height='180' fill='%23dbeafe'/%3E%3C/svg%3E"
 const imageContent = `![Sample image](${imageDataUrl})`
 const mermaidContent = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
+const blockPreviewMoveContent = [
+  'A paragraph before the rendered blocks.',
+  '',
+  tableContent,
+  '',
+  imageContent,
+  '',
+  mermaidContent,
+  '',
+  'A paragraph after the rendered blocks.',
+].join('\n')
 
 export const TablePreview: Story = {
   name: 'the editor draws a GFM table while the cursor is outside it.',
@@ -298,6 +309,15 @@ export const BlockMoveHandles: Story = {
   args: {
     content: blockMoveContent,
     initialSelection: { anchor: 0 },
+    showMoveHandles: true,
+  },
+}
+
+export const BlockMoveHandlesInsidePreviews: Story = {
+  name: 'the editor shows move handles inside rendered tables, images, and Mermaid diagrams.',
+  args: {
+    content: blockPreviewMoveContent,
+    initialSelection: { anchor: 1 },
     showMoveHandles: true,
   },
 }

@@ -6,10 +6,12 @@ import { DomWidget } from '#editor/dom-widget'
 export type BlockWidgetDecorator = (
   element: HTMLElement,
   view: EditorView,
+  sourceFrom: number,
 ) => (() => void) | undefined
 
 interface BlockWidgetOptions {
   attachDecorators?: boolean
+  sourceFrom: number
 }
 
 export const blockWidgetDecorators = Facet.define<
@@ -20,7 +22,7 @@ export const blockWidgetDecorators = Facet.define<
 export function createBlockWidget(
   createPreview: (view: EditorView) => HTMLElement,
   identity: string,
-  { attachDecorators = true }: BlockWidgetOptions = {},
+  { attachDecorators = true, sourceFrom }: BlockWidgetOptions,
 ): DomWidget {
   const cleanupByElement = new WeakMap<HTMLElement, () => void>()
   return new DomWidget(
@@ -32,7 +34,7 @@ export function createBlockWidget(
       const cleanups = attachDecorators
         ? view.state
             .facet(blockWidgetDecorators)
-            .map((decorate) => decorate(element, view))
+            .map((decorate) => decorate(element, view, sourceFrom))
             .filter((cleanup): cleanup is () => void => cleanup !== undefined)
         : []
       const stopWidgetMouseDown = (event: MouseEvent) => {
@@ -74,5 +76,9 @@ export function createBlockWidget(
       cleanupByElement.get(element)?.()
       cleanupByElement.delete(element)
     },
+    (event) =>
+      event.type === 'keydown' &&
+      event.target instanceof Element &&
+      event.target.closest('.cm-markdown-block-widget-handle') !== null,
   )
 }

@@ -107,9 +107,12 @@ function createBlockHandleDecorations(
 function attachWidgetHandle(
   element: HTMLElement,
   view: EditorView,
+  sourceFrom: number,
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
-): () => void {
+): (() => void) | undefined {
+  if (!getVisibleBlockStarts(view).includes(sourceFrom)) return undefined
+
   const host = document.createElement('span')
   host.className = 'cm-markdown-block-widget-handle'
   element.prepend(host)
@@ -236,10 +239,11 @@ function createDragPlugin(
             }
             const input = bodyDropInput(view, position, clientY, from)
             if (input) {
-              history.move(input, view).match(
+              const succeeded = history.move(input, view).match(
                 () => true,
                 () => false,
               )
+              if (!succeeded) return
             }
           },
         })
@@ -294,32 +298,36 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
         },
       ]),
     ),
-    blockWidgetDecorators.of((element, view) =>
-      attachWidgetHandle(element, view, history, composingViews),
+    blockWidgetDecorators.of((element, view, sourceFrom) =>
+      attachWidgetHandle(element, view, sourceFrom, history, composingViews),
     ),
     createBlockHandleExtension(history, composingViews),
     createDragPlugin(history, composingViews),
     EditorView.theme({
+      // Other extensions read this to line their block widgets up with the text after the handle column.
       '.cm-content': {
         '--cm-line-inset': '1.5rem',
       },
       '.cm-content .cm-line': {
         paddingInlineStart: 'var(--cm-line-inset)',
       },
+      '.cm-block-drag-handle': {
+        top: '50%',
+        transform: 'translateY(-50%)',
+      },
+    }),
+    EditorView.baseTheme({
       '.cm-line': {
         position: 'relative',
       },
       '.cm-block-drag-handle': {
         position: 'absolute',
-        insetInlineStart: '0',
-        top: '50%',
-        transform: 'translateY(-50%)',
+        left: '0',
         display: 'flex',
         width: '1.5rem',
         height: '1.5rem',
         alignItems: 'center',
         justifyContent: 'center',
-        pointerEvents: 'auto',
         border: '0',
         borderRadius: '0.25rem',
         background: 'transparent',
@@ -340,7 +348,7 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
       },
       '.cm-markdown-block-widget-handle': {
         position: 'absolute',
-        insetInlineStart: '0',
+        left: '0',
         top: '0.25rem',
       },
       '.cm-markdown-block-widget-handle .cm-block-drag-handle': {
