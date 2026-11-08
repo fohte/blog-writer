@@ -5,6 +5,7 @@ import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { BlockMoveMenu } from '#components/block-move-menu'
+import { getBlockWidgetReplaceEnds } from '#editor/markdown-block-widgets'
 import { blockMoveActions } from '#outline/block-move-actions'
 import { blockStarts } from '#outline/block-ranges'
 import type { MoveHistory } from '#outline/move-history'
@@ -30,8 +31,12 @@ export function mountBlockMoveMenu({
   const currentFrom = () => {
     if (!view.contentDOM.contains(button)) return undefined
     const position = view.posAtDOM(button)
+    const replacedBlockEnds = getBlockWidgetReplaceEnds(view.state)
     return blockStarts(view.state).find(
-      (blockFrom) => blockFrom === position || blockFrom - 1 === position,
+      (blockFrom) =>
+        blockFrom === position ||
+        blockFrom - 1 === position ||
+        replacedBlockEnds.get(blockFrom) === position,
     )
   }
   const actions = () =>

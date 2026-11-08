@@ -416,3 +416,10 @@ export const markdownBlockWidgets: Extension = [
     },
   }),
 ]
+
+export function getBlockWidgetReplaceEnds(
+  state: EditorState,
+): ReadonlyMap<number, number> {
+  const ranges = state.field(blockWidgetStateField, false)?.ranges ?? []
+  return new Map(ranges.map(({ from, to }) => [from, to]))
+}

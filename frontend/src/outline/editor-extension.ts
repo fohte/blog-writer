@@ -10,6 +10,8 @@ import {
   WidgetType,
 } from '@codemirror/view'
 
+import { refreshBlockWidgetExclusions } from '#editor/markdown-block-widget-exclusions'
+import { getBlockWidgetReplaceEnds } from '#editor/markdown-block-widgets'
 import { mountBlockMoveMenu } from '#outline/block-move-menu'
 import { adjacentMove, blockStarts, bodyDropInput } from '#outline/block-ranges'
 import type { MoveHistory } from '#outline/move-history'
@@ -71,12 +73,17 @@ function createDecorations(
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
 ) {
+  const replacedBlockEnds = getBlockWidgetReplaceEnds(view.state)
   return Decoration.set(
     blockStarts(view.state, view.viewport.from, view.viewport.to).map((from) =>
       Decoration.widget({
         widget: new BlockDragHandle(from, history, view, composingViews),
         side: -1,
-      }).range(Math.max(0, from - 1)),
+      }).range(
+        from > 0 && replacedBlockEnds.has(from)
+          ? from - 1
+          : (replacedBlockEnds.get(from) ?? from),
+      ),
     ),
   )
 }
@@ -152,9 +159,12 @@ function createDragPlugin(
         if (
           !update.docChanged &&
           !update.viewportChanged &&
+          !update.selectionSet &&
           !update.transactions.some((transaction) =>
-            transaction.effects.some((effect) =>
-              effect.is(refreshBlockHandles),
+            transaction.effects.some(
+              (effect) =>
+                effect.is(refreshBlockHandles) ||
+                effect.is(refreshBlockWidgetExclusions),
             ),
           )
         )
