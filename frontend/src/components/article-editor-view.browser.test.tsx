@@ -395,6 +395,11 @@ First paragraph.
     await act(async () => {
       await userEvent.click(page.getByRole('tab', { name: '資料' }))
     })
+    // Base UI hides the previous panel on a later animation frame.
+    await vi.waitFor(() => {
+      if (widthOf('section[aria-label="メモ"]') > 0)
+        throw new Error('The memo panel was not hidden')
+    })
 
     const readDesktopPanelOutput = () => ({
       initialPanels,
@@ -1077,6 +1082,11 @@ First paragraph.
     states.push(readPremiseState())
     await act(async () => {
       await userEvent.click(page.getByRole('tab', { name: 'メモ' }))
+    })
+    // Base UI removes the previous panel on a later animation frame.
+    await vi.waitFor(() => {
+      if (readPremiseState().panel !== null)
+        throw new Error('The premise panel was not removed')
     })
     states.push(readPremiseState())
 
