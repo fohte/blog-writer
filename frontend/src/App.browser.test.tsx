@@ -608,137 +608,142 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
-  it('adds research findings to an existing source with the same URL', async () => {
-    const url = 'https://example.invalid/research'
-    addSource(doc, {
-      id: 'source-existing',
-      kind: 'url',
-      title: 'Existing source',
-      url,
-      fileName: null,
-      checkedAt: '2026-02-01T00:00:00.000Z',
-      status: 'unavailable',
-      summary: 'The earlier summary.',
-    })._unsafeUnwrap()
-    setFindings(doc, 'source-existing', [
-      {
-        id: 'finding-existing',
-        researchedHeading: 'Earlier heading',
-        text: 'Earlier finding.',
-        quote: 'Earlier quote.',
-      },
-    ])._unsafeUnwrap()
-    const savedBodies: Array<{ url: string; body: unknown }> = []
-    installFetch((requestUrl, init) => {
-      if (requestUrl === '/api/research/jobs')
-        return serverEvents([
-          {
-            event: 'result',
-            data: {
-              analysis: {
-                task: 'key_points',
-                data: {
-                  sources: [
-                    {
-                      id: 'source-new',
-                      summary: 'The latest summary.',
-                      key_points: [
-                        { text: 'New finding.', quote: 'New quote.' },
-                      ],
-                    },
-                  ],
-                },
-              },
-              sources: [
-                {
-                  id: 'source-new',
-                  url,
-                  final_url: url,
-                  title: 'New title',
-                  status: 'available',
-                  body: 'New body.',
-                },
-              ],
-            },
-          },
-        ])
-      if (init.method === 'POST' && requestUrl.endsWith('/save-if-unchanged'))
-        savedBodies.push({
-          url: requestUrl,
-          body:
-            typeof init.body === 'string'
-              ? (JSON.parse(init.body) as unknown)
-              : init.body,
-        })
-      if (init.method === undefined || init.method === 'GET')
-        return new Response('', { status: 404 })
-      return new Response(null, { status: 204 })
-    })
-    await renderApp()
-    await openArticle()
-    await act(async () => {
-      await userEvent.click(
-        page.getByRole('button', { name: 'Research topic' }),
-      )
-      await userEvent.click(
-        page.getByRole('button', { name: 'この見出しについて調べる' }),
-      )
-    })
-    await waitFor(() => {
-      if (listFindings(doc).length !== 2)
-        throw new Error('The finding was not added to the existing source')
-    })
-
-    const readResult = () => ({
-      savedBodies,
-      sources: listSources(doc).map(({ id, title, url, status, summary }) => ({
-        id,
-        title,
+  it.each(['unavailable', 'loginRequired'] as const)(
+    'adds research findings to an existing %s source with the same URL',
+    async (savedStatus) => {
+      const url = 'https://example.invalid/research'
+      addSource(doc, {
+        id: 'source-existing',
+        kind: 'url',
+        title: 'Existing source',
         url,
-        status,
-        summary,
-      })),
-      findings: listFindings(doc).map(
-        ({ sourceId, text, quote, researchedHeading }) => ({
-          sourceId,
-          text,
-          quote,
-          researchedHeading,
-        }),
-      ),
-    })
-    expect(readResult()).toEqual({
-      savedBodies: [
+        fileName: null,
+        checkedAt: '2026-02-01T00:00:00.000Z',
+        status: savedStatus,
+        summary: 'The earlier summary.',
+      })._unsafeUnwrap()
+      setFindings(doc, 'source-existing', [
         {
-          url: '/api/articles/article-a/source-bodies/source-existing/save-if-unchanged',
-          body: { expected_body: null, body: 'New body.' },
-        },
-      ],
-      sources: [
-        {
-          id: 'source-existing',
-          title: 'Existing source',
-          url,
-          status: 'ready',
-          summary: 'The latest summary.',
-        },
-      ],
-      findings: [
-        {
-          sourceId: 'source-existing',
+          id: 'finding-existing',
+          researchedHeading: 'Earlier heading',
           text: 'Earlier finding.',
           quote: 'Earlier quote.',
-          researchedHeading: 'Earlier heading',
         },
-        {
-          sourceId: 'source-existing',
-          text: 'New finding.',
-          quote: 'New quote.',
-          researchedHeading: 'Research topic',
-        },
-      ],
-    })
-  })
+      ])._unsafeUnwrap()
+      const savedBodies: Array<{ url: string; body: unknown }> = []
+      installFetch((requestUrl, init) => {
+        if (requestUrl === '/api/research/jobs')
+          return serverEvents([
+            {
+              event: 'result',
+              data: {
+                analysis: {
+                  task: 'key_points',
+                  data: {
+                    sources: [
+                      {
+                        id: 'source-new',
+                        summary: 'The latest summary.',
+                        key_points: [
+                          { text: 'New finding.', quote: 'New quote.' },
+                        ],
+                      },
+                    ],
+                  },
+                },
+                sources: [
+                  {
+                    id: 'source-new',
+                    url,
+                    final_url: url,
+                    title: 'New title',
+                    status: 'available',
+                    body: 'New body.',
+                  },
+                ],
+              },
+            },
+          ])
+        if (init.method === 'POST' && requestUrl.endsWith('/save-if-unchanged'))
+          savedBodies.push({
+            url: requestUrl,
+            body:
+              typeof init.body === 'string'
+                ? (JSON.parse(init.body) as unknown)
+                : init.body,
+          })
+        if (init.method === undefined || init.method === 'GET')
+          return new Response('', { status: 404 })
+        return new Response(null, { status: 204 })
+      })
+      await renderApp()
+      await openArticle()
+      await act(async () => {
+        await userEvent.click(
+          page.getByRole('button', { name: 'Research topic' }),
+        )
+        await userEvent.click(
+          page.getByRole('button', { name: 'この見出しについて調べる' }),
+        )
+      })
+      await waitFor(() => {
+        if (listFindings(doc).length !== 2)
+          throw new Error('The finding was not added to the existing source')
+      })
+
+      const readResult = () => ({
+        savedBodies,
+        sources: listSources(doc).map(
+          ({ id, title, url, status, summary }) => ({
+            id,
+            title,
+            url,
+            status,
+            summary,
+          }),
+        ),
+        findings: listFindings(doc).map(
+          ({ sourceId, text, quote, researchedHeading }) => ({
+            sourceId,
+            text,
+            quote,
+            researchedHeading,
+          }),
+        ),
+      })
+      expect(readResult()).toEqual({
+        savedBodies: [
+          {
+            url: '/api/articles/article-a/source-bodies/source-existing/save-if-unchanged',
+            body: { expected_body: null, body: 'New body.' },
+          },
+        ],
+        sources: [
+          {
+            id: 'source-existing',
+            title: 'Existing source',
+            url,
+            status: 'ready',
+            summary: 'The latest summary.',
+          },
+        ],
+        findings: [
+          {
+            sourceId: 'source-existing',
+            text: 'Earlier finding.',
+            quote: 'Earlier quote.',
+            researchedHeading: 'Earlier heading',
+          },
+          {
+            sourceId: 'source-existing',
+            text: 'New finding.',
+            quote: 'New quote.',
+            researchedHeading: 'Research topic',
+          },
+        ],
+      })
+    },
+  )
 
   it('opens and closes evidence cards from the article marker', async () => {
     const markdown = '# Research topic\n\nA sentence to edit.\n'
@@ -2394,11 +2399,23 @@ describe('the application research and evidence integrations', () => {
   })
 
   it.each([
-    ['unavailable', 'unavailable'],
-    ['login_required', 'loginRequired'],
+    ['unavailable', 'unavailable', false],
+    ['login_required', 'loginRequired', false],
+    ['login_required', 'loginRequired', true],
   ] as const)(
-    'routes heading research through the configured local bridge for a %s source',
-    async (sourceStatus, savedStatus) => {
+    'routes heading research through the configured local bridge for a %s source saved as %s (already listed: %s)',
+    async (sourceStatus, savedStatus, savedBefore) => {
+      if (savedBefore)
+        addSource(doc, {
+          id: 'source-local',
+          kind: 'url',
+          title: 'example.invalid',
+          url: 'https://example.invalid/local',
+          fileName: null,
+          checkedAt: null,
+          status: 'unavailable',
+          summary: '',
+        })._unsafeUnwrap()
       window.localStorage.setItem('blog-writer.llm.route', 'local')
       window.localStorage.setItem(
         'blog-writer.llm.bridge-url',

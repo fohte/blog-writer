@@ -307,6 +307,10 @@ function saveResultInDocument(
         ? updateSource(doc, plan.id, {
             summary,
             ...(isAvailable ? { status: 'ready' as const, checkedAt } : {}),
+            ...(plan.source.status === 'login_required' &&
+            isUnfetchedSource(plan.existing)
+              ? { status: 'loginRequired' as const }
+              : {}),
           })
         : addSource(doc, {
             id: plan.id,
