@@ -3,12 +3,15 @@ import * as Y from 'yjs'
 
 import { TRASH_RETENTION_MS } from '#article/constants'
 import {
+  addEvidence,
   addSource,
   getPremise,
+  listFindings,
   listSources,
   moveBlock,
   readBody,
   setBody,
+  setFindings,
   setPremise,
 } from '#article/index'
 import type { Article, SyncClientOptions } from '#lib/sync-client'
@@ -327,12 +330,15 @@ describe('createSyncClient', () => {
   })
 
   it('duplicates an article without its research or publishing targets', async () => {
-    const { client, setArticleId, setNow } = createFixture()
+    const { client, providers, setArticleId, setNow } = createFixture()
     const sourceId = '018f0000-0000-7000-8000-000000000002'
     const copyId = '018f0000-0000-7000-8000-000000000003'
     setArticleId(sourceId)
     client.createArticle()._unsafeUnwrap()
     await Promise.resolve()
+    const provider = providers.at(-1)
+    provider?.emitStatus('connected')
+    provider?.emitSync(true)
     const sourceDoc = client.openDocument(sourceId)._unsafeUnwrap()
     setBody(sourceDoc, 'A paragraph.\n')
     setPremise(sourceDoc, 'audience', 'Gardeners')
@@ -344,6 +350,19 @@ describe('createSyncClient', () => {
       fileName: null,
       checkedAt: '2026-02-01T00:00:00.000Z',
       summary: 'A source summary.',
+    })._unsafeUnwrap()
+    setFindings(sourceDoc, 'source-a', [
+      { id: 'finding-a', text: 'A key point.', quote: 'A quotation.' },
+    ])._unsafeUnwrap()
+    addEvidence(sourceDoc, {
+      id: 'evidence-a',
+      from: 0,
+      to: 1,
+      claim: 'A',
+      sourceId: 'source-a',
+      quote: 'A quotation.',
+      verdict: 'supported',
+      checkedAt: '2026-02-01T00:00:00.000Z',
     })._unsafeUnwrap()
     client.updateArticleTitle(sourceId, 'A garden article')._unsafeUnwrap()
     client
@@ -358,6 +377,8 @@ describe('createSyncClient', () => {
     const copiedBody = readBody(copyDoc)
     const copiedPremise = getPremise(copyDoc)
     const copiedSources = listSources(copyDoc)
+    const copiedFindings = listFindings(copyDoc)
+    const copiedEvidenceIds = [...copyDoc.getMap('evidence').keys()]
     setBody(copyDoc, 'An edited copy.\n')
 
     const readOutput = () => ({
@@ -366,6 +387,8 @@ describe('createSyncClient', () => {
       copiedBody,
       copiedPremise,
       copiedSources,
+      copiedFindings,
+      copiedEvidenceIds,
       sourceBodyAfterEditingCopy: readBody(sourceDoc),
     })
     expect(readOutput()).toEqual({
@@ -391,23 +414,48 @@ describe('createSyncClient', () => {
       copiedBody: 'A paragraph.\n',
       copiedPremise: { audience: 'Gardeners', purpose: null, claim: null },
       copiedSources: [],
+      copiedFindings: [],
+      copiedEvidenceIds: [],
       sourceBodyAfterEditingCopy: 'A paragraph.\n',
     })
     client.destroy()
   })
 
-  it('refuses to duplicate an article whose local copy has not loaded', () => {
-    const { client, setArticleId } = createFixture()
-    const article = client.createArticle()._unsafeUnwrap()
-    setArticleId('018f0000-0000-7000-8000-000000000003')
+  it.each([
+    ['its local copy has not loaded', false],
+    ['it is still arriving from the server', true],
+  ])(
+    'refuses to duplicate an article while %s',
+    async (_name, localCopyLoaded) => {
+      const { client, setArticleId } = createFixture()
+      const article = client.createArticle()._unsafeUnwrap()
+      if (localCopyLoaded) await Promise.resolve()
+      setArticleId('018f0000-0000-7000-8000-000000000003')
 
-    const readOutput = () => ({
-      error: client.duplicateArticle(article.id)._unsafeUnwrapErr().message,
-      articles: client.listArticles(),
-    })
-    expect(readOutput()).toEqual({
-      error: 'The article is not ready to copy',
-      articles: [article],
+      const readOutput = () => ({
+        error: client.duplicateArticle(article.id)._unsafeUnwrapErr().message,
+        articles: client.listArticles(),
+      })
+      expect(readOutput()).toEqual({
+        error: 'The article is not ready to copy',
+        articles: [article],
+      })
+      client.destroy()
+    },
+  )
+
+  it('duplicates an article from its local copy while offline', async () => {
+    const { client, providers, setArticleId } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
+    providers.at(-1)?.emitConnectionClose()
+    const copyId = '018f0000-0000-7000-8000-000000000003'
+    setArticleId(copyId)
+
+    expect(client.duplicateArticle(article.id)._unsafeUnwrap()).toEqual({
+      id: copyId,
+      createdAt: article.createdAt,
+      title: 'Untitled article のコピー',
     })
     client.destroy()
   })

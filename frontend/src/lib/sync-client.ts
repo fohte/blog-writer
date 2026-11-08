@@ -188,12 +188,16 @@ class SyncClient implements SyncClientApi {
   duplicateArticle(id: string) {
     const article = this.listArticles().find((candidate) => candidate.id === id)
     const source = this.documents.get(id)
-    // Before the local copy loads, the document is empty and so would be the duplicate.
-    if (!article || source?.persistence.synced !== true)
+    // Content that is still loading or arriving from the server would be missing from the duplicate.
+    if (
+      !article ||
+      source?.persistence.synced !== true ||
+      source.status === 'syncing'
+    )
       return err(
         new SyncClientError('The article is not ready to copy', new Error(id)),
       )
-    // shortcut: an article this device has not received from the server yet copies as empty, wait for its first sync if that happens in practice.
+    // shortcut: an offline device that never received this article copies it as empty, refuse that too if it happens in practice.
     return this.addArticle(`${article.title} のコピー`, (copy) => {
       Y.applyUpdate(copy, Y.encodeStateAsUpdate(source.doc))
       clearResearch(copy)
