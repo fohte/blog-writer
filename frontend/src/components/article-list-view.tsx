@@ -5,12 +5,12 @@ import { SegmentedControl } from '@fohte/ui/segmented-control'
 import { SearchIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { formatLocalDate } from '#article/format-local-date'
 import { AppHeader } from '#components/app-header'
 import { ArticleRowMenu } from '#components/article-row-menu'
 import { ArticleTrashDialog } from '#components/article-trash-dialog'
 import { OfflineBanner } from '#components/offline-banner'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
-import { formatLocalDate } from '#lib/format-local-date'
 import { type ArticleSortOrder, selectArticles } from '#lib/select-articles'
 import type { Article, SyncState, TrashedArticle } from '#lib/sync-client'
 

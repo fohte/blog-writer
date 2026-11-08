@@ -2,7 +2,7 @@ import { Button } from '@fohte/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@fohte/ui/dialog'
 
 import { TRASH_RETENTION_MS } from '#article/constants'
-import { formatLocalDate } from '#lib/format-local-date'
+import { formatLocalDate } from '#article/format-local-date'
 import type { TrashedArticle } from '#lib/sync-client'
 
 export interface ArticleTrashDialogProps {
