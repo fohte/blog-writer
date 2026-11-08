@@ -18,22 +18,33 @@ function readImportOutput(
 describe('claim evidence import', () => {
   it.each([
     {
-      name: 'server',
+      name: 'server route',
       settings: { route: 'server', bridgeUrl: '' } as const,
       judgementUrl: '/api/research/claim-evidence',
+      publishedAt: '2025-03-04',
+      expectedPublishedAt: '2025-03-04',
     },
     {
-      name: 'local',
+      name: 'local route',
       settings: {
         route: 'local',
         bridgeUrl: 'https://bridge.example.invalid/base/',
       } as const,
       judgementUrl:
         'https://bridge.example.invalid/base/api/research/claim-evidence',
+      publishedAt: '2025-03-04',
+      expectedPublishedAt: '2025-03-04',
+    },
+    {
+      name: 'server route for a page without a published date',
+      settings: { route: 'server', bridgeUrl: '' } as const,
+      judgementUrl: '/api/research/claim-evidence',
+      publishedAt: undefined,
+      expectedPublishedAt: null,
     },
   ])(
-    'fetches source text from the server and sends judgment requests through the $name route',
-    async ({ settings, judgementUrl }) => {
+    'fetches source text from the server and sends judgment requests through the $name',
+    async ({ settings, judgementUrl, publishedAt, expectedPublishedAt }) => {
       const requests: { url: string; method: string; body: string | null }[] =
         []
       const fetcher: typeof fetch = (input, init) => {
@@ -53,6 +64,7 @@ describe('claim evidence import', () => {
                 source_id: 'source-test',
                 title: 'Research report',
                 final_url: 'https://example.invalid/report',
+                published_at: publishedAt,
               }),
               { headers: { 'content-type': 'application/json' } },
             ),
@@ -91,6 +103,7 @@ describe('claim evidence import', () => {
         result: {
           title: 'Research report',
           url: 'https://example.invalid/report',
+          publishedAt: expectedPublishedAt,
           verdict: 'supported',
           quote: 'The value increased.',
         },

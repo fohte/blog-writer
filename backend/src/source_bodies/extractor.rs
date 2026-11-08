@@ -4,6 +4,8 @@ use dom_smoothie::{Config, Readability, ReadabilityError, TextMode};
 pub(crate) struct ExtractedSource {
     pub title: String,
     pub body: String,
+    /// Calendar date (`YYYY-MM-DD`) the page says it was published, if any.
+    pub published_at: Option<String>,
 }
 
 pub(crate) fn extract(html: &str, document_url: &str) -> Result<ExtractedSource, ReadabilityError> {
@@ -17,21 +19,71 @@ pub(crate) fn extract(html: &str, document_url: &str) -> Result<ExtractedSource,
     Ok(ExtractedSource {
         title: article.title,
         body: article.text_content.to_string(),
+        published_at: article.published_time.as_deref().and_then(published_date),
     })
+}
+
+/// OGP and schema.org require ISO 8601 here, so a value that does not start with a real
+/// calendar date is treated as unknown.
+fn published_date(value: &str) -> Option<String> {
+    let date = value.trim().get(..10)?;
+    let is_shaped = date.bytes().enumerate().all(|(index, byte)| match index {
+        4 | 7 => byte == b'-',
+        _ => byte.is_ascii_digit(),
+    });
+    if !is_shaped {
+        return None;
+    }
+    let number = |range: std::ops::Range<usize>| date[range].parse::<u32>().ok();
+    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+    let is_leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year => 29,
+        2 => 28,
+        _ => return None,
+    };
+    (1..=days_in_month).contains(&day).then(|| date.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
-    use indoc::indoc;
+    use indoc::{formatdoc, indoc};
+    use rstest::rstest;
 
     use super::{ExtractedSource, extract};
 
-    #[test]
-    fn extracts_markdown_and_title_from_html() -> Result<(), dom_smoothie::ReadabilityError> {
-        let html = indoc! {r#"
+    #[rstest]
+    #[case::no_published_date("", None)]
+    #[case::open_graph_timestamp(
+        r#"<meta property="article:published_time" content="2025-03-04T09:00:00+09:00">"#,
+        Some("2025-03-04")
+    )]
+    #[case::json_ld_date(
+        r#"<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Sample article","datePublished":"2024-12-31"}</script>"#,
+        Some("2024-12-31")
+    )]
+    #[case::not_iso_8601(
+        r#"<meta property="article:published_time" content="March 4, 2025">"#,
+        None
+    )]
+    #[case::leap_day(
+        r#"<meta property="article:published_time" content="2024-02-29">"#,
+        Some("2024-02-29")
+    )]
+    #[case::impossible_date(
+        r#"<meta property="article:published_time" content="2025-02-29T09:00:00Z">"#,
+        None
+    )]
+    fn extracts_markdown_title_and_published_date_from_html(
+        #[case] head: &str,
+        #[case] published_at: Option<&str>,
+    ) -> Result<(), dom_smoothie::ReadabilityError> {
+        let html = formatdoc! {r#"
             <!doctype html>
             <html>
-              <head><title>Sample article</title></head>
+              <head><title>Sample article</title>{head}</head>
               <body>
                 <article>
                   <h1>Sample article</h1>
@@ -42,7 +94,7 @@ mod tests {
             </html>
         "#};
 
-        let actual = extract(html, "https://example.test/articles/sample")?;
+        let actual = extract(&html, "https://example.test/articles/sample")?;
 
         assert_eq!(
             actual,
@@ -55,6 +107,7 @@ mod tests {
                 "}
                 .trim_end()
                 .to_owned(),
+                published_at: published_at.map(str::to_owned),
             }
         );
 

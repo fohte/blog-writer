@@ -99,7 +99,7 @@ impl SafeFetchService for TestFetcher {
 }
 
 fn article_html() -> &'static str {
-    "<!doctype html><html><head><title>Example research page</title></head><body><article><h1>Example research page</h1><p>This representative sentence provides enough detail for article extraction and quote validation.</p><p>This is a second sentence with useful supporting context for the research result.</p></article></body></html>"
+    "<!doctype html><html><head><title>Example research page</title><meta property=\"article:published_time\" content=\"2025-03-04T09:00:00Z\"></head><body><article><h1>Example research page</h1><p>This representative sentence provides enough detail for article extraction and quote validation.</p><p>This is a second sentence with useful supporting context for the research result.</p></article></body></html>"
 }
 
 fn expected_source_body() -> String {
@@ -262,26 +262,26 @@ async fn streams_progress_and_returns_source_backed_result(
                 "sources": [
                     {
                         "id": "source-1", "url": citations[0], "final_url": citations[0],
-                        "title": "Example research page", "body": expected_source_body(),
+                        "title": "Example research page", "published_at": "2025-03-04", "body": expected_source_body(),
                         "status": "available"
                     },
                     {
                         "id": "source-2", "url": citations[1], "final_url": null,
-                        "title": null, "body": null, "status": "unavailable"
+                        "title": null, "published_at": null, "body": null, "status": "unavailable"
                     },
                     {
                         "id": "source-3", "url": citations[2], "final_url": citations[2],
-                        "title": "Example research page", "body": expected_source_body(),
+                        "title": "Example research page", "published_at": "2025-03-04", "body": expected_source_body(),
                         "status": "available"
                     },
                     {
                         "id": "source-4", "url": citations[3], "final_url": citations[3],
-                        "title": "Example research page", "body": expected_source_body(),
+                        "title": "Example research page", "published_at": "2025-03-04", "body": expected_source_body(),
                         "status": "available"
                     },
                     {
                         "id": "source-5", "url": citations[4], "final_url": citations[4],
-                        "title": "Example research page", "body": expected_source_body(),
+                        "title": "Example research page", "published_at": "2025-03-04", "body": expected_source_body(),
                         "status": "available"
                     }
                 ]
@@ -354,7 +354,7 @@ async fn streams_claim_evidence_with_a_verified_quote(
                 },
                 "sources": [{
                     "id": "source-1", "url": citation, "final_url": citation,
-                    "title": "Example research page", "body": expected_source_body(),
+                    "title": "Example research page", "published_at": "2025-03-04", "body": expected_source_body(),
                     "status": "available"
                 }]
             }

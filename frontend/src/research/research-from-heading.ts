@@ -310,6 +310,7 @@ function saveResultInDocument(
             url: plan.url,
             fileName: null,
             checkedAt: isAvailable ? checkedAt : null,
+            publishedAt: plan.source.published_at ?? null,
             status: isAvailable ? 'ready' : 'unavailable',
             summary,
           })

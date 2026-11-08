@@ -12,6 +12,7 @@ const meta = {
       url: 'https://data.example.invalid/report',
       fileName: null,
       checkedAt: '2026-01-14T00:00:00.000Z',
+      publishedAt: null,
       status: 'ready',
       summary: '調査結果の概要を説明しています。',
     },

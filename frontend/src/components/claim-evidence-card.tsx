@@ -8,7 +8,6 @@ type ClaimEvidenceCardProps = {
   quote: string
   verdict: EvidenceVerdict
   checkedAt: string
-  publishedAt: string | null
   edited?: boolean
   onRemove?: () => void
 }
@@ -35,7 +34,6 @@ export function ClaimEvidenceCard({
   quote,
   verdict,
   checkedAt,
-  publishedAt,
   edited = false,
   onRemove,
 }: ClaimEvidenceCardProps) {
@@ -45,7 +43,9 @@ export function ClaimEvidenceCard({
       : getSourceHost(source.url)
   const origin = [
     ...(host === undefined ? [] : [host]),
-    publishedAt === null ? '公開日不明' : `公開 ${publishedAt}`,
+    source === null || source.publishedAt === null
+      ? '公開日不明'
+      : `公開 ${source.publishedAt}`,
   ].join(' · ')
   return (
     <section

@@ -43,6 +43,7 @@ function sameSource(left: Source, right: Source): boolean {
     left.url === right.url &&
     left.fileName === right.fileName &&
     left.checkedAt === right.checkedAt &&
+    left.publishedAt === right.publishedAt &&
     left.status === right.status &&
     left.summary === right.summary
   )

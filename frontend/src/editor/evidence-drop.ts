@@ -110,6 +110,7 @@ function saveJudgement(
           url: imported.url,
           fileName: null,
           checkedAt,
+          publishedAt: imported.publishedAt,
           status: 'ready',
         },
         '資料を保存できませんでした。',

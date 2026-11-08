@@ -80,6 +80,7 @@ describe('article sources', () => {
       url: 'https://data.example.invalid/report',
       fileName: null,
       checkedAt: '2026-01-14T00:00:00.000Z',
+      publishedAt: '2025-12-01',
     })
     const findings = setFindings(doc, 'source-a', [
       {
@@ -104,6 +105,7 @@ describe('article sources', () => {
         url: 'https://data.example.invalid/report',
         fileName: null,
         checkedAt: '2026-01-14T00:00:00.000Z',
+        publishedAt: '2025-12-01',
         status: 'ready',
         summary: '',
       },
@@ -126,6 +128,7 @@ describe('article sources', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: '2026-01-14T00:00:00.000Z',
+          publishedAt: '2025-12-01',
           status: 'ready',
           summary: '',
         },
@@ -203,6 +206,7 @@ describe('article sources', () => {
           url: null,
           fileName: 'overview.pdf',
           checkedAt: null,
+          publishedAt: null,
           status: 'ready',
           summary: '資料の要約です。',
         },
@@ -215,6 +219,7 @@ describe('article sources', () => {
           url: null,
           fileName: 'overview.pdf',
           checkedAt: null,
+          publishedAt: null,
           status: 'ready',
           summary: '資料の要約です。',
         },
@@ -312,6 +317,7 @@ describe('article sources', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: null,
+          publishedAt: null,
           status: 'ready',
           summary: '',
         },
