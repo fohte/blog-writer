@@ -400,8 +400,13 @@ export function OutlineView({
       aria-label="Article outline"
       className="flex min-w-0 flex-col gap-2"
     >
-      <h2 className="px-2 text-xs font-bold tracking-wide text-muted-foreground">
+      <h2 className="flex justify-between px-2 text-xs font-bold tracking-wide text-muted-foreground">
         構成
+        {suggestions.length > 0 ? (
+          <span className="font-mono text-2xs font-normal">
+            修正案 {suggestions.length}
+          </span>
+        ) : null}
       </h2>
       {error !== undefined && error.length > 0 ? (
         <p className="px-2 text-xs text-destructive" role="alert">

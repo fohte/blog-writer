@@ -1029,6 +1029,127 @@
         }
       }
     },
+    "/api/images": {
+      "post": {
+        "operationId": "upload_image",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The image is stored privately",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageUploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The multipart request is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The image exceeds the size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The image format is not supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The image could not be decoded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Image storage is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/images/{name}": {
+      "get": {
+        "operationId": "get_image",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Image file name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "content": {
+              "image/*": {}
+            }
+          },
+          "404": {
+            "description": "The image does not exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Image storage is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/llm/status": {
       "get": {
         "operationId": "get_llm_status",
@@ -1720,6 +1841,26 @@
           }
         }
       },
+      "ImageUploadRequest": {
+        "type": "object",
+        "required": ["file"],
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary"
+          }
+        }
+      },
+      "ImageUploadResponse": {
+        "type": "object",
+        "required": ["src"],
+        "properties": {
+          "src": {
+            "type": "string",
+            "description": "Path to write as the Markdown image destination."
+          }
+        }
+      },
       "ImportFileResponse": {
         "type": "object",
         "required": ["source_id", "title", "file_name"],
@@ -1808,10 +1949,17 @@
           }
         }
       },
+      "LlmErrorCode": {
+        "type": "string",
+        "enum": ["usage_limit", "invalid_response", "timeout", "connection"]
+      },
       "LlmErrorPayload": {
         "type": "object",
-        "required": ["message"],
+        "required": ["code", "message"],
         "properties": {
+          "code": {
+            "$ref": "#/components/schemas/LlmErrorCode"
+          },
           "message": {
             "type": "string"
           }

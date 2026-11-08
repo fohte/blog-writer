@@ -1,4 +1,4 @@
-import { indentMore, isolateHistory } from '@codemirror/commands'
+import { isolateHistory } from '@codemirror/commands'
 import {
   type Extension,
   Prec,
@@ -13,6 +13,13 @@ import {
   blockWidgetExclusionProviders,
   refreshBlockWidgetExclusions,
 } from '#editor/markdown-block-widget-exclusions'
+import {
+  indentListOrMoveToNextSuggestion,
+  moveToAdjacentSuggestion,
+  moveToNextSuggestion,
+  type SuggestionDirection,
+  suggestionStops,
+} from '#editor/suggestion-layer-navigation'
 import {
   focusForSelection,
   hasOverlappingRange,
@@ -192,7 +199,7 @@ export class SuggestionLayerController<Metadata = unknown> {
       provide: (field) => {
         return [
           EditorView.decorations.compute(
-            [field, suggestionActionsPresentation],
+            [field, suggestionActionsPresentation, suggestionStops],
             (state) =>
               createSuggestionDecorations(
                 state.field(field),
@@ -217,6 +224,10 @@ export class SuggestionLayerController<Metadata = unknown> {
 
     this.extension = [
       this.stateField,
+      suggestionStops.compute(
+        [this.stateField],
+        (state) => state.field(this.stateField).suggestions,
+      ),
       ViewPlugin.define((view) => {
         this.view = view
         const unregister = registerSuggestionLayer(
@@ -261,8 +272,11 @@ export class SuggestionLayerController<Metadata = unknown> {
       ),
       Prec.high(
         keymap.of([
-          { key: 'Tab', run: (view) => this.navigateSuggestions(view) },
+          { key: 'Tab', run: indentListOrMoveToNextSuggestion },
           { key: 'Escape', run: () => this.rejectFocusedSuggestion() },
+          { key: 'Alt-]', run: moveToNextSuggestion },
+          // macOS reports the character Option+] types, and CodeMirror does not fall back to the key's base name there.
+          { key: 'Alt-‘', run: moveToNextSuggestion },
         ]),
       ),
       suggestionLayerTheme,
@@ -460,24 +474,8 @@ export class SuggestionLayerController<Metadata = unknown> {
     return true
   }
 
-  private navigateSuggestions(view: EditorView): boolean {
-    const line = view.state.doc.lineAt(view.state.selection.main.head)
-    if (/^\s*(?:[-*+]|\d+[.)])\s/.test(line.text) && indentMore(view)) {
-      return true
-    }
-
-    const suggestions = suggestionLayerSnapshots(view)
-      .flatMap((getSnapshot) => getSnapshot().suggestions)
-      .sort((left, right) => left.from - right.from || left.to - right.to)
-    if (suggestions.length === 0) return false
-    const head = view.state.selection.main.head
-    const next = suggestions.find(({ from }) => from > head) ?? suggestions[0]
-    if (!next) return false
-    view.dispatch({
-      selection: { anchor: next.from },
-      scrollIntoView: true,
-    })
-    return true
+  moveFocus(direction: SuggestionDirection): void {
+    if (this.view) moveToAdjacentSuggestion(this.view, direction)
   }
 
   // Without a handler, cancelling only hides the marker while the work keeps running.

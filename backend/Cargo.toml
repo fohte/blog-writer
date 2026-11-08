@@ -22,6 +22,8 @@ schemars = "=1.2.3"
 sha2 = "=0.11.1"
 tempfile = "=3.27.0"
 encoding_rs = "=0.8.44"
+image = { version = "=0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+webp = { version = "=0.3.1", default-features = false }
 unicode-normalization = "=0.1.26"
 dom_smoothie = "=0.19.0"
 pdf_oxide = { version = "=0.3.78", default-features = false }

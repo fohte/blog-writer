@@ -48,6 +48,13 @@ function createPendingFetch() {
   return { fetcher, resolveResponse, signals }
 }
 
+function llmErrorResponse(code: string): Response {
+  const data = { code, message: 'fictional provider failure' }
+  return new Response(`data: ${JSON.stringify({ event: 'error', data })}\n\n`, {
+    headers: { 'content-type': 'text/event-stream' },
+  })
+}
+
 function createRequestEditor(
   additionalExtensions: Extension[] = [],
   article = content,
@@ -111,7 +118,7 @@ function createRequestEditor(
     editorHost.remove()
     accessoryHost.remove()
   })
-  return { body, view, unmountAccessory }
+  return { body, doc, view, unmountAccessory }
 }
 
 function pressMod(view: EditorView, key: string) {
@@ -437,40 +444,77 @@ describe('body request', () => {
     })
   })
 
-  it('shows an error without changing the article when the request fails', async () => {
-    const { body, view } = createRequestEditor()
-    let requestCount = 0
-    vi.stubGlobal('fetch', () =>
-      Promise.resolve().then(() => {
-        requestCount += 1
-        return new Response(null, { status: 503 })
-      }),
-    )
+  it.each([
+    {
+      failure: 'the usage limit is reached',
+      respond: () => llmErrorResponse('usage_limit'),
+      reason: '利用枠に達しました',
+    },
+    {
+      failure: 'the provider output is malformed',
+      respond: () => llmErrorResponse('invalid_response'),
+      reason: '応答の形式が正しくありませんでした',
+    },
+    {
+      failure: 'the provider times out',
+      respond: () => llmErrorResponse('timeout'),
+      reason: '10 分たっても応答がありませんでした',
+    },
+    {
+      failure: 'the provider is unreachable',
+      respond: () => llmErrorResponse('connection'),
+      reason: '接続できません',
+    },
+    {
+      failure: 'the API responds with an error status',
+      respond: () => new Response(null, { status: 503 }),
+      reason: '接続できません',
+    },
+    {
+      failure: 'the API cannot be reached',
+      respond: () => {
+        throw new TypeError('Failed to fetch')
+      },
+      reason: '接続できません',
+    },
+  ])(
+    'explains the failure without changing the article when $failure',
+    async ({ respond, reason }) => {
+      const { body, view } = createRequestEditor()
+      let requestCount = 0
+      vi.stubGlobal('fetch', () =>
+        Promise.resolve().then(() => {
+          requestCount += 1
+          return respond()
+        }),
+      )
+      const expectedError = `作成できませんでした · ${reason}`
 
-    await submitRequest(view, 'make it concise', () => requestCount === 1)
-    await act(async () => {
-      await vi.waitFor(() => {
-        if (
-          document.querySelector('[role="alert"]')?.textContent !==
-          '作成できませんでした · LLM API returned status 503'
-        ) {
-          throw new Error('The failed request has not been announced')
-        }
+      await submitRequest(view, 'make it concise', () => requestCount === 1)
+      await act(async () => {
+        await vi.waitFor(() => {
+          if (
+            document.querySelector('[role="alert"]')?.textContent !==
+            expectedError
+          ) {
+            throw new Error('The failed request has not been announced')
+          }
+        })
       })
-    })
 
-    const readOutput = () => ({
-      body: body.toJSON(),
-      error: document.querySelector('[role="alert"]')?.textContent ?? null,
-      inFlight:
-        view.dom.querySelector('.cm-suggestion-widget')?.textContent ?? null,
-    })
-    expect(readOutput()).toEqual({
-      body: content,
-      error: '作成できませんでした · LLM API returned status 503',
-      inFlight: null,
-    })
-  })
+      const readOutput = () => ({
+        body: body.toJSON(),
+        error: document.querySelector('[role="alert"]')?.textContent ?? null,
+        inFlight:
+          view.dom.querySelector('.cm-suggestion-widget')?.textContent ?? null,
+      })
+      expect(readOutput()).toEqual({
+        body: content,
+        error: expectedError,
+        inFlight: null,
+      })
+    },
+  )
 
   it('explains when the proposal layer is not mounted', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
@@ -712,6 +756,62 @@ describe('body request', () => {
 
   it.each([
     {
+      name: 'a selection under a heading in an article with a premise',
+      article: content,
+      anchor: undefined,
+      hasPremise: true,
+      expected: [
+        '簡潔にする',
+        '前後とのつながりを直す',
+        '前提に沿って直す',
+        'Under a heading',
+        'Always',
+      ],
+    },
+    {
+      name: 'a blank line without a heading or a premise',
+      article: 'A sentence.\n\n',
+      anchor: 'A sentence.\n\n'.length,
+      hasPremise: false,
+      expected: ['例を 1 つ足す', 'On an insertion', 'Always'],
+    },
+  ])(
+    'offers the candidates that fit $name',
+    async ({ article, anchor, hasPremise, expected }) => {
+      const { doc, view } = createRequestEditor([], article, true, [
+        {
+          id: 'under-heading',
+          label: 'Under a heading',
+          isAvailable: (situation) => situation.hasHeading,
+          onSelect: () => undefined,
+        },
+        {
+          id: 'on-insertion',
+          label: 'On an insertion',
+          isAvailable: (situation) => situation.target === 'insertion',
+          onSelect: () => undefined,
+        },
+        { id: 'always', label: 'Always', onSelect: () => undefined },
+      ])
+      if (!hasPremise) {
+        for (const field of ['audience', 'purpose', 'claim'] as const) {
+          setPremise(doc, field, null)
+        }
+      }
+      if (anchor !== undefined) view.dispatch({ selection: { anchor } })
+
+      await openRequestInput(view)
+
+      const readLabels = () =>
+        Array.from(
+          document.querySelectorAll('[aria-label="定型の依頼"] button'),
+        ).map((button) => button.textContent)
+      expect(readLabels()).toEqual(expected)
+    },
+  )
+
+  it.each([
+    {
       name: 'clicking it',
       choose: async () => {
         const button = Array.from(document.querySelectorAll('button')).find(
@@ -727,7 +827,10 @@ describe('body request', () => {
       choose: async () => {
         await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}')
       },
-      expected: { instructions: ['例を 1 つ足す'], label: '> 例を 1 つ足す' },
+      expected: {
+        instructions: ['前後とのつながりを直す'],
+        label: '> 前後とのつながりを直す',
+      },
     },
   ])(
     'sends an edit candidate chosen by $name as the instruction',
