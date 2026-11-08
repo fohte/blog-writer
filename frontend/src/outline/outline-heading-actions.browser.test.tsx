@@ -117,6 +117,44 @@ describe('outline heading actions on a phone', () => {
     })
   })
 
+  it('disables every heading action while the cursor is before the first heading', () => {
+    act(() => {
+      getBody(doc).insert(0, 'intro\n\n')
+    })
+
+    expect(snapshot()).toEqual({
+      body: `intro\n\n${initialBody}`,
+      selected: null,
+      disabled: [
+        '階層を上げる',
+        '階層を下げる',
+        '配下ごと上へ',
+        '配下ごと下へ',
+        '見出しを消す',
+      ],
+      navigated: 0,
+    })
+  })
+
+  it('deletes the selected heading at its current offset after a remote edit that has not rendered', async () => {
+    await tapRow('C')
+    const button = host.querySelector<HTMLElement>(
+      'button[aria-label="見出しを消す"]',
+    )
+
+    act(() => {
+      getBody(doc).insert(0, 'intro\n\n')
+      button?.click()
+    })
+
+    expect(snapshot()).toEqual({
+      body: 'intro\n\n# A\nu\n## B\nv\nw\n# D\n',
+      selected: 'B',
+      disabled: ['階層を下げる', '配下ごと上へ', '配下ごと下へ'],
+      navigated: 0,
+    })
+  })
+
   it.each([
     ['階層を上げる', 'B', '# A\nu\n## C\nw\n\n# B\nv\n\n# D\n'],
     ['階層を下げる', 'C', '# A\nu\n## B\nv\n\n### C\nw\n\n# D\n'],

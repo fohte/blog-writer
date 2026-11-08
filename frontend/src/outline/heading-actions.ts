@@ -1,7 +1,9 @@
+import type { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 
 import type { MoveBlockInput } from '#article/index'
 import { deriveHeadingTree, flattenHeadingTree } from '#article/index'
+import type { Heading } from '#article/types'
 import type { OutlineHeadingActionsProps } from '#components/outline-heading-actions'
 import { adjacentMove, headingChildMove } from '#outline/block-ranges'
 import {
@@ -14,40 +16,68 @@ import type { MoveHistory } from '#outline/move-history'
 // The outline shows history failures through `history.onError`.
 const ignore = () => undefined
 
+type SelectedHeading = {
+  state: EditorState
+  markdown: string
+  tree: Heading[]
+  heading: Heading
+}
+
+function selectedHeading(state: EditorState): SelectedHeading | undefined {
+  const markdown = state.doc.toString()
+  const tree = deriveHeadingTree(markdown)
+  const heading = flattenHeadingTree(tree).findLast(
+    ({ from }) => from <= state.selection.main.head,
+  )
+  return heading ? { state, markdown, tree, heading } : undefined
+}
+
 export function outlineHeadingActions({
   history,
-  selectedFrom,
   view,
 }: {
   history: MoveHistory
-  selectedFrom: number | undefined
   view: EditorView
 }): OutlineHeadingActionsProps {
   const onUndo = () => {
     history.undo(view).match(ignore, ignore)
   }
-  const markdown = view.state.doc.toString()
-  const tree = deriveHeadingTree(markdown)
-  const heading = flattenHeadingTree(tree).find(
-    ({ from }) => from === selectedFrom,
-  )
-  if (!heading) return { onUndo }
+  const rendered = selectedHeading(view.state)
+  if (!rendered) return { onUndo }
 
-  const moveAction = (input: MoveBlockInput | undefined) =>
-    input
+  // A remote edit can land between rendering and the tap, so each action resolves its offsets when it runs.
+  const moveAction = (
+    resolve: (selected: SelectedHeading) => MoveBlockInput | undefined,
+  ) =>
+    resolve(rendered)
       ? () => {
-          history.move(input, view).match(ignore, ignore)
+          const selected = selectedHeading(view.state)
+          const input = selected && resolve(selected)
+          if (input) history.move(input, view).match(ignore, ignore)
         }
       : undefined
 
   return {
     onDelete: () => {
-      applyHeadingChange(view, deleteHeadingChange(markdown, heading))
+      const selected = selectedHeading(view.state)
+      if (selected)
+        applyHeadingChange(
+          view,
+          deleteHeadingChange(selected.markdown, selected.heading),
+        )
     },
-    onIndent: moveAction(headingChildMove(view.state, heading.from)),
-    onMoveDown: moveAction(adjacentMove(view.state, heading.from, 'down')),
-    onMoveUp: moveAction(adjacentMove(view.state, heading.from, 'up')),
-    onOutdent: moveAction(outdentHeadingMove(markdown, tree, heading)),
+    onIndent: moveAction(({ state, heading }) =>
+      headingChildMove(state, heading.from),
+    ),
+    onMoveDown: moveAction(({ state, heading }) =>
+      adjacentMove(state, heading.from, 'down'),
+    ),
+    onMoveUp: moveAction(({ state, heading }) =>
+      adjacentMove(state, heading.from, 'up'),
+    ),
+    onOutdent: moveAction(({ markdown, tree, heading }) =>
+      outdentHeadingMove(markdown, tree, heading),
+    ),
     onUndo,
   }
 }

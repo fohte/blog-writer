@@ -227,13 +227,7 @@ export function ArticleOutline({
         }}
       />
       {mobile ? (
-        <OutlineHeadingActions
-          {...outlineHeadingActions({
-            history,
-            selectedFrom: selectedHeadingFrom,
-            view,
-          })}
-        />
+        <OutlineHeadingActions {...outlineHeadingActions({ history, view })} />
       ) : headings.length > 0 ? (
         <OutlineKeyHints />
       ) : null}
