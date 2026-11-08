@@ -14,6 +14,7 @@ import {
   readBody,
   setBody,
   setFindings,
+  setMemoAdoptedTo,
   setPremise,
 } from '#article/index'
 import type { Article, SyncClientOptions } from '#lib/sync-client'
@@ -470,11 +471,13 @@ describe('createSyncClient', () => {
     provider?.emitStatus('connected')
     provider?.emitSync(true)
     const doc = client.openDocument(article.id)._unsafeUnwrap()
-    setBody(doc, 'A paragraph.\n')
+    setBody(doc, '# A heading\n\nA paragraph.\n')
     addMemo(doc, { id: 'memo-a', text: 'A note', order: 0 })._unsafeUnwrap()
     addMemo(doc, { id: 'memo-b', text: 'A note', order: 1 })._unsafeUnwrap()
     addMemo(doc, { id: 'memo-c', text: 'A note', order: 2 })._unsafeUnwrap()
+    addMemo(doc, { id: 'memo-d', text: 'A note', order: 3 })._unsafeUnwrap()
     dismissMemo(doc, 'memo-c')._unsafeUnwrap()
+    setMemoAdoptedTo(doc, 'memo-d', 0)._unsafeUnwrap()
 
     expect(client.getArticleSummary(article.id)).toEqual({
       unorganizedMemoCount: 2,

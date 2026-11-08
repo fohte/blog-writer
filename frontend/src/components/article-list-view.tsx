@@ -220,6 +220,7 @@ export function ArticleListView({
                       syncFileStatus === 'external_changed'
                         ? '外部で変更あり'
                         : rowStatusLabels[statuses[id] ?? 'saved']
+                    // shortcut: a remote edit arriving while the list stays open appears on the next render, subscribe to document updates if the stale count confuses writers.
                     const summary = readArticleSummary(id)
 
                     return (
