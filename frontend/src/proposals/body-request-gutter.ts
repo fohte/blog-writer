@@ -8,7 +8,7 @@ class RequestMarker extends GutterMarker {
     button.className = 'cm-body-request-marker'
     button.textContent = '>'
     button.title = '依頼を入力'
-    // CodeMirror hides gutters from assistive technology, so the editor's shortcut is the way in without a pointer.
+    // Keep the request marker out of the accessibility tree; the editor shortcut is its keyboard path.
     button.tabIndex = -1
     return button
   }

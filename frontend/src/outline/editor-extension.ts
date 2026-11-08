@@ -126,6 +126,39 @@ function createBlockHandleGutter(
   })
 }
 
+function createAccessibleBlockHandleGutter() {
+  return ViewPlugin.fromClass(
+    class {
+      constructor(readonly view: EditorView) {
+        this.updateGutterAccessibility()
+      }
+
+      update() {
+        this.updateGutterAccessibility()
+      }
+
+      private updateGutterAccessibility() {
+        const blockGutter = this.view.dom.querySelector('.cm-block-move-gutter')
+        const gutters = blockGutter?.parentElement
+        if (!blockGutter || !gutters) return
+
+        // CodeMirror hides all gutters from assistive technology by default.
+        gutters.removeAttribute('aria-hidden')
+        for (const child of gutters.children) {
+          if (!(child instanceof HTMLElement)) continue
+          if (child === blockGutter) {
+            child.setAttribute('role', 'group')
+            child.setAttribute('aria-label', 'Block move handles')
+            child.removeAttribute('aria-hidden')
+          } else {
+            child.setAttribute('aria-hidden', 'true')
+          }
+        }
+      }
+    },
+  )
+}
+
 function createDragPlugin(
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
@@ -262,6 +295,7 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
       ]),
     ),
     createBlockHandleGutter(history, composingViews),
+    createAccessibleBlockHandleGutter(),
     createDragPlugin(history, composingViews),
     EditorView.theme({
       '.cm-content': {
@@ -285,6 +319,7 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
         height: '1.5rem',
         alignItems: 'center',
         justifyContent: 'center',
+        pointerEvents: 'auto',
         border: '0',
         borderRadius: '0.25rem',
         background: 'transparent',
