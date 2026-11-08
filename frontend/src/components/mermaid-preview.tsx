@@ -65,13 +65,12 @@ function createDiagramElement(svg: string): HTMLElement {
   return container
 }
 
-export function createMermaidPreviewElement({
-  id,
-  source,
-  showSource = false,
-}: MermaidPreviewProps): HTMLElement {
+export function createMermaidPreviewElement(
+  { id, source, showSource = false }: MermaidPreviewProps,
+  onRendered?: () => void,
+): HTMLElement {
   const figure = document.createElement('figure')
-  figure.className = 'my-2 rounded-md border bg-background p-3'
+  figure.className = 'rounded-md border bg-background px-3 py-5'
   const loading = document.createElement('p')
   loading.setAttribute('aria-busy', 'true')
   loading.className = 'text-sm text-muted-foreground'
@@ -85,12 +84,14 @@ export function createMermaidPreviewElement({
         ...(showSource ? [createSourceElement(source)] : []),
         createDiagramElement(svg),
       )
+      onRendered?.()
     },
     (error) => {
       figure.replaceChildren(
         createSourceElement(source),
         createErrorElement(error.message),
       )
+      onRendered?.()
     },
   )
   return figure

@@ -21,7 +21,7 @@ export function createMarkdownImagePreview({
   if (failed) return fallback()
 
   const figure = document.createElement('figure')
-  figure.className = 'my-2 flex justify-center'
+  figure.className = 'flex justify-center py-2'
   const image = document.createElement('img')
   image.alt = alt
   image.className = 'max-h-128 max-w-full rounded-md object-contain'

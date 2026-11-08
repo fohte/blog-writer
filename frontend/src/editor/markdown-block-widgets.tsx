@@ -292,10 +292,15 @@ function buildBlockWidgetDecorations(
         const excluded = isBlockWidgetExcluded(range, exclusions)
         if (excluded) continue
         const diagramId = 'markdown-mermaid-' + String(nextMermaidWidgetId++)
-        const widget = createBlockWidget(
-          () => createMermaidPreviewElement({ id: diagramId, source }),
-          'mermaid:' + source,
-        )
+        const widget = createBlockWidget((view) => {
+          const refreshMeasurements = () => {
+            view.requestMeasure()
+          }
+          return createMermaidPreviewElement(
+            { id: diagramId, source },
+            refreshMeasurements,
+          )
+        }, 'mermaid:' + source)
         if (selectionTouches(state, range.from, range.to)) {
           decorations.push(
             Decoration.widget({ widget, block: true, side: 1 }).range(

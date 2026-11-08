@@ -1241,7 +1241,7 @@ describe('outline interactions', () => {
           firstCharacterHitByHandle: false,
         },
         mobile: {
-          firstCharacterInset: 73,
+          firstCharacterInset: 74,
           horizontalOverflow: false,
         },
         clickMovesCursorAfterFirstCharacter: true,
