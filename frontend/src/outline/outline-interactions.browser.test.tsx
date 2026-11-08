@@ -968,58 +968,100 @@ describe('outline interactions', () => {
     })
   })
 
-  it('moves a Markdown block with a real pointer drag from the body handle', async () => {
-    const markdownText = 'First paragraph.\n\nSecond paragraph.\n'
-    const doc = new Y.Doc()
-    setBody(doc, markdownText)
-    const body = getBody(doc)
-    const history = createMoveHistory(doc)
-    const editorHost = document.createElement('div')
-    document.body.append(editorHost)
-    const view = new EditorView({
-      parent: editorHost,
-      state: EditorState.create({
-        doc: markdownText,
-        extensions: [
-          markdown({ extensions: GFM }),
-          yCollab(body, null, { undoManager: false }),
-          createOutlineEditorExtension(history),
-        ],
-      }),
-    })
-    cleanups.push(() => {
-      view.destroy()
-      history.destroy()
-      doc.destroy()
-      editorHost.remove()
-    })
+  it.each([
+    {
+      name: 'the lower half of the last paragraph',
+      sourceText: 'First paragraph.',
+      markdownText: 'First paragraph.\n\nSecond paragraph.\n',
+      targetText: 'Second paragraph.',
+      dropHeight: 0.75,
+      expected: 'Second paragraph.\n\nFirst paragraph.\n',
+    },
+    {
+      name: 'the lower half of a paragraph before another paragraph',
+      sourceText: 'First paragraph.',
+      markdownText:
+        'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n',
+      targetText: 'Second paragraph.',
+      dropHeight: 0.75,
+      expected: 'Second paragraph.\n\nFirst paragraph.\n\nThird paragraph.\n',
+    },
+    {
+      name: 'the upper half of a paragraph after another paragraph',
+      sourceText: 'Third paragraph.',
+      markdownText:
+        'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n',
+      targetText: 'Second paragraph.',
+      dropHeight: 0.25,
+      expected: 'First paragraph.\n\nThird paragraph.\n\nSecond paragraph.\n',
+    },
+  ])(
+    'uses the drop half to place a Markdown block at $name',
+    async ({ markdownText, sourceText, targetText, dropHeight, expected }) => {
+      const doc = new Y.Doc()
+      setBody(doc, markdownText)
+      const body = getBody(doc)
+      const history = createMoveHistory(doc)
+      const editorHost = document.createElement('div')
+      document.body.append(editorHost)
+      const view = new EditorView({
+        parent: editorHost,
+        state: EditorState.create({
+          doc: markdownText,
+          extensions: [
+            markdown({ extensions: GFM }),
+            yCollab(body, null, { undoManager: false }),
+            createOutlineEditorExtension(history),
+          ],
+        }),
+      })
+      cleanups.push(() => {
+        view.destroy()
+        history.destroy()
+        doc.destroy()
+        editorHost.remove()
+      })
 
-    const handles = view.dom.querySelectorAll<HTMLElement>(
-      '.cm-block-drag-handle',
-    )
-    const firstHandle = handles[0]
-    if (firstHandle === undefined)
-      throw new Error('The body drag source or target is missing')
-    const secondParagraph = [
-      ...view.dom.querySelectorAll<HTMLElement>('.cm-line'),
-    ].find((line) => line.textContent.endsWith('Second paragraph.'))
-    if (!secondParagraph)
-      throw new Error('The second paragraph is missing from the editor')
-    await act(async () => {
-      await userEvent.dragAndDrop(firstHandle, secondParagraph)
-    })
+      const handles = view.dom.querySelectorAll<HTMLElement>(
+        '.cm-block-drag-handle',
+      )
+      const sourceLine = [
+        ...view.dom.querySelectorAll<HTMLElement>('.cm-line'),
+      ].find((line) => line.textContent.endsWith(sourceText))
+      const sourceHandle = sourceLine?.querySelector<HTMLElement>(
+        '.cm-block-drag-handle',
+      )
+      if (handles.length === 0 || !sourceHandle)
+        throw new Error('The body drag source or target is missing')
+      const targetLine = [
+        ...view.dom.querySelectorAll<HTMLElement>('.cm-line'),
+      ].find((line) => line.textContent.endsWith(targetText))
+      if (!targetLine)
+        throw new Error(
+          `The drop target "${targetText}" is missing from the editor`,
+        )
+      const bounds = targetLine.getBoundingClientRect()
+      await act(async () => {
+        await userEvent.dragAndDrop(sourceHandle, targetLine, {
+          targetPosition: {
+            x: bounds.width / 2,
+            y: bounds.height * dropHeight,
+          },
+        })
+      })
 
-    const readOutput = () => ({
-      body: body.toJSON(),
-      editor: view.state.doc.toString(),
-      menuOpen: document.querySelector('[role="menu"]') !== null,
-    })
-    expect(readOutput()).toEqual({
-      body: 'Second paragraph.\n\nFirst paragraph.\n',
-      editor: 'Second paragraph.\n\nFirst paragraph.\n',
-      menuOpen: false,
-    })
-  })
+      const readOutput = () => ({
+        body: body.toJSON(),
+        editor: view.state.doc.toString(),
+        menuOpen: document.querySelector('[role="menu"]') !== null,
+      })
+      expect(readOutput()).toEqual({
+        body: expected,
+        editor: expected,
+        menuOpen: false,
+      })
+    },
+  )
 
   it('keeps body drag handles clear of text at mobile width', async () => {
     const markdownText =

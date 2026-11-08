@@ -18,6 +18,7 @@ export default mergeConfig(
         'src/article/move-conflicts.test-support.test.ts',
         'src/outline/move-history.test-support.test.ts',
         'src/editor/__tests__/markdown-editor-setup.test.tsx',
+        'src/test-support/browser.test-support.test.ts',
       ],
       projects: [
         {
@@ -31,6 +32,7 @@ export default mergeConfig(
               'src/article/move-conflicts.test-support.test.ts',
               'src/outline/move-history.test-support.test.ts',
               'src/editor/__tests__/markdown-editor-setup.test.tsx',
+              'src/test-support/browser.test-support.test.ts',
             ],
           },
         },
@@ -47,6 +49,20 @@ export default mergeConfig(
               }),
               headless: true,
               instances: [{ browser: 'chromium' }],
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-unit-webkit',
+            include: ['src/**/*.browser.test.tsx'],
+            exclude: ['src/**/*.ime.browser.test.tsx'],
+            browser: {
+              enabled: true,
+              provider: playwright(),
+              headless: true,
+              instances: [{ browser: 'webkit' }],
             },
           },
         },

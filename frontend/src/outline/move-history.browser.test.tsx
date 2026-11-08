@@ -9,6 +9,7 @@ import {
   readSelection,
   step,
 } from '#outline/move-history.test-support.test'
+import { nextFrame } from '#test-support/browser.test-support.test'
 
 afterEach(cleanupHistoryEditors)
 
@@ -178,11 +179,7 @@ describe('MoveHistory text editing', () => {
     const editor = createHistoryEditor(initial)
     editor.view.scrollDOM.style.height = '80px'
     editor.view.scrollDOM.style.overflow = 'auto'
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve()
-      })
-    })
+    await nextFrame()
     const beforePosition = initial.indexOf('Paragraph 70') + 5
     editor.view.dispatch({ selection: EditorSelection.cursor(beforePosition) })
     const beforeSelection = readSelection(editor.view.state.selection)
@@ -192,11 +189,7 @@ describe('MoveHistory text editing', () => {
     editor.view.dispatch({ selection: EditorSelection.cursor(0) })
     editor.view.scrollDOM.scrollTop = 0
     const undo = step(editor, 'undo')
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve()
-      })
-    })
+    await nextFrame()
     const selectionAfterUndo = readSelection(editor.view.state.selection)
     const scrolledAfterUndo = editor.view.scrollDOM.scrollTop > 0
     const afterUndo = editor.body.toJSON()
@@ -204,11 +197,7 @@ describe('MoveHistory text editing', () => {
     editor.view.dispatch({ selection: EditorSelection.cursor(0) })
     editor.view.scrollDOM.scrollTop = 0
     const redo = step(editor, 'redo')
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        resolve()
-      })
-    })
+    await nextFrame()
     const selectionAfterRedo = readSelection(editor.view.state.selection)
     const scrolledAfterRedo = editor.view.scrollDOM.scrollTop > 0
     const afterRedo = editor.body.toJSON()
