@@ -451,6 +451,31 @@ describe('suggestion layer', () => {
     })
   })
 
+  it('returns the current evidence suggestions from the editor state', () => {
+    const from = initialText.indexOf('selected')
+    const { layer, setSuggestion } = createEditor<{
+      evidenceIds: string[]
+    }>()
+    setSuggestion({
+      id: 'evidence-suggestion',
+      from,
+      to: from + 'selected sentence'.length,
+      replacement: 'revised sentence',
+      metadata: { evidenceIds: ['evidence-a'] },
+    })
+
+    const readOutput = () => layer.getSuggestions()
+    expect(readOutput()).toEqual([
+      {
+        id: 'evidence-suggestion',
+        from,
+        to: from + 'selected sentence'.length,
+        replacement: 'revised sentence',
+        metadata: { evidenceIds: ['evidence-a'] },
+      },
+    ])
+  })
+
   it('cancels the in-flight work from the cancel button', async () => {
     const events: string[] = []
     const { host, layer } = createEditor(initialText, (event) =>
