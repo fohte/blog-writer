@@ -12,6 +12,7 @@ export function selectArticles(
   readBody: (id: string) => string,
 ): Article[] {
   const normalizedQuery = query.trim().toLocaleLowerCase()
+  // shortcut: every keystroke re-reads each article body, cache them per document if typing lags on a large collection.
   const matches =
     normalizedQuery === ''
       ? articles

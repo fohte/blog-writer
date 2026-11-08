@@ -39,7 +39,7 @@ export function ArticleWorkspace({
   sourcesPanel,
 }: ArticleWorkspaceProps) {
   const [selectedArticleId, setSelectedArticleId] = useState<string>()
-  // Kept here so the list looks the same after coming back from an article.
+  // Lives here because the list unmounts while an article is open.
   const [searchQuery, setSearchQuery] = useState('')
   const [sortOrder, setSortOrder] = useState<ArticleSortOrder>('edited')
   const online = useOnline()

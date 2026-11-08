@@ -283,6 +283,24 @@ describe('createSyncClient', () => {
     client.destroy()
   })
 
+  it('keeps the edit time after a restart', () => {
+    const { client, savedDocuments } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    client
+      .openDocument(article.id)
+      ._unsafeUnwrap()
+      .getText('body')
+      .insert(0, 'x')
+    client.destroy()
+
+    const restored = createFixture(savedDocuments)
+
+    expect(restored.client.listArticles()).toEqual([
+      { ...article, updatedAt: article.createdAt },
+    ])
+    restored.client.destroy()
+  })
+
   it('does not count a change received from elsewhere as a local edit', () => {
     const { client } = createFixture()
     const article = client.createArticle()._unsafeUnwrap()

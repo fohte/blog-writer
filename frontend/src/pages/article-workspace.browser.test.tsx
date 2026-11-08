@@ -152,18 +152,28 @@ describe('article list', () => {
     'leaves / with %s to the browser',
     (modifier) => {
       renderWorkspace()
-
-      act(() => {
-        window.dispatchEvent(
-          new KeyboardEvent('keydown', { key: '/', [modifier]: true }),
-        )
+      const event = new KeyboardEvent('keydown', {
+        key: '/',
+        cancelable: true,
+        [modifier]: true,
       })
 
-      expect(readList()).toEqual({
-        titles: [NEWER_TITLE, OLDER_TITLE],
-        sort: '最近編集した順',
-        query: '',
-        searchFocused: false,
+      act(() => {
+        window.dispatchEvent(event)
+      })
+
+      const readOutput = () => ({
+        list: readList(),
+        defaultPrevented: event.defaultPrevented,
+      })
+      expect(readOutput()).toEqual({
+        list: {
+          titles: [NEWER_TITLE, OLDER_TITLE],
+          sort: '最近編集した順',
+          query: '',
+          searchFocused: false,
+        },
+        defaultPrevented: false,
       })
     },
   )
