@@ -22,7 +22,14 @@ import {
   type BodyRequestInput,
   requestBodyProposal,
 } from '#proposals/body-request-api'
-import { getBodyRequestContext } from '#proposals/body-request-context'
+import {
+  type BodyRequestSituation,
+  editCandidatesFor,
+} from '#proposals/body-request-candidates'
+import {
+  getBodyRequestContext,
+  sectionHeadingText,
+} from '#proposals/body-request-context'
 import { bodyRequestGutter } from '#proposals/body-request-gutter'
 import {
   getBodyRequestManager,
@@ -38,12 +45,6 @@ const llmFailureReasons: Record<LlmRequestError['code'], string> = {
   timeout: '10 分たっても応答がありませんでした',
   connection: '接続できません',
 }
-
-const editCandidates: readonly BodyRequestCandidate[] = [
-  { id: 'concise', label: '簡潔にする', group: 'edit' },
-  { id: 'add-example', label: '例を 1 つ足す', group: 'edit' },
-  { id: 'smooth-flow', label: '前後とのつながりを直す', group: 'edit' },
-]
 
 type BodyRequestProposalResult = Pick<
   WriteFromKeyPointsProposal,
@@ -67,7 +68,12 @@ export interface BodyRequestPresetSelection {
   view: EditorView
 }
 
-interface BodyRequestProposalPreset extends BodyRequestPresetOption {
+interface BodyRequestPresetBase extends BodyRequestPresetOption {
+  /** A preset without a condition is always offered. */
+  isAvailable?: (situation: BodyRequestSituation) => boolean
+}
+
+interface BodyRequestProposalPreset extends BodyRequestPresetBase {
   createProposal: (
     selection: BodyRequestPresetSelection,
     signal: AbortSignal,
@@ -75,7 +81,7 @@ interface BodyRequestProposalPreset extends BodyRequestPresetOption {
 }
 
 export type BodyRequestPreset =
-  | (BodyRequestPresetOption & {
+  | (BodyRequestPresetBase & {
       onSelect: (selection: BodyRequestPresetSelection) => void
     })
   | BodyRequestProposalPreset
@@ -138,11 +144,31 @@ function readSelectionContext(view: EditorView) {
   })
 }
 
-function readTarget(view: EditorView | null): BodyRequestTarget {
-  if (!view) return 'paragraph'
+function readTarget(
+  view: EditorView,
+  range: { from: number; to: number },
+): BodyRequestTarget {
   if (!view.state.selection.main.empty) return 'selection'
-  const { range } = readSelectionContext(view)
   return range.from === range.to ? 'insertion' : 'paragraph'
+}
+
+type CursorSituation = Omit<BodyRequestSituation, 'hasInstruction'>
+
+function readSituation(view: EditorView, doc: Y.Doc): CursorSituation {
+  const { range, section } = readSelectionContext(view)
+  return {
+    target: readTarget(view, range),
+    hasHeading: sectionHeadingText(section).length > 0,
+    hasPremise: Object.values(getPremise(doc)).some(
+      (value) => value !== null && value.trim().length > 0,
+    ),
+  }
+}
+
+const closedSituation: CursorSituation = {
+  target: 'paragraph',
+  hasHeading: false,
+  hasPremise: false,
 }
 
 export function BodyRequestAccessory({
@@ -159,10 +185,15 @@ export function BodyRequestAccessory({
   const [touchDevice, setTouchDevice] = useState(false)
   const mobileViewport = useMobileViewport()
   // The editor keeps its selection while the request input has focus, so typing does not change the target.
-  const target = useMemo(
-    () => (open ? readTarget(view) : 'paragraph'),
-    [open, view],
+  const cursorSituation = useMemo(
+    () => (open && view ? readSituation(view, doc) : closedSituation),
+    [open, view, doc],
   )
+  const situation: BodyRequestSituation = {
+    ...cursorSituation,
+    hasInstruction: instruction.trim().length > 0,
+  }
+  const availableEditCandidates = editCandidatesFor(situation)
 
   const fail = useCallback((reason: string, title = '作成できませんでした') => {
     setFailure({ title, reason })
@@ -403,17 +434,21 @@ export function BodyRequestAccessory({
     <BodyRequestView
       anchor={cursorLineAnchor(view)}
       candidates={[
-        ...editCandidates,
-        ...(presets ?? []).map(({ id, label }): BodyRequestCandidate => ({
-          id,
-          label,
-          group: 'research',
-        })),
+        ...availableEditCandidates,
+        ...(presets ?? [])
+          .filter(({ isAvailable }) => isAvailable?.(situation) ?? true)
+          .map(({ id, label }): BodyRequestCandidate => ({
+            id,
+            label,
+            group: 'research',
+          })),
       ]}
       failure={failure}
       instruction={instruction}
       onCandidateSelect={(id) => {
-        const editCandidate = editCandidates.find((item) => item.id === id)
+        const editCandidate = availableEditCandidates.find(
+          (item) => item.id === id,
+        )
         if (editCandidate) {
           startRequest(editCandidate.label)
           return
@@ -441,7 +476,7 @@ export function BodyRequestAccessory({
       }}
       open={open}
       phase={phase}
-      target={target}
+      target={situation.target}
       // Phone widths open the request from the editor toolbar instead.
       touchDevice={touchDevice && !mobileViewport}
     />

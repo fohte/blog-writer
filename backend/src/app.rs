@@ -20,6 +20,7 @@ use crate::{
     export::{self, ExportError, ExportService},
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
+    images,
     llm::{self, LlmEvent, LlmState},
     local_file_sync::LocalFileSyncService,
     ogp,
@@ -181,6 +182,7 @@ fn router_with_frontend_fallback(
 fn api_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(health::router())
+        .merge(images::router())
         .merge(export::router())
         .merge(llm::router())
         .merge(ogp::router())

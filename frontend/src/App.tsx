@@ -21,8 +21,12 @@ import {
 } from '#lib/file-sync-api'
 import { useSyncClient } from '#lib/use-sync-client'
 import { ArticleWorkspace } from '#pages/article-workspace'
+import { sectionHeadingText } from '#proposals/body-request-context'
 import { PremiseDiscussionPanel } from '#proposals/premise'
-import { writeFromKeyPoints } from '#proposals/write-from-key-points'
+import {
+  hasKeyPoints,
+  writeFromKeyPoints,
+} from '#proposals/write-from-key-points'
 import { HeadingResearchOutline } from '#research/heading-research-outline'
 import { SourcePanel } from '#research/source-panel'
 import { useClaimEvidence } from '#research/use-claim-evidence'
@@ -130,6 +134,7 @@ export function App() {
             {
               id: 'verify-claim-evidence',
               label: '根拠を確かめる',
+              isAvailable: ({ target }) => target !== 'insertion',
               onSelect: ({ context: requestContext }) => {
                 const [before = '', rest = ''] = requestContext.section.split(
                   '⟪依頼範囲の開始⟫',
@@ -156,17 +161,10 @@ export function App() {
             {
               id: 'research-from-heading',
               label: 'この見出しについて調べる',
+              isAvailable: ({ hasHeading, hasInstruction }) =>
+                hasHeading || hasInstruction,
               onSelect: ({ context: requestContext, instruction }) => {
-                const sectionHeading = requestContext.section
-                  .split('\n', 1)[0]
-                  ?.replaceAll('⟪依頼範囲の開始⟫', '')
-                  .replaceAll('⟪依頼範囲の終了⟫', '')
-                  .trim()
-                const headingText =
-                  sectionHeading !== undefined &&
-                  /^#{1,6}(?:[ \t]+|$)/u.test(sectionHeading)
-                    ? sectionHeading.replace(/^#{1,6}(?:[ \t]+|$)/u, '').trim()
-                    : ''
+                const headingText = sectionHeadingText(requestContext.section)
                 if (instruction.trim().length === 0 && headingText.length === 0)
                   return
                 startResearch(
@@ -181,6 +179,8 @@ export function App() {
             {
               id: 'write-from-key-points',
               label: '資料をもとに書く',
+              isAvailable: ({ hasHeading }) =>
+                hasHeading && hasKeyPoints(context.doc),
               createProposal: (selection, signal) =>
                 writeFromKeyPoints(context.doc, selection, signal),
             },
