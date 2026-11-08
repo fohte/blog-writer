@@ -257,6 +257,15 @@ function buildProposal(
   return { replacement, metadata, replacementMarks }
 }
 
+export function hasKeyPoints(doc: Y.Doc): boolean {
+  const readySourceIds = new Set(
+    listSources(doc)
+      .filter((source) => source.status === 'ready')
+      .map((source) => source.id),
+  )
+  return listFindings(doc).some(({ sourceId }) => readySourceIds.has(sourceId))
+}
+
 export function writeFromKeyPoints(
   doc: Y.Doc,
   selection: WriteFromKeyPointsSelection,

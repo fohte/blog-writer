@@ -1,6 +1,36 @@
 import { describe, expect, it } from 'vitest'
 
-import { getBodyRequestContext } from '#proposals/body-request-context'
+import {
+  getBodyRequestContext,
+  sectionHeadingText,
+} from '#proposals/body-request-context'
+
+describe('sectionHeadingText', () => {
+  it.each([
+    {
+      name: 'the heading that starts the section',
+      section: '## First\n⟪依頼範囲の開始⟫body⟪依頼範囲の終了⟫',
+      expected: 'First',
+    },
+    {
+      name: 'a heading that is itself the request target',
+      section: '⟪依頼範囲の開始⟫## First⟪依頼範囲の終了⟫\nbody',
+      expected: 'First',
+    },
+    {
+      name: 'nothing for text before the first heading',
+      section: '⟪依頼範囲の開始⟫body⟪依頼範囲の終了⟫\n\nmore',
+      expected: '',
+    },
+    {
+      name: 'nothing for a heading without text',
+      section: '##\n⟪依頼範囲の開始⟫body⟪依頼範囲の終了⟫',
+      expected: '',
+    },
+  ])('returns $name', ({ section, expected }) => {
+    expect(sectionHeadingText(section)).toBe(expected)
+  })
+})
 
 describe('getBodyRequestContext', () => {
   it('uses the paragraph at the cursor and includes its containing section', () => {

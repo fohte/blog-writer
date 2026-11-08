@@ -3362,13 +3362,103 @@ describe('App body request research context', () => {
     })
   })
 })
+function addKeyPoint(articleDoc: Y.Doc) {
+  addSource(articleDoc, {
+    id: 'source-sample',
+    kind: 'url',
+    title: 'Sample report',
+    url: 'https://example.invalid/report',
+    fileName: null,
+    checkedAt: '2026-03-01T00:00:00.000Z',
+    summary: 'A sample summary.',
+  })._unsafeUnwrap()
+  setFindings(articleDoc, 'source-sample', [
+    {
+      id: 'finding-sample',
+      researchedHeading: 'Target section',
+      text: 'The measure increased each year.',
+      quote: 'The recorded value increased each year.',
+    },
+  ])._unsafeUnwrap()
+}
+
 describe('App write from key points integration', () => {
+  it.each([
+    {
+      name: 'a paragraph before any heading in an article without key points',
+      articleBody: 'An intro paragraph.\n\n# Target section\n\nBody text.',
+      anchor: 0,
+      withKeyPoint: false,
+      expected: [
+        '簡潔にする',
+        '例を 1 つ足す',
+        '前後とのつながりを直す',
+        '根拠を確かめる',
+      ],
+    },
+    {
+      name: 'a blank line under a heading in an article with key points',
+      articleBody: '# Target section\n\n\n\nBody text.',
+      anchor: '# Target section\n\n'.length,
+      withKeyPoint: true,
+      expected: [
+        '例を 1 つ足す',
+        'この見出しについて調べる',
+        '資料をもとに書く',
+      ],
+    },
+  ])(
+    'offers the requests that fit $name',
+    async ({ articleBody, anchor, withKeyPoint, expected }) => {
+      const articleDoc = new Y.Doc()
+      doc = articleDoc
+      setBody(articleDoc, articleBody)
+      if (withKeyPoint) addKeyPoint(articleDoc)
+      installFetch(() => new Response('', { status: 404 }))
+      await renderApp(articleDoc)
+      await openArticle()
+      const editorContent = await vi.waitFor(() => {
+        const content = host?.querySelector<HTMLElement>('.cm-content')
+        if (!content) throw new Error('The article editor did not open')
+        return content
+      })
+      const view = EditorView.findFromDOM(editorContent)
+      if (!view) throw new Error('The article editor view did not render')
+      const modifier = navigator.platform.includes('Mac')
+        ? 'metaKey'
+        : 'ctrlKey'
+      act(() => {
+        view.dispatch({ selection: { anchor } })
+        view.focus()
+        editorContent.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            bubbles: true,
+            key: 'k',
+            [modifier]: true,
+          }),
+        )
+      })
+
+      const readLabels = () =>
+        Array.from(
+          document.querySelectorAll('[aria-label="定型の依頼"] button'),
+        ).map((button) => button.textContent)
+      await vi.waitFor(() => {
+        if (readLabels().length === 0) {
+          throw new Error('The request candidates did not render')
+        }
+      })
+      expect(readLabels()).toEqual(expected)
+    },
+  )
+
   it('keeps the article unchanged when a writing request is canceled', async () => {
     holdWriteResponse = true
     const articleDoc = new Y.Doc()
     doc = articleDoc
     const articleBody = '# Target section\n\nA starter paragraph.'
     setBody(articleDoc, articleBody)
+    addKeyPoint(articleDoc)
     installFetch(() => new Response('', { status: 404 }))
     await renderApp(articleDoc)
 

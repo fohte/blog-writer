@@ -2,8 +2,69 @@ import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
 import { setBody } from '#article/body'
-import { addSource, deleteSource, listEvidence } from '#article/index'
-import { persistAcceptedEvidence } from '#proposals/write-from-key-points'
+import {
+  addSource,
+  deleteSource,
+  listEvidence,
+  setFindings,
+} from '#article/index'
+import type { SourceStatus } from '#article/types'
+import {
+  hasKeyPoints,
+  persistAcceptedEvidence,
+} from '#proposals/write-from-key-points'
+
+function createDocWithSource(status: SourceStatus, findingCount: number) {
+  const doc = new Y.Doc()
+  addSource(doc, {
+    id: 'source-example',
+    kind: 'url',
+    title: 'Example report',
+    url: 'https://example.invalid/report',
+    fileName: null,
+    checkedAt: '2026-03-01T00:00:00.000Z',
+    status,
+    summary: 'Example summary.',
+  })._unsafeUnwrap()
+  setFindings(
+    doc,
+    'source-example',
+    Array.from({ length: findingCount }, (_, index) => ({
+      id: `finding-${String(index)}`,
+      researchedHeading: 'Example heading',
+      text: 'An example key point.',
+      quote: 'An example quote.',
+    })),
+  )._unsafeUnwrap()
+  return doc
+}
+
+describe('hasKeyPoints', () => {
+  it.each([
+    {
+      name: 'a ready source with a key point',
+      doc: () => createDocWithSource('ready', 1),
+      expected: true,
+    },
+    {
+      name: 'a ready source without key points',
+      doc: () => createDocWithSource('ready', 0),
+      expected: false,
+    },
+    {
+      name: 'an unavailable source with a key point',
+      doc: () => createDocWithSource('unavailable', 1),
+      expected: false,
+    },
+    {
+      name: 'no sources',
+      doc: () => new Y.Doc(),
+      expected: false,
+    },
+  ])('is $expected for $name', ({ doc, expected }) => {
+    expect(hasKeyPoints(doc())).toBe(expected)
+  })
+})
 
 describe('persistAcceptedEvidence', () => {
   it('keeps accepted evidence when its source was removed', () => {

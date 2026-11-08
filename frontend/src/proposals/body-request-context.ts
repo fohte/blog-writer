@@ -1,6 +1,6 @@
 import { GFM, parser } from '@lezer/markdown'
 
-import { deriveHeadingTree } from '#article/headings'
+import { deriveHeadingTree, extractAtxHeadingText } from '#article/headings'
 
 type TextRange = { from: number; to: number }
 
@@ -143,6 +143,11 @@ function collectHeadingRanges(text: string): HeadingRange[] {
       ...flatten(children),
     ])
   return flatten(deriveHeadingTree(text))
+}
+
+export function sectionHeadingText(section: string): string {
+  const unmarked = section.replace(/⟪依頼範囲の(?:開始|終了)⟫/gu, '')
+  return extractAtxHeadingText(unmarked, 0, unmarked.length)
 }
 
 export function getBodyRequestContext(
