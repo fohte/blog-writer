@@ -51,6 +51,7 @@ function renderWorkspace(listedArticles = articles) {
     updateArticleTitle: () => ok(undefined),
     updateArticleExportSettings: () => ok(undefined),
     listArticles: () => articles,
+    getArticleSummary: () => undefined,
     getStatus: () => 'synced',
     getSyncedAt: () => undefined,
     getError: () => undefined,

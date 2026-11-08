@@ -84,6 +84,7 @@ function renderPublish(
       return ok(undefined)
     },
     listArticles: () => [article],
+    getArticleSummary: () => undefined,
     getStatus: () => undefined,
     getSyncedAt: () => undefined,
     getError: () => undefined,
