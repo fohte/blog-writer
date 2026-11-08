@@ -1,10 +1,8 @@
 import type { Extension } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { Tabs, TabsList, TabsPanel, TabsTab } from '@fohte/ui/tabs'
-import { err, ok, type Result } from 'neverthrow'
-import type { ReactNode } from 'react'
+import { err, ok } from 'neverthrow'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type * as Y from 'yjs'
 
 import { getBody } from '#article/index'
 import { ArticleBody } from '#components/article-body'
@@ -15,55 +13,36 @@ import {
 } from '#components/article-editor-document'
 import { ArticleEditorHeader } from '#components/article-editor-header'
 import { ArticleEditorMobileToolbar } from '#components/article-editor-mobile-toolbar'
+import {
+  type ArticleEditorPanel,
+  type ArticleEditorViewProps,
+  EditorNotReadyError,
+} from '#components/article-editor-types'
 import type { ArticleExportSection } from '#components/article-export-screen'
 import { ArticlePremisePanel } from '#components/article-premise-panel'
 import { EditorStatusBarContainer } from '#components/editor-status-bar-container'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { MarkdownEditor } from '#components/markdown-editor'
+import { OutlineModeIntro } from '#components/outline-mode-intro'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
 import {
   moveConflictExtension,
   suggestionActionsPresentation,
 } from '#editor/index'
 import { useMobileViewport } from '#hooks/use-mobile-viewport'
+import { useOutlineMode } from '#hooks/use-outline-mode'
 import { useVisualViewportArea } from '#hooks/use-visual-viewport-area'
 import { useWriteMemo } from '#hooks/use-write-memo'
-import type { SyncState } from '#lib/sync-client'
 import { MemoPanel } from '#memos/memo-panel'
-import {
-  ArticleOutline,
-  createOutlineEditorExtension,
-  type MoveHistory,
-} from '#outline/index'
+import { ArticleOutline, createOutlineEditorExtension } from '#outline/index'
 
-export type ArticleEditorPanel =
-  'memo' | 'outline' | 'body' | 'premise' | 'sources'
-type ArticleEditorLayout = 'responsive' | 'mobile' | 'desktop'
-export type ArticleEditorContext = {
-  articleId: string
-  doc: Y.Doc
-  history: MoveHistory
-  view: EditorView | null
-  replaceBody: (value: string) => Result<void, EditorNotReadyError>
-  showSources: () => void
-  openExport: (section?: ArticleExportSection) => void
-}
-export type ArticleExportContext = ArticleEditorContext & {
-  section: ArticleExportSection | undefined
-  syncStatus: SyncState | undefined
-  onBack: () => void
-}
-type ArticleOutlineRenderContext = ArticleEditorContext & {
-  mobile: boolean
-  onHeadingSelected: () => void
-}
-
-class EditorNotReadyError extends Error {
-  constructor() {
-    super('The article editor is not ready')
-    this.name = 'EditorNotReadyError'
-  }
-}
+export type {
+  ArticleEditorContext,
+  ArticleEditorIntegrationProps,
+  ArticleEditorPanel,
+  ArticleEditorViewProps,
+  ArticleExportContext,
+} from '#components/article-editor-types'
 
 function isArticleEditorPanel(value: string): value is ArticleEditorPanel {
   return (
@@ -79,51 +58,6 @@ function isSidePanel(value: ArticleEditorPanel) {
   return value === 'memo' || value === 'premise' || value === 'sources'
 }
 
-export interface ArticleEditorViewProps {
-  articleId: string
-  title: string
-  doc?: Y.Doc | undefined
-  status?: { kind: 'loading' } | { kind: 'error'; message: string } | undefined
-  layout?: ArticleEditorLayout
-  initialPanel?: ArticleEditorPanel
-  /** Keeps extension instances stable by calling the factory once per article document. */
-  editorExtensions?:
-    ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
-  bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  /** Opens the body request from the mobile toolbar; the toolbar hides the request button without it. */
-  onRequest?: ((context: ArticleEditorContext) => void) | undefined
-  outlineRenderer?:
-    ((context: ArticleOutlineRenderContext) => ReactNode) | undefined
-  premisePanel?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  /** Renders above every panel so the writer notices it whichever panel is open. */
-  articleNotice?: ((context: ArticleEditorContext) => ReactNode) | undefined
-  exportScreen?: ((context: ArticleExportContext) => ReactNode) | undefined
-  sourcesPanel?:
-    ReactNode | ((context: ArticleEditorContext) => ReactNode) | undefined
-  onViewChange?: ((view: EditorView | null) => void) | undefined
-  syncStatus?: SyncState | undefined
-  syncedAt?: number | undefined
-  syncError?: string | undefined
-  requiresAuthentication?: boolean | undefined
-  onLoginAgain?: (() => void) | undefined
-  onTitleChange: (title: string) => void
-  onBack: () => void
-  onOpenSettings: () => void
-}
-
-export type ArticleEditorIntegrationProps = Pick<
-  ArticleEditorViewProps,
-  | 'bodyAccessory'
-  | 'editorExtensions'
-  | 'exportScreen'
-  | 'articleNotice'
-  | 'onRequest'
-  | 'onViewChange'
-  | 'outlineRenderer'
-  | 'premisePanel'
-  | 'sourcesPanel'
->
-
 const emptyExtensions: Extension[] = []
 
 export function ArticleEditorView({
@@ -133,6 +67,7 @@ export function ArticleEditorView({
   status,
   layout = 'responsive',
   initialPanel = 'body',
+  initialOutlineMode = false,
   editorExtensions,
   bodyAccessory,
   onRequest,
@@ -158,6 +93,10 @@ export function ArticleEditorView({
   const mobileVisibleArea = isMobile ? visibleArea : undefined
   const [panel, setPanel] = useState<ArticleEditorPanel>(initialPanel)
   const writeMemo = useWriteMemo(setPanel)
+  const { writingOutline, leaveOutlineMode } = useOutlineMode(
+    initialOutlineMode,
+    !isMobile,
+  )
   const [exportView, setExportView] = useState<{
     section: ArticleExportSection | undefined
   }>()
@@ -236,7 +175,10 @@ export function ArticleEditorView({
         if (isMobile) setPanel('body')
       }
       const mobile = isMobile && selectedPanel === 'outline'
-      const outlineContext = { ...context, mobile, onHeadingSelected }
+      const writing = writingOutline
+        ? { onOpenBody: leaveOutlineMode }
+        : undefined
+      const outlineContext = { ...context, mobile, onHeadingSelected, writing }
       return outlineRenderer ? (
         outlineRenderer(outlineContext)
       ) : view ? (
@@ -246,6 +188,7 @@ export function ArticleEditorView({
           mobile={mobile}
           onHeadingSelected={onHeadingSelected}
           view={view}
+          writing={writing}
         />
       ) : null
     }
@@ -414,17 +357,30 @@ export function ArticleEditorView({
               className={
                 isMobile
                   ? ''
-                  : 'border-b border-border lg:w-66 lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-b-0'
+                  : writingOutline
+                    ? 'min-w-0 border-b border-border lg:flex-1 lg:overflow-y-auto lg:border-b-0'
+                    : 'border-b border-border lg:w-66 lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-b-0'
               }
             >
               <TabsPanel {...desktopPanelProps} keepMounted value="outline">
-                <div className={isMobile ? 'p-4' : 'px-3 py-5'}>
+                <div
+                  className={
+                    isMobile
+                      ? 'p-4'
+                      : writingOutline
+                        ? 'mx-auto max-w-180 px-8 py-10'
+                        : 'px-3 py-5'
+                  }
+                >
+                  {writingOutline ? <OutlineModeIntro title={title} /> : null}
                   {renderPanel('outline')}
                 </div>
               </TabsPanel>
             </nav>
+            {/* Hidden instead of unmounted because the outline edits the article through this editor. */}
             <main
               className={`min-w-0 ${isMobile ? '' : 'lg:flex-1 lg:overflow-y-auto'}`}
+              hidden={writingOutline}
             >
               <TabsPanel {...desktopPanelProps} keepMounted value="body">
                 <div

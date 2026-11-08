@@ -20,7 +20,10 @@ import {
 import { useMemos } from '#memos/use-memos'
 import { outlineHeadingActions } from '#outline/heading-actions'
 import type { MoveHistory } from '#outline/move-history'
-import { useOutlineKeyboard } from '#outline/use-outline-keyboard'
+import {
+  type OutlineWriting,
+  useOutlineKeyboard,
+} from '#outline/use-outline-keyboard'
 import type { OutlineProposalState } from '#proposals/outline'
 
 export interface ArticleOutlineProps {
@@ -30,6 +33,7 @@ export interface ArticleOutlineProps {
   activeFrom?: number
   /** Taps select a heading for the action bar, and only a tap on the selected row opens the body. */
   mobile?: boolean
+  writing?: OutlineWriting | undefined
   onHeadingSelected?: () => void
   onActiveHeadingChange?: ((heading: Heading | undefined) => void) | undefined
   proposalState?: OutlineProposalState
@@ -61,6 +65,7 @@ export function ArticleOutline({
   view,
   activeFrom,
   mobile = false,
+  writing,
   onHeadingSelected,
   onActiveHeadingChange,
   proposalState,
@@ -187,11 +192,12 @@ export function ArticleOutline({
     )
   }, [headings, onActiveHeadingChange, selectedHeadingFrom])
 
-  const editing = useOutlineKeyboard({
+  const { editing, editRow } = useOutlineKeyboard({
     headings,
     history,
     selectedFrom: selectedHeadingFrom,
     view,
+    writing,
   })
 
   return (
@@ -214,6 +220,10 @@ export function ArticleOutline({
         {...(onProposalReject === undefined ? {} : { onProposalReject })}
         onSelect={(from) => {
           setError(undefined)
+          if (writing) {
+            editRow(from)
+            return
+          }
           if (mobile && from !== selectedHeadingFrom) {
             view.dispatch({ selection: EditorSelection.cursor(from) })
             return
@@ -229,7 +239,7 @@ export function ArticleOutline({
       {mobile ? (
         <OutlineHeadingActions {...outlineHeadingActions({ history, view })} />
       ) : headings.length > 0 ? (
-        <OutlineKeyHints />
+        <OutlineKeyHints writing={writing !== undefined} />
       ) : null}
     </div>
   )

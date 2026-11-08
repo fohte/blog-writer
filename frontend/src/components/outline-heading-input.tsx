@@ -18,20 +18,29 @@ export type OutlineKeyAction =
   | 'exit'
   | 'undo'
   | 'redo'
+  | 'open-body'
 
 export type OutlineHeadingEditing = {
   /** Changes whenever focus must return to the input, even on the same row. */
   focusKey: number
+  /** True in outline mode, where this input is the only way to write. */
+  writing?: boolean
   onAction: (action: OutlineKeyAction, draft: string) => void
   onBlur: (draft: string) => void
 }
 
 function actionForKey(
   event: KeyboardEvent<HTMLInputElement>,
-  dirty: boolean,
+  draft: string,
+  text: string,
+  writing: boolean,
 ): OutlineKeyAction | undefined {
+  const dirty = draft !== text
   const mod = event.metaKey || event.ctrlKey
   const key = event.key.toLowerCase()
+  if (writing && mod && (key === 'enter' || (event.shiftKey && key === 'o')))
+    return 'open-body'
+  if (writing && !mod && key === 'backspace' && draft === '') return 'delete'
   if (mod && key === 'backspace') return 'delete'
   // A dirty draft keeps the input's own undo, so typing can be stepped back before it reaches the body.
   if (mod && !dirty && key === 'z') return event.shiftKey ? 'redo' : 'undo'
@@ -46,7 +55,7 @@ function actionForKey(
 }
 
 export function OutlineHeadingInput({
-  editing: { focusKey, onAction, onBlur },
+  editing: { focusKey, writing = false, onAction, onBlur },
   text,
 }: {
   editing: OutlineHeadingEditing
@@ -81,9 +90,11 @@ export function OutlineHeadingInput({
         // Enter and arrows confirm or navigate the IME candidates during composition.
         // eslint-disable-next-line @typescript-eslint/no-deprecated -- Safari reports the key that ends a composition with isComposing false, and only keyCode 229 identifies it.
         if (event.nativeEvent.isComposing || event.keyCode === 229) return
-        const action = actionForKey(event, draft !== text)
+        const action = actionForKey(event, draft, text, writing)
         if (action === undefined) return
         event.preventDefault()
+        // The window shortcut would otherwise toggle outline mode back on.
+        event.stopPropagation()
         onAction(action, draft)
       }}
       onMouseDown={(event) => {
