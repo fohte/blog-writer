@@ -60,6 +60,13 @@ const destinations: ExportDestination[] = [
   },
 ]
 
+const destinationFacts = [
+  'リポジトリexample/site',
+  '取り込み先main',
+  'パスposts/{slug}.md',
+  '形式Markdown',
+]
+
 function renderPublish(
   settings: Partial<Article> = {},
   options: {
@@ -344,12 +351,7 @@ describe('ArticlePublishContainer', () => {
     renderPublish()
 
     expect(readPublishSummary()).toEqual({
-      facts: [
-        'リポジトリexample/site',
-        '取り込み先main',
-        'パスposts/{slug}.md',
-        '形式Markdown',
-      ],
+      facts: destinationFacts,
       resolvedPath: '→ posts/sample-post.md',
       diffSize: null,
     })
@@ -361,7 +363,11 @@ describe('ArticlePublishContainer', () => {
   ])('leaves out the resolved path for %s', (_name, exportSlug) => {
     renderPublish({ exportSlug })
 
-    expect(readPublishSummary().resolvedPath).toBeNull()
+    expect(readPublishSummary()).toEqual({
+      facts: destinationFacts,
+      resolvedPath: null,
+      diffSize: null,
+    })
   })
 
   it('shows the changed line counts and when the destination was read', async () => {
@@ -378,7 +384,11 @@ describe('ArticlePublishContainer', () => {
 
     await clickAndWait('差分を見る', waitForDiff)
 
-    expect(readPublishSummary().diffSize).toBe('+1 −1 · 取得 09:05')
+    expect(readPublishSummary()).toEqual({
+      facts: destinationFacts,
+      resolvedPath: '→ posts/sample-post.md',
+      diffSize: '+1 −1 · 取得 09:05',
+    })
   })
 
   it('posts the exact content and sha shown in the diff', async () => {
