@@ -12,7 +12,7 @@ export interface BlockWidgetDecorator {
   identity: (state: EditorState, sourceFrom: number) => string
 }
 
-export type BlockWidgetSourceRange = Readonly<{ from: number; to: number }>
+type BlockWidgetSourceRange = Readonly<{ from: number; to: number }>
 
 interface BlockWidgetOptions {
   attachDecorators?: boolean
@@ -23,7 +23,6 @@ interface BlockWidgetOptions {
 
 const decoratorCleanupsByElement = new WeakMap<HTMLElement, (() => void)[]>()
 const cleanupByElement = new WeakMap<HTMLElement, () => void>()
-const sourceRangeByElement = new WeakMap<HTMLElement, BlockWidgetSourceRange>()
 
 export const blockWidgetDecorators = Facet.define<
   BlockWidgetDecorator,
@@ -69,7 +68,6 @@ export function createBlockWidget(
       const element = document.createElement('div')
       element.className = 'cm-markdown-block-widget'
       element.append(createPreview(view))
-      sourceRangeByElement.set(element, sourceRange)
 
       refreshDecorators(element, view)
       const stopWidgetMouseDown = (event: MouseEvent) => {
@@ -111,7 +109,6 @@ export function createBlockWidget(
         for (const cleanup of decoratorCleanupsByElement.get(element) ?? [])
           cleanup()
         decoratorCleanupsByElement.delete(element)
-        sourceRangeByElement.delete(element)
       })
       return element
     },
@@ -153,12 +150,4 @@ export function createBlockWidget(
       updateElement: attachDecorators ? refreshDecorators : undefined,
     },
   )
-}
-
-export function getBlockWidgetSourceRange(
-  target: EventTarget | null,
-): BlockWidgetSourceRange | undefined {
-  if (!(target instanceof Element)) return undefined
-  const element = target.closest<HTMLElement>('.cm-markdown-block-widget')
-  return element ? sourceRangeByElement.get(element) : undefined
 }

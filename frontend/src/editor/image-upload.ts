@@ -1,7 +1,6 @@
+import { syntaxTree } from '@codemirror/language'
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import type { ResultAsync } from 'neverthrow'
-
-import { getBlockWidgetSourceRange } from '#editor/block-widget'
 
 type ArticleImageUploadError = { message: string }
 
@@ -38,12 +37,37 @@ function standaloneBlockInsertion(
   after: string,
   markdown: string,
 ): { insert: string; cursorOffset: number } {
-  const prefix = '\n'.repeat(Math.max(0, 2 - lineBreaksAtEnd(before)))
-  const suffix = '\n'.repeat(Math.max(0, 2 - lineBreaksAtStart(after)))
+  const prefix =
+    before.trim().length === 0
+      ? ''
+      : '\n'.repeat(Math.max(0, 2 - lineBreaksAtEnd(before)))
+  const suffix =
+    after.trim().length === 0
+      ? ''
+      : '\n'.repeat(Math.max(0, 2 - lineBreaksAtStart(after)))
   return {
     insert: prefix + markdown + suffix,
     cursorOffset: prefix.length + markdown.length,
   }
+}
+
+function topLevelBlockEndAtWidget(
+  view: EditorView,
+  target: EventTarget | null,
+): number | undefined {
+  if (!(target instanceof Element)) return undefined
+  const widget = target.closest<HTMLElement>('.cm-markdown-block-widget')
+  if (!widget) return undefined
+
+  const first = view.posAtDOM(widget, -1)
+  const last = view.posAtDOM(widget, 1)
+  const widgetFrom = Math.min(first, last)
+  const widgetTo = Math.max(first, last)
+  const root = syntaxTree(view.state).topNode
+  for (let node = root.firstChild; node; node = node.nextSibling) {
+    if (node.from <= widgetFrom && widgetTo <= node.to) return node.to
+  }
+  return widgetTo
 }
 
 class ImageUploadPlugin {
@@ -84,22 +108,15 @@ class ImageUploadPlugin {
     if (files.length === 0) return false
     event.preventDefault()
     if (!uploader) return true
-    const widgetRange = getBlockWidgetSourceRange(event.target)
-    const validWidgetRange =
-      widgetRange &&
-      widgetRange.from >= 0 &&
-      widgetRange.from <= widgetRange.to &&
-      widgetRange.to <= this.view.state.doc.length
-        ? widgetRange
-        : undefined
+    const widgetBlockEnd = topLevelBlockEndAtWidget(this.view, event.target)
     const position =
-      validWidgetRange?.to ??
+      widgetBlockEnd ??
       this.view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
       this.view.state.selection.main.from
     void this.upload(files, uploader, {
       from: position,
       to: position,
-      ...(validWidgetRange ? { standaloneBlock: true } : {}),
+      ...(widgetBlockEnd !== undefined ? { standaloneBlock: true } : {}),
     })
     return true
   }
