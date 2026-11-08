@@ -1,5 +1,6 @@
 import '#index.css'
 
+import { EditorSelection } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
@@ -158,9 +159,6 @@ describe('Markdown block widget layout', () => {
     const mountedView = EditorView.findFromDOM(content)
     if (!mountedView) throw new Error('The editor view did not mount')
     const view = mountedView
-    const handles = [
-      ...view.dom.querySelectorAll<HTMLButtonElement>('.cm-block-drag-handle'),
-    ]
     const readFocus = () => {
       const active = document.activeElement
       if (active === before) return 'before'
@@ -170,7 +168,9 @@ describe('Markdown block widget layout', () => {
         active instanceof Element
           ? active.closest<HTMLButtonElement>('.cm-block-drag-handle')
           : null
-      return handle ? `handle:${String(handles.indexOf(handle))}` : 'other'
+      return handle
+        ? `handle:${handle.dataset['blockFrom'] ?? 'unknown'}`
+        : 'other'
     }
 
     before.focus()
@@ -180,8 +180,10 @@ describe('Markdown block widget layout', () => {
     await userEvent.keyboard('{Tab}')
     focusSequence.push(readFocus())
     await userEvent.keyboard('{ArrowDown}')
+    await vi.waitUntil(() => readFocus() === 'handle:18')
     focusSequence.push(readFocus())
     await userEvent.keyboard('{ArrowUp}')
+    await vi.waitUntil(() => readFocus() === 'handle:0')
     focusSequence.push(readFocus())
     await userEvent.keyboard('{Tab}')
     focusSequence.push(readFocus())
@@ -203,11 +205,109 @@ describe('Markdown block widget layout', () => {
         'before',
         'body',
         'handle:0',
-        'handle:1',
+        'handle:18',
         'handle:0',
         'after',
       ],
       tabbableHandles: [String(source.indexOf('First'))],
+    })
+  })
+
+  it('keeps Tab and arrow focus on the current block in a long scrolling body', async () => {
+    const paragraphs = Array.from(
+      { length: 300 },
+      (_, index) => `Paragraph ${String(index + 1)}.`,
+    )
+    const source = paragraphs.join('\n\n')
+    const currentParagraph = 40
+    const currentFrom = source.indexOf(`Paragraph ${String(currentParagraph)}.`)
+    const currentPosition = currentFrom + 1
+    const scrollContainer = document.createElement('main')
+    scrollContainer.style.height = '24rem'
+    scrollContainer.style.overflowY = 'auto'
+    const bodyPanel = document.createElement('div')
+    bodyPanel.style.padding = '40px 32px 96px'
+    scrollContainer.append(bodyPanel)
+    document.body.append(scrollContainer)
+    controls.push(scrollContainer)
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      className: 'min-h-96 -ms-7',
+      initialSelection: { anchor: currentPosition },
+      parent: bodyPanel,
+      showMoveHandles: true,
+    })
+    if (!content) throw new Error('The editor did not mount')
+    const mountedView = EditorView.findFromDOM(content)
+    if (!mountedView) throw new Error('The editor view did not mount')
+    const view = mountedView
+    view.dispatch({
+      selection: EditorSelection.cursor(currentPosition),
+      effects: EditorView.scrollIntoView(currentPosition, { y: 'center' }),
+    })
+    await vi.waitUntil(
+      () =>
+        scrollContainer.scrollTop > 0 &&
+        view.dom.querySelector<HTMLButtonElement>(
+          `.cm-block-drag-handle[data-block-from="${String(currentFrom)}"]`,
+        )?.tabIndex === 0,
+    )
+    const scrollTopBeforeTab = scrollContainer.scrollTop
+    const currentLine = [
+      ...content.querySelectorAll<HTMLElement>('.cm-line'),
+    ].find(
+      (line) => line.textContent === `Paragraph ${String(currentParagraph)}.`,
+    )
+    if (!currentLine) throw new Error('The caret paragraph is not visible')
+    await userEvent.click(currentLine)
+    await vi.waitUntil(
+      () =>
+        document.activeElement === content &&
+        view.state.doc.lineAt(view.state.selection.main.head).text ===
+          `Paragraph ${String(currentParagraph)}.`,
+    )
+    await userEvent.keyboard('{Tab}')
+    const scrollTopAfterTab = scrollContainer.scrollTop
+    const tabBlockFrom =
+      document.activeElement instanceof HTMLButtonElement
+        ? document.activeElement.dataset['blockFrom']
+        : null
+
+    const finalParagraph = currentParagraph + 24
+    for (
+      let paragraph = currentParagraph + 1;
+      tabBlockFrom === String(currentFrom) && paragraph <= finalParagraph;
+      paragraph++
+    ) {
+      const expectedFrom = source.indexOf(`Paragraph ${String(paragraph)}.`)
+      await userEvent.keyboard('{ArrowDown}')
+      await vi.waitUntil(
+        () =>
+          document.activeElement instanceof HTMLButtonElement &&
+          document.activeElement.dataset['blockFrom'] === String(expectedFrom),
+      )
+    }
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      caretParagraph: view.state.doc.lineAt(view.state.selection.main.head)
+        .text,
+      focusedBlockFromAfterTab: tabBlockFrom,
+      focusedBlockFrom:
+        document.activeElement instanceof HTMLButtonElement
+          ? document.activeElement.dataset['blockFrom']
+          : null,
+      scrollAdvanced: scrollContainer.scrollTop > scrollTopAfterTab,
+      tabStayedNearCaret: scrollTopAfterTab >= scrollTopBeforeTab - 100,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      caretParagraph: `Paragraph ${String(currentParagraph)}.`,
+      focusedBlockFromAfterTab: String(currentFrom),
+      focusedBlockFrom: String(
+        source.indexOf(`Paragraph ${String(finalParagraph)}.`),
+      ),
+      scrollAdvanced: true,
+      tabStayedNearCaret: true,
     })
   })
 })

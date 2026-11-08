@@ -31,6 +31,7 @@ type MarkdownEditorMountOptions = {
   uploadArticleImage?: ArticleImageUploader
   showMoveHandles?: boolean
   prepareDoc?: (doc: Y.Doc) => void
+  parent?: HTMLElement
 }
 
 const cleanups: (() => void)[] = []
@@ -52,7 +53,8 @@ export function mountMarkdownEditor(
   options: MarkdownEditorMountOptions = {},
 ): MountedMarkdownEditor {
   const host = document.createElement('div')
-  document.body.append(host)
+  const parent = options.parent ?? document.body
+  parent.append(host)
   const root: Root = createRoot(host)
   const doc = new Y.Doc()
   const body = getBody(doc)

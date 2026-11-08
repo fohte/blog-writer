@@ -17,6 +17,7 @@ import {
 import { getBlockWidgetReplaceEnds } from '#editor/markdown-block-widgets'
 import { mountBlockMoveMenu } from '#outline/block-move-menu'
 import { adjacentMove, blockStarts, bodyDropInput } from '#outline/block-ranges'
+import { createAccessibleBlockHandleGutter } from '#outline/editor-extension-accessibility'
 import type { MoveHistory } from '#outline/move-history'
 
 const refreshBlockHandles = StateEffect.define()
@@ -126,92 +127,6 @@ function createBlockHandleGutter(
         transaction.effects.some((effect) => effect.is(refreshBlockHandles)),
       ),
   })
-}
-
-function createAccessibleBlockHandleGutter() {
-  return ViewPlugin.fromClass(
-    class {
-      constructor(readonly view: EditorView) {
-        view.dom.addEventListener('focusin', this.onFocusIn)
-        view.dom.addEventListener('keydown', this.onKeyDown)
-        this.updateGutterAccessibility()
-      }
-
-      update() {
-        this.updateGutterAccessibility()
-      }
-
-      destroy() {
-        this.view.dom.removeEventListener('focusin', this.onFocusIn)
-        this.view.dom.removeEventListener('keydown', this.onKeyDown)
-      }
-
-      private readonly onFocusIn = (event: FocusEvent) => {
-        const target = event.target
-        if (
-          target instanceof HTMLButtonElement &&
-          target.matches('.cm-block-drag-handle')
-        ) {
-          this.updateGutterAccessibility(target)
-        }
-      }
-
-      private readonly onKeyDown = (event: KeyboardEvent) => {
-        const target = event.target
-        if (
-          !(target instanceof HTMLButtonElement) ||
-          !target.matches('.cm-block-drag-handle')
-        ) {
-          return
-        }
-        const direction =
-          event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0
-        if (direction === 0) return
-        const handles = [
-          ...this.view.dom.querySelectorAll<HTMLButtonElement>(
-            '.cm-block-drag-handle',
-          ),
-        ]
-        const next = handles[handles.indexOf(target) + direction]
-        if (!next) return
-        event.preventDefault()
-        next.focus()
-      }
-
-      private updateGutterAccessibility(focusedHandle?: HTMLButtonElement) {
-        const blockGutter = this.view.dom.querySelector('.cm-block-move-gutter')
-        const gutters = blockGutter?.parentElement
-        if (!blockGutter || !gutters) return
-
-        // CodeMirror hides all gutters from assistive technology by default.
-        gutters.removeAttribute('aria-hidden')
-        for (const child of gutters.children) {
-          if (!(child instanceof HTMLElement)) continue
-          if (child === blockGutter) {
-            child.setAttribute('role', 'group')
-            child.setAttribute('aria-label', 'Block move handles')
-            child.removeAttribute('aria-hidden')
-          } else {
-            child.setAttribute('aria-hidden', 'true')
-          }
-        }
-
-        const handles = [
-          ...blockGutter.querySelectorAll<HTMLButtonElement>(
-            '.cm-block-drag-handle',
-          ),
-        ]
-        const activeHandle =
-          focusedHandle ??
-          handles.find(
-            (handle) => handle === this.view.dom.ownerDocument.activeElement,
-          )
-        const tabStop = activeHandle ?? handles[0]
-        for (const handle of handles)
-          handle.tabIndex = handle === tabStop ? 0 : -1
-      }
-    },
-  )
 }
 
 function createDragPlugin(
@@ -358,6 +273,7 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
         order: '-1',
         insetInlineStart: '0',
         insetInlineEnd: 'auto',
+        borderLeftWidth: '0',
       },
       '.cm-block-move-gutter': {
         flex: '0 0 1.5rem',
