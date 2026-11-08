@@ -4,6 +4,7 @@ import { Textarea } from '@fohte/ui/textarea'
 
 import type { PremiseField } from '#article/types'
 import { SuggestionDiff } from '#components/suggestion-diff'
+import { SuggestionGeneratingBar } from '#components/suggestion-generating-bar'
 
 export type PremiseConversationMessage = {
   role: 'user' | 'assistant'
@@ -15,9 +16,12 @@ export type PremiseDiscussion = {
   proposals: Partial<Record<PremiseField, string>>
   draft: string
   generating: boolean
+  elapsedSeconds: number
+  cancelled: boolean
   error: string | undefined
   onDraftChange: (value: string) => void
   onSubmit: () => void
+  onCancel: () => void
   onAccept: (field: PremiseField) => void
   onReject: (field: PremiseField) => void
 }
@@ -43,7 +47,14 @@ export function PremisePanelView({
     discussion?.messages.some(({ role }) => role === 'assistant') ?? false
 
   return (
-    <div className="flex flex-col gap-4">
+    <div
+      className="flex flex-col gap-4"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || discussion?.generating !== true) return
+        event.preventDefault()
+        discussion.onCancel()
+      }}
+    >
       {premiseFields.map(({ field, label }) => {
         const proposal = discussion?.proposals[field]
         return (
@@ -129,12 +140,17 @@ export function PremisePanelView({
             </ol>
           ) : null}
           {discussion.generating ? (
+            <SuggestionGeneratingBar
+              elapsedSeconds={discussion.elapsedSeconds}
+              onCancel={discussion.onCancel}
+            />
+          ) : discussion.cancelled ? (
             <p
               aria-live="polite"
               className="text-xs text-muted-foreground"
               role="status"
             >
-              作成中…
+              中止しました
             </p>
           ) : null}
           {discussion.error === undefined ? null : (
@@ -146,7 +162,12 @@ export function PremisePanelView({
             className="flex items-center gap-2"
             onSubmit={(event) => {
               event.preventDefault()
-              if (discussion.draft.trim().length > 0) discussion.onSubmit()
+              if (discussion.draft.trim().length === 0) return
+              // The send button is disabled while generating, so keep focus where Esc can cancel.
+              event.currentTarget
+                .querySelector<HTMLInputElement>('#premise-message')
+                ?.focus()
+              discussion.onSubmit()
             }}
           >
             <label className="sr-only" htmlFor="premise-message">
@@ -161,12 +182,13 @@ export function PremisePanelView({
               </span>
               <Input
                 className="border-0 bg-transparent px-0 focus-visible:ring-0 dark:bg-transparent"
-                disabled={discussion.generating}
                 id="premise-message"
                 onChange={(event) => {
                   discussion.onDraftChange(event.currentTarget.value)
                 }}
                 placeholder="前提について話す"
+                // Read-only rather than disabled keeps focus in the field so Esc reaches the cancel handler.
+                readOnly={discussion.generating}
                 value={discussion.draft}
               />
             </div>

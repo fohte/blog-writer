@@ -80,6 +80,7 @@ afterEach(() => {
     window.localStorage.setItem('blog-writer.llm.route', previousRoute)
   }
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('premise discussion panel', () => {
@@ -357,7 +358,7 @@ describe('premise discussion panel', () => {
       await vi.waitFor(() => {
         if (
           resolveResponse === undefined ||
-          host?.querySelector('[role="status"]')?.textContent !== '作成中…'
+          host?.querySelector('[role="status"]')?.textContent !== '作成中'
         ) {
           throw new Error('The request did not start')
         }
@@ -399,6 +400,100 @@ describe('premise discussion panel', () => {
       requestAborted: false,
     })
   })
+
+  it.each([
+    {
+      method: 'the cancel button',
+      cancel: () =>
+        userEvent.click(page.getByRole('button', { name: /^中止/u })),
+    },
+    {
+      method: 'Escape',
+      cancel: () => userEvent.keyboard('{Escape}'),
+    },
+    {
+      method: 'Escape in a premise field',
+      cancel: async () => {
+        await userEvent.click(page.getByRole('textbox', { name: '想定読者' }))
+        await userEvent.keyboard('{Escape}')
+      },
+    },
+  ])(
+    'counts the elapsed time, then drops the reply and proposals of a request cancelled with $method',
+    async ({ cancel }) => {
+      vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+      const articleDoc = new Y.Doc()
+      doc = articleDoc
+      setPremise(articleDoc, 'audience', 'Existing readers')
+      let resolveResponse: ((response: Response) => void) | undefined
+      let requestSignal: AbortSignal | undefined
+      vi.stubGlobal('fetch', ((_input, init) => {
+        requestSignal = init?.signal ?? undefined
+        return new Promise<Response>((resolve) => {
+          resolveResponse = resolve
+        })
+      }) satisfies typeof fetch)
+
+      renderPanel(articleDoc)
+      await act(async () => {
+        await userEvent.type(
+          page.getByRole('textbox', { name: '前提について話す' }),
+          'Clarify the premise',
+        )
+        await userEvent.click(page.getByRole('button', { name: '送る' }))
+      })
+      await act(async () => {
+        await vi.waitFor(() => {
+          if (resolveResponse === undefined) {
+            throw new Error('The request did not start')
+          }
+        })
+      })
+      act(() => {
+        vi.advanceTimersByTime(3000)
+      })
+      const generatingBar =
+        host?.querySelector('[role="status"]')?.parentElement?.textContent ??
+        null
+      await act(async () => {
+        await cancel()
+      })
+      await act(async () => {
+        resolveResponse?.(
+          createSseResponse({
+            reply: 'This reply arrived after the cancel.',
+            audience: 'New maintainers',
+          }),
+        )
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+      const actual = () => ({
+        generatingBar,
+        premise: getPremise(articleDoc),
+        messages:
+          host?.querySelectorAll('[aria-label="やり取り"] li').length ?? 0,
+        proposals:
+          host?.querySelectorAll('[aria-label$="の修正案"]').length ?? 0,
+        status: host?.querySelector('[role="status"]')?.textContent ?? null,
+        error: host?.querySelector('[role="alert"]')?.textContent ?? null,
+        draft:
+          host?.querySelector<HTMLInputElement>('#premise-message')?.value ??
+          null,
+        requestAborted: requestSignal?.aborted ?? null,
+      })
+      expect(actual()).toEqual({
+        generatingBar: '作成中 ··· 3s',
+        premise: { audience: 'Existing readers', purpose: null, claim: null },
+        messages: 0,
+        proposals: 0,
+        status: '中止しました',
+        error: null,
+        draft: 'Clarify the premise',
+        requestAborted: true,
+      })
+    },
+  )
 
   it('preserves pending proposals when a follow-up request fails', async () => {
     const articleDoc = new Y.Doc()

@@ -7,9 +7,12 @@ const discussion = {
   proposals: {},
   draft: '',
   generating: false,
+  elapsedSeconds: 0,
+  cancelled: false,
   error: undefined,
   onDraftChange: () => {},
   onSubmit: () => {},
+  onCancel: () => {},
   onAccept: () => {},
   onReject: () => {},
 }
@@ -75,6 +78,19 @@ export const Generating: Story = {
         claim: '1 人で使う道具なら、競合を人に選ばせない同期で十分に回る',
       },
       generating: true,
+      elapsedSeconds: 4,
+    },
+  },
+}
+
+export const Cancelled: Story = {
+  name: 'the discussion keeps the draft and shows that the request was cancelled',
+  args: {
+    discussion: {
+      ...discussion,
+      messages: repliedMessages,
+      draft: '比べる相手も入れたい',
+      cancelled: true,
     },
   },
 }

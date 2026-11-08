@@ -48,6 +48,9 @@ export function PremiseDiscussionPanel({ doc }: PremiseDiscussionPanelProps) {
   >({})
   const [draft, setDraft] = useState('')
   const [generating, setGenerating] = useState(false)
+  const [startedAt, setStartedAt] = useState(0)
+  const [now, setNow] = useState(0)
+  const [cancelled, setCancelled] = useState(false)
   const [error, setError] = useState<string>()
   const premiseRef = useRef(premise)
   const activeRequest = useRef<ActiveRequest | null>(null)
@@ -91,6 +94,16 @@ export function PremiseDiscussionPanel({ doc }: PremiseDiscussionPanelProps) {
     },
     [],
   )
+
+  useEffect(() => {
+    if (!generating) return
+    const timer = window.setInterval(() => {
+      setNow(Date.now())
+    }, 1000)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [generating])
 
   const visibleProposals = useMemo(
     () =>
@@ -136,6 +149,10 @@ export function PremiseDiscussionPanel({ doc }: PremiseDiscussionPanelProps) {
     }
 
     setError(undefined)
+    setCancelled(false)
+    const requestStartedAt = Date.now()
+    setStartedAt(requestStartedAt)
+    setNow(requestStartedAt)
     setGenerating(true)
     const result = loadLlmSettings(() => window.localStorage).match(
       (settings) =>
@@ -176,6 +193,14 @@ export function PremiseDiscussionPanel({ doc }: PremiseDiscussionPanelProps) {
     )
   }
 
+  const cancelRequest = () => {
+    if (!activeRequest.current) return
+    activeRequest.current.controller.abort()
+    activeRequest.current = null
+    setGenerating(false)
+    setCancelled(true)
+  }
+
   const acceptProposal = (field: PremiseField) => {
     const replacement = proposals[field]
     if (replacement === undefined) return
@@ -195,11 +220,14 @@ export function PremiseDiscussionPanel({ doc }: PremiseDiscussionPanelProps) {
   return (
     <ArticlePremisePanel
       discussion={{
+        cancelled,
         draft,
+        elapsedSeconds: Math.floor((now - startedAt) / 1000),
         error,
         generating,
         messages,
         onAccept: acceptProposal,
+        onCancel: cancelRequest,
         onDraftChange: setDraft,
         onReject: rejectProposal,
         onSubmit: sendMessage,
