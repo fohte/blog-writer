@@ -357,5 +357,6 @@ describe('random move and edit sequences', () => {
       },
       firstFailure: null,
     })
-  }, 20_000)
+    // CPU-bound, and about ten times slower while CI runs the browser tests alongside it.
+  }, 60_000)
 })
