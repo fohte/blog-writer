@@ -118,7 +118,7 @@ function createRequestEditor(
     editorHost.remove()
     accessoryHost.remove()
   })
-  return { body, view, unmountAccessory }
+  return { body, doc, view, unmountAccessory }
 }
 
 function pressMod(view: EditorView, key: string) {
@@ -756,6 +756,62 @@ describe('body request', () => {
 
   it.each([
     {
+      name: 'a selection under a heading in an article with a premise',
+      article: content,
+      anchor: undefined,
+      hasPremise: true,
+      expected: [
+        '簡潔にする',
+        '前後とのつながりを直す',
+        '前提に沿って直す',
+        'Under a heading',
+        'Always',
+      ],
+    },
+    {
+      name: 'a blank line without a heading or a premise',
+      article: 'A sentence.\n\n',
+      anchor: 'A sentence.\n\n'.length,
+      hasPremise: false,
+      expected: ['例を 1 つ足す', 'On an insertion', 'Always'],
+    },
+  ])(
+    'offers the candidates that fit $name',
+    async ({ article, anchor, hasPremise, expected }) => {
+      const { doc, view } = createRequestEditor([], article, true, [
+        {
+          id: 'under-heading',
+          label: 'Under a heading',
+          isAvailable: (situation) => situation.hasHeading,
+          onSelect: () => undefined,
+        },
+        {
+          id: 'on-insertion',
+          label: 'On an insertion',
+          isAvailable: (situation) => situation.target === 'insertion',
+          onSelect: () => undefined,
+        },
+        { id: 'always', label: 'Always', onSelect: () => undefined },
+      ])
+      if (!hasPremise) {
+        for (const field of ['audience', 'purpose', 'claim'] as const) {
+          setPremise(doc, field, null)
+        }
+      }
+      if (anchor !== undefined) view.dispatch({ selection: { anchor } })
+
+      await openRequestInput(view)
+
+      const readLabels = () =>
+        Array.from(
+          document.querySelectorAll('[aria-label="定型の依頼"] button'),
+        ).map((button) => button.textContent)
+      expect(readLabels()).toEqual(expected)
+    },
+  )
+
+  it.each([
+    {
       name: 'clicking it',
       choose: async () => {
         const button = Array.from(document.querySelectorAll('button')).find(
@@ -771,7 +827,10 @@ describe('body request', () => {
       choose: async () => {
         await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}')
       },
-      expected: { instructions: ['例を 1 つ足す'], label: '> 例を 1 つ足す' },
+      expected: {
+        instructions: ['前後とのつながりを直す'],
+        label: '> 前後とのつながりを直す',
+      },
     },
   ])(
     'sends an edit candidate chosen by $name as the instruction',
