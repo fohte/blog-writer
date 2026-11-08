@@ -46,6 +46,7 @@ function createClient(currentDoc: Y.Doc): SyncClientApi {
     updateArticleTitle: () => ok(undefined),
     updateArticleExportSettings: () => ok(undefined),
     listArticles: () => [article],
+    getArticleSummary: () => undefined,
     getStatus: () => undefined,
     getSyncedAt: () => undefined,
     getError: () => undefined,

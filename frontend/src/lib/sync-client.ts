@@ -2,7 +2,9 @@ import { err, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 import { v7 } from 'uuid'
 import * as Y from 'yjs'
 
+import { readBody } from '#article/body'
 import { DEFAULT_ARTICLE_TITLE, TRASH_RETENTION_MS } from '#article/constants'
+import { listMemos } from '#article/memos'
 import { clearResearch } from '#article/sources'
 import type { ArticleFileSyncStatus } from '#lib/file-sync-api'
 import {
@@ -45,6 +47,11 @@ export type Article = {
 
 export type TrashedArticle = Article & { trashedAt: number }
 
+export type ArticleSummary = {
+  unorganizedMemoCount: number
+  bodyIsEmpty: boolean
+}
+
 type ArticleExportSettings = {
   exportDestinationId?: string | undefined
   exportSlug?: string | undefined
@@ -79,6 +86,7 @@ export interface SyncClientApi {
   listArticles(): Article[]
   getStatus(docId: string): SyncState | undefined
   getSyncedAt(docId: string): number | undefined
+  getArticleSummary(id: string): ArticleSummary | undefined
   getError(): SyncClientError | undefined
   requiresAuthentication(): boolean
   subscribe(listener: () => void): () => void
@@ -187,13 +195,8 @@ class SyncClient implements SyncClientApi {
 
   duplicateArticle(id: string) {
     const article = this.listArticles().find((candidate) => candidate.id === id)
-    const source = this.documents.get(id)
-    // Content that is still loading or arriving from the server would be missing from the duplicate.
-    if (
-      !article ||
-      source?.persistence.synced !== true ||
-      source.status === 'syncing'
-    )
+    const source = this.loadedDocument(id)
+    if (!article || !source)
       return err(
         new SyncClientError('The article is not ready to copy', new Error(id)),
       )
@@ -282,6 +285,25 @@ class SyncClient implements SyncClientApi {
 
   getSyncedAt(docId: string) {
     return this.documents.get(docId)?.syncedAt
+  }
+
+  getArticleSummary(id: string) {
+    const document = this.loadedDocument(id)
+    if (!document) return undefined
+    return {
+      unorganizedMemoCount: listMemos(document.doc).filter(
+        ({ state }) => state.kind === 'unorganized',
+      ).length,
+      bodyIsEmpty: readBody(document.doc).trim().length === 0,
+    }
+  }
+
+  /** Undefined while content is still loading or arriving from the server, because reading it then would miss part of the article. */
+  private loadedDocument(id: string) {
+    const document = this.documents.get(id)
+    if (document?.persistence.synced !== true || document.status === 'syncing')
+      return undefined
+    return document
   }
 
   getError() {

@@ -104,6 +104,7 @@ export function ArticleWorkspace({
       readArticleBody={(id) =>
         client?.openDocument(id).map(readBody).unwrapOr('') ?? ''
       }
+      readArticleSummary={(id) => client?.getArticleSummary(id)}
       requiresAuthentication={requiresAuthentication}
       searchQuery={searchQuery}
       sortOrder={sortOrder}

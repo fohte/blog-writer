@@ -12,7 +12,12 @@ import { ArticleTrashDialog } from '#components/article-trash-dialog'
 import { OfflineBanner } from '#components/offline-banner'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
 import { type ArticleSortOrder, selectArticles } from '#lib/select-articles'
-import type { Article, SyncState, TrashedArticle } from '#lib/sync-client'
+import type {
+  Article,
+  ArticleSummary,
+  SyncState,
+  TrashedArticle,
+} from '#lib/sync-client'
 
 export interface ArticleListViewProps {
   articles: Article[]
@@ -24,6 +29,7 @@ export interface ArticleListViewProps {
   requiresAuthentication: boolean
   canCreate: boolean
   readArticleBody: (id: string) => string
+  readArticleSummary: (id: string) => ArticleSummary | undefined
   onSearchQueryChange: (query: string) => void
   onSortOrderChange: (sortOrder: ArticleSortOrder) => void
   onCreateArticle: () => void
@@ -45,6 +51,18 @@ const sortOptions: Array<{ value: ArticleSortOrder; label: string }> = [
   { value: 'created', label: '作成した順' },
 ]
 
+function formatArticleSummary({
+  unorganizedMemoCount,
+  bodyIsEmpty,
+}: ArticleSummary) {
+  return [
+    ...(unorganizedMemoCount > 0
+      ? [`未整理メモ ${String(unorganizedMemoCount)}`]
+      : []),
+    ...(bodyIsEmpty ? ['本文なし'] : []),
+  ].join(' · ')
+}
+
 export function ArticleListView({
   articles,
   statuses,
@@ -55,6 +73,7 @@ export function ArticleListView({
   requiresAuthentication,
   canCreate,
   readArticleBody,
+  readArticleSummary,
   onSearchQueryChange,
   onSortOrderChange,
   onCreateArticle,
@@ -79,6 +98,12 @@ export function ArticleListView({
     sortOrder,
     readArticleBody,
   )
+  const syncedCount = activeArticles.filter(
+    ({ id }) => statuses[id] === 'synced',
+  ).length
+  // A browser that is offline still reports `syncing` until its connection attempt fails.
+  const syncInProgress =
+    !offline && activeArticles.some(({ id }) => statuses[id] === 'syncing')
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -159,6 +184,15 @@ export function ArticleListView({
           <ReauthenticationPrompt onLoginAgain={onLoginAgain} />
         ) : null}
 
+        {syncInProgress ? (
+          <p className="border border-border px-2.5 py-1.5 font-mono text-xs">
+            ◐ 全記事を同期中 {syncedCount} / {activeArticles.length}{' '}
+            <span className="text-muted-foreground-strong">
+              · 開ける記事から使えます
+            </span>
+          </p>
+        ) : null}
+
         {activeArticles.length === 0 ? (
           <p className="border border-border px-3 py-4 text-sm">
             記事はまだありません
@@ -186,6 +220,8 @@ export function ArticleListView({
                       syncFileStatus === 'external_changed'
                         ? '外部で変更あり'
                         : rowStatusLabels[statuses[id] ?? 'saved']
+                    // shortcut: a remote edit arriving while the list stays open appears on the next render, subscribe to document updates if the stale count confuses writers.
+                    const summary = readArticleSummary(id)
 
                     return (
                       <li
@@ -202,6 +238,11 @@ export function ArticleListView({
                         >
                           {title}
                         </button>
+                        <span className="font-mono text-xs text-muted-foreground-strong empty:hidden">
+                          {summary !== undefined
+                            ? formatArticleSummary(summary)
+                            : null}
+                        </span>
                         {statusLabel !== undefined ? (
                           <span className="font-mono text-xs text-muted-foreground-strong">
                             {statusLabel}

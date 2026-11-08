@@ -4,7 +4,9 @@ import * as Y from 'yjs'
 import { TRASH_RETENTION_MS } from '#article/constants'
 import {
   addEvidence,
+  addMemo,
   addSource,
+  dismissMemo,
   getPremise,
   listFindings,
   listSources,
@@ -12,6 +14,7 @@ import {
   readBody,
   setBody,
   setFindings,
+  setMemoAdoptedTo,
   setPremise,
 } from '#article/index'
 import type { Article, SyncClientOptions } from '#lib/sync-client'
@@ -459,6 +462,58 @@ describe('createSyncClient', () => {
     })
     client.destroy()
   })
+
+  it('summarizes the memos and body of a synced article', async () => {
+    const { client, providers } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
+    const provider = providers.at(-1)
+    provider?.emitStatus('connected')
+    provider?.emitSync(true)
+    const doc = client.openDocument(article.id)._unsafeUnwrap()
+    setBody(doc, '# A heading\n\nA paragraph.\n')
+    addMemo(doc, { id: 'memo-a', text: 'A note', order: 0 })._unsafeUnwrap()
+    addMemo(doc, { id: 'memo-b', text: 'A note', order: 1 })._unsafeUnwrap()
+    addMemo(doc, { id: 'memo-c', text: 'A note', order: 2 })._unsafeUnwrap()
+    addMemo(doc, { id: 'memo-d', text: 'A note', order: 3 })._unsafeUnwrap()
+    dismissMemo(doc, 'memo-c')._unsafeUnwrap()
+    setMemoAdoptedTo(doc, 'memo-d', 0)._unsafeUnwrap()
+
+    expect(client.getArticleSummary(article.id)).toEqual({
+      unorganizedMemoCount: 2,
+      bodyIsEmpty: false,
+    })
+    client.destroy()
+  })
+
+  it('treats a whitespace-only body as empty from the local copy while offline', async () => {
+    const { client, providers } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
+    providers.at(-1)?.emitConnectionClose()
+    setBody(client.openDocument(article.id)._unsafeUnwrap(), ' \n')
+
+    expect(client.getArticleSummary(article.id)).toEqual({
+      unorganizedMemoCount: 0,
+      bodyIsEmpty: true,
+    })
+    client.destroy()
+  })
+
+  it.each([
+    ['its local copy has not loaded', false],
+    ['it is still arriving from the server', true],
+  ])(
+    'has no summary for an article while %s',
+    async (_name, localCopyLoaded) => {
+      const { client } = createFixture()
+      const article = client.createArticle()._unsafeUnwrap()
+      if (localCopyLoaded) await Promise.resolve()
+
+      expect(client.getArticleSummary(article.id)).toBeUndefined()
+      client.destroy()
+    },
+  )
 
   it('keeps a trashed article across a restart until it is restored', () => {
     const { client, savedDocuments, setNow } = createFixture()
