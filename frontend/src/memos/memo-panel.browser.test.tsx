@@ -100,6 +100,11 @@ const readPanelOutputWithMenu = (doc: Y.Doc) => ({
     document.body.querySelector('[data-slot="popover-content"]') !== null,
 })
 
+const readLatestAdoption = () =>
+  [...(host?.querySelectorAll('[aria-label="最近の採用"] p') ?? [])].map(
+    (line) => line.textContent,
+  )
+
 beforeEach(() => {
   memoMocks.failNextDismiss = false
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -434,6 +439,36 @@ describe('MemoPanel', () => {
       rendered: [],
       draft: '',
       alert: undefined,
+    })
+  })
+
+  it('names the memo adopted most recently, even when its heading stays the same', () => {
+    const doc = new Y.Doc()
+    const markdown = '# Alpha\n\n## Beta\n'
+    setBody(doc, markdown)
+    addMemo(doc, { id: 'memo-a', text: '最初の案', order: 0 })
+    addMemo(doc, { id: 'memo-b', text: '次の案', order: 1 })
+    setMemoAdoptedTo(doc, 'memo-a', 0, '2026-03-01T00:00:00.000Z')
+    setMemoAdoptedTo(
+      doc,
+      'memo-b',
+      markdown.indexOf('## Beta'),
+      '2026-03-02T00:00:00.000Z',
+    )
+    mountMemoPanel(doc)
+    const afterMount = readLatestAdoption()
+
+    act(() => {
+      setMemoAdoptedTo(doc, 'memo-a', 0, '2026-03-03T00:00:00.000Z')
+    })
+
+    const readOutput = () => ({
+      afterMount,
+      afterAdoptingAgain: readLatestAdoption(),
+    })
+    expect(readOutput()).toEqual({
+      afterMount: ['最近の採用', '[x] 次の案', '→ ## Beta'],
+      afterAdoptingAgain: ['最近の採用', '[x] 最初の案', '→ # Alpha'],
     })
   })
 

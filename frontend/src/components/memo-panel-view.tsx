@@ -15,6 +15,7 @@ type MemoFilter = Memo['state']['kind']
 
 type MemoPanelViewProps = {
   memos: Memo[]
+  latestAdoptedMemoId?: string | undefined
   headings: Heading[]
   draft: string
   filter: MemoFilter
@@ -45,8 +46,18 @@ const EMPTY_MESSAGES: Record<MemoFilter, string> = {
   dismissed: '見送ったメモはありません。',
 }
 
+function AdoptedHeadingLine({ heading }: { heading: Heading }) {
+  return (
+    <p className="truncate text-xs text-muted-foreground">
+      → <span className="font-mono">{'#'.repeat(heading.level)}</span>{' '}
+      {heading.text}
+    </p>
+  )
+}
+
 export function MemoPanelView({
   memos,
+  latestAdoptedMemoId,
   headings,
   draft,
   filter,
@@ -90,8 +101,10 @@ export function MemoPanelView({
     }
   }, [visibleMemos])
 
+  const latestAdoption = memos.find(({ id }) => id === latestAdoptedMemoId)
+
   return (
-    <section aria-label="メモ" className="flex flex-col gap-4">
+    <section aria-label="メモ" className="flex flex-1 flex-col gap-4">
       <form
         className="flex flex-col gap-1.5"
         onSubmit={(event) => {
@@ -173,13 +186,7 @@ export function MemoPanelView({
                   {memo.text}
                 </p>
                 {memo.state.kind === 'adopted' ? (
-                  <p className="truncate text-xs text-muted-foreground">
-                    →{' '}
-                    <span className="font-mono">
-                      {'#'.repeat(memo.state.heading.level)}
-                    </span>{' '}
-                    {memo.state.heading.text}
-                  </p>
+                  <AdoptedHeadingLine heading={memo.state.heading} />
                 ) : null}
               </div>
               {memo.state.kind === 'dismissed' ? (
@@ -221,6 +228,22 @@ export function MemoPanelView({
           ))}
         </List>
       )}
+
+      {latestAdoption?.state.kind === 'adopted' ? (
+        <section
+          aria-label="最近の採用"
+          className="mt-auto flex flex-col gap-1.5 border-t border-border pt-3 text-xs text-muted-foreground"
+        >
+          <p>最近の採用</p>
+          <p className="whitespace-pre-wrap text-foreground">
+            <span aria-hidden="true" className="font-mono">
+              [x]{' '}
+            </span>
+            {latestAdoption.text}
+          </p>
+          <AdoptedHeadingLine heading={latestAdoption.state.heading} />
+        </section>
+      ) : null}
     </section>
   )
 }

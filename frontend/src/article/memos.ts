@@ -144,6 +144,20 @@ export function listMemos(doc: Y.Doc): Memo[] {
     )
 }
 
+export function findLatestAdoptedMemoId(
+  doc: Y.Doc,
+  memos: readonly Memo[],
+): string | undefined {
+  let latest: { id: string; adoptedAt: string } | undefined
+  for (const { id, state } of memos) {
+    const adoptedAt = getMemoMap(doc, id)?.get('adoptedAt')
+    if (state.kind !== 'adopted' || typeof adoptedAt !== 'string') continue
+    if (latest === undefined || adoptedAt > latest.adoptedAt)
+      latest = { id, adoptedAt }
+  }
+  return latest?.id
+}
+
 export function captureDeletedMemoAdoptions(
   doc: Y.Doc,
   getPreviousMarkdown: () => string,
@@ -338,6 +352,7 @@ export function setMemoAdoptedTo(
   doc: Y.Doc,
   id: string,
   markerIndex: number,
+  adoptedAt = new Date().toISOString(),
 ): Result<void, MemoNotFoundError | InvalidHeadingError> {
   const body = getBody(doc)
   const heading = findHeadingAtMarker(
@@ -353,6 +368,7 @@ export function setMemoAdoptedTo(
       -1,
     )
     memo.set('adoptedTo', Y.relativePositionToJSON(relativePosition))
+    memo.set('adoptedAt', adoptedAt)
     memo.delete('dismissed')
   })
 }
