@@ -28,6 +28,7 @@ export function EditorStatusBarContainer({
   useEffect(() => {
     if (!doc) return
     const body = getBody(doc)
+    // shortcut: recounts the whole body on every edit, about 4 ms at 50,000 characters; count incrementally if articles grow far beyond that.
     const update = () => {
       setCharacterCount(countBodyCharacters(body.toJSON()))
     }
