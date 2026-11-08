@@ -196,7 +196,7 @@ pub(super) fn line_endings(body: &[u8], previous: Option<&[u8]>) -> Vec<u8> {
     result
 }
 
-pub(super) fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
 
     let digest = Sha256::digest(bytes);

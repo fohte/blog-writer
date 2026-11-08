@@ -7,6 +7,7 @@
 | [public.app_metadata](public.app_metadata.md)   | 2       | Stores backend metadata as key-value pairs.   | BASE TABLE |
 | [public.source_bodies](public.source_bodies.md) | 3       | Stores Markdown bodies for article sources.   | BASE TABLE |
 | [public.sync_updates](public.sync_updates.md)   | 3       | Stores encoded Yjs updates for each document. | BASE TABLE |
+| [public.images](public.images.md)               | 2       | Stores images pasted into article drafts.     | BASE TABLE |
 
 ## Relations
 
@@ -27,6 +28,10 @@ erDiagram
   bigint update_id
   text doc_id
   bytea update_data
+}
+"public.images" {
+  text name
+  bytea data
 }
 ```
 
