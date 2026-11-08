@@ -25,6 +25,7 @@ type WorkspaceOptions = ArticleEditorIntegrationProps & {
   error?: string
   requiresAuthentication?: boolean
   syncStatus?: 'saved' | 'unsynced' | 'syncing' | 'synced'
+  syncedAt?: number
   onOpenSettings?: () => void
 }
 
@@ -35,6 +36,7 @@ function renderWorkspace(
     error,
     requiresAuthentication = false,
     syncStatus = 'synced',
+    syncedAt,
     onOpenSettings = () => {},
     ...integrations
   }: WorkspaceOptions = {},
@@ -65,6 +67,7 @@ function renderWorkspace(
       updateArticleExportSettings: () => ok(undefined),
       listArticles: () => articlesRef.current,
       getStatus: () => syncStatus,
+      getSyncedAt: () => syncedAt,
       getError: () => undefined,
       requiresAuthentication: () => requiresAuthentication,
       subscribe: () => () => {},
@@ -116,6 +119,47 @@ afterEach(() => {
 })
 
 describe('article editor screen', () => {
+  it('shows the last sync time, the LLM route and a live character count in the status bar', async () => {
+    const article: Article = {
+      id: 'article-status-bar',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, 'ab\ncd')
+    renderWorkspace(article, articleDoc, {
+      syncedAt: new Date(2026, 0, 15, 2, 14).getTime(),
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const readStatusItems = () => {
+      const items = Array.from(
+        host?.querySelector('footer')?.children ?? [],
+        (item) => item.textContent,
+      )
+      return items.slice(0, items.indexOf(''))
+    }
+
+    await vi.waitFor(() => {
+      expect(readStatusItems()).toEqual([
+        '端末に保存済み · 同期済み 02:14',
+        'LLM サーバー',
+        '4 字',
+      ])
+    })
+    act(() => {
+      setBody(articleDoc, 'abcdefg')
+    })
+
+    expect(readStatusItems()).toEqual([
+      '端末に保存済み · 同期済み 02:14',
+      'LLM サーバー',
+      '7 字',
+    ])
+  })
+
   it('opens an article, edits and reorders its body, undoes the move, and returns to the list', async () => {
     const article: Article = {
       id: 'article-a',
@@ -350,6 +394,11 @@ First paragraph.
     const initialPanels = readPanels()
     await act(async () => {
       await userEvent.click(page.getByRole('tab', { name: '資料' }))
+    })
+    // Base UI hides the previous panel on a later animation frame.
+    await vi.waitFor(() => {
+      if (widthOf('section[aria-label="メモ"]') > 0)
+        throw new Error('The memo panel was not hidden')
     })
 
     const readDesktopPanelOutput = () => ({
@@ -1034,9 +1083,11 @@ First paragraph.
     await act(async () => {
       await userEvent.click(page.getByRole('tab', { name: 'メモ' }))
     })
-    await vi.waitUntil(
-      () => host?.querySelector('[data-testid="premise-panel"]') === null,
-    )
+    // Base UI removes the previous panel on a later animation frame.
+    await vi.waitFor(() => {
+      if (readPremiseState().panel !== null)
+        throw new Error('The premise panel was not removed')
+    })
     states.push(readPremiseState())
 
     expect(states).toEqual([
@@ -1110,6 +1161,44 @@ First paragraph.
     })
   })
 
+  it('moves to the memo input with the memo shortcut from another tab', async () => {
+    const article: Article = {
+      id: 'article-memo-shortcut',
+      title: 'A fresh draft',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    renderWorkspace(article, articleDoc)
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const modifier = modifierKey()
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '前提を決める' }))
+    })
+    const tabBeforeShortcut = host?.querySelector(
+      '[role="tab"][aria-selected="true"]',
+    )?.textContent
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}{Shift>}M{/Shift}{/${modifier}}`)
+    })
+
+    const readShortcutOutput = () => ({
+      tabBeforeShortcut,
+      tabAfterShortcut: host?.querySelector(
+        '[role="tab"][aria-selected="true"]',
+      )?.textContent,
+      focusedElementId: document.activeElement?.id,
+    })
+    expect(readShortcutOutput()).toEqual({
+      tabBeforeShortcut: '前提',
+      tabAfterShortcut: 'メモ',
+      focusedElementId: 'new-memo',
+    })
+  })
+
   it('guides an empty article to the premise or a new memo until a memo exists', async () => {
     const article: Article = {
       id: 'article-empty',
@@ -1127,7 +1216,7 @@ First paragraph.
       host?.querySelector('[role="tab"][aria-selected="true"]')?.textContent
     const hasStartButtons = () =>
       [...(host?.querySelectorAll('button') ?? [])].some(
-        (button) => button.textContent === 'メモを書く',
+        (button) => button.textContent === '前提を決める',
       )
     const startButtonsBeforeMemo = hasStartButtons()
 
@@ -1176,7 +1265,7 @@ First paragraph.
     })
     const hasStartButtons = () =>
       [...(host?.querySelectorAll('button') ?? [])].some(
-        (button) => button.textContent === 'メモを書く',
+        (button) => button.textContent === '前提を決める',
       )
     const startButtonsBeforeTyping = hasStartButtons()
     const editor = host?.querySelector<HTMLElement>('.cm-content')
@@ -1448,6 +1537,7 @@ First paragraph.
       updateArticleExportSettings: () => ok(undefined),
       listArticles: () => [firstArticle, secondArticle],
       getStatus: () => 'synced',
+      getSyncedAt: () => undefined,
       getError: () => undefined,
       requiresAuthentication: () => false,
       subscribe: () => () => {},

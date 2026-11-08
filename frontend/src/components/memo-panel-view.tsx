@@ -1,6 +1,7 @@
 import { draggable } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
 import { Button } from '@fohte/ui/button'
 import { Input } from '@fohte/ui/input'
+import { Kbd } from '@fohte/ui/kbd'
 import { List } from '@fohte/ui/list'
 import { SegmentedControl } from '@fohte/ui/segmented-control'
 import { GripVerticalIcon } from 'lucide-react'
@@ -8,6 +9,7 @@ import { useEffect, useMemo, useRef } from 'react'
 
 import type { Heading, Memo } from '#article/index'
 import { MemoAdoptionMenu } from '#components/memo-adoption-menu'
+import { writeMemoKeyLabel } from '#lib/key-labels'
 
 type MemoFilter = Memo['state']['kind']
 
@@ -98,7 +100,7 @@ export function MemoPanelView({
         }}
       >
         <label className="text-xs text-muted-foreground" htmlFor="new-memo">
-          メモを足す
+          メモを足す <Kbd className="max-md:hidden">{writeMemoKeyLabel}</Kbd>
         </label>
         <Input
           id="new-memo"

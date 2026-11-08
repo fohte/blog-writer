@@ -114,12 +114,12 @@ function createRequestEditor(
   return { body, view, unmountAccessory }
 }
 
-function pressModK(view: EditorView) {
+function pressMod(view: EditorView, key: string) {
   view.focus()
   const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
   const event = new KeyboardEvent('keydown', {
     bubbles: true,
-    key: 'k',
+    key,
     [modifier]: true,
   })
   view.contentDOM.dispatchEvent(event)
@@ -138,7 +138,7 @@ function pressNonModK(view: EditorView) {
 
 async function openRequestInput(view: EditorView): Promise<HTMLInputElement> {
   await act(async () => {
-    pressModK(view)
+    pressMod(view, 'j')
     await Promise.resolve()
   })
   const input = document.querySelector<HTMLInputElement>('#body-request')
@@ -288,7 +288,18 @@ describe('body request', () => {
     })
   })
 
-  it('opens only for the platform Mod-K shortcut', async () => {
+  it.each(['j', 'k'])('opens for the platform Mod-%s shortcut', async (key) => {
+    const { view } = createRequestEditor()
+
+    await act(async () => {
+      pressMod(view, key)
+      await Promise.resolve()
+    })
+
+    expect(document.querySelector('#body-request')?.tagName).toEqual('INPUT')
+  })
+
+  it('stays closed for the modifier of the other platform', async () => {
     const { view } = createRequestEditor()
 
     await act(async () => {
@@ -613,7 +624,10 @@ describe('body request', () => {
     vi.stubGlobal('fetch', fetcher)
 
     await submitRequest(view, 'make it concise', () => signals.length === 1)
-    await vi.waitUntil(() => document.querySelector('#body-request') === null)
+    await vi.waitFor(() => {
+      if (document.querySelector('#body-request'))
+        throw new Error('The request input did not close')
+    })
     const duringGeneration = {
       inputOpen: document.querySelector('#body-request') !== null,
       inFlight:

@@ -14,6 +14,7 @@ type ArticleEditorPageProps = {
   onOpenSettings: () => void
   error?: string | undefined
   syncStatus?: SyncState | undefined
+  syncedAt?: number | undefined
   requiresAuthentication: boolean
   onLoginAgain: () => void
 } & ArticleEditorIntegrationProps
@@ -25,6 +26,7 @@ export function ArticleEditorPage({
   onOpenSettings,
   error: syncError,
   syncStatus,
+  syncedAt,
   requiresAuthentication,
   onLoginAgain,
   bodyAccessory,
@@ -82,6 +84,7 @@ export function ArticleEditorPage({
       sourcesPanel={sourcesPanel}
       syncError={syncError}
       syncStatus={syncStatus}
+      syncedAt={syncedAt}
       requiresAuthentication={requiresAuthentication}
       status={
         error === undefined

@@ -1,5 +1,8 @@
 import { Button } from '@fohte/ui/button'
+import { Kbd } from '@fohte/ui/kbd'
 import type { ReactNode } from 'react'
+
+import { writeMemoKeyLabel } from '#lib/key-labels'
 
 type ArticleBodyProps = {
   title: string
@@ -57,7 +60,8 @@ export function ArticleBody({
               type="button"
               variant="outline"
             >
-              メモを書く
+              メモを書く{' '}
+              <Kbd className="max-md:hidden">{writeMemoKeyLabel}</Kbd>
             </Button>
             <Button
               onClick={onDecidePremise}

@@ -174,6 +174,7 @@ async function renderApp(articleDoc = doc) {
     updateArticleExportSettings: () => ok(undefined),
     listArticles: () => [article],
     getStatus: () => 'synced' as const,
+    getSyncedAt: () => undefined,
     getError: () => undefined,
     requiresAuthentication: () => false,
     subscribe: () => () => {},
@@ -1248,6 +1249,10 @@ describe('the application research and evidence integrations', () => {
     await act(async () => {
       await userEvent.click(page.getByRole('button', { name: '却下 Esc' }))
     })
+    await waitFor(() => {
+      if (!host?.querySelector('.cm-evidence-marker'))
+        throw new Error('The evidence marker did not render')
+    })
 
     const readResult = () => ({
       body: getBody(doc).toJSON(),
@@ -1330,6 +1335,11 @@ describe('the application research and evidence integrations', () => {
     await waitFor(() => {
       if (exactRoleText('alert', errorMessage) !== errorMessage)
         throw new Error('The failed recheck was not shown')
+      if (
+        host?.querySelector('.cm-evidence-marker')?.className !==
+        'cm-evidence-marker cm-evidence-needs-review'
+      )
+        throw new Error('The evidence marker did not render')
     })
 
     const readResult = () => ({

@@ -82,6 +82,7 @@ function renderPublish(
     },
     listArticles: () => [article],
     getStatus: () => undefined,
+    getSyncedAt: () => undefined,
     getError: () => undefined,
     requiresAuthentication: () => false,
     subscribe: () => () => {},

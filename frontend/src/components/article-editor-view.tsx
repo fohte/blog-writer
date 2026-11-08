@@ -4,7 +4,6 @@ import { Tabs, TabsList, TabsPanel, TabsTab } from '@fohte/ui/tabs'
 import { err, ok, type Result } from 'neverthrow'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
 import type * as Y from 'yjs'
 
 import { getBody } from '#article/index'
@@ -18,7 +17,7 @@ import { ArticleEditorHeader } from '#components/article-editor-header'
 import { ArticleEditorMobileToolbar } from '#components/article-editor-mobile-toolbar'
 import type { ArticleExportSection } from '#components/article-export-screen'
 import { ArticlePremisePanel } from '#components/article-premise-panel'
-import { EditorStatusBar } from '#components/editor-status-bar'
+import { EditorStatusBarContainer } from '#components/editor-status-bar-container'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
@@ -28,6 +27,7 @@ import {
 } from '#editor/index'
 import { useMobileViewport } from '#hooks/use-mobile-viewport'
 import { useVisualViewportArea } from '#hooks/use-visual-viewport-area'
+import { useWriteMemo } from '#hooks/use-write-memo'
 import type { SyncState } from '#lib/sync-client'
 import { MemoPanel } from '#memos/memo-panel'
 import {
@@ -101,6 +101,7 @@ export interface ArticleEditorViewProps {
     ReactNode | ((context: ArticleEditorContext) => ReactNode) | undefined
   onViewChange?: ((view: EditorView | null) => void) | undefined
   syncStatus?: SyncState | undefined
+  syncedAt?: number | undefined
   syncError?: string | undefined
   requiresAuthentication?: boolean | undefined
   onLoginAgain?: (() => void) | undefined
@@ -141,6 +142,7 @@ export function ArticleEditorView({
   sourcesPanel,
   onViewChange,
   syncStatus,
+  syncedAt,
   syncError,
   requiresAuthentication = false,
   onLoginAgain,
@@ -154,6 +156,7 @@ export function ArticleEditorView({
   const visibleArea = useVisualViewportArea()
   const mobileVisibleArea = isMobile ? visibleArea : undefined
   const [panel, setPanel] = useState<ArticleEditorPanel>(initialPanel)
+  const writeMemo = useWriteMemo(setPanel)
   const [exportView, setExportView] = useState<{
     section: ArticleExportSection | undefined
   }>()
@@ -219,13 +222,6 @@ export function ArticleEditorView({
     editorViewRef.current = nextView
     setView(nextView)
     onViewChange?.(nextView)
-  }
-
-  const writeMemo = () => {
-    flushSync(() => {
-      setPanel('memo')
-    })
-    document.getElementById('new-memo')?.focus()
   }
 
   const renderPanel = (target: ArticleEditorPanel) => {
@@ -467,7 +463,11 @@ export function ArticleEditorView({
           </div>
         </Tabs>
         {!isMobile ? (
-          <EditorStatusBar syncStatus={syncStatus} />
+          <EditorStatusBarContainer
+            doc={doc}
+            syncStatus={syncStatus}
+            syncedAt={syncedAt}
+          />
         ) : selectedPanel === 'body' && context && view ? (
           <ArticleEditorMobileToolbar
             history={context.history}
