@@ -1246,21 +1246,65 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
     );
 }
 
-#[test]
-fn event_payloads_keep_their_openapi_wire_shape() {
-    let actual = serde_json::to_value(LlmEvent::Error(super::LlmErrorPayload::from(
-        &LlmError::Timeout,
-    )))
-    .expect("event is serializable");
+#[rstest]
+#[case::provider(
+    LlmError::Provider,
+    "connection",
+    "failed to start or communicate with the LLM provider"
+)]
+#[case::cancelled(
+    LlmError::Cancelled,
+    "connection",
+    "LLM call was cancelled due to shutdown"
+)]
+#[case::invalid_output(
+    LlmError::InvalidOutput,
+    "invalid_response",
+    "LLM provider returned invalid output"
+)]
+#[case::missing_structured_output(
+    LlmError::MissingStructuredOutput,
+    "invalid_response",
+    "LLM provider did not return structured output"
+)]
+#[case::usage_limit(
+    LlmError::UsageLimit,
+    "usage_limit",
+    "LLM provider usage limit reached"
+)]
+#[case::timeout(
+    LlmError::Timeout,
+    "timeout",
+    "LLM call exceeded the 10 minute time limit"
+)]
+#[case::invalid_response(
+    LlmError::InvalidResponse,
+    "invalid_response",
+    "LLM output does not match the expected type"
+)]
+#[case::invalid_result(
+    LlmError::InvalidResult,
+    "invalid_response",
+    "LLM result does not match the request"
+)]
+#[case::serialize_result(
+    LlmError::SerializeResult,
+    "invalid_response",
+    "LLM result could not be serialized"
+)]
+fn event_payloads_keep_their_openapi_wire_shape(
+    #[case] error: LlmError,
+    #[case] code: &str,
+    #[case] message: &str,
+) {
+    let actual = serde_json::to_value(LlmEvent::Error(super::LlmErrorPayload::from(&error)))
+        .expect("event is serializable");
 
     assert_eq!(
         actual,
         serde_json::json!({
             "event": "error",
-            "data": {
-                "code": "timeout",
-                "message": "LLM call exceeded the 10 minute time limit"
-            }
+            "data": {"code": code, "message": message}
         })
     );
 }
