@@ -293,7 +293,10 @@ describe('Markdown block previews', () => {
       diagramCount: content?.querySelectorAll('svg').length ?? 0,
     }
     const cursor = source.indexOf('Draft') + 2
-    view?.dispatch({ selection: { anchor: cursor } })
+    await act(async () => {
+      view?.dispatch({ selection: { anchor: cursor } })
+      await vi.waitUntil(() => content?.querySelector('svg') !== null)
+    })
     const inside = {
       body: body.toJSON(),
       sourceVisible: hasEditorLine(content, '```mermaid'),

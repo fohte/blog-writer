@@ -1,31 +1,27 @@
 import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
+import { type Extension, Prec, StateEffect } from '@codemirror/state'
 import {
-  type Extension,
-  Prec,
-  RangeSet,
-  StateEffect,
-  type Text,
-} from '@codemirror/state'
-import {
+  Decoration,
+  type DecorationSet,
   EditorView,
-  gutter,
-  GutterMarker,
   keymap,
   ViewPlugin,
+  type ViewUpdate,
+  WidgetType,
 } from '@codemirror/view'
 
+import { blockWidgetDecorators } from '#editor/block-widget'
+import { refreshBlockWidgetExclusions } from '#editor/markdown-block-widget-exclusions'
 import { getBlockWidgetReplaceEnds } from '#editor/markdown-block-widgets'
-import { mountBlockMoveMenu } from '#outline/block-move-menu'
+import { mountBlockMoveHandle } from '#outline/block-move-handle'
 import { adjacentMove, blockStarts, bodyDropInput } from '#outline/block-ranges'
-import { createAccessibleBlockHandleGutter } from '#outline/editor-extension-accessibility'
 import type { MoveHistory } from '#outline/move-history'
 
 const refreshBlockHandles = StateEffect.define()
 const blockHandleCleanups = new WeakMap<HTMLElement, () => void>()
 
-class BlockDragHandle extends GutterMarker {
+class BlockDragHandle extends WidgetType {
   constructor(
-    private readonly from: number,
     private readonly history: MoveHistory,
     private readonly view: EditorView,
     private readonly composingViews: WeakSet<EditorView>,
@@ -33,9 +29,9 @@ class BlockDragHandle extends GutterMarker {
     super()
   }
 
-  override eq(other: BlockDragHandle): boolean {
+  override eq(other: WidgetType): boolean {
     return (
-      this.from === other.from &&
+      other instanceof BlockDragHandle &&
       this.history === other.history &&
       this.view === other.view &&
       this.composingViews === other.composingViews
@@ -44,32 +40,21 @@ class BlockDragHandle extends GutterMarker {
 
   override toDOM(): HTMLElement {
     const wrapper = document.createElement('span')
-    const button = document.createElement('button')
-    const menuHost = document.createElement('span')
-    button.type = 'button'
-    button.className = 'cm-block-drag-handle'
-    button.tabIndex = -1
-    button.dataset['blockFrom'] = String(this.from)
-    button.setAttribute('aria-label', 'Move block')
-    button.setAttribute('aria-haspopup', 'menu')
-    button.setAttribute('aria-expanded', 'false')
-    button.textContent = '⠿'
-    wrapper.append(button, menuHost)
+    wrapper.className = 'cm-block-drag-handle-wrapper'
     blockHandleCleanups.set(
       wrapper,
-      mountBlockMoveMenu({
-        button,
+      mountBlockMoveHandle({
         composingViews: this.composingViews,
-        from: this.from,
+        host: wrapper,
         history: this.history,
-        host: menuHost,
+        positionDOM: wrapper,
         view: this.view,
       }),
     )
     return wrapper
   }
 
-  override destroy(dom: Node) {
+  override destroy(dom: Node): void {
     if (dom instanceof HTMLElement) {
       blockHandleCleanups.get(dom)?.()
       blockHandleCleanups.delete(dom)
@@ -77,67 +62,118 @@ class BlockDragHandle extends GutterMarker {
   }
 }
 
-function createBlockHandleGutter(
+function createBlockHandleDecorations(
+  view: EditorView,
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
-) {
-  const blockStartsByView = new WeakMap<
-    EditorView,
-    { doc: Text; from: number; to: number; starts: number[] }
-  >()
-  const getBlockStarts = (view: EditorView) => {
-    const from = view.viewport.from
-    const to = view.viewport.to
-    const cached = blockStartsByView.get(view)
-    if (
-      cached?.doc === view.state.doc &&
-      cached.from === from &&
-      cached.to === to
-    ) {
-      return cached.starts
-    }
+): DecorationSet {
+  const replacedBlocks = getBlockWidgetReplaceEnds(view.state)
+  const decorations = blockStarts(
+    view.state,
+    view.viewport.from,
+    view.viewport.to,
+  )
+    .filter((from) => !replacedBlocks.has(from))
+    .map((from) =>
+      Decoration.widget({
+        widget: new BlockDragHandle(history, view, composingViews),
+        side: -1,
+      }).range(from),
+    )
+  return Decoration.set(decorations, true)
+}
 
-    const starts = blockStarts(view.state, from, to)
-    blockStartsByView.set(view, { doc: view.state.doc, from, to, starts })
-    return starts
-  }
-
-  return gutter({
-    class: 'cm-block-move-gutter',
-    side: 'after',
-    markers: (view) => {
-      const replacedBlockEnds = getBlockWidgetReplaceEnds(view.state)
-      const starts = getBlockStarts(view)
-      const markers = starts
-        .filter((from) => !replacedBlockEnds.has(from))
-        .map((from) =>
-          new BlockDragHandle(from, history, view, composingViews).range(from),
-        )
-      return RangeSet.of(markers, true)
-    },
-    widgetMarker: (view, _widget, block) => {
-      const replaced = getBlockWidgetReplaceEnds(view.state)
-      return replaced.has(block.from)
-        ? new BlockDragHandle(block.from, history, view, composingViews)
-        : null
-    },
-    lineMarkerChange: (update) =>
-      !composingViews.has(update.view) ||
-      update.transactions.some((transaction) =>
-        transaction.effects.some((effect) => effect.is(refreshBlockHandles)),
-      ),
+function attachWidgetHandle(
+  element: HTMLElement,
+  view: EditorView,
+  history: MoveHistory,
+  composingViews: WeakSet<EditorView>,
+): () => void {
+  const host = document.createElement('span')
+  host.className = 'cm-markdown-block-widget-handle'
+  element.prepend(host)
+  return mountBlockMoveHandle({
+    composingViews,
+    host,
+    history,
+    positionDOM: element,
+    view,
   })
+}
+
+function createBlockHandleExtension(
+  history: MoveHistory,
+  composingViews: WeakSet<EditorView>,
+): Extension {
+  const plugin = ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet
+
+      constructor(readonly view: EditorView) {
+        this.decorations = createBlockHandleDecorations(
+          view,
+          history,
+          composingViews,
+        )
+      }
+
+      update(update: ViewUpdate): void {
+        if (composingViews.has(this.view)) {
+          if (update.docChanged)
+            this.decorations = this.decorations.map(update.changes)
+          return
+        }
+        const refresh = update.transactions.some((transaction) =>
+          transaction.effects.some(
+            (effect) =>
+              effect.is(refreshBlockHandles) ||
+              effect.is(refreshBlockWidgetExclusions),
+          ),
+        )
+        if (
+          !update.docChanged &&
+          !update.viewportChanged &&
+          !update.selectionSet &&
+          !refresh
+        ) {
+          return
+        }
+        this.decorations = createBlockHandleDecorations(
+          this.view,
+          history,
+          composingViews,
+        )
+      }
+    },
+    { decorations: (extension) => extension.decorations },
+  )
+  return [
+    plugin,
+    EditorView.domEventHandlers({
+      compositionstart: (_event, view) => {
+        composingViews.add(view)
+        return false
+      },
+      compositionend: (_event, view) => {
+        composingViews.delete(view)
+        requestAnimationFrame(() => {
+          if (view.dom.isConnected)
+            view.dispatch({ effects: refreshBlockHandles.of(null) })
+        })
+        return false
+      },
+    }),
+  ]
 }
 
 function createDragPlugin(
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
 ) {
-  const plugin = ViewPlugin.fromClass(
+  return ViewPlugin.fromClass(
     class {
       private readonly cleanupDropTarget: () => void
       private readonly preventCompositionShortcut = (event: KeyboardEvent) => {
-        // Capture these before CodeMirror skips keymaps during composition.
         if (
           composingViews.has(this.view) &&
           event.altKey &&
@@ -179,30 +215,16 @@ function createDragPlugin(
             }
             const input = bodyDropInput(view, position, clientY, from)
             if (input) {
-              const succeeded = history.move(input, view).match(
+              history.move(input, view).match(
                 () => true,
                 () => false,
               )
-              if (!succeeded) return
             }
           },
         })
       }
 
-      startComposition() {
-        composingViews.add(this.view)
-      }
-
-      endComposition() {
-        composingViews.delete(this.view)
-        requestAnimationFrame(() => {
-          if (this.view.dom.isConnected) {
-            this.view.dispatch({ effects: refreshBlockHandles.of(null) })
-          }
-        })
-      }
-
-      destroy() {
+      destroy(): void {
         this.view.contentDOM.removeEventListener(
           'keydown',
           this.preventCompositionShortcut,
@@ -212,19 +234,6 @@ function createDragPlugin(
       }
     },
   )
-  return [
-    plugin,
-    EditorView.domEventHandlers({
-      compositionstart: (_event, view) => {
-        view.plugin(plugin)?.startComposition()
-        return false
-      },
-      compositionend: (_event, view) => {
-        view.plugin(plugin)?.endComposition()
-        return false
-      },
-    }),
-  ]
 }
 
 function moveAdjacent(
@@ -264,30 +273,26 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
         },
       ]),
     ),
-    createBlockHandleGutter(history, composingViews),
-    createAccessibleBlockHandleGutter(),
+    blockWidgetDecorators.of((element, view) =>
+      attachWidgetHandle(element, view, history, composingViews),
+    ),
+    createBlockHandleExtension(history, composingViews),
     createDragPlugin(history, composingViews),
     EditorView.theme({
-      // Keep the controls visually on the left while their DOM order follows the body.
-      '.cm-scroller > .cm-gutters-after': {
-        order: '-1',
-        insetInlineStart: '0',
-        insetInlineEnd: 'auto',
-        borderLeftWidth: '0',
+      '.cm-content': {
+        '--cm-line-inset': '1.5rem',
       },
-      '.cm-block-move-gutter': {
-        flex: '0 0 1.5rem',
-        width: '1.5rem',
+      '.cm-content .cm-line': {
+        paddingInlineStart: 'var(--cm-line-inset)',
       },
-      '.cm-block-move-gutter .cm-gutterElement': {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '0',
+      '.cm-line': {
+        position: 'relative',
       },
-    }),
-    EditorView.baseTheme({
       '.cm-block-drag-handle': {
+        position: 'absolute',
+        insetInlineStart: '0',
+        top: '50%',
+        transform: 'translateY(-50%)',
         display: 'flex',
         width: '1.5rem',
         height: '1.5rem',
@@ -306,6 +311,20 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
       },
       '.cm-block-drag-handle:hover': {
         background: 'var(--accent)',
+      },
+      '.cm-markdown-block-widget': {
+        position: 'relative',
+        display: 'flow-root',
+        paddingInlineStart: 'var(--cm-line-inset)',
+      },
+      '.cm-markdown-block-widget-handle': {
+        position: 'absolute',
+        insetInlineStart: '0',
+        top: '0.25rem',
+      },
+      '.cm-markdown-block-widget-handle .cm-block-drag-handle': {
+        position: 'static',
+        transform: 'none',
       },
     }),
   ]

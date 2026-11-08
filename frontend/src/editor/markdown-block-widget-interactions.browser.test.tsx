@@ -1,7 +1,7 @@
 import { EditorView } from '@codemirror/view'
 import { act } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { userEvent } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 
 import { addEvidence } from '#article/evidence'
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
@@ -449,10 +449,9 @@ describe('Markdown block widget interactions', () => {
     const initialSvg = content.querySelector('svg')
 
     try {
-      act(() => {
-        view.dispatch({
-          changes: { from: 'top'.length, insert: ' updated' },
-        })
+      await act(async () => {
+        view.focus()
+        await userEvent.type(view.contentDOM, ' updated')
       })
 
       const readOutput = () => ({
@@ -563,6 +562,7 @@ describe('Markdown block widget interactions', () => {
       body: body.toJSON(),
       handleCount: handles.length,
       menuItems,
+      previewCount: content.querySelectorAll('table, figure').length,
     })
     expect(readOutput()).toEqual({
       body: [
@@ -578,21 +578,67 @@ describe('Markdown block widget interactions', () => {
       ].join('\n'),
       handleCount: 5,
       menuItems: ['Move up', 'Move down'],
+      previewCount: 3,
     })
   })
 
   it.each([
-    { block: 'table', markdown: tableSource, previewSelector: 'table' },
-    { block: 'image', markdown: imageSource, previewSelector: 'figure' },
     {
+      scenario: 'at the start of the document',
+      block: 'table',
+      markdown: tableSource,
+      previewSelector: 'table',
+      source: `${tableSource}\n\nAfter paragraph.`,
+      handleIndex: 0,
+      expectedBody: `After paragraph.\n\n${tableSource}\n`,
+      expectedHandleCount: 2,
+      expectedMoveResult: 'success',
+    },
+    {
+      scenario: 'at the start of the document',
+      block: 'image',
+      markdown: imageSource,
+      previewSelector: 'figure',
+      source: `${imageSource}\n\nAfter paragraph.`,
+      handleIndex: 0,
+      expectedBody: `After paragraph.\n\n${imageSource}\n`,
+      expectedHandleCount: 2,
+      expectedMoveResult: 'success',
+    },
+    {
+      scenario: 'at the start of the document',
       block: 'Mermaid diagram',
       markdown: mermaidSource,
       previewSelector: 'figure',
+      source: `${mermaidSource}\n\nAfter paragraph.`,
+      handleIndex: 0,
+      expectedBody: `After paragraph.\n\n${mermaidSource}\n`,
+      expectedHandleCount: 2,
+      expectedMoveResult: 'success',
+    },
+    {
+      scenario: 'after a paragraph',
+      block: 'table',
+      markdown: tableSource,
+      previewSelector: 'table',
+      source: `Before paragraph.\n\n${tableSource}\n\nAfter paragraph.`,
+      handleIndex: 1,
+      expectedBody: `Before paragraph.\n\nAfter paragraph.\n\n${tableSource}\n`,
+      expectedHandleCount: 3,
+      expectedMoveResult: 'success',
     },
   ])(
-    'drags the leading $block after the following paragraph',
-    async ({ block, markdown, previewSelector }) => {
-      const source = `${markdown}\n\nAfter paragraph.`
+    'uses the $block handle position for a drag $scenario',
+    async ({
+      block,
+      expectedBody,
+      expectedHandleCount,
+      expectedMoveResult,
+      handleIndex,
+      markdown,
+      previewSelector,
+      source,
+    }) => {
       const { body, content, history, host } = mountMarkdownEditor(
         source,
         [],
@@ -602,9 +648,9 @@ describe('Markdown block widget interactions', () => {
           showMoveHandles: true,
         },
       )
-      const handle = host.querySelector<HTMLButtonElement>(
+      const handle = host.querySelectorAll<HTMLButtonElement>(
         '.cm-block-drag-handle',
-      )
+      )[handleIndex]
       const target = [
         ...(content?.querySelectorAll<HTMLElement>('.cm-line') ?? []),
       ].find((line) => line.textContent.includes('After paragraph.'))
@@ -640,7 +686,20 @@ describe('Markdown block widget interactions', () => {
       })
       const textBounds = targetRange.getBoundingClientRect()
       const lineBounds = target.getBoundingClientRect()
-      const move = vi.spyOn(history, 'move')
+      const moveResults: string[] = []
+      const moveHistory = history.move.bind(history)
+      const move = vi
+        .spyOn(history, 'move')
+        .mockImplementation((input, view) => {
+          const result = moveHistory(input, view)
+          moveResults.push(
+            result.match(
+              () => 'success',
+              (error) => error.message,
+            ),
+          )
+          return result
+        })
       act(() => {
         dispatchDragEvents(handle, target, {
           x: textBounds.left + textBounds.width / 2,
@@ -652,23 +711,96 @@ describe('Markdown block widget interactions', () => {
         body: body.toJSON(),
         handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
         moveCalls: move.mock.calls.map(([input]) => input),
+        moveResults,
         previewCount: content.querySelectorAll(previewSelector).length,
       })
       expect(readOutput()).toEqual({
-        body: `After paragraph.\n\n${markdown}\n`,
-        handleCount: 2,
-        moveCalls: [{ from: 0, destination: source.length }],
+        body: expectedBody,
+        handleCount: expectedHandleCount,
+        moveCalls: [
+          { from: source.indexOf(markdown), destination: source.length },
+        ],
+        moveResults: [expectedMoveResult],
         previewCount: 1,
       })
     },
   )
 
+  it('opens the Mermaid handle beside a table without changing source rejected by move validation', async () => {
+    const source = `${tableSource}\n${mermaidSource}\n\nAfter paragraph.`
+    const { body, content, history, host } = mountMarkdownEditor(
+      source,
+      [],
+      undefined,
+      {
+        initialSelection: { anchor: source.length },
+        showMoveHandles: true,
+      },
+    )
+    const handle = host.querySelectorAll<HTMLButtonElement>(
+      '.cm-block-drag-handle',
+    )[1]
+    if (!content || !handle)
+      throw new Error('The adjacent Mermaid handle did not mount')
+    const moveResults: string[] = []
+    const moveHistory = history.move.bind(history)
+    const move = vi.spyOn(history, 'move').mockImplementation((input, view) => {
+      const result = moveHistory(input, view)
+      moveResults.push(
+        result.match(
+          () => 'success',
+          (error) => error.message,
+        ),
+      )
+      return result
+    })
+    await act(async () => {
+      await userEvent.click(
+        page.getByRole('button', { name: 'Move block' }).nth(1),
+      )
+    })
+    const moveDown = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((item) => item.textContent === 'Move down')
+    if (!moveDown) throw new Error('The Mermaid Move down action did not mount')
+    await act(async () => {
+      await userEvent.click(moveDown)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      editorSourceVisible: hasEditorSource(content, mermaidSource),
+      handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
+      moveCalls: move.mock.calls.map(([input]) => input),
+      moveResults,
+      previewCount: content.querySelectorAll('table, figure').length,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      editorSourceVisible: false,
+      handleCount: 3,
+      moveCalls: [
+        {
+          from: source.indexOf(mermaidSource),
+          destination: source.length,
+        },
+      ],
+      moveResults: ['The move would change Markdown block structure'],
+      previewCount: 2,
+    })
+  })
+
   it.each([
-    { block: 'image', markdown: imageSource },
-    { block: 'Mermaid diagram', markdown: mermaidSource },
+    { block: 'table', markdown: tableSource, previewSelector: 'table' },
+    { block: 'image', markdown: imageSource, previewSelector: 'figure' },
+    {
+      block: 'Mermaid diagram',
+      markdown: mermaidSource,
+      previewSelector: 'figure',
+    },
   ])(
     'keeps the leading $block move handle usable',
-    async ({ block, markdown }) => {
+    async ({ block, markdown, previewSelector }) => {
       const source = `${markdown}\n\nAfter paragraph.`
       const { body, content, host } = mountMarkdownEditor(
         source,
@@ -685,7 +817,9 @@ describe('Markdown block widget interactions', () => {
       if (!content || !handle)
         throw new Error(`The leading ${block} handle did not mount`)
       await act(async () => {
-        await userEvent.click(handle)
+        await userEvent.click(
+          page.getByRole('button', { name: 'Move block' }).first(),
+        )
       })
       const menu = document.querySelector('[role="menu"]')
       const menuItems =
@@ -705,12 +839,14 @@ describe('Markdown block widget interactions', () => {
         body: body.toJSON(),
         handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
         menuItems: [...menuItems].map((item) => item.textContent),
-        previewCount: content.querySelectorAll('figure').length,
+        sourceVisible: hasEditorSource(content, markdown),
+        previewCount: content.querySelectorAll(previewSelector).length,
       })
       expect(readOutput()).toEqual({
         body: `After paragraph.\n\n${markdown}\n`,
         handleCount: 2,
         menuItems: ['Move up', 'Move down'],
+        sourceVisible: false,
         previewCount: 1,
       })
     },

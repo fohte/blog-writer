@@ -12,29 +12,36 @@ import type { MoveHistory } from '#outline/move-history'
 export function mountBlockMoveMenu({
   button,
   composingViews,
-  from,
   history,
   host,
+  positionDOM,
   view,
 }: {
   button: HTMLButtonElement
   composingViews: WeakSet<EditorView>
-  from: number
   history: MoveHistory
   host: HTMLElement
+  positionDOM: HTMLElement
   view: EditorView
 }): () => void {
   const anchor: RefObject<HTMLButtonElement | null> = { current: button }
   let root: Root | undefined
   let menuOpen = false
   const currentFrom = () => {
-    if (!view.dom.contains(button)) return undefined
-    const position = Number(button.dataset['blockFrom'])
-    if (!Number.isInteger(position)) return undefined
-    return blockStarts(view.state).find((blockFrom) => blockFrom === position)
+    if (!view.dom.contains(positionDOM)) return undefined
+    const position = view.posAtDOM(positionDOM, -1)
+    const starts = blockStarts(view.state)
+    return (
+      starts.find((from) => from === position) ??
+      starts.filter((from) => from < position).at(-1)
+    )
   }
-  const actions = () =>
-    blockMoveActions(view, currentFrom() ?? from, currentFrom)
+  const actions = () => {
+    const position = currentFrom()
+    return position === undefined
+      ? []
+      : blockMoveActions(view, position, currentFrom)
+  }
   const renderMenu = (open: boolean, sync = false) => {
     menuOpen = open
     button.setAttribute('aria-expanded', String(open))
@@ -63,23 +70,36 @@ export function mountBlockMoveMenu({
   const handleClick = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    if (view.composing || composingViews.has(view)) return
+    if (
+      view.composing ||
+      composingViews.has(view) ||
+      currentFrom() === undefined
+    )
+      return
     renderMenu(!menuOpen, true)
   }
   const handleMouseDown = (event: MouseEvent) => {
     event.stopPropagation()
   }
+  const handlePointerDown = (event: PointerEvent) => {
+    event.stopPropagation()
+  }
   button.addEventListener('click', handleClick)
   button.addEventListener('mousedown', handleMouseDown)
+  button.addEventListener('pointerdown', handlePointerDown)
   const cleanupDraggable = draggable({
     element: button,
-    getInitialData: () => ({ kind: 'block', from: currentFrom() ?? from }),
+    getInitialData: () => {
+      const from = currentFrom()
+      return from === undefined ? { kind: 'block' } : { kind: 'block', from }
+    },
   })
 
   return () => {
     cleanupDraggable()
     button.removeEventListener('click', handleClick)
     button.removeEventListener('mousedown', handleMouseDown)
+    button.removeEventListener('pointerdown', handlePointerDown)
     if (root) queueMicrotask(() => root?.unmount())
   }
 }

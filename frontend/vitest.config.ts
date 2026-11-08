@@ -15,7 +15,7 @@ const tapBodyElement: BrowserCommand<[selector: string]> = async (
   selector,
 ) => {
   if (context.provider.name === 'playwright') {
-    await context.iframe.locator(selector).tap()
+    await context.iframe.locator(selector).first().tap()
   }
 }
 

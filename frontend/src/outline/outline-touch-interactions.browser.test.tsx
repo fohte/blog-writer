@@ -23,18 +23,16 @@ describe('body move handle touch interactions', () => {
     const { body, cleanup, view } = createBodyMenuEditor(markdownText)
     cleanups.push(cleanup)
     const handle = view.dom.querySelector<HTMLButtonElement>(
-      '.cm-block-drag-handle[data-block-from="0"]',
+      '.cm-block-drag-handle',
     )
     if (!handle) throw new Error('The first body move handle is missing')
 
     await act(async () => {
-      await commands.tapBodyElement(
-        '.cm-block-drag-handle[data-block-from="0"]',
-      )
+      await commands.tapBodyElement('.cm-block-drag-handle')
     })
 
     const currentHandle = view.dom.querySelector<HTMLButtonElement>(
-      '.cm-block-drag-handle[data-block-from="0"]',
+      '.cm-block-drag-handle',
     )
     const menuItems = [
       ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),

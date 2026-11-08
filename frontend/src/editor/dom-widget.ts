@@ -4,6 +4,7 @@ export class DomWidget extends WidgetType {
   constructor(
     private readonly createElement: (view: EditorView) => HTMLElement,
     private readonly identity: string,
+    private readonly destroyElement?: (dom: HTMLElement) => void,
   ) {
     super()
   }
@@ -18,5 +19,9 @@ export class DomWidget extends WidgetType {
 
   override toDOM(view: EditorView): HTMLElement {
     return this.createElement(view)
+  }
+
+  override destroy(dom: Node): void {
+    if (dom instanceof HTMLElement) this.destroyElement?.(dom)
   }
 }

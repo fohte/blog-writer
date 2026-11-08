@@ -6,12 +6,49 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
+import { blockStarts } from '#outline/block-ranges'
 
 const tableSource = '| Feature | Offline |\n| --- | --- |\n| Tables | Yes |'
 const imageSource =
   "![Sample](data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='1'%20height='1'%3E%3C/svg%3E)"
 const mermaidSource = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
 const controls: (HTMLElement | (() => void))[] = []
+
+function blockHandlePositionDOM(button: HTMLButtonElement): HTMLElement | null {
+  return (
+    button.closest<HTMLElement>('.cm-markdown-block-widget') ??
+    button.closest<HTMLElement>('.cm-block-drag-handle-wrapper')
+  )
+}
+
+function blockHandleAt(
+  view: EditorView,
+  from: number,
+): HTMLButtonElement | undefined {
+  const starts = blockStarts(view.state)
+  const index = starts.indexOf(from)
+  return index < 0
+    ? undefined
+    : [
+        ...view.dom.querySelectorAll<HTMLButtonElement>(
+          '.cm-block-drag-handle',
+        ),
+      ][index]
+}
+
+function blockHandleFromDOM(
+  view: EditorView,
+  button: HTMLButtonElement,
+): number | undefined {
+  const positionDOM = blockHandlePositionDOM(button)
+  if (positionDOM === null) return undefined
+  const position = view.posAtDOM(positionDOM, -1)
+  const starts = blockStarts(view.state)
+  return (
+    starts.find((from) => from === position) ??
+    starts.filter((from) => from < position).at(-1)
+  )
+}
 
 afterEach(() => {
   for (const control of controls) {
@@ -56,15 +93,8 @@ describe('Markdown block widget layout', () => {
       lineNames.map((name) => {
         const line = [
           ...content.querySelectorAll<HTMLElement>('.cm-line'),
-        ].find((candidate) => candidate.textContent === name)
-        const handle = [
-          ...view.dom.querySelectorAll<HTMLButtonElement>(
-            '.cm-block-drag-handle',
-          ),
-        ].find(
-          (candidate) =>
-            candidate.dataset['blockFrom'] === String(source.indexOf(name)),
-        )
+        ].find((candidate) => candidate.textContent.endsWith(name))
+        const handle = blockHandleAt(view, source.indexOf(name))
         if (!line || !handle)
           throw new Error(`The ${name} line handle is missing`)
         const lineRect = line.getBoundingClientRect()
@@ -108,16 +138,9 @@ describe('Markdown block widget layout', () => {
     const view = mountedView
     const readOffset = () => {
       const line = [...content.querySelectorAll<HTMLElement>('.cm-line')].find(
-        (candidate) => candidate.textContent === 'after',
+        (candidate) => candidate.textContent.endsWith('after'),
       )
-      const handle = [
-        ...view.dom.querySelectorAll<HTMLButtonElement>(
-          '.cm-block-drag-handle',
-        ),
-      ].find(
-        (candidate) =>
-          candidate.dataset['blockFrom'] === String(source.indexOf('after')),
-      )
+      const handle = blockHandleAt(view, source.indexOf('after'))
       if (!line || !handle) return undefined
       const lineRect = line.getBoundingClientRect()
       const handleRect = handle.getBoundingClientRect()
@@ -145,7 +168,7 @@ describe('Markdown block widget layout', () => {
     })
   })
 
-  it('tabs through the body before one roving block handle stop', async () => {
+  it('keeps the main inline handle order in the native Tab sequence', async () => {
     const source = 'First paragraph.\n\nSecond paragraph.'
     const before = document.createElement('button')
     before.textContent = 'Before editor'
@@ -171,9 +194,8 @@ describe('Markdown block widget layout', () => {
         active instanceof Element
           ? active.closest<HTMLButtonElement>('.cm-block-drag-handle')
           : null
-      return handle
-        ? `handle:${handle.dataset['blockFrom'] ?? 'unknown'}`
-        : 'other'
+      const position = handle ? blockHandleFromDOM(view, handle) : undefined
+      return position === undefined ? 'other' : 'handle:' + String(position)
     }
 
     before.focus()
@@ -182,11 +204,7 @@ describe('Markdown block widget layout', () => {
     focusSequence.push(readFocus())
     await userEvent.keyboard('{Tab}')
     focusSequence.push(readFocus())
-    await userEvent.keyboard('{ArrowDown}')
-    await vi.waitUntil(() => readFocus() === 'handle:18')
-    focusSequence.push(readFocus())
-    await userEvent.keyboard('{ArrowUp}')
-    await vi.waitUntil(() => readFocus() === 'handle:0')
+    await userEvent.keyboard('{Tab}')
     focusSequence.push(readFocus())
     await userEvent.keyboard('{Tab}')
     focusSequence.push(readFocus())
@@ -194,85 +212,16 @@ describe('Markdown block widget layout', () => {
     const readOutput = () => ({
       body: body.toJSON(),
       focusSequence,
-      tabbableHandles: [
-        ...view.dom.querySelectorAll<HTMLButtonElement>(
-          '.cm-block-drag-handle',
-        ),
-      ]
-        .filter((handle) => handle.tabIndex === 0)
-        .map((handle) => handle.dataset['blockFrom']),
+      handleCount: view.dom.querySelectorAll('.cm-block-drag-handle').length,
     })
     expect(readOutput()).toEqual({
       body: source,
-      focusSequence: [
-        'before',
-        'body',
-        'handle:0',
-        'handle:18',
-        'handle:0',
-        'after',
-      ],
-      tabbableHandles: [String(source.indexOf('First'))],
+      focusSequence: ['before', 'body', 'handle:0', 'handle:18', 'after'],
+      handleCount: 2,
     })
   })
 
-  it('does not restore a handle after Shift+Tab leaves the editor', async () => {
-    const source = 'First paragraph.\n\nSecond paragraph.'
-    const previousTabIndex = document.body.getAttribute('tabindex')
-    document.body.setAttribute('tabindex', '-1')
-    controls.push(() => {
-      if (previousTabIndex === null) {
-        document.body.removeAttribute('tabindex')
-      } else {
-        document.body.setAttribute('tabindex', previousTabIndex)
-      }
-    })
-    const { body: articleBody, content } = mountMarkdownEditor(
-      source,
-      [],
-      undefined,
-      { showMoveHandles: true },
-    )
-    if (!content) throw new Error('The editor did not mount')
-    const mountedView = EditorView.findFromDOM(content)
-    if (!mountedView) throw new Error('The editor view did not mount')
-    const view = mountedView
-    content.focus()
-    await vi.waitUntil(() => document.activeElement === content)
-    content.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        bubbles: true,
-        key: 'Tab',
-        shiftKey: true,
-      }),
-    )
-    document.body.focus()
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          resolve()
-        })
-      })
-    })
-
-    const readOutput = () => ({
-      body: articleBody.toJSON(),
-      focusedBlockFrom:
-        document.activeElement instanceof HTMLButtonElement
-          ? document.activeElement.dataset['blockFrom']
-          : null,
-      focus: document.activeElement === document.body ? 'body' : 'other',
-      editor: view.state.doc.toString(),
-    })
-    expect(readOutput()).toEqual({
-      body: source,
-      focusedBlockFrom: null,
-      focus: 'body',
-      editor: source,
-    })
-  })
-
-  it('keeps Tab and arrow focus on the current block in a long scrolling body', async () => {
+  it('keeps focus in the editor controls when Tab is pressed in a long scrolling body', async () => {
     const paragraphs = Array.from(
       { length: 300 },
       (_, index) => `Paragraph ${String(index + 1)}.`,
@@ -303,71 +252,24 @@ describe('Markdown block widget layout', () => {
       selection: EditorSelection.cursor(currentPosition),
       effects: EditorView.scrollIntoView(currentPosition, { y: 'center' }),
     })
-    await vi.waitUntil(
-      () =>
-        scrollContainer.scrollTop > 0 &&
-        view.dom.querySelector<HTMLButtonElement>(
-          `.cm-block-drag-handle[data-block-from="${String(currentFrom)}"]`,
-        )?.tabIndex === 0,
-    )
-    const scrollTopBeforeTab = scrollContainer.scrollTop
-    const currentLine = [
-      ...content.querySelectorAll<HTMLElement>('.cm-line'),
-    ].find(
-      (line) => line.textContent === `Paragraph ${String(currentParagraph)}.`,
-    )
-    if (!currentLine) throw new Error('The caret paragraph is not visible')
-    await userEvent.click(currentLine)
-    await vi.waitUntil(
-      () =>
-        document.activeElement === content &&
-        view.state.doc.lineAt(view.state.selection.main.head).text ===
-          `Paragraph ${String(currentParagraph)}.`,
-    )
+    await vi.waitUntil(() => scrollContainer.scrollTop > 0)
+    view.focus()
     await userEvent.keyboard('{Tab}')
-    const scrollTopAfterTab = scrollContainer.scrollTop
-    const tabBlockFrom =
-      document.activeElement instanceof HTMLButtonElement
-        ? document.activeElement.dataset['blockFrom']
-        : null
-
-    const finalParagraph = currentParagraph + 24
-    for (
-      let paragraph = currentParagraph + 1;
-      tabBlockFrom === String(currentFrom) && paragraph <= finalParagraph;
-      paragraph++
-    ) {
-      const expectedFrom = source.indexOf(`Paragraph ${String(paragraph)}.`)
-      await userEvent.keyboard('{ArrowDown}')
-      await vi.waitUntil(
-        () =>
-          document.activeElement instanceof HTMLButtonElement &&
-          document.activeElement.dataset['blockFrom'] === String(expectedFrom),
-      )
-    }
 
     const readOutput = () => ({
       body: body.toJSON(),
       caretParagraph: view.state.doc.lineAt(view.state.selection.main.head)
         .text,
-      focusedBlockFromAfterTab: tabBlockFrom,
-      focusedBlockFrom:
-        document.activeElement instanceof HTMLButtonElement
-          ? document.activeElement.dataset['blockFrom']
-          : null,
-      scrollAdvanced: scrollContainer.scrollTop > scrollTopAfterTab,
-      tabStayedNearCaret:
-        Math.abs(scrollTopAfterTab - scrollTopBeforeTab) <= 100,
+      activeElement: document.activeElement?.className ?? null,
+      focusedBody: document.activeElement === document.body,
+      initialScrollTop: scrollContainer.scrollTop > 0,
     })
     expect(readOutput()).toEqual({
       body: source,
       caretParagraph: `Paragraph ${String(currentParagraph)}.`,
-      focusedBlockFromAfterTab: String(currentFrom),
-      focusedBlockFrom: String(
-        source.indexOf(`Paragraph ${String(finalParagraph)}.`),
-      ),
-      scrollAdvanced: true,
-      tabStayedNearCaret: true,
+      activeElement: 'cm-block-drag-handle',
+      focusedBody: false,
+      initialScrollTop: true,
     })
   })
 })

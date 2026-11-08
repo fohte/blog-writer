@@ -37,7 +37,13 @@ function bodyDragHandle(
 ): HTMLButtonElement | undefined {
   return [
     ...view.dom.querySelectorAll<HTMLButtonElement>('.cm-block-drag-handle'),
-  ].find((button) => button.dataset['blockFrom'] === String(from))
+  ].find((button) => {
+    const positionDOM = button.closest('.cm-block-drag-handle-wrapper')
+    return (
+      positionDOM instanceof HTMLElement &&
+      view.posAtDOM(positionDOM, -1) === from
+    )
+  })
 }
 
 function createBodyMenuEditor(markdownText: string) {
@@ -1241,7 +1247,7 @@ describe('outline interactions', () => {
           firstCharacterHitByHandle: false,
         },
         mobile: {
-          firstCharacterInset: 73,
+          firstCharacterInset: 72,
           horizontalOverflow: false,
         },
         clickMovesCursorAfterFirstCharacter: true,

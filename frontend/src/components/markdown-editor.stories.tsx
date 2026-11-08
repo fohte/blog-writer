@@ -24,7 +24,7 @@ interface StoryArgs {
   initialSelection?: { anchor: number; head?: number }
   evidence?: StoryEvidence[]
   showMoveHandles?: boolean
-  focusedBlockFrom?: number
+  focusedBlockIndex?: number
   showRequestMarker?: boolean
 }
 
@@ -69,7 +69,7 @@ function MarkdownEditorPreview({
   initialSelection,
   evidence = noEvidence,
   showMoveHandles = false,
-  focusedBlockFrom,
+  focusedBlockIndex,
   showRequestMarker = false,
 }: StoryArgs) {
   const viewRef = useRef<EditorView | null>(null)
@@ -77,7 +77,7 @@ function MarkdownEditorPreview({
     (view: EditorView | null) => {
       viewRef.current = view
       if (!view) return
-      if (focusedBlockFrom === undefined) {
+      if (focusedBlockIndex === undefined) {
         const active = view.dom.ownerDocument.activeElement
         if (
           active instanceof HTMLButtonElement &&
@@ -92,13 +92,10 @@ function MarkdownEditorPreview({
         ...view.dom.querySelectorAll<HTMLButtonElement>(
           '.cm-block-drag-handle',
         ),
-      ].find(
-        (candidate) =>
-          candidate.dataset['blockFrom'] === String(focusedBlockFrom),
-      )
+      ][focusedBlockIndex]
       handle?.focus()
     },
-    [focusedBlockFrom],
+    [focusedBlockIndex],
   )
   useEffect(() => {
     if (viewRef.current) focusStoryHandle(viewRef.current)
@@ -309,7 +306,7 @@ export const KeyboardFocusedBlockHandle: Story = {
   name: 'the editor shows a keyboard-focused block move handle.',
   args: {
     content: blockMoveContent,
-    focusedBlockFrom: 0,
+    focusedBlockIndex: 0,
     initialSelection: { anchor: 0 },
     showMoveHandles: true,
   },

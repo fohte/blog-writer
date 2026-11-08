@@ -19,7 +19,7 @@ import {
   type TableAlignment,
 } from '#components/markdown-table-preview'
 import { createMermaidPreviewElement } from '#components/mermaid-preview'
-import { DomWidget } from '#editor/dom-widget'
+import { createBlockWidget } from '#editor/block-widget'
 import {
   type BlockWidgetExclusionRange,
   collectBlockWidgetExclusions,
@@ -61,39 +61,6 @@ function mapRanges(
     from: changes.mapPos(from, 1),
     to: changes.mapPos(to, -1),
   }))
-}
-
-function createBlockWidget(
-  createElement: (view: EditorView) => HTMLElement,
-  identity: string,
-): DomWidget {
-  return new DomWidget((view) => {
-    const element = createElement(view)
-    const enterSource = (event: Event) => {
-      const target = event.target
-      if (target instanceof Element && target.closest('a')) {
-        event.stopPropagation()
-        return
-      }
-
-      event.preventDefault()
-      event.stopPropagation()
-      const first = view.posAtDOM(element, -1)
-      const last = view.posAtDOM(element, 1)
-      const from = Math.min(first, last)
-      const to = Math.max(first, last)
-      view.focus()
-      view.dispatch({
-        selection: { anchor: Math.min(from + 1, to) },
-        scrollIntoView: true,
-      })
-    }
-    element.addEventListener('mousedown', (event) => {
-      event.stopPropagation()
-    })
-    element.addEventListener('click', enterSource)
-    return element
-  }, identity)
 }
 
 function enterAdjacentBlock(direction: 'up' | 'down') {
@@ -246,6 +213,7 @@ function buildBlockWidgetDecorations(
         const range = { from: image.from, to: image.lineTo }
         const excluded = isBlockWidgetExcluded(range, exclusions)
         if (excluded) continue
+        const sourceVisible = selectionTouches(state, range.from, range.to)
         const widget = createBlockWidget(
           () =>
             createMarkdownImagePreview({
@@ -253,13 +221,16 @@ function buildBlockWidgetDecorations(
               source: image.source,
               src: image.src,
             }),
-          'image:' + image.source,
+          'image:' + image.source + (sourceVisible ? ':source' : ':rendered'),
+          { attachDecorators: !sourceVisible },
         )
-        if (selectionTouches(state, range.from, range.to)) {
+        if (sourceVisible) {
           decorations.push(
-            Decoration.widget({ widget, block: true, side: 1 }).range(
-              image.lineTo,
-            ),
+            Decoration.widget({
+              widget,
+              block: true,
+              side: 1,
+            }).range(image.lineTo),
           )
         } else {
           decorations.push(
@@ -291,21 +262,28 @@ function buildBlockWidgetDecorations(
         const range = { from: cursor.from, to: cursor.to }
         const excluded = isBlockWidgetExcluded(range, exclusions)
         if (excluded) continue
+        const sourceVisible = selectionTouches(state, range.from, range.to)
         const diagramId = 'markdown-mermaid-' + String(nextMermaidWidgetId++)
-        const widget = createBlockWidget((view) => {
-          const refreshMeasurements = () => {
-            view.requestMeasure()
-          }
-          return createMermaidPreviewElement(
-            { id: diagramId, source },
-            refreshMeasurements,
-          )
-        }, 'mermaid:' + source)
-        if (selectionTouches(state, range.from, range.to)) {
+        const widget = createBlockWidget(
+          (view) => {
+            const refreshMeasurements = () => {
+              view.requestMeasure()
+            }
+            return createMermaidPreviewElement(
+              { id: diagramId, source },
+              refreshMeasurements,
+            )
+          },
+          'mermaid:' + source + (sourceVisible ? ':source' : ':rendered'),
+          { attachDecorators: !sourceVisible },
+        )
+        if (sourceVisible) {
           decorations.push(
-            Decoration.widget({ widget, block: true, side: 1 }).range(
-              cursor.to,
-            ),
+            Decoration.widget({
+              widget,
+              block: true,
+              side: 1,
+            }).range(cursor.to),
           )
         } else {
           decorations.push(
