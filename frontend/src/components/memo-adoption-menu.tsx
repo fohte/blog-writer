@@ -297,6 +297,7 @@ export function MemoAdoptionMenu({
       }}
       ref={triggerRef}
       size="sm"
+      title="採用先を選ぶ (A)"
       type="button"
       variant="outline"
     >

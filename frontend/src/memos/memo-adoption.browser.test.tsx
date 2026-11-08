@@ -37,10 +37,12 @@ type MountedEditor = {
 function EditorHarness({
   doc,
   history,
+  mobile,
   viewRef,
 }: {
   doc: Y.Doc
   history: MoveHistory
+  mobile: boolean
   viewRef: ViewRef
 }) {
   const [view, setView] = useState<EditorView | null>(null)
@@ -62,7 +64,7 @@ function EditorHarness({
       />
       {view === null ? null : (
         <>
-          <MemoPanel doc={doc} view={view} />
+          <MemoPanel doc={doc} mobile={mobile} view={view} />
           <ArticleOutline doc={doc} history={history} view={view} />
         </>
       )}
@@ -83,7 +85,11 @@ function currentView(): EditorView {
   return viewRef.current
 }
 
-function mount(markdown: string, memoText: string) {
+function mount(
+  markdown: string,
+  memoText: string,
+  { mobile = false }: { mobile?: boolean } = {},
+) {
   const doc = new Y.Doc()
   setBody(doc, markdown)
   addMemo(doc, { id: 'memo-a', text: memoText, order: 0 })
@@ -95,7 +101,14 @@ function mount(markdown: string, memoText: string) {
   viewRef.current = null
 
   act(() => {
-    root.render(<EditorHarness doc={doc} history={history} viewRef={viewRef} />)
+    root.render(
+      <EditorHarness
+        doc={doc}
+        history={history}
+        mobile={mobile}
+        viewRef={viewRef}
+      />,
+    )
   })
 }
 
@@ -1583,7 +1596,9 @@ body
   })
 
   it.each([
-    { case: 'a modified A', key: '{Control>}a{/Control}' },
+    { case: 'Control+A', key: '{Control>}a{/Control}' },
+    { case: 'Meta+A', key: '{Meta>}a{/Meta}' },
+    { case: 'Alt+A', key: '{Alt>}a{/Alt}' },
     { case: 'another key', key: 'b' },
   ])('leaves the adoption targets closed for $case', async ({ key }) => {
     mount('# First', 'memo')
@@ -1593,6 +1608,39 @@ body
     })
 
     expect(adoptionMenuIsOpen()).toBe(false)
+  })
+
+  it('inserts a memo one level below the cursor heading from the phone sheet', async () => {
+    mount('# First\n\nbody', 'memo', { mobile: true })
+    const chooseTarget = findButton('採用')
+    if (!chooseTarget) throw new Error('The memo target menu is missing')
+    await act(async () => {
+      await userEvent.click(chooseTarget)
+    })
+    const insert = findButton('新しい見出しとして追加## First の末尾')
+    if (!insert) throw new Error('The sheet insertion target is missing')
+    // Without the app's CSS, the dialog's inert layer covers a pointer click.
+    act(() => {
+      insert.click()
+    })
+
+    expect(readOutputWithAdoptionMenu()).toEqual({
+      output: {
+        body: '# First\n\nbody\n\n## memo\n\n',
+        editor: '# First\n\nbody\n\n## memo\n\n',
+        memos: [
+          {
+            id: 'memo-a',
+            state: {
+              kind: 'adopted',
+              heading: { from: 15, level: 2, text: 'memo' },
+            },
+          },
+        ],
+        memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
+      },
+      menuOpen: false,
+    })
   })
 
   it('inserts a memo at the end from the memo panel', async () => {
