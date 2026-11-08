@@ -147,9 +147,14 @@ describe('LLM SSE client', () => {
       },
     },
     {
-      name: 'an error status',
+      name: 'a server error status',
       response: () => new Response(null, { status: 503 }),
       expected: { code: 'connection', message: 'LLM API returned status 503' },
+    },
+    {
+      name: 'a client error status',
+      response: () => new Response(null, { status: 400 }),
+      expected: { code: null, message: 'LLM API returned status 400' },
     },
     {
       name: 'a stream that ends without a result',

@@ -210,11 +210,11 @@ export function postLlmResult<TBody, TResult>(
       new LlmStreamInterruptedError('Failed to connect to the LLM API', cause),
   ).andThen((response) => {
     if (!response.ok) {
+      const message = `LLM API returned status ${response.status.toString()}`
       return errAsync(
-        new LlmRequestError(
-          'connection',
-          `LLM API returned status ${response.status.toString()}`,
-        ),
+        response.status >= 500
+          ? new LlmRequestError('connection', message)
+          : new Error(message),
       )
     }
     if (!response.body) {
