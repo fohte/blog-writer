@@ -1,6 +1,7 @@
 import { type RefObject, useEffect, useRef, useState } from 'react'
 
 import { LlmSettingsView } from '#components/llm-settings-view'
+import { UnsavedSettingsDialog } from '#components/unsaved-settings-dialog'
 import {
   defaultLlmSettings,
   type LlmSettings,
@@ -54,6 +55,7 @@ export function LlmSettingsScreen({
   )
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [locked, setLocked] = useState(false)
+  const [confirmingLeave, setConfirmingLeave] = useState(false)
   // Stored as the URL so the error hides while another URL is being edited.
   const [unreachableBridgeUrl, setUnreachableBridgeUrl] = useState<string>()
   const latestBridgeProbe = useRef(0)
@@ -84,41 +86,65 @@ export function LlmSettingsScreen({
     }
   }, [initialSettings])
 
+  const unsaved =
+    settings.route !== savedSettings.route ||
+    settings.bridgeUrl !== savedSettings.bridgeUrl
+
+  useEffect(() => {
+    if (!unsaved) return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => {
+      window.removeEventListener('beforeunload', warn)
+    }
+  }, [unsaved])
+
   return (
-    <LlmSettingsView
-      bridgeUnreachable={
-        settings.route === 'local' &&
-        settings.bridgeUrl === unreachableBridgeUrl
-      }
-      fileSyncDirectory={fileSyncDirectory}
-      fileSyncConfigurationError={fileSyncConfigurationError}
-      locked={locked}
-      onBack={onBack}
-      onBridgeUrlChange={(bridgeUrl) => {
-        setSettings({ ...settings, bridgeUrl })
-      }}
-      onRouteChange={(route) => {
-        setSettings({ ...settings, route })
-      }}
-      onSave={() => {
-        saveLlmSettings(() => window.localStorage, settings).match(
-          () => {
-            setStorageError(undefined)
-            setSavedSettings(settings)
-            checkBridge(settings, latestBridgeProbe, setUnreachableBridgeUrl)
-          },
-          () => {
-            setStorageError('save')
-          },
-        )
-      }}
-      settings={settings}
-      status={status}
-      storageError={storageError}
-      unsaved={
-        settings.route !== savedSettings.route ||
-        settings.bridgeUrl !== savedSettings.bridgeUrl
-      }
-    />
+    <>
+      <LlmSettingsView
+        bridgeUnreachable={
+          settings.route === 'local' &&
+          settings.bridgeUrl === unreachableBridgeUrl
+        }
+        fileSyncDirectory={fileSyncDirectory}
+        fileSyncConfigurationError={fileSyncConfigurationError}
+        locked={locked}
+        onBack={() => {
+          if (unsaved) setConfirmingLeave(true)
+          else onBack()
+        }}
+        onBridgeUrlChange={(bridgeUrl) => {
+          setSettings({ ...settings, bridgeUrl })
+        }}
+        onRouteChange={(route) => {
+          setSettings({ ...settings, route })
+        }}
+        onSave={() => {
+          saveLlmSettings(() => window.localStorage, settings).match(
+            () => {
+              setStorageError(undefined)
+              setSavedSettings(settings)
+              checkBridge(settings, latestBridgeProbe, setUnreachableBridgeUrl)
+            },
+            () => {
+              setStorageError('save')
+            },
+          )
+        }}
+        settings={settings}
+        status={status}
+        storageError={storageError}
+        unsaved={unsaved}
+      />
+      <UnsavedSettingsDialog
+        onLeave={onBack}
+        onStay={() => {
+          setConfirmingLeave(false)
+        }}
+        open={confirmingLeave}
+      />
+    </>
   )
 }
