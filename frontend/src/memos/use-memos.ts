@@ -7,6 +7,7 @@ import type { Heading, Memo } from '#article/index'
 import {
   addMemo,
   dismissMemo,
+  findLatestAdoptedMemoId,
   getBody,
   listMemos,
   observeMemos,
@@ -14,8 +15,13 @@ import {
   updateMemoOrder,
 } from '#article/index'
 
+type MemoSnapshot = {
+  memos: Memo[]
+  latestAdoptedMemoId: string | undefined
+}
+
 type MemoStore = {
-  getSnapshot: () => Memo[]
+  getSnapshot: () => MemoSnapshot
   subscribe: (listener: () => void) => () => void
 }
 
@@ -53,20 +59,29 @@ function haveSameMemos(left: Memo[], right: Memo[]): boolean {
   )
 }
 
+function readMemoSnapshot(doc: Y.Doc): MemoSnapshot {
+  const memos = listMemos(doc)
+  return { memos, latestAdoptedMemoId: findLatestAdoptedMemoId(doc, memos) }
+}
+
 function createMemoStore(doc: Y.Doc): MemoStore {
-  let snapshot = listMemos(doc)
+  let snapshot = readMemoSnapshot(doc)
   const listeners = new Set<() => void>()
   const body = getBody(doc)
   let stopObservingMemos: (() => void) | undefined
 
   const refresh = () => {
-    const nextSnapshot = listMemos(doc)
-    if (haveSameMemos(snapshot, nextSnapshot)) return
+    const nextSnapshot = readMemoSnapshot(doc)
+    if (
+      snapshot.latestAdoptedMemoId === nextSnapshot.latestAdoptedMemoId &&
+      haveSameMemos(snapshot.memos, nextSnapshot.memos)
+    )
+      return
     snapshot = nextSnapshot
     for (const listener of listeners) listener()
   }
   const onBodyUpdate = () => {
-    if (!snapshot.some((memo) => memo.state.kind === 'adopted')) return
+    if (!snapshot.memos.some((memo) => memo.state.kind === 'adopted')) return
     refresh()
   }
 
@@ -78,7 +93,7 @@ function createMemoStore(doc: Y.Doc): MemoStore {
         body.observe(onBodyUpdate)
       }
       listeners.add(listener)
-      snapshot = listMemos(doc)
+      snapshot = readMemoSnapshot(doc)
 
       return () => {
         listeners.delete(listener)
@@ -103,7 +118,7 @@ function toOperationError<T, E>(result: Result<T, E>): string | undefined {
 
 export function useMemos(doc: Y.Doc) {
   const store = useMemo(() => createMemoStore(doc), [doc])
-  const memos = useSyncExternalStore(
+  const { memos, latestAdoptedMemoId } = useSyncExternalStore(
     store.subscribe,
     store.getSnapshot,
     store.getSnapshot,
@@ -111,6 +126,7 @@ export function useMemos(doc: Y.Doc) {
 
   return {
     memos,
+    latestAdoptedMemoId,
     add: (text: string): string | undefined => {
       const result = addMemo(doc, {
         id: v7(),

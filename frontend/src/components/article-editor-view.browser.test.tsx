@@ -10,7 +10,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
-import { addMemo, getBody, listMemos, moveBlock, setBody } from '#article/index'
+import {
+  addMemo,
+  getBody,
+  listMemos,
+  moveBlock,
+  setBody,
+  setMemoAdoptedTo,
+} from '#article/index'
 import type { ArticleEditorIntegrationProps } from '#components/article-editor-view'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 import { ArticleEditorPage } from '#pages/article-editor-page'
@@ -119,6 +126,37 @@ afterEach(() => {
 })
 
 describe('article editor screen', () => {
+  it('holds the latest memo adoption at the bottom of the side panel', async () => {
+    const article: Article = {
+      id: 'article-latest-adoption',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# Heading\n')
+    addMemo(articleDoc, { id: 'memo-a', text: 'First note', order: 0 })
+    setMemoAdoptedTo(articleDoc, 'memo-a', 0)
+    renderWorkspace(article, articleDoc)
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+
+    const latest = await vi.waitFor(() => {
+      const element = document.querySelector('[aria-label="最近の採用"]')
+      if (!element) throw new Error('The latest adoption was not rendered')
+      return element
+    })
+    const sidePanel = latest.closest('aside')
+    if (!sidePanel) throw new Error('The side panel was not rendered')
+
+    // The side panel's padding is the only space left under the section.
+    expect(
+      sidePanel.getBoundingClientRect().bottom -
+        latest.getBoundingClientRect().bottom,
+    ).toBe(14)
+  })
+
   it('shows the last sync time, the LLM route and a live character count in the status bar', async () => {
     const article: Article = {
       id: 'article-status-bar',

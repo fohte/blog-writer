@@ -19,7 +19,8 @@ type MemoPanelProps = {
 }
 
 export function MemoPanel({ doc, view, mobile = false }: MemoPanelProps) {
-  const { memos, add, move, dismiss, restore } = useMemos(doc)
+  const { memos, latestAdoptedMemoId, add, move, dismiss, restore } =
+    useMemos(doc)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string>()
   const { headings } = useArticleHeadings(doc)
@@ -48,6 +49,7 @@ export function MemoPanel({ doc, view, mobile = false }: MemoPanelProps) {
       error={error}
       filter={filter}
       headings={headings}
+      latestAdoptedMemoId={latestAdoptedMemoId}
       memos={memos}
       openAdoptionMenuId={openAdoptionMenuId}
       onAddMemo={() => {

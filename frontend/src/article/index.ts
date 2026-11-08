@@ -31,6 +31,7 @@ export {
   addMemo,
   captureDeletedMemoAdoptions,
   dismissMemo,
+  findLatestAdoptedMemoId,
   getMemoAdoptedTo,
   getMemoState,
   listMemos,
