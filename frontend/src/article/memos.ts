@@ -293,6 +293,8 @@ export function restoreMemoAdoptionHistory(
       continue
     }
 
+    // shortcut: adoptedAt keeps the undone adoption's time, so this memo can
+    // still rank as latest; add it to the history record if that matters.
     if (change.previousAdoptedTo === undefined) memo.delete('adoptedTo')
     else memo.set('adoptedTo', change.previousAdoptedTo)
   }
