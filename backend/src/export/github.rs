@@ -1,5 +1,6 @@
 mod contents;
 mod ogp_json;
+mod pulls;
 
 use std::{fs, sync::Arc, time::Duration};
 
@@ -14,6 +15,9 @@ use crate::{
 
 const GITHUB_API_URL: &str = "https://api.github.com";
 const GITHUB_ACCEPT: &str = "application/vnd.github+json";
+const ARTICLE_BRANCH_PREFIX: &str = "blog-writer/";
+
+pub use pulls::ArticlePull;
 
 #[derive(Clone)]
 pub struct ExportService {
@@ -439,7 +443,7 @@ impl ExportService {
 }
 
 fn article_branch(article_id: &str) -> String {
-    format!("blog-writer/{article_id}")
+    format!("{ARTICLE_BRANCH_PREFIX}{article_id}")
 }
 
 fn article_reference<'a>(
@@ -2056,6 +2060,87 @@ mod tests {
                 0
             )
         );
+    }
+
+    #[tokio::test]
+    async fn lists_the_newest_pull_request_of_each_article() {
+        let fixture = fixture().await;
+        mock_token_exchange(&fixture).await;
+        let pull = |number: u32, state: &str, merged_at: Option<&str>, label: Option<&str>| {
+            json!({
+                "number": number,
+                "html_url": format!("https://github.example/writer/notes/pull/{number}"),
+                "state": state,
+                "merged_at": merged_at,
+                "head": { "label": label }
+            })
+        };
+        let merged_at = Some("2026-01-15T00:00:00Z");
+        Mock::given(method("GET"))
+            .and(path("/repos/writer/notes/pulls"))
+            .and(query_param("state", "all"))
+            .and(query_param("sort", "created"))
+            .and(query_param("direction", "desc"))
+            .and(query_param("per_page", "100"))
+            .and(github_auth())
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                pull(14, "open", None, Some("writer:blog-writer/article-a")),
+                pull(
+                    11,
+                    "closed",
+                    merged_at,
+                    Some("writer:blog-writer/article-a")
+                ),
+                pull(9, "closed", merged_at, Some("Writer:blog-writer/article-b")),
+                pull(8, "closed", None, Some("writer:blog-writer/article-c")),
+                pull(7, "open", None, Some("writer:unrelated-branch")),
+                pull(6, "open", None, Some("visitor:blog-writer/article-d")),
+                pull(5, "open", None, None),
+            ])))
+            .expect(1)
+            .mount(&fixture.github)
+            .await;
+
+        let response = api_router(&fixture)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/export/site-one/pulls")
+                    .header("host", "localhost:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response_json(response).await,
+            (
+                200,
+                json!({
+                    "pulls": [
+                        {
+                            "article_id": "article-a",
+                            "number": 14,
+                            "state": "open",
+                            "url": "https://github.example/writer/notes/pull/14"
+                        },
+                        {
+                            "article_id": "article-b",
+                            "number": 9,
+                            "state": "merged",
+                            "url": "https://github.example/writer/notes/pull/9"
+                        },
+                        {
+                            "article_id": "article-c",
+                            "number": 8,
+                            "state": "closed",
+                            "url": "https://github.example/writer/notes/pull/8"
+                        }
+                    ]
+                })
+            )
+        );
+        fixture.github.verify().await;
     }
 
     #[tokio::test]

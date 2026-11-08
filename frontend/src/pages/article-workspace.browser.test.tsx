@@ -62,6 +62,7 @@ function renderWorkspace(listedArticles = articles) {
   act(() => {
     root.render(
       <ArticleWorkspace
+        readArticlePull={() => undefined}
         articles={listedArticles}
         client={client}
         onCreateArticle={() => undefined}

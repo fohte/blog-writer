@@ -8,7 +8,7 @@ import * as Y from 'yjs'
 import type { ArticleExportContext } from '#components/article-editor-view'
 import { ArticleExportContainer } from '#components/article-export-container'
 import type { ArticleExportSection } from '#components/article-export-screen'
-import type { ExportDestination } from '#lib/article-export-api'
+import type { ArticlePull, ExportDestination } from '#lib/article-export-api'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 import { createMoveHistory } from '#outline/move-history'
 import type { MoveHistory } from '#outline/move-history-types'
@@ -38,6 +38,8 @@ const destinations: ExportDestination[] = [
   },
 ]
 
+const reload = vi.fn<() => void>()
+
 function createClient(currentDoc: Y.Doc): SyncClientApi {
   return {
     start: () => okAsync(undefined),
@@ -64,11 +66,13 @@ function mount({
   fileSyncEnabled,
   publishable,
   destinationError,
+  pull,
 }: {
   section: ArticleExportSection | undefined
   fileSyncEnabled: boolean
   publishable: boolean
   destinationError?: string
+  pull?: ArticlePull
 }) {
   host = document.createElement('div')
   document.body.append(host)
@@ -93,6 +97,10 @@ function mount({
     root?.render(
       <ArticleExportContainer
         article={article}
+        articlePulls={{
+          read: () => pull,
+          reload,
+        }}
         client={publishable ? createClient(currentDoc) : undefined}
         context={context}
         destinationError={destinationError}
@@ -171,6 +179,39 @@ describe('ArticleExportContainer', () => {
       heading: '公開先へ PR',
       alert: null,
       backCount: 0,
+    })
+  })
+
+  it('shows the pull request state in the navigation and rereads it on open', () => {
+    reload.mockClear()
+    mount({
+      section: 'publish',
+      fileSyncEnabled: false,
+      publishable: true,
+      pull: {
+        article_id: article.id,
+        number: 11,
+        state: 'merged',
+        url: 'https://github.com/example/site/pull/11',
+      },
+    })
+    const readOutput = () => ({
+      ...readScreen(),
+      reloads: reload.mock.calls.length,
+    })
+
+    expect(readOutput()).toEqual({
+      sections: [
+        { text: ['公開先へ PR', 'PR #11 merged'], selected: true },
+        {
+          text: ['ファイルに保存', '.md / .mdx · frontmatter なし'],
+          selected: false,
+        },
+      ],
+      heading: '公開先へ PR',
+      alert: null,
+      backCount: 0,
+      reloads: 1,
     })
   })
 

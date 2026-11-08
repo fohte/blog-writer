@@ -12,7 +12,7 @@ import { Textarea } from '@fohte/ui/textarea'
 import { isValidArticleSlug } from '#article/export'
 import { formatLocalTime } from '#article/format-local-date'
 import { TextDiffView } from '#components/text-diff-view'
-import type { ExportDestination } from '#lib/article-export-api'
+import type { ArticlePull, ExportDestination } from '#lib/article-export-api'
 
 export type ArticlePublishViewProps = {
   destinations: ExportDestination[]
@@ -33,6 +33,7 @@ export type ArticlePublishViewProps = {
   canPublish?: boolean | undefined
   error?: string | undefined
   publishedUrl?: string | undefined
+  openPull?: ArticlePull | undefined
   onDestinationChange: (destinationId: string) => void
   onSlugChange: (slug: string) => void
   onFrontmatterChange: (frontmatter: string) => void
@@ -56,6 +57,7 @@ export function ArticlePublishView({
   canPublish = false,
   error,
   publishedUrl,
+  openPull,
   onDestinationChange,
   onSlugChange,
   onFrontmatterChange,
@@ -79,6 +81,8 @@ export function ArticlePublishView({
     selectedDestination !== undefined && isValidArticleSlug(slug)
       ? selectedDestination.path_template.replace('{slug}', slug)
       : undefined
+  const openPullLabel =
+    openPull === undefined ? undefined : `PR #${String(openPull.number)}`
 
   return (
     <section aria-label="PR を作成" className="flex flex-col gap-5">
@@ -178,7 +182,9 @@ export function ArticlePublishView({
           role="status"
         >
           {busyAction === 'publish'
-            ? 'PR を作成しています…'
+            ? openPullLabel === undefined
+              ? 'PR を作成しています…'
+              : `${openPullLabel} に追加しています…`
             : '公開先を確認しています…'}
         </p>
       ) : null}
@@ -195,7 +201,7 @@ export function ArticlePublishView({
         <span className="flex-1 basis-75 text-sm leading-relaxed text-muted-foreground-strong">
           {publishedUrl !== undefined ? (
             <>
-              PR を作成しました。{' '}
+              PR に反映しました。{' '}
               <a
                 className="text-primary underline-offset-4 hover:underline"
                 href={publishedUrl}
@@ -205,10 +211,26 @@ export function ArticlePublishView({
                 PR を開く
               </a>
             </>
-          ) : diff === undefined ? (
-            '作成する前に、公開先の現在のファイルとの差分を確認します。'
           ) : (
-            '差分の確認後に公開先が変わっていたら、差分の確認からやり直します。'
+            <>
+              {openPull !== undefined ? (
+                <>
+                  open な{' '}
+                  <a
+                    className="text-primary underline-offset-4 hover:underline"
+                    href={openPull.url}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {openPullLabel}
+                  </a>{' '}
+                  があるので、そこにコミットを追加します。
+                </>
+              ) : null}
+              {diff !== undefined
+                ? '差分の確認後に公開先が変わっていたら、差分の確認からやり直します。'
+                : `${openPull === undefined ? '作成' : '追加'}する前に、公開先の現在のファイルとの差分を確認します。`}
+            </>
           )}
         </span>
         <Button
@@ -228,7 +250,9 @@ export function ArticlePublishView({
             type="button"
             variant="solid"
           >
-            PR を作成
+            {openPullLabel === undefined
+              ? 'PR を作成'
+              : `${openPullLabel} に追加する`}
           </Button>
         ) : null}
       </div>

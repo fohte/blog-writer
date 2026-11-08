@@ -1,10 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
 import { ArticleListView } from '#components/article-list-view'
+import type { ArticlePulls } from '#hooks/use-article-pulls'
 import type { Article, ArticleSummary } from '#lib/sync-client'
 
 const emptyBody: (id: string) => string = () => ''
 const noSummary: (id: string) => ArticleSummary | undefined = () => undefined
+const noPull: ArticlePulls['read'] = () => undefined
 
 const meta = {
   component: ArticleListView,
@@ -18,6 +20,7 @@ const meta = {
     canCreate: true,
     readArticleBody: emptyBody,
     readArticleSummary: noSummary,
+    readArticlePull: noPull,
     onSearchQueryChange: () => {},
     onSortOrderChange: () => {},
     onCreateArticle: () => {},
@@ -112,6 +115,29 @@ const summaries: Record<string, ArticleSummary> = {
 export const WithSummaries: Story = {
   name: 'the list shows the unorganized memo count and a missing body only on the rows they apply to.',
   args: { articles, readArticleSummary: (id) => summaries[id] },
+}
+
+export const WithPullRequests: Story = {
+  name: 'the list shows the pull request state only on the rows that have one',
+  args: {
+    articles,
+    readArticlePull: (_destinationId, articleId) =>
+      articleId === 'article-a'
+        ? {
+            article_id: articleId,
+            number: 14,
+            state: 'open',
+            url: 'https://github.com/example/site/pull/14',
+          }
+        : articleId === 'article-c'
+          ? {
+              article_id: articleId,
+              number: 11,
+              state: 'merged',
+              url: 'https://github.com/example/site/pull/11',
+            }
+          : undefined,
+  },
 }
 
 export const SyncProgress: Story = {

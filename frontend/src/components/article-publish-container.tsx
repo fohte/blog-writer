@@ -9,6 +9,7 @@ import {
   prependArticleFrontmatter,
 } from '#article/export'
 import { ArticlePublishView } from '#components/article-publish-view'
+import type { ArticlePulls } from '#hooks/use-article-pulls'
 import {
   ExportConflictError,
   type ExportDestination,
@@ -20,6 +21,7 @@ import type { Article, SyncClientApi } from '#lib/sync-client'
 
 type ArticlePublishContainerProps = {
   article: Article
+  articlePulls: ArticlePulls
   doc: Y.Doc
   destinations: ExportDestination[]
   client: SyncClientApi
@@ -57,6 +59,7 @@ function defaultFrontmatter(destination: ExportDestination, article: Article) {
 
 export function ArticlePublishContainer({
   article,
+  articlePulls,
   doc,
   destinations,
   client,
@@ -111,6 +114,7 @@ export function ArticlePublishContainer({
   const selectedDestinationId = selectedDestination?.id
   const destinationUnavailable =
     article.exportDestinationId !== undefined && !savedDestinationExists
+  const pull = articlePulls.read(selectedDestinationId, article.id)
 
   function isCurrentRequest(id: number) {
     return mounted.current && requestId.current === id
@@ -303,6 +307,7 @@ export function ArticlePublishContainer({
     } else {
       setPrepared(undefined)
       setPublishedUrl(result.url)
+      articlePulls.reload()
     }
     setBusyAction(undefined)
   }
@@ -342,6 +347,7 @@ export function ArticlePublishContainer({
         setPublishedUrl(undefined)
         updateSettings({ slug: value })
       }}
+      openPull={pull?.state === 'open' ? pull : undefined}
       publishedUrl={publishedUrl}
       selectedDestinationId={selectedDestinationId}
       slug={slug}

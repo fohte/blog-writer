@@ -88,6 +88,26 @@ export const NewFile: Story = {
   },
 }
 
+export const OpenPullRequest: Story = {
+  name: 'the reviewed diff will be added to the open pull request',
+  args: {
+    canPublish: true,
+    diff: {
+      original: 'title: "Sample article"\n\nOld body',
+      modified: 'title: "Sample article"\n\nUpdated body',
+      added: 1,
+      removed: 1,
+      fetchedAt: Date.UTC(2026, 0, 15, 7, 16),
+    },
+    openPull: {
+      article_id: 'sample-article',
+      number: 14,
+      state: 'open',
+      url: 'https://github.com/example/site/pull/14',
+    },
+  },
+}
+
 export const RequestingDiff: Story = {
   name: 'the destination comparison is in progress',
   args: { busyAction: 'diff' },

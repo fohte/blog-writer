@@ -44,6 +44,7 @@ function renderList(
         onSortOrderChange={() => {}}
         onTrashArticle={() => {}}
         readArticleBody={() => ''}
+        readArticlePull={() => undefined}
         readArticleSummary={() => undefined}
         requiresAuthentication={false}
         searchQuery=""
@@ -104,6 +105,31 @@ describe('article list summaries', () => {
     })
 
     expect(readRows()).toEqual([`First${label}作成 2026-01-15⋯`])
+  })
+})
+
+describe('article list pull request state', () => {
+  it('labels a row with the pull request of its saved destination', () => {
+    renderList({
+      articles: [
+        { ...firstArticle, exportDestinationId: 'sample-site' },
+        secondArticle,
+      ],
+      readArticlePull: (destinationId, articleId) =>
+        destinationId === 'sample-site'
+          ? {
+              article_id: articleId,
+              number: 14,
+              state: 'open',
+              url: 'https://github.com/example/site/pull/14',
+            }
+          : undefined,
+    })
+
+    expect(readRows()).toEqual([
+      'Second作成 2026-01-16⋯',
+      'FirstPR #14 open作成 2026-01-15⋯',
+    ])
   })
 })
 
