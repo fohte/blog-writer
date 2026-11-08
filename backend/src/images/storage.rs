@@ -10,6 +10,15 @@ pub(super) async fn insert(pool: &AnyPool, name: &str, data: &[u8]) -> Result<()
     Ok(())
 }
 
+pub(super) async fn exists(pool: &AnyPool, name: &str) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query("SELECT name FROM images WHERE name = $1")
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(row.is_some())
+}
+
 pub(super) async fn get(pool: &AnyPool, name: &str) -> Result<Option<Vec<u8>>, sqlx::Error> {
     let row = sqlx::query("SELECT data FROM images WHERE name = $1")
         .bind(name)

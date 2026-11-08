@@ -153,9 +153,7 @@ impl ExportService {
         article_id: &str,
         slug: &str,
     ) -> Result<Option<RemoteFile>, ExportError> {
-        if !valid_article_id(article_id) || !valid_slug(slug) {
-            return Err(ExportError::InvalidInput);
-        }
+        validate_article_target(article_id, slug)?;
         let (owner, repo) = destination
             .repository_parts()
             .ok_or(ExportError::InvalidConfiguration)?;
@@ -178,9 +176,7 @@ impl ExportService {
         request: &ArticleContent,
         safe_fetch: Arc<dyn SafeFetchService>,
     ) -> Result<String, ExportError> {
-        if !valid_article_id(article_id) || !valid_slug(&request.slug) {
-            return Err(ExportError::InvalidInput);
-        }
+        validate_article_target(article_id, &request.slug)?;
         let (owner, repo) = destination
             .repository_parts()
             .ok_or(ExportError::InvalidConfiguration)?;
@@ -454,6 +450,14 @@ fn article_reference<'a>(
     if pull.is_some() { branch } else { base_branch }
 }
 
+pub(super) fn validate_article_target(article_id: &str, slug: &str) -> Result<(), ExportError> {
+    if valid_article_id(article_id) && valid_slug(slug) {
+        Ok(())
+    } else {
+        Err(ExportError::InvalidInput)
+    }
+}
+
 fn valid_article_id(article_id: &str) -> bool {
     !article_id.is_empty()
         && article_id
@@ -481,6 +485,7 @@ async fn successful_response(response: Response) -> Result<Response, ExportError
 mod tests {
     use std::{
         fs,
+        io::Cursor,
         path::PathBuf,
         sync::{
             Arc, Mutex,
@@ -493,6 +498,7 @@ mod tests {
         http::Request,
     };
     use base64::{Engine, engine::general_purpose::STANDARD};
+    use image::{ImageFormat, RgbaImage};
     use indoc::indoc;
     use rstest::rstest;
     use serde_json::{Map, Value, json};
@@ -504,8 +510,10 @@ mod tests {
 
     use crate::{
         app::{self, AppState},
-        config::{ExportConfig, ExportDestination, ExportFormat},
+        config::{ExportConfig, ExportDestination, ExportFormat, ExportImageConfig},
+        db::initialize,
         host_origin::HostOriginPolicy,
+        images::ImagePublisher,
         safe_fetch::{FetchResponse, SafeFetchError, SafeFetchFuture, SafeFetchService},
     };
 
@@ -608,6 +616,7 @@ mod tests {
                 octo_sts_url: octo_sts.uri(),
                 octo_sts_identity: "writer-export".to_owned(),
                 octo_sts_sa_token_path: token_file.clone(),
+                images: None,
             },
             github.uri(),
         )
@@ -1773,6 +1782,177 @@ mod tests {
         assert_eq!(
             response_json(response).await,
             (200, json!({ "content": null, "sha": null }))
+        );
+        fixture.github.verify().await;
+        fixture.octo_sts.verify().await;
+    }
+
+    async fn image_api_router(fixture: &Fixture, image_storage: &MockServer) -> axum::Router {
+        let publisher = ImagePublisher::new(&ExportImageConfig {
+            endpoint: reqwest::Url::parse(&image_storage.uri()).unwrap(),
+            bucket: "site-assets".to_owned(),
+            access_key_id: "example-key".to_owned(),
+            secret_access_key: "example-secret".to_owned(),
+            public_url: "https://assets.example".to_owned(),
+        })
+        .unwrap();
+        app::router(
+            AppState {
+                export: Some(fixture.service.clone()),
+                image_publisher: Some(publisher),
+                database: Some(initialize(Some("sqlite::memory:")).await.unwrap()),
+                ..AppState::default()
+            },
+            HostOriginPolicy::new(
+                vec!["localhost:3000".to_owned()],
+                vec!["http://localhost:3000".to_owned()],
+            ),
+        )
+    }
+
+    /// Stores a GIF the way pasting into the editor does and returns the path written to the draft.
+    async fn store_gif(router: axum::Router) -> String {
+        const BOUNDARY: &str = "upload-boundary";
+        const CRLF: &[u8] = b"\r\n";
+
+        let mut gif = Cursor::new(Vec::new());
+        RgbaImage::new(4, 2)
+            .write_to(&mut gif, ImageFormat::Gif)
+            .unwrap();
+        let body = [
+            format!("--{BOUNDARY}").as_bytes(),
+            CRLF,
+            br#"Content-Disposition: form-data; name="file"; filename="a""#,
+            CRLF,
+            CRLF,
+            gif.get_ref(),
+            CRLF,
+            format!("--{BOUNDARY}--").as_bytes(),
+            CRLF,
+        ]
+        .concat();
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/images")
+                    .header("host", "localhost:3000")
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={BOUNDARY}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        response_json(response).await.1["src"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn publishes_stored_images_and_commits_public_links() {
+        let fixture = fixture().await;
+        let image_storage = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&image_storage)
+            .await;
+        let router = image_api_router(&fixture, &image_storage).await;
+        let draft_path = store_gif(router.clone()).await;
+        let public_path = draft_path.replace("/api/images/", "https://assets.example/images/");
+        mock_open_pull_article_commit(
+            &fixture,
+            &format!("![a]({public_path})"),
+            Some("file-sha"),
+            200,
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/export/site-one/articles/{ARTICLE_ID}"))
+                    .header("host", "localhost:3000")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "slug": SLUG,
+                            "content": format!("![a]({draft_path})"),
+                            "sha": "file-sha"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let uploaded_paths: Vec<String> = image_storage
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|request| request.url.path().to_owned())
+            .collect();
+        let object_name = draft_path
+            .trim_start_matches("/api/images/")
+            .split('?')
+            .next()
+            .unwrap();
+
+        assert_eq!(
+            (response_json(response).await, uploaded_paths),
+            (
+                (
+                    200,
+                    json!({ "url": "https://github.example/writer/notes/pull/12" }),
+                ),
+                vec![format!("/site-assets/images/{object_name}")],
+            ),
+        );
+        fixture.github.verify().await;
+        fixture.octo_sts.verify().await;
+    }
+
+    #[tokio::test]
+    async fn returns_published_articles_with_their_draft_image_links() {
+        let fixture = fixture().await;
+        let image_storage = MockServer::start().await;
+        let router = image_api_router(&fixture, &image_storage).await;
+        let draft_path = store_gif(router.clone()).await;
+        let public_path = draft_path.replace("/api/images/", "https://assets.example/images/");
+        mock_open_pull(&fixture).await;
+        mock_article_contents_read(
+            &fixture,
+            ARTICLE_BRANCH,
+            Some(&format!("![a]({public_path})")),
+            Some("file-sha"),
+        )
+        .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!(
+                        "/api/export/site-one/articles/{ARTICLE_ID}?slug={SLUG}"
+                    ))
+                    .header("host", "localhost:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response_json(response).await,
+            (
+                200,
+                json!({ "content": format!("![a]({draft_path})"), "sha": "file-sha" }),
+            ),
         );
         fixture.github.verify().await;
         fixture.octo_sts.verify().await;

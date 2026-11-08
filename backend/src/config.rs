@@ -8,8 +8,10 @@ use std::{
 use thiserror::Error;
 
 mod export;
+mod export_image;
 mod llm;
 pub use export::{ExportConfig, ExportDestination, ExportFormat};
+pub use export_image::ExportImageConfig;
 pub use llm::{LlmConfig, OpenAiCompatibleConfig, ProviderName};
 
 use llm::{
@@ -52,6 +54,7 @@ struct ConfigValues<'a> {
     octo_sts_url: Option<&'a str>,
     octo_sts_identity: Option<&'a str>,
     octo_sts_sa_token_path: Option<&'a str>,
+    export_images: Option<ExportImageConfig>,
     sync_directory: Option<&'a str>,
 }
 
@@ -105,6 +108,14 @@ pub enum ConfigError {
         "all BLOG_EXPORT_OCTO_STS_* variables are required when {EXPORT_DESTINATIONS_ENV} is set"
     )]
     MissingOctoStsConfiguration,
+    #[error("BLOG_EXPORT_IMAGE_* variables must contain valid Unicode")]
+    NonUnicodeExportImage,
+    #[error("either all or none of the BLOG_EXPORT_IMAGE_* variables must be set")]
+    MissingExportImageConfiguration,
+    #[error(
+        "BLOG_EXPORT_IMAGE_ENDPOINT and BLOG_EXPORT_IMAGE_PUBLIC_URL must be HTTP(S) URLs without a query or fragment"
+    )]
+    InvalidExportImageUrl,
     #[error("{LLM_PROVIDER_ENV} must name a supported provider")]
     InvalidLlmProvider,
     #[error("{LLM_API_ONLY_ENV} must be one of 1, 0, true, or false")]
@@ -184,6 +195,9 @@ impl Config {
             ConfigError::NonUnicodeOctoStsSaTokenPath,
             &read_env_value,
         )?;
+        let export_images = ExportImageConfig::from_env(|name| {
+            read_env(name, ConfigError::NonUnicodeExportImage, &read_env_value)
+        })?;
         let llm_provider = read_env(
             LLM_PROVIDER_ENV,
             ConfigError::NonUnicodeLlmProvider,
@@ -219,6 +233,7 @@ impl Config {
                 octo_sts_url: octo_sts_url.as_deref(),
                 octo_sts_identity: octo_sts_identity.as_deref(),
                 octo_sts_sa_token_path: octo_sts_sa_token_path.as_deref(),
+                export_images,
             },
             LlmValues {
                 provider: llm_provider.as_deref(),
@@ -279,6 +294,7 @@ impl Config {
                 values.octo_sts_url,
                 values.octo_sts_identity,
                 values.octo_sts_sa_token_path,
+                values.export_images,
             )?,
             sync_directory,
             llm: LlmConfig::from_values(

@@ -20,7 +20,7 @@ use crate::{
     export::{self, ExportError, ExportService},
     frontend, health,
     host_origin::{HostOriginPolicy, enforce_host_origin},
-    images,
+    images::{self, ImagePublisher},
     llm::{self, LlmEvent, LlmState},
     local_file_sync::LocalFileSyncService,
     ogp,
@@ -39,6 +39,7 @@ struct ApiDefinition;
 #[derive(Clone)]
 pub struct AppState {
     pub export: Option<ExportService>,
+    pub(crate) image_publisher: Option<ImagePublisher>,
     pub(crate) llm: LlmState,
     pub database: Option<AnyPool>,
     pub sync: Option<SyncService>,
@@ -58,6 +59,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             export: None,
+            image_publisher: None,
             llm: LlmState::default(),
             database: None,
             sync: None,
@@ -95,8 +97,14 @@ impl AppState {
             .as_ref()
             .zip(sync_directory)
             .map(|(sync, directory)| LocalFileSyncService::new(sync.clone(), directory));
+        let image_publisher = export
+            .as_ref()
+            .and_then(|export| export.images.as_ref())
+            .map(ImagePublisher::new)
+            .transpose()?;
         Ok(Self {
             export: export.map(ExportService::new).transpose()?,
+            image_publisher,
             llm: LlmState::new_with_shutdown(llm_config, shutdown),
             database,
             sync,
@@ -704,40 +712,78 @@ mod tests {
         );
     }
 
+    fn state_with_export() -> AppState {
+        AppState::new(
+            Some(ExportConfig {
+                destinations: vec![ExportDestination {
+                    id: "site-one".to_owned(),
+                    repository: "writer/notes".to_owned(),
+                    base_branch: "main".to_owned(),
+                    path_template: "posts/{slug}.mdx".to_owned(),
+                    format: ExportFormat::Mdx,
+                    frontmatter_template: "title: {{ title }}".to_owned(),
+                    ogp_json_path: None,
+                }],
+                octo_sts_url: "https://sts.example".to_owned(),
+                octo_sts_identity: "writer-export".to_owned(),
+                octo_sts_sa_token_path: "/var/run/token".into(),
+                images: None,
+            }),
+            LlmConfig::default(),
+            None,
+        )
+        .unwrap()
+    }
+
+    #[rstest]
+    #[case::invalid_slug("../escape", 400, "Invalid article ID or slug")]
+    #[case::valid_slug("article", 503, "Image publishing is not configured")]
+    #[test_attr(tokio::test)]
+    async fn checks_the_publish_target_before_handling_images(
+        policy: HostOriginPolicy,
+        #[case] slug: &str,
+        #[case] status: u16,
+        #[case] error: &str,
+    ) {
+        let content = format!("![a](/api/images/{}.webp)", "a".repeat(64));
+        let response = router(state_with_export(), policy)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/export/site-one/articles/article-one")
+                    .header("host", "localhost:3000")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({ "slug": slug, "content": content, "sha": null }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let actual_status = response.status().as_u16();
+        let actual_body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+
+        assert_eq!(
+            (actual_status, actual_body),
+            (status, json!({ "error": error }))
+        );
+    }
+
     #[tokio::test]
     async fn lists_configured_export_destinations() {
-        let response = router(
-            AppState::new(
-                Some(ExportConfig {
-                    destinations: vec![ExportDestination {
-                        id: "site-one".to_owned(),
-                        repository: "writer/notes".to_owned(),
-                        base_branch: "main".to_owned(),
-                        path_template: "posts/{slug}.mdx".to_owned(),
-                        format: ExportFormat::Mdx,
-                        frontmatter_template: "title: {{ title }}".to_owned(),
-                        ogp_json_path: None,
-                    }],
-                    octo_sts_url: "https://sts.example".to_owned(),
-                    octo_sts_identity: "writer-export".to_owned(),
-                    octo_sts_sa_token_path: "/var/run/token".into(),
-                }),
-                LlmConfig::default(),
-                None,
+        let response = router(state_with_export(), policy())
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/export/destinations")
+                    .header("host", "localhost:3000")
+                    .body(Body::empty())
+                    .unwrap(),
             )
-            .unwrap(),
-            policy(),
-        )
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/api/export/destinations")
-                .header("host", "localhost:3000")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+            .await
+            .unwrap();
         let actual_status = response.status().as_u16();
         let actual_body: Value =
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())

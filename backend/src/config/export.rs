@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use utoipa::ToSchema;
 
-use super::ConfigError;
+use super::{ConfigError, ExportImageConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportConfig {
@@ -12,6 +12,7 @@ pub struct ExportConfig {
     pub octo_sts_url: String,
     pub octo_sts_identity: String,
     pub octo_sts_sa_token_path: PathBuf,
+    pub images: Option<ExportImageConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -39,6 +40,7 @@ impl ExportConfig {
         octo_sts_url: Option<&str>,
         octo_sts_identity: Option<&str>,
         octo_sts_sa_token_path: Option<&str>,
+        images: Option<ExportImageConfig>,
     ) -> Result<Option<Self>, ConfigError> {
         let Some(raw_destinations) = raw_destinations else {
             return Ok(None);
@@ -66,6 +68,7 @@ impl ExportConfig {
             octo_sts_url: octo_sts_url.to_owned(),
             octo_sts_identity: octo_sts_identity.to_owned(),
             octo_sts_sa_token_path: PathBuf::from(octo_sts_sa_token_path),
+            images,
         }))
     }
 }
@@ -228,7 +231,8 @@ mod tests {
         #[case] token_path: Option<&str>,
         #[case] expected: Result<Option<ExportConfig>, ConfigError>,
     ) {
-        let actual = ExportConfig::from_values(destinations, octo_sts_url, identity, token_path);
+        let actual =
+            ExportConfig::from_values(destinations, octo_sts_url, identity, token_path, None);
 
         assert_eq!(actual, expected);
     }
@@ -245,6 +249,7 @@ mod tests {
             Some("https://sts.example"),
             Some("writer-export"),
             Some("/var/run/token"),
+            None,
         );
 
         assert_eq!(
@@ -262,6 +267,7 @@ mod tests {
                 octo_sts_url: "https://sts.example".to_owned(),
                 octo_sts_identity: "writer-export".to_owned(),
                 octo_sts_sa_token_path: "/var/run/token".into(),
+                images: None,
             }))
         );
     }

@@ -66,6 +66,7 @@ async fn post_request(
 ) -> Result<(u16, Value), Box<dyn std::error::Error>> {
     let api: Router = router().split_for_parts().0.with_state(AppState {
         export: None,
+        image_publisher: None,
         llm: state,
         database: None,
         sync: None,

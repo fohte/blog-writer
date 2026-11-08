@@ -972,8 +972,18 @@
               }
             }
           },
+          "422": {
+            "description": "The article links to an image that is not stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
-            "description": "Export failed, including a conflict while updating OGP metadata after the article commit",
+            "description": "Export failed, including an image upload failure or a conflict while updating OGP metadata after the article commit",
             "content": {
               "application/json": {
                 "schema": {
@@ -983,7 +993,7 @@
             }
           },
           "503": {
-            "description": "Export publishing is not configured",
+            "description": "Export publishing or, for an article with images, image publishing is not configured",
             "content": {
               "application/json": {
                 "schema": {

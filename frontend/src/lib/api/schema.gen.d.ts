@@ -1647,7 +1647,16 @@ export interface operations {
           'application/json': components['schemas']['ErrorResponse']
         }
       }
-      /** @description Export failed, including a conflict while updating OGP metadata after the article commit */
+      /** @description The article links to an image that is not stored */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Export failed, including an image upload failure or a conflict while updating OGP metadata after the article commit */
       500: {
         headers: {
           [name: string]: unknown
@@ -1656,7 +1665,7 @@ export interface operations {
           'application/json': components['schemas']['ErrorResponse']
         }
       }
-      /** @description Export publishing is not configured */
+      /** @description Export publishing or, for an article with images, image publishing is not configured */
       503: {
         headers: {
           [name: string]: unknown
