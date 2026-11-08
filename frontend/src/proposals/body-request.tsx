@@ -23,6 +23,7 @@ import {
   requestBodyProposal,
 } from '#proposals/body-request-api'
 import { getBodyRequestContext } from '#proposals/body-request-context'
+import { bodyRequestGutter } from '#proposals/body-request-gutter'
 import {
   getBodyRequestManager,
   preserveBlankLineSeparators,
@@ -108,6 +109,9 @@ export function bodyRequestExtensions(
   const manager = getBodyRequestManager(context.doc)
   return [
     manager.layer.extension,
+    bodyRequestGutter(() => {
+      manager.openRequest()
+    }),
     Prec.high(
       keymap.of(
         ['Mod-j', 'Mod-k'].map((key) => ({
