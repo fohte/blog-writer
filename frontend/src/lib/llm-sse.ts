@@ -1,6 +1,20 @@
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 
+import type { components } from '#lib/api/schema.gen.d.ts'
 import { isRecord } from '#lib/guards'
+
+type LlmErrorCode = components['schemas']['LlmErrorCode']
+
+const llmErrorCodes: readonly unknown[] = [
+  'usage_limit',
+  'invalid_response',
+  'timeout',
+  'connection',
+] satisfies LlmErrorCode[]
+
+function isLlmErrorCode(value: unknown): value is LlmErrorCode {
+  return llmErrorCodes.includes(value)
+}
 
 type LlmStreamEnvelope = {
   event: string
@@ -19,9 +33,19 @@ type LlmStreamOptions<TBody, TResult> = {
   isResult: (data: unknown) => data is TResult
 }
 
-export class LlmStreamInterruptedError extends Error {
-  constructor(message: string, cause?: unknown) {
+export class LlmRequestError extends Error {
+  readonly code: LlmErrorCode
+
+  constructor(code: LlmErrorCode, message: string, cause?: unknown) {
     super(message, { cause })
+    this.name = 'LlmRequestError'
+    this.code = code
+  }
+}
+
+export class LlmStreamInterruptedError extends LlmRequestError {
+  constructor(message: string, cause?: unknown) {
+    super('connection', message, cause)
     this.name = 'LlmStreamInterruptedError'
   }
 }
@@ -32,17 +56,32 @@ function parseEnvelope(
 ): Result<LlmStreamEnvelope, Error> {
   return Result.fromThrowable(
     (): unknown => JSON.parse(rawData),
-    (cause) => new Error('LLM stream returned invalid JSON', { cause }),
+    (cause) =>
+      new LlmRequestError(
+        'invalid_response',
+        'LLM stream returned invalid JSON',
+        cause,
+      ),
   )().andThen((value) => {
     if (
       !isRecord(value) ||
       typeof value['event'] !== 'string' ||
       !('data' in value)
     ) {
-      return err(new Error('LLM stream returned an invalid event'))
+      return err(
+        new LlmRequestError(
+          'invalid_response',
+          'LLM stream returned an invalid event',
+        ),
+      )
     }
     if (eventName !== 'message' && eventName !== value['event']) {
-      return err(new Error('LLM stream event names did not match'))
+      return err(
+        new LlmRequestError(
+          'invalid_response',
+          'LLM stream event names did not match',
+        ),
+      )
     }
     return ok({ event: value['event'], data: value['data'] })
   })
@@ -69,14 +108,25 @@ function readResult<TBody, TResult>(
       if (parsed.event === 'result') {
         return options.isResult(parsed.data)
           ? ok({ terminal: true, value: parsed.data })
-          : err(new Error('LLM stream returned an invalid result'))
+          : err(
+              new LlmRequestError(
+                'invalid_response',
+                'LLM stream returned an invalid result',
+              ),
+            )
       }
       if (parsed.event === 'error') {
+        const data = isRecord(parsed.data) ? parsed.data : {}
         const message =
-          isRecord(parsed.data) && typeof parsed.data['message'] === 'string'
-            ? parsed.data['message']
+          typeof data['message'] === 'string'
+            ? data['message']
             : 'LLM request failed'
-        return err(new Error(message))
+        const code = data['code']
+        return err(
+          isLlmErrorCode(code)
+            ? new LlmRequestError(code, message)
+            : new Error(message),
+        )
       }
       const callbackResult = Result.fromThrowable(
         () => options.onEvent?.(parsed.event, parsed.data),
@@ -161,10 +211,17 @@ export function postLlmResult<TBody, TResult>(
   ).andThen((response) => {
     if (!response.ok) {
       return errAsync(
-        new Error(`LLM API returned status ${response.status.toString()}`),
+        new LlmRequestError(
+          'connection',
+          `LLM API returned status ${response.status.toString()}`,
+        ),
       )
     }
-    if (!response.body) return errAsync(new Error('LLM API returned no stream'))
+    if (!response.body) {
+      return errAsync(
+        new LlmRequestError('invalid_response', 'LLM API returned no stream'),
+      )
+    }
     return readResult<TBody, TResult>(response.body.getReader(), options)
   })
 }

@@ -16,6 +16,7 @@ import {
 } from '#components/body-request-view'
 import { useMobileViewport } from '#hooks/use-mobile-viewport'
 import { loadLlmSettings } from '#lib/llm-settings'
+import { LlmRequestError } from '#lib/llm-sse'
 import type { MoveHistory } from '#outline/move-history'
 import {
   type BodyRequestInput,
@@ -29,6 +30,13 @@ import {
 import type { WriteFromKeyPointsProposal } from '#proposals/write-from-key-points'
 
 const overlappingSuggestionError = 'この範囲には別の提案が表示されています'
+
+const llmFailureReasons: Record<LlmRequestError['code'], string> = {
+  usage_limit: '利用枠に達しました',
+  invalid_response: '応答の形式が正しくありませんでした',
+  timeout: '10 分たっても応答がありませんでした',
+  connection: '接続できません',
+}
 
 const editCandidates: readonly BodyRequestCandidate[] = [
   { id: 'concise', label: '簡潔にする', group: 'edit' },
@@ -334,7 +342,11 @@ export function BodyRequestAccessory({
         if (controller.signal.aborted) return
         setRequestActive(false)
         manager.clearInFlight()
-        fail(cause.message)
+        fail(
+          cause instanceof LlmRequestError
+            ? llmFailureReasons[cause.code]
+            : cause.message,
+        )
       },
     )
   }

@@ -219,7 +219,7 @@ async fn emits_an_error_when_model_sources_do_not_match_the_request(
                         prefix: "data: ".to_owned(),
                         value: json!({
                             "event": "error",
-                            "data": {"message": "LLM result does not match the request"}
+                            "data": {"code": "invalid_response", "message": "LLM result does not match the request"}
                         }),
                     },
                     SseLine::Raw(String::new()),

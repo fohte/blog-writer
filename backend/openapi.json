@@ -1808,10 +1808,17 @@
           }
         }
       },
+      "LlmErrorCode": {
+        "type": "string",
+        "enum": ["usage_limit", "invalid_response", "timeout", "connection"]
+      },
       "LlmErrorPayload": {
         "type": "object",
-        "required": ["message"],
+        "required": ["code", "message"],
         "properties": {
+          "code": {
+            "$ref": "#/components/schemas/LlmErrorCode"
+          },
           "message": {
             "type": "string"
           }
