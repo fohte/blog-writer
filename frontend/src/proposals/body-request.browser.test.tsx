@@ -3,8 +3,16 @@ import { EditorView } from '@codemirror/view'
 import { ok, okAsync } from 'neverthrow'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { userEvent } from 'vitest/browser'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest'
+import { page, userEvent } from 'vitest/browser'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
@@ -121,6 +129,12 @@ function createRequestEditor(
   return { body, doc, view, unmountAccessory }
 }
 
+async function useViewport(width: number, height: number) {
+  const { innerHeight, innerWidth } = window
+  await page.viewport(width, height)
+  onTestFinished(() => page.viewport(innerWidth, innerHeight))
+}
+
 function pressMod(view: EditorView, key: string) {
   view.focus()
   const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
@@ -198,6 +212,56 @@ afterEach(() => {
 })
 
 describe('body request', () => {
+  it('hides the request marker on a narrow screen', async () => {
+    await useViewport(375, 812)
+    const { view } = createRequestEditor()
+    const marker = view.dom.querySelector('.cm-body-request-marker')
+    if (!marker) throw new Error('The request marker was not rendered')
+
+    expect(getComputedStyle(marker).display).toBe('none')
+  })
+
+  it('opens the request from the marker beside the cursor line', async () => {
+    await useViewport(1280, 800)
+    const { view } = createRequestEditor()
+    // The marker sits on estimated line heights until the editor's first measurement.
+    await new Promise(requestAnimationFrame)
+    const readMarkerLine = () => {
+      const marker = view.dom.querySelector('.cm-body-request-marker')
+      if (!marker) throw new Error('The request marker was not rendered')
+      const { bottom, top } = marker.getBoundingClientRect()
+      const block = view.lineBlockAtHeight(
+        (top + bottom) / 2 - view.documentTop,
+      )
+      return view.state.doc.lineAt(block.from).number
+    }
+    const lineFromInitialSelection = readMarkerLine()
+    view.dispatch({ selection: { anchor: 0 } })
+    const lineAfterMovingCursor = readMarkerLine()
+    const textOffset =
+      view.contentDOM.getBoundingClientRect().left -
+      view.scrollDOM.getBoundingClientRect().left
+
+    const marker = view.dom.querySelector('.cm-body-request-marker')
+    if (!marker) throw new Error('The request marker was not rendered')
+    await act(async () => {
+      await userEvent.click(marker)
+    })
+
+    const readOutput = () => ({
+      lineFromInitialSelection,
+      lineAfterMovingCursor,
+      textOffset,
+      requestOpen: document.querySelector('#body-request') !== null,
+    })
+    expect(readOutput()).toEqual({
+      lineFromInitialSelection: 4,
+      lineAfterMovingCursor: 1,
+      textOffset: 0,
+      requestOpen: true,
+    })
+  })
+
   it('passes the selected context, view and instruction to a preset request', async () => {
     let selected: BodyRequestPresetSelection | undefined
     const { view } = createRequestEditor([], content, true, [

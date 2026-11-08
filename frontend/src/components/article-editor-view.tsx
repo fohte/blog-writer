@@ -437,12 +437,15 @@ export function ArticleEditorView({
               className={
                 isMobile
                   ? ''
-                  : 'flex flex-col border-t border-border lg:w-85 lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-l'
+                  : // TabsPanel takes no className; stretching it holds the latest memo adoption at the bottom edge.
+                    'flex flex-col border-t border-border lg:w-85 lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-l [&>[role=tabpanel]]:flex [&>[role=tabpanel]]:flex-1 [&>[role=tabpanel]]:flex-col'
               }
             >
               {isMobile ? null : renderTabs(sidePanels)}
               <TabsPanel keepMounted value="memo">
-                <div className={isMobile ? 'p-4' : 'p-3.5'}>
+                <div
+                  className={`flex flex-1 flex-col ${isMobile ? 'p-4' : 'p-3.5'}`}
+                >
                   {renderPanel('memo')}
                 </div>
               </TabsPanel>

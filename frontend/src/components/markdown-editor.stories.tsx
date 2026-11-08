@@ -8,7 +8,7 @@ import { addEvidence } from '#article/evidence'
 import { addSource } from '#article/sources'
 import type { EvidenceVerdict } from '#article/types'
 import type { ArticleImageUploader } from '#editor/image-upload'
-import { MarkdownEditor } from '#editor/index'
+import { bodyRequestExtensions, MarkdownEditor } from '#editor/index'
 import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
 
 interface StoryEvidence {
@@ -23,6 +23,7 @@ interface StoryArgs {
   initialSelection?: { anchor: number; head?: number }
   evidence?: StoryEvidence[]
   showMoveHandles?: boolean
+  showRequestMarker?: boolean
 }
 
 const defaultContent = [
@@ -64,6 +65,7 @@ function MarkdownEditorPreview({
   initialSelection,
   evidence = noEvidence,
   showMoveHandles = false,
+  showRequestMarker = false,
 }: StoryArgs) {
   const { body, doc, history, extensions } = useMemo(() => {
     const doc = new Y.Doc()
@@ -97,11 +99,12 @@ function MarkdownEditorPreview({
       })._unsafeUnwrap()
     }
     const history = createMoveHistory(doc)
-    const extensions = showMoveHandles
-      ? [createOutlineEditorExtension(history)]
-      : []
+    const extensions = [
+      ...(showMoveHandles ? [createOutlineEditorExtension(history)] : []),
+      ...(showRequestMarker ? bodyRequestExtensions({ doc, history }) : []),
+    ]
     return { body, doc, history, extensions }
-  }, [content, evidence, showMoveHandles])
+  }, [content, evidence, showMoveHandles, showRequestMarker])
 
   useEffect(() => {
     return () => {
@@ -263,5 +266,14 @@ export const BlockMoveHandles: Story = {
       '# Overview\n\nA first paragraph.\n\n## Details\n\nA second paragraph.\n',
     initialSelection: { anchor: 0 },
     showMoveHandles: true,
+  },
+}
+
+export const RequestMarker: Story = {
+  name: 'the cursor line has a request marker beside it while the text stays in place.',
+  args: {
+    content: '# Overview\n\nA first paragraph.\n\nA second paragraph.\n',
+    initialSelection: { anchor: 12 },
+    showRequestMarker: true,
   },
 }

@@ -58,6 +58,7 @@ async fn responds_with_range_replacements_and_full_article_context() {
     );
     let api: Router = router().split_for_parts().0.with_state(AppState {
         export: None,
+        image_publisher: None,
         llm: state,
         database: None,
         sync: None,

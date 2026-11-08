@@ -11,7 +11,8 @@ use crate::{
     app::AppState,
     config::{ExportDestination, ExportFormat},
     error::{ApiJson, AppError, ErrorResponse},
-    export::github::{ArticleContent, ExportError},
+    export::github::{ArticleContent, ExportError, validate_article_target},
+    images,
 };
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -106,7 +107,7 @@ pub async fn get_article_file(
 
     Ok(Json(match file {
         Some(file) => ArticleFileResponse {
-            content: Some(file.content),
+            content: Some(images::restore_draft_links(&state, file.content).await?),
             sha: Some(file.sha),
         },
         None => ArticleFileResponse {
@@ -129,8 +130,9 @@ pub async fn get_article_file(
         (status = 400, description = "Invalid article ID or slug, or more than 50 unregistered HTTP(S) CardLink hrefs", body = ErrorResponse),
         (status = 404, description = "Destination not found", body = ErrorResponse),
         (status = 409, description = "Remote file changed; fetch its current version before retrying", body = ErrorResponse),
-        (status = 500, description = "Export failed, including a conflict while updating OGP metadata after the article commit", body = ErrorResponse),
-        (status = 503, description = "Export publishing is not configured", body = ErrorResponse)
+        (status = 422, description = "The article links to an image that is not stored", body = ErrorResponse),
+        (status = 500, description = "Export failed, including an image upload failure or a conflict while updating OGP metadata after the article commit", body = ErrorResponse),
+        (status = 503, description = "Export publishing or, for an article with images, image publishing is not configured", body = ErrorResponse)
     )
 )]
 pub async fn publish_article(
@@ -140,9 +142,11 @@ pub async fn publish_article(
 ) -> Result<Json<PublishArticleResponse>, AppError> {
     let export = state.export.as_ref().ok_or(AppError::ExportUnavailable)?;
     let destination = find_destination(export.destinations(), &destination_id)?;
+    // Rejected input must not make the draft's images public.
+    validate_article_target(&article_id, &request.slug).map_err(map_export_error)?;
     let article = ArticleContent {
         slug: request.slug,
-        content: request.content,
+        content: images::publish_draft_images(&state, request.content).await?,
         sha: request.sha,
     };
     let url = export

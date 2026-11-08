@@ -92,6 +92,11 @@ export const Adopted: Story = {
   args: { filter: 'adopted', memos: mixedMemos },
 }
 
+export const LatestAdoption: Story = {
+  name: 'the end of the panel names the memo adopted most recently and its heading',
+  args: { headings, latestAdoptedMemoId: 'memo-b', memos: mixedMemos },
+}
+
 export const Dismissed: Story = {
   name: 'a dismissed memo can return to unorganized',
   args: { filter: 'dismissed', memos: mixedMemos },
