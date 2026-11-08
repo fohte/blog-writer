@@ -216,7 +216,7 @@ export function ArticleOutline({
           onHeadingSelected?.()
         }}
       />
-      <OutlineKeyHints />
+      {headings.length > 0 ? <OutlineKeyHints /> : null}
     </div>
   )
 }

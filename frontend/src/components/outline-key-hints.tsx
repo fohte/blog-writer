@@ -47,7 +47,7 @@ export function OutlineKeyHints() {
     <dl className="flex flex-col gap-1 px-2 text-xs text-muted-foreground pointer-coarse:hidden">
       {hints.map(({ keys, description }) => (
         <div className="flex gap-3" key={description}>
-          <dt className="flex w-20 shrink-0 gap-1">{keys}</dt>
+          <dt className="flex w-20 shrink-0 items-start gap-1">{keys}</dt>
           <dd>{description}</dd>
         </div>
       ))}
