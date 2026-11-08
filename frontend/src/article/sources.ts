@@ -58,6 +58,11 @@ export function observeSources(doc: Y.Doc, listener: () => void): () => void {
   }
 }
 
+/** Whether the source body could not be fetched, so a pasted body can replace it. */
+export function isUnfetchedSource({ status }: Pick<Source, 'status'>): boolean {
+  return status === 'unavailable' || status === 'loginRequired'
+}
+
 function readSource(id: string, source: SourceData): Source {
   const value = (key: string): unknown => source.get(key)
   const kind = value('kind')
@@ -71,7 +76,9 @@ function readSource(id: string, source: SourceData): Source {
     checkedAt: asNullableString(value('checkedAt')),
     publishedAt: asNullableString(value('publishedAt')),
     status:
-      status === 'unavailable' || status === 'analysisFailed'
+      status === 'unavailable' ||
+      status === 'loginRequired' ||
+      status === 'analysisFailed'
         ? status
         : 'ready',
     summary: asString(value('summary')),

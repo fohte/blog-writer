@@ -86,6 +86,9 @@ impl SafeFetchService for TestFetcher {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(url.to_owned());
+            if url.contains("login-wall") {
+                return Err(SafeFetchError::HttpStatus(reqwest::StatusCode::FORBIDDEN));
+            }
             if self.unavailable_url.as_deref() == Some(url) {
                 return Err(SafeFetchError::InvalidUrl);
             }
@@ -450,6 +453,47 @@ async fn handles_failed_search_and_empty_results_without_generation(
             "fetched_urls": [],
             "body": sse_body(&expected_events),
         })
+    );
+}
+
+#[rstest]
+#[tokio::test]
+async fn marks_a_source_behind_a_login_wall(
+    app_state_builder: TestAppStateBuilder,
+    fetched_urls: Arc<Mutex<Vec<String>>>,
+) {
+    let url = "https://login-wall.example.test/article".to_owned();
+    let (provider, _, _) = test_provider(vec![url.clone()], json!({}), false);
+    let app_state = app_state_builder.build(provider, fetched_urls, None);
+    let response = post_job(
+        app_state,
+        json!({"task": "claim_evidence", "claim": "The source supports this statement."}),
+    )
+    .await;
+
+    assert_eq!(
+        response_body(response).await,
+        (
+            200,
+            sse_body(&[
+                json!({"event": "progress", "data": {"kind": "search", "query": "sample search query"}}),
+                json!({"event": "progress", "data": {"kind": "fetching", "url": url}}),
+                json!({"event": "progress", "data": {"kind": "unavailable", "url": url}}),
+                json!({
+                    "event": "result",
+                    "data": {
+                        "analysis": {
+                            "task": "claim_evidence",
+                            "data": {"verdict": "insufficient", "quote": null, "suggestion": null}
+                        },
+                        "sources": [{
+                            "id": "source-1", "url": url, "final_url": null,
+                            "title": null, "published_at": null, "body": null, "status": "login_required"
+                        }]
+                    }
+                }),
+            ])
+        )
     );
 }
 

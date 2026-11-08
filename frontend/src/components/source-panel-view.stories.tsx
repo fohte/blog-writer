@@ -75,6 +75,19 @@ export const Unavailable: Story = {
   },
 }
 
+export const LoginRequired: Story = {
+  name: 'ログインが必要で取得できない資料に要ログインと表示する',
+  args: {
+    sources: [
+      {
+        ...readySource,
+        status: 'loginRequired',
+        summary: '',
+      },
+    ],
+  },
+}
+
 export const AnalysisFailed: Story = {
   name: '本文保存後に要約と要点の作成に失敗した資料を示す',
   args: {

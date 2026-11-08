@@ -224,12 +224,24 @@ async function mountFootnoteEditor() {
   return { doc, readFootnotes }
 }
 
+const uploadStatus: Record<string, number> = {
+  unavailable: 500,
+  loginRequired: 424,
+}
+
 describe('MarkdownEditor', () => {
   it.each([
     {
       name: 'source retrieval fails',
       expectedError: '資料ページを取得できませんでした: HTTP 500',
       expectedStatus: 'unavailable',
+      expectedTitle: 'example.invalid',
+    },
+    {
+      name: 'the source page requires a login',
+      expectedError:
+        'ログインが必要なページのため、資料ページを取得できませんでした。',
+      expectedStatus: 'loginRequired',
       expectedTitle: 'example.invalid',
     },
     {
@@ -264,7 +276,7 @@ describe('MarkdownEditor', () => {
               final_url: 'https://example.invalid/report',
             }),
             {
-              status: scenario.expectedStatus === 'unavailable' ? 500 : 200,
+              status: uploadStatus[scenario.expectedStatus] ?? 200,
               headers: { 'content-type': 'application/json' },
             },
           ),

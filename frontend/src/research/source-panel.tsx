@@ -23,7 +23,7 @@ import {
 } from '#components/source-panel-view'
 import { useSourcesSeenAt } from '#hooks/use-sources-seen-at'
 import { loadLlmSettings } from '#lib/llm-settings'
-import { deleteSourceBody } from '#lib/source-api'
+import { deleteSourceBody, failedFetchStatus } from '#lib/source-api'
 import { getSourceHost } from '#research/source-format'
 import type { SourceInput } from '#research/source-ingestion'
 import {
@@ -253,7 +253,7 @@ export function SourcePanel({
               persistSource({
                 ...fallback,
                 checkedAt: null,
-                status: 'unavailable',
+                status: failedFetchStatus(importError),
                 summary: '',
               })
             })

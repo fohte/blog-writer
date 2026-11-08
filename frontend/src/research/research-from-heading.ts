@@ -10,6 +10,7 @@ import * as Y from 'yjs'
 
 import {
   addSource,
+  isUnfetchedSource,
   listFindings,
   listSources,
   setFindings,
@@ -119,7 +120,7 @@ function planSources(doc: Y.Doc, result: ResearchJobResult): SourcePlan[] {
         ...(existing === undefined ? {} : { existing }),
         ...(analysis === undefined ? {} : { analysis }),
         saveBody:
-          (existing === undefined || existing.status === 'unavailable') &&
+          (existing === undefined || isUnfetchedSource(existing)) &&
           source.status === 'available' &&
           typeof source.body === 'string',
       },
@@ -296,13 +297,20 @@ function saveResultInDocument(
       const isAvailable =
         plan.source.status === 'available' &&
         (plan.saveBody ||
-          (plan.existing !== undefined &&
-            plan.existing.status !== 'unavailable'))
+          (plan.existing !== undefined && !isUnfetchedSource(plan.existing)))
+      const unfetchedStatus =
+        plan.source.status === 'login_required'
+          ? ('loginRequired' as const)
+          : ('unavailable' as const)
       const summary = plan.analysis?.summary ?? plan.existing?.summary ?? ''
       const sourceResult = plan.existing
         ? updateSource(doc, plan.id, {
             summary,
             ...(isAvailable ? { status: 'ready' as const, checkedAt } : {}),
+            ...(plan.source.status === 'login_required' &&
+            isUnfetchedSource(plan.existing)
+              ? { status: 'loginRequired' as const }
+              : {}),
           })
         : addSource(doc, {
             id: plan.id,
@@ -312,7 +320,7 @@ function saveResultInDocument(
             fileName: null,
             checkedAt: isAvailable ? checkedAt : null,
             publishedAt: plan.source.published_at ?? null,
-            status: isAvailable ? 'ready' : 'unavailable',
+            status: isAvailable ? 'ready' : unfetchedStatus,
             summary,
           })
       if (sourceResult.isErr()) {

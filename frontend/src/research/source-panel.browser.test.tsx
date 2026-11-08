@@ -913,6 +913,27 @@ describe('SourcePanel', () => {
     doc.destroy()
   })
 
+  it('tells a login-required URL apart from other failed imports', async () => {
+    const doc = new Y.Doc()
+    urlStatus = 424
+    mountSourcePanel(doc)
+    dispatchPaste(
+      host?.querySelector('[aria-labelledby="source-panel-heading"]'),
+      'https://data.example.invalid/report',
+    )
+    await settleUi(doc)
+
+    const readResult = () => ({
+      row: readSourceRow(),
+      alert: host?.querySelector('[role="alert"]')?.textContent,
+    })
+    expect(readResult()).toEqual({
+      row: 'data.example.invalid×data.example.invalid · 取得できず (要ログイン)本文を貼り付けて登録',
+      alert: 'ログインが必要なページのため、資料ページを取得できませんでした。',
+    })
+    doc.destroy()
+  })
+
   it('keeps a failed URL import available for pasted body recovery', async () => {
     const doc = new Y.Doc()
     urlStatus = 500

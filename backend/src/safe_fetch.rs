@@ -68,6 +68,14 @@ pub enum SafeFetchError {
 }
 
 impl SafeFetchError {
+    /// 401 and 403 mean the page exists but is closed to an anonymous fetch.
+    pub(crate) fn requires_login(&self) -> bool {
+        matches!(
+            self,
+            Self::HttpStatus(StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+        )
+    }
+
     pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::InvalidUrl => "invalid_url",
@@ -637,6 +645,15 @@ mod tests {
             .map_err(|_| io::Error::other("response server thread panicked"))??;
         assert_eq!(error_code(actual), Err("too_large"));
         Ok(())
+    }
+
+    #[rstest]
+    #[case::unauthorized(SafeFetchError::HttpStatus(reqwest::StatusCode::UNAUTHORIZED), true)]
+    #[case::forbidden(SafeFetchError::HttpStatus(reqwest::StatusCode::FORBIDDEN), true)]
+    #[case::not_found(SafeFetchError::HttpStatus(reqwest::StatusCode::NOT_FOUND), false)]
+    #[case::other_failure(SafeFetchError::Timeout, false)]
+    fn identifies_a_login_wall(#[case] error: SafeFetchError, #[case] expected: bool) {
+        assert_eq!(error.requires_login(), expected);
     }
 
     #[rstest]

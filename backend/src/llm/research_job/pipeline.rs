@@ -75,7 +75,9 @@ async fn execute(
         let source = fetch_source(fetcher.as_ref(), index, url.clone()).await;
         let _ = progress.send(match source.status {
             ResearchJobSourceStatus::Available => ResearchJobProgress::Fetched { url },
-            ResearchJobSourceStatus::Unavailable => ResearchJobProgress::Unavailable { url },
+            ResearchJobSourceStatus::Unavailable | ResearchJobSourceStatus::LoginRequired => {
+                ResearchJobProgress::Unavailable { url }
+            }
         });
         sources.push(source);
     }
@@ -125,7 +127,14 @@ async fn fetch_source(
         Ok(response) => response,
         Err(error) => {
             tracing::warn!(reason = error.code(), "research source fetch failed");
-            return unavailable();
+            return if error.requires_login() {
+                ResearchJobSource {
+                    status: ResearchJobSourceStatus::LoginRequired,
+                    ..unavailable()
+                }
+            } else {
+                unavailable()
+            };
         }
     };
     if !crate::html::is_html_content_type(response.content_type.as_deref()) {
