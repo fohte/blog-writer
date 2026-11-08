@@ -34,6 +34,8 @@ export type SyncDocument = {
   doc: Y.Doc
   persistence: LocalPersistence
   status: SyncState
+  /** Last time this tab was in sync with the server. Kept in memory, so unset after a reload. */
+  syncedAt: number | undefined
   connectProvider: () => Result<void, SyncClientError>
   notifyError: (error: SyncClientError) => void
   destroy: () => void
@@ -110,6 +112,7 @@ export const buildSyncDocument = (options: SyncClientOptions, docId: string) =>
             () =>
               options.createWebsocketProvider(createWebsocketUrl(), docId, doc),
             stopObservingMoveConflicts,
+            options.now,
           ),
         toSyncClientError,
       )()
@@ -139,13 +142,18 @@ export const buildSyncDocument = (options: SyncClientOptions, docId: string) =>
     },
   )
 
+const minuteOf = (time: number | undefined) =>
+  time === undefined ? undefined : Math.floor(time / 60_000)
+
 const makeSyncDocument = (
   doc: Y.Doc,
   persistence: LocalPersistence,
   createProvider: () => WebsocketConnection,
   stopObservingMoveConflicts: () => void,
+  now: () => number,
 ): SyncDocument => {
   let status: SyncState = 'unsynced'
+  let syncedAt: number | undefined
   let localReady = persistence.synced
   let provider: WebsocketConnection | undefined
   let connectionStatus: 'connected' | 'connecting' | 'disconnected' =
@@ -164,6 +172,7 @@ const makeSyncDocument = (
   const setStatus = (next: SyncState) => {
     if (status === next) return
     status = next
+    if (next === 'synced') syncedAt = now()
     emit('status')
   }
 
@@ -188,11 +197,22 @@ const makeSyncDocument = (
     refreshStatus()
   })
 
+  doc.on('update', () => {
+    if (status !== 'synced') return
+    const previousMinute = minuteOf(syncedAt)
+    syncedAt = now()
+    // Updates arrive on every keystroke, but the time is only shown to the minute.
+    if (minuteOf(syncedAt) !== previousMinute) emit('status')
+  })
+
   return {
     doc,
     persistence,
     get status() {
       return status
+    },
+    get syncedAt() {
+      return syncedAt
     },
     connectProvider() {
       if (destroyed || provider) return ok(undefined)

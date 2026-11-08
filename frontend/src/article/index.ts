@@ -1,4 +1,4 @@
-export { getBody, readBody, setBody } from '#article/body'
+export { countBodyCharacters, getBody, readBody, setBody } from '#article/body'
 export {
   ArticleError,
   InvalidBlockMoveError,

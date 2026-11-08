@@ -25,6 +25,7 @@ type WorkspaceOptions = ArticleEditorIntegrationProps & {
   error?: string
   requiresAuthentication?: boolean
   syncStatus?: 'saved' | 'unsynced' | 'syncing' | 'synced'
+  syncedAt?: number
   onOpenSettings?: () => void
 }
 
@@ -35,6 +36,7 @@ function renderWorkspace(
     error,
     requiresAuthentication = false,
     syncStatus = 'synced',
+    syncedAt,
     onOpenSettings = () => {},
     ...integrations
   }: WorkspaceOptions = {},
@@ -65,6 +67,7 @@ function renderWorkspace(
       updateArticleExportSettings: () => ok(undefined),
       listArticles: () => articlesRef.current,
       getStatus: () => syncStatus,
+      getSyncedAt: () => syncedAt,
       getError: () => undefined,
       requiresAuthentication: () => requiresAuthentication,
       subscribe: () => () => {},
@@ -116,6 +119,47 @@ afterEach(() => {
 })
 
 describe('article editor screen', () => {
+  it('shows the last sync time, the LLM route and a live character count in the status bar', async () => {
+    const article: Article = {
+      id: 'article-status-bar',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, 'ab\ncd')
+    renderWorkspace(article, articleDoc, {
+      syncedAt: new Date(2026, 0, 15, 2, 14).getTime(),
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const readStatusItems = () => {
+      const items = Array.from(
+        host?.querySelector('footer')?.children ?? [],
+        (item) => item.textContent,
+      )
+      return items.slice(0, items.indexOf(''))
+    }
+
+    await vi.waitFor(() => {
+      expect(readStatusItems()).toEqual([
+        '端末に保存済み · 同期済み 02:14',
+        'LLM サーバー',
+        '4 字',
+      ])
+    })
+    act(() => {
+      setBody(articleDoc, 'abcdefg')
+    })
+
+    expect(readStatusItems()).toEqual([
+      '端末に保存済み · 同期済み 02:14',
+      'LLM サーバー',
+      '7 字',
+    ])
+  })
+
   it('opens an article, edits and reorders its body, undoes the move, and returns to the list', async () => {
     const article: Article = {
       id: 'article-a',
@@ -1445,6 +1489,7 @@ First paragraph.
       updateArticleExportSettings: () => ok(undefined),
       listArticles: () => [firstArticle, secondArticle],
       getStatus: () => 'synced',
+      getSyncedAt: () => undefined,
       getError: () => undefined,
       requiresAuthentication: () => false,
       subscribe: () => () => {},

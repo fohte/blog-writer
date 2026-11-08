@@ -18,7 +18,7 @@ import { ArticleEditorHeader } from '#components/article-editor-header'
 import { ArticleEditorMobileToolbar } from '#components/article-editor-mobile-toolbar'
 import type { ArticleExportSection } from '#components/article-export-screen'
 import { ArticlePremisePanel } from '#components/article-premise-panel'
-import { EditorStatusBar } from '#components/editor-status-bar'
+import { EditorStatusBarContainer } from '#components/editor-status-bar-container'
 import type { MarkdownEditorHandle } from '#components/markdown-editor'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
@@ -101,6 +101,7 @@ export interface ArticleEditorViewProps {
     ReactNode | ((context: ArticleEditorContext) => ReactNode) | undefined
   onViewChange?: ((view: EditorView | null) => void) | undefined
   syncStatus?: SyncState | undefined
+  syncedAt?: number | undefined
   syncError?: string | undefined
   requiresAuthentication?: boolean | undefined
   onLoginAgain?: (() => void) | undefined
@@ -141,6 +142,7 @@ export function ArticleEditorView({
   sourcesPanel,
   onViewChange,
   syncStatus,
+  syncedAt,
   syncError,
   requiresAuthentication = false,
   onLoginAgain,
@@ -467,7 +469,11 @@ export function ArticleEditorView({
           </div>
         </Tabs>
         {!isMobile ? (
-          <EditorStatusBar syncStatus={syncStatus} />
+          <EditorStatusBarContainer
+            doc={doc}
+            syncStatus={syncStatus}
+            syncedAt={syncedAt}
+          />
         ) : selectedPanel === 'body' && context && view ? (
           <ArticleEditorMobileToolbar
             history={context.history}

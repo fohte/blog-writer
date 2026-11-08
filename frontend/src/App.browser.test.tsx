@@ -174,6 +174,7 @@ async function renderApp(articleDoc = doc) {
     updateArticleExportSettings: () => ok(undefined),
     listArticles: () => [article],
     getStatus: () => 'synced' as const,
+    getSyncedAt: () => undefined,
     getError: () => undefined,
     requiresAuthentication: () => false,
     subscribe: () => () => {},

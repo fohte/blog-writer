@@ -8,6 +8,12 @@ export function readBody(doc: Y.Doc): string {
   return getBody(doc).toJSON()
 }
 
+const graphemes = new Intl.Segmenter('ja-JP', { granularity: 'grapheme' })
+
+export function countBodyCharacters(markdown: string): number {
+  return Array.from(graphemes.segment(markdown.replace(/[\r\n]/gu, ''))).length
+}
+
 export function setBody(doc: Y.Doc, value: string): void {
   const body = getBody(doc)
 
