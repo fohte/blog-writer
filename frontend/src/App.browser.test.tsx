@@ -1232,8 +1232,20 @@ describe('the application research and evidence integrations', () => {
     const readResult = () => ({
       body: getBody(doc).toJSON(),
       cardProposals: document.querySelectorAll('[aria-label="修正案"]').length,
+      evidence: listEvidence(doc).map(({ quote, verdict }) => ({
+        quote,
+        verdict,
+      })),
+      markers: [...(host?.querySelectorAll('.cm-evidence-marker') ?? [])].map(
+        ({ className }) => className,
+      ),
     })
-    expect(readResult()).toEqual({ body, cardProposals: 0 })
+    expect(readResult()).toEqual({
+      body,
+      cardProposals: 0,
+      evidence: [{ quote: 'A current source quote.', verdict: 'outdated' }],
+      markers: ['cm-evidence-marker cm-evidence-needs-review'],
+    })
   })
 
   it('updates existing evidence when checking a claim again', async () => {
