@@ -1,7 +1,7 @@
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import type { ResultAsync } from 'neverthrow'
 
-export type ArticleImageUploadError = { message: string }
+type ArticleImageUploadError = { message: string }
 
 export type ArticleImageUploader = (
   file: File,

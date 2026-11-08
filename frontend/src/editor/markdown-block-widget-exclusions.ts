@@ -21,6 +21,17 @@ export function collectBlockWidgetExclusions(
     .flatMap((provide) => provide(state))
 }
 
+export function isBlockWidgetExcluded(
+  range: BlockWidgetExclusionRange,
+  exclusions: readonly BlockWidgetExclusionRange[],
+): boolean {
+  return exclusions.some((excluded) =>
+    excluded.from === excluded.to
+      ? excluded.from >= range.from && excluded.from <= range.to
+      : excluded.from < range.to && excluded.to > range.from,
+  )
+}
+
 export function equalBlockWidgetExclusionRanges(
   first: readonly BlockWidgetExclusionRange[],
   second: readonly BlockWidgetExclusionRange[],

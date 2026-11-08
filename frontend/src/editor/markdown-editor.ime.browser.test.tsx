@@ -409,33 +409,43 @@ describe('MarkdownEditor IME', () => {
     { side: 'after', target: 'after' },
   ])('preserves Japanese input $side of a block widget', async ({ target }) => {
     const image =
-      "![Sample](data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E)"
+      "![Sample](data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='1'%20height='1'%3E%3C/svg%3E)"
     const initial = `before\n${image}\nafter`
     const position =
       target === 'before' ? 'before'.length : initial.indexOf('after')
     const { body, content } = mountMarkdownEditor(initial, [], undefined, {
       initialSelection: { anchor: position },
     })
+    const initialPreviewCount = content?.querySelectorAll('figure').length ?? 0
+    const initialSourceLineCount = [
+      ...(content?.querySelectorAll<HTMLElement>('.cm-line') ?? []),
+    ].filter((line) => line.textContent === image).length
     content?.focus()
     const composition = await compose(body, content, '日本語')
 
     const readOutput = () => ({
       during: composition.duringComposition.body,
       committed: composition.committed.body,
+      initialPreviewCount,
+      initialSourceLineCount,
+      finalPreviewCount: content?.querySelectorAll('figure').length ?? 0,
+      finalSourceLineCount: [
+        ...(content?.querySelectorAll<HTMLElement>('.cm-line') ?? []),
+      ].filter((line) => line.textContent === image).length,
     })
     expect(readOutput()).toEqual({
-      during: {
-        body:
-          target === 'before'
-            ? `before日本語\n${image}\nafter`
-            : `before\n${image}\n日本語after`,
-      },
-      committed: {
-        body:
-          target === 'before'
-            ? `before日本語\n${image}\nafter`
-            : `before\n${image}\n日本語after`,
-      },
+      during:
+        target === 'before'
+          ? `before日本語\n${image}\nafter`
+          : `before\n${image}\n日本語after`,
+      committed:
+        target === 'before'
+          ? `before日本語\n${image}\nafter`
+          : `before\n${image}\n日本語after`,
+      initialPreviewCount: 1,
+      initialSourceLineCount: 0,
+      finalPreviewCount: 1,
+      finalSourceLineCount: 0,
     })
   })
 

@@ -29,7 +29,6 @@ class BlockDragHandle extends WidgetType {
 
   override eq(other: BlockDragHandle): boolean {
     return (
-      this.from === other.from &&
       this.history === other.history &&
       this.view === other.view &&
       this.composingViews === other.composingViews
@@ -77,7 +76,7 @@ function createDecorations(
       Decoration.widget({
         widget: new BlockDragHandle(from, history, view, composingViews),
         side: -1,
-      }).range(from),
+      }).range(Math.max(0, from - 1)),
     ),
   )
 }

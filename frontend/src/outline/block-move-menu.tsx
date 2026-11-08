@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { BlockMoveMenu } from '#components/block-move-menu'
 import { blockMoveActions } from '#outline/block-move-actions'
+import { blockStarts } from '#outline/block-ranges'
 import type { MoveHistory } from '#outline/move-history'
 
 export function mountBlockMoveMenu({
@@ -26,8 +27,13 @@ export function mountBlockMoveMenu({
   const anchor: RefObject<HTMLButtonElement | null> = { current: button }
   let root: Root | undefined
   let menuOpen = false
-  const currentFrom = () =>
-    view.contentDOM.contains(button) ? view.posAtDOM(button) : undefined
+  const currentFrom = () => {
+    if (!view.contentDOM.contains(button)) return undefined
+    const position = view.posAtDOM(button)
+    return blockStarts(view.state).find(
+      (blockFrom) => blockFrom === position || blockFrom - 1 === position,
+    )
+  }
   const actions = () =>
     blockMoveActions(view, currentFrom() ?? from, currentFrom)
   const renderMenu = (open: boolean, sync = false) => {
@@ -68,7 +74,7 @@ export function mountBlockMoveMenu({
   button.addEventListener('mousedown', handleMouseDown)
   const cleanupDraggable = draggable({
     element: button,
-    getInitialData: () => ({ kind: 'block', from }),
+    getInitialData: () => ({ kind: 'block', from: currentFrom() ?? from }),
   })
 
   return () => {

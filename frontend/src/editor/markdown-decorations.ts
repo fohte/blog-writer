@@ -8,6 +8,12 @@ import {
   type ViewUpdate,
 } from '@codemirror/view'
 
+import {
+  collectBlockWidgetExclusions,
+  isBlockWidgetExcluded,
+  refreshBlockWidgetExclusions,
+} from '#editor/markdown-block-widget-exclusions'
+
 const refreshDecorations = StateEffect.define()
 
 function selectionTouches(
@@ -39,13 +45,32 @@ function isAtxHeading(name: string | undefined): boolean {
   return name !== undefined && /^ATXHeading[1-6]$/u.test(name)
 }
 
+type SyntaxNodeLike = {
+  from: number
+  name: string
+  parent: SyntaxNodeLike | null
+  to: number
+}
+
+function imageAncestor(node: SyntaxNodeLike): SyntaxNodeLike | null {
+  for (
+    let current: SyntaxNodeLike | null = node;
+    current;
+    current = current.parent
+  )
+    if (current.name === 'Image') return current
+  return null
+}
+
 function shouldHideMark(
   state: EditorState,
   name: string,
   from: number,
   to: number,
   parent: { name: string; from: number; to: number } | null,
+  excludedImage: boolean,
 ): boolean {
+  if (excludedImage) return false
   if (selectionTouches(state, from, to)) return false
 
   switch (name) {
@@ -71,8 +96,13 @@ function shouldHideMark(
 function buildDecorations(state: EditorState): DecorationSet {
   const decorations = []
   const cursor = syntaxTree(state).cursor()
+  const exclusions = collectBlockWidgetExclusions(state)
 
   while (cursor.next()) {
+    const image = imageAncestor(cursor.node)
+    const excludedImage =
+      image !== null && isBlockWidgetExcluded(image, exclusions)
+
     if (isAtxHeading(cursor.name)) {
       const level = Number(cursor.name.slice('ATXHeading'.length))
       const line = state.doc.lineAt(cursor.from)
@@ -83,7 +113,7 @@ function buildDecorations(state: EditorState): DecorationSet {
       )
     }
 
-    if (cursor.name === 'Link') {
+    if (cursor.name === 'Link' && !excludedImage) {
       let destinationFrom: number | undefined
       let destinationTo: number | undefined
       for (
@@ -119,6 +149,7 @@ function buildDecorations(state: EditorState): DecorationSet {
         cursor.from,
         cursor.to,
         cursor.node.parent,
+        excludedImage,
       )
     ) {
       const to =
@@ -194,7 +225,11 @@ class MarkdownDecorationPlugin {
       !update.docChanged &&
       !update.selectionSet &&
       !update.transactions.some((transaction) =>
-        transaction.effects.some((effect) => effect.is(refreshDecorations)),
+        transaction.effects.some(
+          (effect) =>
+            effect.is(refreshDecorations) ||
+            effect.is(refreshBlockWidgetExclusions),
+        ),
       )
     )
       return

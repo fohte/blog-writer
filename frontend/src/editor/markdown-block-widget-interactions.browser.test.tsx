@@ -17,6 +17,20 @@ const imageSource =
   '![Sample](https://assets.example.test/images/sample.webp?w=640&h=360)'
 const clickableImageSource = imageSource
 const mermaidSource = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
+const localImageSource =
+  "![Sample](data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='1'%20height='1'%3E%3C/svg%3E)"
+const linkTableSource = [
+  '| Feature | Guide |',
+  '| --- | --- |',
+  '| Links | [Open](https://assets.example.test/guide) |',
+].join('\n')
+
+function hasEditorSource(content: HTMLElement, source: string): boolean {
+  const visibleText = [...content.querySelectorAll<HTMLElement>('.cm-line')]
+    .map((line) => line.textContent)
+    .join('')
+  return visibleText.includes(source.replaceAll('\n', ''))
+}
 
 describe('Markdown block widget interactions', () => {
   it.each([
@@ -68,6 +82,146 @@ describe('Markdown block widget interactions', () => {
       })
     },
   )
+
+  it('keeps a table link clickable without opening the Markdown source', async () => {
+    const source = `before\n\n${linkTableSource}\n\nafter`
+    const { body, content } = mountMarkdownEditor(source)
+    const anchor = content?.querySelector<HTMLAnchorElement>('table a')
+    if (!content || !anchor) throw new Error('The table link did not mount')
+    let clicked = false
+    anchor.addEventListener('click', (event) => {
+      clicked = true
+      event.preventDefault()
+    })
+
+    await act(async () => {
+      await userEvent.click(anchor)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      clicked,
+      href: anchor.getAttribute('href'),
+      renderedTableCount: content.querySelectorAll('table').length,
+      sourceVisible: hasEditorSource(content, '| Feature | Guide |'),
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      clicked: true,
+      href: 'https://assets.example.test/guide',
+      renderedTableCount: 1,
+      sourceVisible: false,
+    })
+  })
+
+  it('keeps a touch scroll on a table preview and enters only on tap', () => {
+    const source = `before\n\n${tableSource}\n\nafter`
+    const from = source.indexOf(tableSource)
+    const to = from + tableSource.length
+    const { body, content } = mountMarkdownEditor(source)
+    const view = content ? EditorView.findFromDOM(content) : null
+    const table = content?.querySelector('table')
+    if (!view || !content || !table)
+      throw new Error('The table preview did not mount')
+
+    act(() => {
+      table.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 1,
+          pointerType: 'touch',
+          button: 0,
+        }),
+      )
+      table.dispatchEvent(
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          pointerId: 1,
+          pointerType: 'touch',
+          button: -1,
+          clientY: 40,
+        }),
+      )
+      table.dispatchEvent(
+        new PointerEvent('pointercancel', {
+          bubbles: true,
+          pointerId: 1,
+          pointerType: 'touch',
+          button: -1,
+        }),
+      )
+    })
+    const afterScroll = {
+      body: body.toJSON(),
+      cursorInsideTable:
+        view.state.selection.main.head >= from &&
+        view.state.selection.main.head <= to,
+      renderedTableCount: content.querySelectorAll('table').length,
+      sourceVisible: hasEditorSource(content, tableSource),
+    }
+
+    act(() => {
+      table.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 2,
+          pointerType: 'touch',
+          button: 0,
+        }),
+      )
+      table.dispatchEvent(
+        new MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+        }),
+      )
+      table.dispatchEvent(
+        new PointerEvent('pointerup', {
+          bubbles: true,
+          pointerId: 2,
+          pointerType: 'touch',
+          button: 0,
+        }),
+      )
+      table.dispatchEvent(
+        new MouseEvent('mouseup', { bubbles: true, button: 0 }),
+      )
+      table.dispatchEvent(
+        new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+        }),
+      )
+    })
+
+    const afterTap = {
+      body: body.toJSON(),
+      cursorInsideTable:
+        view.state.selection.main.head >= from &&
+        view.state.selection.main.head <= to,
+      renderedTableCount: content.querySelectorAll('table').length,
+      sourceVisible: hasEditorSource(content, tableSource),
+    }
+    const readOutput = () => ({ afterScroll, afterTap })
+    expect(readOutput()).toEqual({
+      afterScroll: {
+        body: source,
+        cursorInsideTable: false,
+        renderedTableCount: 1,
+        sourceVisible: false,
+      },
+      afterTap: {
+        body: source,
+        cursorInsideTable: true,
+        renderedTableCount: 0,
+        sourceVisible: true,
+      },
+    })
+  })
 
   it.each([
     {
@@ -261,69 +415,118 @@ describe('Markdown block widget interactions', () => {
     })
   })
 
-  it('preserves a rendered Mermaid diagram when text above it changes', async () => {
-    const source = `before\n\n${mermaidSource}\n\nafter`
-    const { body, content } = mountMarkdownEditor(source)
+  it('preserves block previews when text above them changes with move handles enabled', async () => {
+    const source = [
+      'top',
+      '',
+      tableSource,
+      '',
+      mermaidSource,
+      '',
+      tableSource,
+      '',
+      localImageSource,
+      '',
+      'end',
+    ].join('\n')
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      initialSelection: { anchor: 'top'.length },
+      showMoveHandles: true,
+    })
     const view = content ? EditorView.findFromDOM(content) : null
     if (!view || !content) throw new Error('The Markdown editor did not mount')
     const toDOM = vi.spyOn(DomWidget.prototype, 'toDOM')
     await act(async () => {
-      await vi.waitUntil(() => content.querySelector('svg') !== null)
+      await vi.waitUntil(
+        () =>
+          content.querySelector('svg') !== null &&
+          content.querySelectorAll('table').length === 2 &&
+          content.querySelector('figure img') !== null,
+      )
     })
     const initialRenderCount = toDOM.mock.calls.length
+    const initialSvg = content.querySelector('svg')
+    const initialHandles = [
+      ...content.querySelectorAll('.cm-block-drag-handle'),
+    ]
 
     try {
       act(() => {
         view.dispatch({
-          changes: { from: 'before'.length, insert: ' updated' },
+          changes: { from: 'top'.length, insert: ' updated' },
         })
       })
 
       const readOutput = () => ({
         body: body.toJSON(),
         diagramCount: content.querySelectorAll('svg').length,
+        previewCount: content.querySelectorAll('table, figure').length,
+        handleCount: content.querySelectorAll('.cm-block-drag-handle').length,
+        handlesReused: initialHandles.every(
+          (handle, index) =>
+            content.querySelectorAll('.cm-block-drag-handle')[index] === handle,
+        ),
         renderCount: toDOM.mock.calls.length,
+        svgReused: content.querySelector('svg') === initialSvg,
       })
       expect(readOutput()).toEqual({
-        body: `before updated\n\n${mermaidSource}\n\nafter`,
+        body: source.replace('top', 'top updated'),
         diagramCount: 1,
+        previewCount: 4,
+        handleCount: 6,
+        handlesReused: true,
         renderCount: initialRenderCount,
+        svgReused: true,
       })
     } finally {
       toDOM.mockRestore()
     }
   })
 
-  it('keeps an evidence marker visible over a table instead of replacing its source', () => {
-    const source = `before\n\n${tableSource}\n\nafter`
-    const from = source.indexOf(tableSource)
-    const { body, content } = mountMarkdownEditor(source, [], undefined, {
-      prepareDoc: (doc) => {
-        addEvidence(doc, {
-          id: 'evidence-table',
-          from,
-          to: from + tableSource.length,
-          claim: tableSource,
-          sourceId: null,
-          quote: 'The table provides supporting values.',
-          verdict: 'supported',
-          checkedAt: '2026-02-01T00:00:00.000Z',
-        })._unsafeUnwrap()
-      },
-    })
+  it.each([
+    { block: 'table', markdown: tableSource, previewSelector: 'table' },
+    { block: 'image', markdown: imageSource, previewSelector: 'figure' },
+    {
+      block: 'Mermaid diagram',
+      markdown: mermaidSource,
+      previewSelector: 'figure',
+    },
+  ])(
+    'keeps an evidence marker visible over a $block instead of replacing its source',
+    ({ block, markdown, previewSelector }) => {
+      const source = `before\n\n${markdown}\n\nafter`
+      const from = source.indexOf(markdown)
+      const { body, content } = mountMarkdownEditor(source, [], undefined, {
+        prepareDoc: (doc) => {
+          addEvidence(doc, {
+            id: `evidence-${block}`,
+            from,
+            to: from + markdown.length,
+            claim: markdown,
+            sourceId: null,
+            quote: 'The block provides supporting information.',
+            verdict: 'supported',
+            checkedAt: '2026-02-01T00:00:00.000Z',
+          })._unsafeUnwrap()
+        },
+      })
+      if (!content) throw new Error('The Markdown editor did not mount')
 
-    const readOutput = () => ({
-      body: body.toJSON(),
-      evidenceMarker:
-        content?.querySelector('.cm-evidence-marker')?.textContent ?? null,
-      renderedTableCount: content?.querySelectorAll('table').length ?? 0,
-    })
-    expect(readOutput()).toEqual({
-      body: source,
-      evidenceMarker: '[?]',
-      renderedTableCount: 0,
-    })
-  })
+      const readOutput = () => ({
+        body: body.toJSON(),
+        evidenceMarker:
+          content.querySelector('.cm-evidence-marker')?.textContent ?? null,
+        sourceVisible: hasEditorSource(content, markdown),
+        renderedPreviewCount: content.querySelectorAll(previewSelector).length,
+      })
+      expect(readOutput()).toEqual({
+        body: source,
+        evidenceMarker: '[?]',
+        sourceVisible: true,
+        renderedPreviewCount: 0,
+      })
+    },
+  )
 
   it('keeps move handles on rendered blocks and moves a table from its menu', async () => {
     const source = [
@@ -385,54 +588,67 @@ describe('Markdown block widget interactions', () => {
     })
   })
 
-  it('keeps suggestion markers and focused diffs visible over a table', () => {
-    const source = `before\n\n${tableSource}\n\nafter`
-    const from = source.indexOf(tableSource)
-    const layer = new SuggestionLayerController({
-      initialSuggestions: [
-        {
-          id: 'table-suggestion',
-          from,
-          to: from + tableSource.length,
-          replacement: 'A revised table.',
+  it.each([
+    { block: 'table', markdown: tableSource, previewSelector: 'table' },
+    { block: 'image', markdown: imageSource, previewSelector: 'figure' },
+    {
+      block: 'Mermaid diagram',
+      markdown: mermaidSource,
+      previewSelector: 'figure',
+    },
+  ])(
+    'keeps suggestion markers and focused diffs visible over a $block',
+    ({ block, markdown, previewSelector }) => {
+      const source = `before\n\n${markdown}\n\nafter`
+      const from = source.indexOf(markdown)
+      const suggestionId = `${block}-suggestion`
+      const layer = new SuggestionLayerController({
+        initialSuggestions: [
+          {
+            id: suggestionId,
+            from,
+            to: from + markdown.length,
+            replacement: 'A revised block.',
+          },
+        ],
+      })
+      const { body, content } = mountMarkdownEditor(
+        source,
+        [layer.extension],
+        undefined,
+        { initialSelection: { anchor: 0 } },
+      )
+      if (!content) throw new Error('The Markdown editor did not mount')
+      const unfocused = {
+        body: body.toJSON(),
+        marker:
+          content.querySelector('.cm-suggestion-marker')?.textContent ?? null,
+        renderedPreviewCount: content.querySelectorAll(previewSelector).length,
+      }
+
+      act(() => {
+        layer.focus(suggestionId)
+      })
+
+      const focused = {
+        body: body.toJSON(),
+        diff:
+          content.querySelector('.suggestion-diff-text')?.textContent ?? null,
+        renderedPreviewCount: content.querySelectorAll(previewSelector).length,
+      }
+      const readOutput = () => ({ unfocused, focused })
+      expect(readOutput()).toEqual({
+        unfocused: {
+          body: source,
+          marker: '提案',
+          renderedPreviewCount: 0,
         },
-      ],
-    })
-    const { body, content } = mountMarkdownEditor(
-      source,
-      [layer.extension],
-      undefined,
-      { initialSelection: { anchor: 0 } },
-    )
-    if (!content) throw new Error('The Markdown editor did not mount')
-    const unfocused = {
-      body: body.toJSON(),
-      marker:
-        content.querySelector('.cm-suggestion-marker')?.textContent ?? null,
-      renderedTableCount: content.querySelectorAll('table').length,
-    }
-
-    act(() => {
-      layer.focus('table-suggestion')
-    })
-
-    const focused = {
-      body: body.toJSON(),
-      diff: content.querySelector('.suggestion-diff-text')?.textContent ?? null,
-      renderedTableCount: content.querySelectorAll('table').length,
-    }
-    const readOutput = () => ({ unfocused, focused })
-    expect(readOutput()).toEqual({
-      unfocused: {
-        body: source,
-        marker: '提案',
-        renderedTableCount: 0,
-      },
-      focused: {
-        body: source,
-        diff: tableSource + 'A revised table.',
-        renderedTableCount: 0,
-      },
-    })
-  })
+        focused: {
+          body: source,
+          diff: markdown + 'A revised block.',
+          renderedPreviewCount: 0,
+        },
+      })
+    },
+  )
 })

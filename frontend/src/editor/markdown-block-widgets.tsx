@@ -24,6 +24,7 @@ import {
   type BlockWidgetExclusionRange,
   collectBlockWidgetExclusions,
   equalBlockWidgetExclusionRanges,
+  isBlockWidgetExcluded,
   refreshBlockWidgetExclusions,
 } from '#editor/markdown-block-widget-exclusions'
 
@@ -52,22 +53,6 @@ function selectionTouches(
   )
 }
 
-function overlapsRange(
-  range: BlockSourceRange,
-  excluded: BlockWidgetExclusionRange,
-): boolean {
-  return excluded.from === excluded.to
-    ? excluded.from >= range.from && excluded.from <= range.to
-    : excluded.from < range.to && excluded.to > range.from
-}
-
-function isExcludedBlock(
-  range: BlockSourceRange,
-  exclusions: readonly BlockWidgetExclusionRange[],
-): boolean {
-  return exclusions.some((excluded) => overlapsRange(range, excluded))
-}
-
 function mapRanges(
   ranges: readonly BlockSourceRange[],
   changes: Parameters<DecorationSet['map']>[0],
@@ -84,8 +69,7 @@ function createBlockWidget(
 ): DomWidget {
   return new DomWidget((view) => {
     const element = createElement(view)
-    element.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) return
+    const enterSource = (event: Event) => {
       const target = event.target
       if (target instanceof Element && target.closest('a')) {
         event.stopPropagation()
@@ -103,7 +87,11 @@ function createBlockWidget(
         selection: { anchor: Math.min(from + 1, to) },
         scrollIntoView: true,
       })
+    }
+    element.addEventListener('mousedown', (event) => {
+      event.stopPropagation()
     })
+    element.addEventListener('click', enterSource)
     return element
   }, identity)
 }
@@ -235,7 +223,7 @@ function buildBlockWidgetDecorations(
       if (
         table &&
         !selectionTouches(state, range.from, range.to) &&
-        !isExcludedBlock(range, exclusions)
+        !isBlockWidgetExcluded(range, exclusions)
       ) {
         const source = state.doc.sliceString(range.from, range.to)
         const widget = createBlockWidget(
@@ -246,8 +234,6 @@ function buildBlockWidgetDecorations(
           Decoration.replace({
             widget,
             block: true,
-            inclusiveStart: false,
-            inclusiveEnd: false,
           }).range(range.from, range.to),
         )
         ranges.push(range)
@@ -258,7 +244,8 @@ function buildBlockWidgetDecorations(
       const image = imageData(state, cursor.node)
       if (image) {
         const range = { from: image.from, to: image.lineTo }
-        const excluded = isExcludedBlock(range, exclusions)
+        const excluded = isBlockWidgetExcluded(range, exclusions)
+        if (excluded) continue
         const widget = createBlockWidget(
           () =>
             createMarkdownImagePreview({
@@ -269,7 +256,6 @@ function buildBlockWidgetDecorations(
           'image:' + image.source,
         )
         if (selectionTouches(state, range.from, range.to)) {
-          if (excluded) continue
           decorations.push(
             Decoration.widget({ widget, block: true, side: 1 }).range(
               image.lineTo,
@@ -280,8 +266,6 @@ function buildBlockWidgetDecorations(
             Decoration.replace({
               widget,
               block: true,
-              inclusiveStart: false,
-              inclusiveEnd: false,
             }).range(image.from, image.lineTo),
           )
           ranges.push(range)
@@ -305,14 +289,14 @@ function buildBlockWidgetDecorations(
           .sliceString(codeText.from, codeText.to)
           .trimEnd()
         const range = { from: cursor.from, to: cursor.to }
-        const excluded = isExcludedBlock(range, exclusions)
+        const excluded = isBlockWidgetExcluded(range, exclusions)
+        if (excluded) continue
         const diagramId = 'markdown-mermaid-' + String(nextMermaidWidgetId++)
         const widget = createBlockWidget(
           () => createMermaidPreviewElement({ id: diagramId, source }),
           'mermaid:' + source,
         )
         if (selectionTouches(state, range.from, range.to)) {
-          if (excluded) continue
           decorations.push(
             Decoration.widget({ widget, block: true, side: 1 }).range(
               cursor.to,
@@ -323,8 +307,6 @@ function buildBlockWidgetDecorations(
             Decoration.replace({
               widget,
               block: true,
-              inclusiveStart: false,
-              inclusiveEnd: false,
             }).range(cursor.from, cursor.to),
           )
           ranges.push(range)

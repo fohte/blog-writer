@@ -15,6 +15,8 @@ const tableSource = [
 ].join('\n')
 const imageUrl = 'https://assets.example.test/images/sample.webp?w=640&h=360'
 const imageSource = `![Sample](${imageUrl})`
+const localImageSource =
+  "![Sample](data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='1'%20height='1'%3E%3C/svg%3E)"
 const mermaidSource = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
 
 function readTableRows(content: HTMLElement | null) {
@@ -72,6 +74,41 @@ function dispatchFileDrop(content: HTMLElement | null, file: File): DragEvent {
 }
 
 describe('Markdown block previews', () => {
+  it('does not add empty editor lines around rendered block previews', () => {
+    const source = [
+      'Before',
+      '',
+      tableSource,
+      '',
+      localImageSource,
+      '',
+      'After',
+    ].join('\n')
+    const { body, content } = mountMarkdownEditor(source)
+
+    const readOutput = () => {
+      const lines = [
+        ...(content?.querySelectorAll<HTMLElement>('.cm-line') ?? []),
+      ].map((line) => line.textContent)
+      return {
+        body: body.toJSON(),
+        emptyLineCount: lines.filter((line) => line === '').length,
+        lineCount: lines.length,
+        previewCount: content?.querySelectorAll('table, figure').length ?? 0,
+        renderedRowCount:
+          lines.length +
+          (content?.querySelectorAll('table, figure').length ?? 0),
+      }
+    }
+    expect(readOutput()).toEqual({
+      body: source,
+      emptyLineCount: 3,
+      lineCount: 5,
+      previewCount: 2,
+      renderedRowCount: 7,
+    })
+  })
+
   it('draws a GFM table outside the block and restores its exact source inside', () => {
     const source = `before\n\n${tableSource}\n\nafter`
     const { body, content } = mountMarkdownEditor(source)
