@@ -365,6 +365,10 @@ export class SuggestionLayerController<Metadata = unknown> {
     return ok(undefined)
   }
 
+  getSuggestions(): readonly TextSuggestion<Metadata>[] {
+    return this.view?.state.field(this.stateField, false)?.suggestions ?? []
+  }
+
   getInFlight(): InFlightSuggestion | null {
     const view = this.view
     return view?.state.field(this.stateField, false)?.inFlight ?? null

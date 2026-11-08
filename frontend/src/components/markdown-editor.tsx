@@ -29,8 +29,14 @@ import { evidenceDecorations } from '#editor/evidence-decorations'
 import { evidenceDrop } from '#editor/evidence-drop'
 import { markdownDecorations } from '#editor/markdown-decorations'
 import { replaceBody } from '#editor/replace-body'
+import type { SuggestionDecision } from '#editor/suggestion-layer'
 import { editorTheme, markdownHighlightStyle } from '#editor/theme'
 import type { MoveHistory } from '#outline/move-history'
+import {
+  decideClaimEvidenceSuggestion,
+  findClaimEvidenceSuggestion,
+  observeClaimEvidenceSuggestions,
+} from '#research/claim-evidence-layer'
 
 export interface MarkdownEditorHandle {
   replaceBody(value: string): void
@@ -240,11 +246,13 @@ export const MarkdownEditor = forwardRef<
       })
     }
     const unobserve = observeEvidence(doc, refresh)
+    const unobserveSuggestions = observeClaimEvidenceSuggestions(doc, refresh)
     const body = getBody(doc)
     body.observe(refresh)
     return () => {
       observing = false
       unobserve()
+      unobserveSuggestions()
       body.unobserve(refresh)
     }
   }, [activeEvidenceId, text])
@@ -260,8 +268,21 @@ export const MarkdownEditor = forwardRef<
         ? null
         : listSources(text.doc).find((item) => item.id === evidence.sourceId)
     if (evidence.sourceId !== null && !source) return undefined
-    return { evidence, source: source ?? null }
+    return {
+      evidence,
+      source: source ?? null,
+      suggestion: findClaimEvidenceSuggestion(text.doc, evidence.id),
+    }
   }, [activeEvidenceId, evidenceVersion, text])
+
+  const decideSuggestion = (decision: SuggestionDecision) => {
+    if (text.doc && activeEvidence?.suggestion)
+      decideClaimEvidenceSuggestion(
+        text.doc,
+        activeEvidence.suggestion.id,
+        decision,
+      )
+  }
 
   return (
     <>
@@ -282,6 +303,25 @@ export const MarkdownEditor = forwardRef<
               verdict={activeEvidence.evidence.verdict}
               checkedAt={activeEvidence.evidence.checkedAt}
               edited={activeEvidence.evidence.edited}
+              suggestion={
+                activeEvidence.suggestion
+                  ? {
+                      original: text
+                        .toJSON()
+                        .slice(
+                          activeEvidence.suggestion.from,
+                          activeEvidence.suggestion.to,
+                        ),
+                      replacement: activeEvidence.suggestion.replacement,
+                      onAccept: () => {
+                        decideSuggestion('accept')
+                      },
+                      onReject: () => {
+                        decideSuggestion('reject')
+                      },
+                    }
+                  : undefined
+              }
               onRemove={() => {
                 if (!text.doc) return
                 removeEvidence(text.doc, activeEvidence.evidence.id)
