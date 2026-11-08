@@ -1720,7 +1720,7 @@ export interface operations {
     }
     requestBody?: never
     responses: {
-      /** @description Newest pull request of each article published to the destination */
+      /** @description Newest pull request of each article, among the 100 newest pull requests of the destination */
       200: {
         headers: {
           [name: string]: unknown

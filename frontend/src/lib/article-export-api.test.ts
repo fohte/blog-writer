@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { getArticlePulls, getExportDestinations } from '#lib/article-export-api'
 
@@ -36,6 +36,20 @@ describe('getArticlePulls', () => {
     state: 'open',
     url: 'https://github.com/example/site/pull/14',
   }
+
+  it('requests the pull requests of the given destination', async () => {
+    const fetcher = vi.fn<typeof fetch>(() =>
+      Promise.resolve(Response.json({ pulls: [] })),
+    )
+    await getArticlePulls(fetcher, 'sample/site').match(
+      () => undefined,
+      () => undefined,
+    )
+
+    expect(fetcher.mock.calls).toEqual([
+      ['/api/export/sample%2Fsite/pulls', {}],
+    ])
+  })
 
   it('accepts the pull requests of a destination', async () => {
     const actual = await readPulls({ pulls: [pull] })

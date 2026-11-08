@@ -94,7 +94,7 @@ pub async fn list_destinations(
         ("destination_id" = String, Path, description = "Configured export destination ID")
     ),
     responses(
-        (status = 200, description = "Newest pull request of each article published to the destination", body = ArticlePullListResponse),
+        (status = 200, description = "Newest pull request of each article, among the 100 newest pull requests of the destination", body = ArticlePullListResponse),
         (status = 404, description = "Destination not found", body = ErrorResponse),
         (status = 503, description = "Export publishing is not configured", body = ErrorResponse)
     )

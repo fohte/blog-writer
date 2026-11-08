@@ -39,7 +39,7 @@ struct PullHead {
 }
 
 impl ExportService {
-    /// Returns the newest pull request of each article, newest first.
+    /// Returns the newest pull request of each article among the 100 newest of the repository.
     pub async fn list_article_pulls(
         &self,
         destination: &ExportDestination,

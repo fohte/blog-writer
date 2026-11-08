@@ -34,6 +34,7 @@ function Probe() {
           read('site-one', 'article-a')?.number,
           read('site-two', 'article-a')?.number,
           read(undefined, 'article-a')?.number,
+          read('constructor', 'article-a')?.number,
         ].join(',')}
       </output>
       <button onClick={reload} type="button" />
@@ -86,7 +87,7 @@ describe('useArticlePulls', () => {
   it('finds the pull request of an article in its own destination only', async () => {
     await resolveRead(0, [pull(14)])
 
-    expect(host.querySelector('output')?.textContent).toBe('14,,')
+    expect(host.querySelector('output')?.textContent).toBe('14,,,')
   })
 
   it('ignores a read that finishes after a newer reload', async () => {
@@ -96,6 +97,6 @@ describe('useArticlePulls', () => {
     await resolveRead(1, [pull(15)])
     await resolveRead(0, [pull(14)])
 
-    expect(host.querySelector('output')?.textContent).toBe('15,,')
+    expect(host.querySelector('output')?.textContent).toBe('15,,,')
   })
 })

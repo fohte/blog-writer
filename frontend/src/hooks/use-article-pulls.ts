@@ -17,7 +17,9 @@ export type ArticlePulls = {
 export function useArticlePulls(
   destinations: ExportDestination[] | undefined,
 ): ArticlePulls {
-  const [pulls, setPulls] = useState<Record<string, ArticlePull[]>>({})
+  const [pulls, setPulls] = useState<ReadonlyMap<string, ArticlePull[]>>(
+    new Map(),
+  )
   const latestReload = useRef(0)
 
   const reload = useCallback(() => {
@@ -28,10 +30,12 @@ export function useArticlePulls(
         ({ pulls: destinationPulls }) => {
           // A read from before a publish must not overwrite the one after it.
           if (latestReload.current !== currentReload) return
-          setPulls((previous) => ({ ...previous, [id]: destinationPulls }))
+          setPulls((previous) => new Map(previous).set(id, destinationPulls))
         },
         // Publishing works without the status, so a failed read only leaves it out.
-        () => {},
+        (loadError) => {
+          console.warn('Pull request status request failed', loadError)
+        },
       )
     }
   }, [destinations])
@@ -42,9 +46,9 @@ export function useArticlePulls(
     read: (destinationId, articleId) =>
       destinationId === undefined
         ? undefined
-        : pulls[destinationId]?.find(
-            ({ article_id }) => article_id === articleId,
-          ),
+        : pulls
+            .get(destinationId)
+            ?.find(({ article_id }) => article_id === articleId),
     reload,
   }
 }
