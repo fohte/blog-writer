@@ -101,11 +101,26 @@ export function createBlockWidget(
         cleanupByElement.delete(element)
       },
       equalityKey,
-      shouldIgnoreEvent: (event) =>
-        event.target instanceof Element &&
-        event.target.closest(
+      shouldIgnoreEvent: (event) => {
+        if (
+          event.type === 'drop' &&
+          event instanceof DragEvent &&
+          (event.dataTransfer?.files.length ?? 0) > 0
+        ) {
+          return false
+        }
+        if (!(event.target instanceof Element)) return false
+
+        const widget = event.target.closest('.cm-markdown-block-widget')
+        const interactive = event.target.closest(
           'a, button, input, select, textarea, [tabindex], .cm-markdown-block-widget-handle',
-        ) !== null,
+        )
+        return (
+          widget !== null &&
+          interactive !== null &&
+          widget.contains(interactive)
+        )
+      },
       updateElement: attachDecorators ? refreshDecorators : undefined,
     },
   )

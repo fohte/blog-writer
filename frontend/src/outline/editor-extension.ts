@@ -24,10 +24,10 @@ const refreshBlockHandles = StateEffect.define()
 const blockHandleCleanups = new WeakMap<HTMLElement, () => void>()
 const blockStartsByView = new WeakMap<
   EditorView,
-  { doc: Text; from: number; to: number; starts: number[] }
+  { doc: Text; from: number; to: number; starts: readonly number[] }
 >()
 
-function getVisibleBlockStarts(view: EditorView): number[] {
+function getVisibleBlockStarts(view: EditorView): readonly number[] {
   const { from, to } = view.viewport
   const cached = blockStartsByView.get(view)
   if (
@@ -121,6 +121,7 @@ function attachWidgetHandle(
     host,
     history,
     positionDOM: element,
+    sourceFrom,
     view,
   })
   return () => {

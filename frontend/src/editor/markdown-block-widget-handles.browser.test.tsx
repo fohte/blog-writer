@@ -1,3 +1,4 @@
+import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { act } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -17,6 +18,34 @@ const imageSource =
 const mermaidSource = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
 
 describe('Markdown block widget handles', () => {
+  it('reuses block starts for editor states that share a document', () => {
+    const source = Array.from(
+      { length: 199 },
+      (_, index) => `Paragraph ${String(index)}.`,
+    ).join('\n\n')
+    const state = EditorState.create({ doc: source })
+    const selectionState = state.update({ selection: { anchor: 1 } }).state
+    const changedState = state.update({
+      changes: { from: 0, insert: 'A new paragraph.\n\n' },
+    }).state
+    const starts = blockStarts(state)
+    const selectionStarts = blockStarts(selectionState)
+    const changedStarts = blockStarts(changedState)
+
+    const readOutput = () => ({
+      changedDocumentHasNewStarts: selectionStarts !== changedStarts,
+      changedDocumentStartCount: changedStarts.length,
+      sameDocumentStartCount: starts.length,
+      sameDocumentSharesStarts: starts === selectionStarts,
+    })
+    expect(readOutput()).toEqual({
+      changedDocumentHasNewStarts: true,
+      changedDocumentStartCount: 200,
+      sameDocumentStartCount: 199,
+      sameDocumentSharesStarts: true,
+    })
+  })
+
   it.each([
     {
       scenario: 'a paragraph followed by an image',

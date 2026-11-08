@@ -13,6 +13,11 @@ const tableSource = [
   '| :--- | ---: |',
   '| Tables | Yes |',
 ].join('\n')
+const linkedTableSource = [
+  '| Feature | Guide |',
+  '| --- | --- |',
+  '| Links | [Open](https://assets.example.test/guide) |',
+].join('\n')
 const imageUrl = 'https://assets.example.test/images/sample.webp?w=640&h=360'
 const imageSource = `![Sample](${imageUrl})`
 const localImageSource =
@@ -59,7 +64,11 @@ function dispatchFilePaste(content: HTMLElement | null, file: File): Event {
   return event
 }
 
-function dispatchFileDrop(content: HTMLElement | null, file: File): DragEvent {
+function dispatchFileDrop(
+  content: HTMLElement | null,
+  file: File,
+  target: HTMLElement | null = content,
+): DragEvent {
   const view = content ? EditorView.findFromDOM(content) : null
   const coords = view?.coordsAtPos(0)
   const event = new DragEvent('drop', {
@@ -69,7 +78,7 @@ function dispatchFileDrop(content: HTMLElement | null, file: File): DragEvent {
     clientX: (coords?.left ?? 0) + 1,
     clientY: (coords?.top ?? 0) + 1,
   })
-  content?.dispatchEvent(event)
+  target?.dispatchEvent(event)
   return event
 }
 
@@ -504,4 +513,100 @@ describe('image paste and drop uploads', () => {
       uploadedFiles: ['sample.png'],
     })
   })
+
+  it.each([
+    {
+      target: 'a table cell',
+      source: `${linkedTableSource}\n\nAfter paragraph.`,
+      selector: 'table td',
+      previewSelector: 'table',
+      showMoveHandles: false,
+    },
+    {
+      target: 'an image',
+      source: `${localImageSource}\n\nAfter paragraph.`,
+      selector: 'figure img',
+      previewSelector: 'figure img',
+      showMoveHandles: false,
+    },
+    {
+      target: 'an SVG diagram',
+      source: `${mermaidSource}\n\nAfter paragraph.`,
+      selector: 'svg',
+      previewSelector: 'svg',
+      showMoveHandles: false,
+    },
+    {
+      target: 'a table link',
+      source: `${linkedTableSource}\n\nAfter paragraph.`,
+      selector: 'table a',
+      previewSelector: 'table a',
+      showMoveHandles: false,
+    },
+    {
+      target: 'a widget move handle',
+      source: `${tableSource}\n\nAfter paragraph.`,
+      selector: '.cm-markdown-block-widget-handle .cm-block-drag-handle',
+      previewSelector: 'table',
+      showMoveHandles: true,
+    },
+  ])(
+    'uploads a dropped image from $target',
+    async ({ source, selector, previewSelector, showMoveHandles }) => {
+      const uploadedFiles: string[] = []
+      const uploader: ArticleImageUploader = (file) => {
+        uploadedFiles.push(file.name)
+        return okAsync({
+          src: 'https://assets.example.test/images/uploaded.webp?w=320&h=200',
+        })
+      }
+      const { body, content, host } = mountMarkdownEditor(
+        source,
+        [],
+        undefined,
+        {
+          uploadArticleImage: uploader,
+          initialSelection: { anchor: source.length },
+          showMoveHandles,
+        },
+      )
+      if (!content) throw new Error('The Markdown editor did not mount')
+      await act(async () => {
+        await vi.waitUntil(
+          () => content.querySelector(previewSelector) !== null,
+        )
+      })
+      const target =
+        host.querySelector<HTMLElement>(selector) ??
+        content.querySelector<HTMLElement>(selector)
+      if (!target) throw new Error('The file drop target did not mount')
+
+      const posAtCoords = vi
+        .spyOn(EditorView.prototype, 'posAtCoords')
+        .mockReturnValue(source.length)
+      const expectedBody =
+        source +
+        '![](https://assets.example.test/images/uploaded.webp?w=320&h=200)'
+      let drop: DragEvent | undefined
+      try {
+        await act(async () => {
+          drop = dispatchFileDrop(content, imageFile(), target)
+          await vi.waitUntil(() => body.toJSON() === expectedBody)
+        })
+
+        const readOutput = () => ({
+          body: body.toJSON(),
+          defaultPrevented: drop?.defaultPrevented ?? false,
+          uploadedFiles,
+        })
+        expect(readOutput()).toEqual({
+          body: expectedBody,
+          defaultPrevented: true,
+          uploadedFiles: ['sample.png'],
+        })
+      } finally {
+        posAtCoords.mockRestore()
+      }
+    },
+  )
 })

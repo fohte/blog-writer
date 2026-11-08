@@ -8,12 +8,14 @@ export function mountBlockMoveHandle({
   host,
   history,
   positionDOM,
+  sourceFrom,
   view,
 }: {
   composingViews: WeakSet<EditorView>
   host: HTMLElement
   history: MoveHistory
   positionDOM: HTMLElement
+  sourceFrom?: number
   view: EditorView
 }): () => void {
   const button = document.createElement('button')
@@ -31,6 +33,7 @@ export function mountBlockMoveHandle({
     history,
     host: menuHost,
     positionDOM,
+    ...(sourceFrom === undefined ? {} : { sourceFrom }),
     view,
   })
 }

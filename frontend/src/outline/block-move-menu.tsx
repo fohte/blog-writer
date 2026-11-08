@@ -15,6 +15,7 @@ export function mountBlockMoveMenu({
   history,
   host,
   positionDOM,
+  sourceFrom,
   view,
 }: {
   button: HTMLButtonElement
@@ -22,6 +23,7 @@ export function mountBlockMoveMenu({
   history: MoveHistory
   host: HTMLElement
   positionDOM: HTMLElement
+  sourceFrom?: number
   view: EditorView
 }): () => void {
   const anchor: RefObject<HTMLButtonElement | null> = { current: button }
@@ -29,8 +31,11 @@ export function mountBlockMoveMenu({
   let menuOpen = false
   const currentFrom = () => {
     if (!view.dom.contains(positionDOM)) return undefined
-    const position = view.posAtDOM(positionDOM, -1)
     const starts = blockStarts(view.state)
+    if (sourceFrom !== undefined)
+      return starts.includes(sourceFrom) ? sourceFrom : undefined
+
+    const position = view.posAtDOM(positionDOM, -1)
     return (
       starts.find((from) => from === position) ??
       starts.filter((from) => from < position).at(-1)

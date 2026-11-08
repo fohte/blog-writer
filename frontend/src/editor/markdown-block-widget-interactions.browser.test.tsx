@@ -657,6 +657,17 @@ describe('Markdown block widget interactions', () => {
       expectedHandleCount: 3,
       expectedMoveResult: 'success',
     },
+    {
+      scenario: 'after a paragraph with a leading space',
+      block: 'image',
+      markdown: localImageSource,
+      previewSelector: 'figure',
+      source: `Before paragraph.\n\n ${localImageSource}\n\nAfter paragraph.`,
+      handleIndex: 1,
+      expectedBody: `Before paragraph.\n\n After paragraph.\n\n${localImageSource}\n`,
+      expectedHandleCount: 3,
+      expectedMoveResult: 'success',
+    },
   ])(
     'uses the $block handle position for a drag $scenario',
     async ({
@@ -755,6 +766,64 @@ describe('Markdown block widget interactions', () => {
       })
     },
   )
+
+  it('moves an indented image from its own move menu', async () => {
+    const source = `Before paragraph.\n\n ${localImageSource}\n\nAfter paragraph.`
+    const { body, content, history, host } = mountMarkdownEditor(
+      source,
+      [],
+      undefined,
+      {
+        initialSelection: { anchor: source.length },
+        showMoveHandles: true,
+      },
+    )
+    if (!content) throw new Error('The Markdown editor did not mount')
+    await act(async () => {
+      await vi.waitUntil(() => content.querySelector('figure') !== null)
+    })
+    const handle = host.querySelector<HTMLButtonElement>(
+      '.cm-markdown-block-widget-handle .cm-block-drag-handle',
+    )
+    if (!handle) throw new Error('The indented image move handle did not mount')
+
+    const move = vi.spyOn(history, 'move')
+    await act(async () => {
+      await userEvent.click(handle)
+    })
+    const menuItems = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ]
+    const readMenu = () =>
+      menuItems.map(({ disabled, textContent }) => ({
+        disabled,
+        label: textContent,
+      }))
+    const moveDown = menuItems.find((item) => item.textContent === 'Move down')
+    if (!moveDown) throw new Error('The image Move down action did not mount')
+    await act(async () => {
+      await userEvent.click(moveDown)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      menu: readMenu(),
+      moveCalls: move.mock.calls.map(([input]) => input),
+    })
+    expect(readOutput()).toEqual({
+      body: `Before paragraph.\n\n After paragraph.\n\n${localImageSource}\n`,
+      menu: [
+        { disabled: false, label: 'Move up' },
+        { disabled: false, label: 'Move down' },
+      ],
+      moveCalls: [
+        {
+          from: source.indexOf(localImageSource),
+          destination: source.length,
+        },
+      ],
+    })
+  })
 
   it('opens the Mermaid handle beside a table without changing source rejected by move validation', async () => {
     const source = `${tableSource}\n${mermaidSource}\n\nAfter paragraph.`

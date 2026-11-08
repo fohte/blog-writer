@@ -6,7 +6,6 @@ export type {
   InFlightSuggestion,
   SuggestionDecision,
   SuggestionLayerError,
-  SuggestionLayerState,
   SuggestionPosition,
   SuggestionReplacementMark,
   TextSuggestion,
