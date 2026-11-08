@@ -404,6 +404,55 @@ function expectedImeScenario(scenario: ImeScenario) {
 }
 
 describe('MarkdownEditor IME', () => {
+  it.each([
+    { side: 'before', target: 'before' },
+    { side: 'after', target: 'after' },
+  ])('preserves Japanese input $side of a block widget', async ({ target }) => {
+    const table = '| Feature | Value |\n| --- | --- |\n| Table | Visible |'
+    const initial = `before\n\n${table}\n\nafter`
+    const targetLine = target === 'before' ? 'before' : 'after'
+    const { body, content } = mountMarkdownEditor(initial, [], undefined, {
+      initialSelection: {
+        anchor: initial.indexOf(targetLine) + targetLine.length,
+      },
+    })
+    content?.focus()
+    const composition = await compose(body, content, '日本語')
+
+    const readOutput = () => ({
+      during: {
+        body: composition.duringComposition.body,
+        visible: composition.duringComposition.visible,
+      },
+      committed: {
+        body: composition.committed.body,
+        visible: composition.committed.visible,
+      },
+    })
+    expect(readOutput()).toEqual({
+      during: {
+        body:
+          target === 'before'
+            ? `before日本語\n\n${table}\n\nafter`
+            : `before\n\n${table}\n\nafter日本語`,
+        visible:
+          target === 'before'
+            ? 'before日本語FeatureValueTableVisibleafter'
+            : 'beforeFeatureValueTableVisibleafter日本語',
+      },
+      committed: {
+        body:
+          target === 'before'
+            ? `before日本語\n\n${table}\n\nafter`
+            : `before\n\n${table}\n\nafter日本語`,
+        visible:
+          target === 'before'
+            ? 'before日本語FeatureValueTableVisibleafter'
+            : 'beforeFeatureValueTableVisibleafter日本語',
+      },
+    })
+  })
+
   it.skipIf(!isChromium)(
     'keeps move handles stable and ignores block movement during composition',
     async () => {

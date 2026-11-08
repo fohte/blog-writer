@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { okAsync } from 'neverthrow'
 import { useEffect, useMemo } from 'react'
 import * as Y from 'yjs'
 
@@ -6,6 +7,7 @@ import { getBody } from '#article/body'
 import { addEvidence } from '#article/evidence'
 import { addSource } from '#article/sources'
 import type { EvidenceVerdict } from '#article/types'
+import type { ArticleImageUploader } from '#editor/image-upload'
 import { MarkdownEditor } from '#editor/index'
 import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
 
@@ -51,6 +53,10 @@ const otherSyntaxContent = [
 
 const noEvidence: StoryEvidence[] = []
 const storySourceTitles = ['Example research report', 'Example survey']
+const uploadArticleImage: ArticleImageUploader = () =>
+  okAsync({
+    src: 'https://assets.example.test/images/uploaded.webp?w=640&h=360',
+  })
 
 function MarkdownEditorPreview({
   content,
@@ -110,6 +116,7 @@ function MarkdownEditorPreview({
         text={body}
         history={history}
         extensions={extensions}
+        uploadArticleImage={uploadArticleImage}
         {...(className === undefined ? {} : { className })}
         {...(initialSelection ? { initialSelection } : {})}
       />
@@ -150,10 +157,68 @@ export const CursorInBoldSpan: Story = {
 }
 
 export const OtherMarkdownSyntax: Story = {
-  name: 'links and strikethrough are decorated while block Markdown stays as text.',
+  name: 'links and strikethrough are decorated while the GFM table is drawn.',
   args: {
     content: otherSyntaxContent,
     initialSelection: { anchor: otherSyntaxContent.length },
+  },
+}
+
+const tableContent = [
+  '| Feature | Offline |',
+  '| :--- | ---: |',
+  '| Tables | Yes |',
+  '| Diagrams | Yes |',
+].join('\n')
+const imageDataUrl =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='180'%3E%3Crect width='320' height='180' fill='%23dbeafe'/%3E%3C/svg%3E"
+const imageContent = `![Sample image](${imageDataUrl})`
+const mermaidContent = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
+
+export const TablePreview: Story = {
+  name: 'the editor draws a GFM table while the cursor is outside it.',
+  args: { content: tableContent, initialSelection: { anchor: 0 } },
+}
+
+export const CursorInTable: Story = {
+  name: 'the editor reveals the original table Markdown when the cursor enters it.',
+  args: {
+    content: tableContent,
+    initialSelection: { anchor: tableContent.indexOf('Tables') + 2 },
+  },
+}
+
+export const ImagePreview: Story = {
+  name: 'the editor draws an image while keeping its original Markdown unchanged.',
+  args: { content: imageContent, initialSelection: { anchor: 0 } },
+}
+
+export const CursorInImage: Story = {
+  name: 'the editor shows the image source and preview while the cursor is inside it.',
+  args: {
+    content: imageContent,
+    initialSelection: { anchor: imageContent.indexOf('sample') + 2 },
+  },
+}
+
+export const MermaidPreview: Story = {
+  name: 'the editor draws a Mermaid diagram while the cursor is outside its source.',
+  args: { content: mermaidContent, initialSelection: { anchor: 0 } },
+}
+
+export const CursorInMermaid: Story = {
+  name: 'the editor keeps the Mermaid source visible above its diagram preview.',
+  args: {
+    content: mermaidContent,
+    initialSelection: { anchor: mermaidContent.indexOf('Draft') + 2 },
+  },
+}
+
+export const MermaidSyntaxError: Story = {
+  name: 'the editor shows Mermaid source and a parser error for an invalid diagram.',
+  args: {
+    content: '```mermaid\ngraph LR\n  Draft -->\n```',
+    initialSelection: { anchor: 0 },
   },
 }
 

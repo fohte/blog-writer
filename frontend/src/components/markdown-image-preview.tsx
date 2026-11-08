@@ -1,0 +1,71 @@
+import { useState } from 'react'
+
+export interface MarkdownImagePreviewProps {
+  alt: string
+  source: string
+  src: string
+  failed?: boolean
+}
+
+export function createMarkdownImagePreview({
+  alt,
+  source,
+  src,
+  failed = false,
+}: MarkdownImagePreviewProps): HTMLElement {
+  const fallback = () => {
+    const code = document.createElement('code')
+    code.className =
+      'block whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm'
+    code.textContent = source
+    return code
+  }
+  if (failed) return fallback()
+
+  const figure = document.createElement('figure')
+  figure.className = 'my-2 flex justify-center'
+  const image = document.createElement('img')
+  image.alt = alt
+  image.className = 'max-h-128 max-w-full rounded-md object-contain'
+  image.src = src
+  image.addEventListener(
+    'error',
+    () => {
+      figure.replaceChildren(fallback())
+    },
+    { once: true },
+  )
+  figure.append(image)
+  return figure
+}
+
+export function MarkdownImagePreview({
+  alt,
+  source,
+  src,
+  failed: forcedFailure,
+}: MarkdownImagePreviewProps) {
+  const [loadFailed, setLoadFailed] = useState(false)
+  const failed = forcedFailure ?? loadFailed
+
+  if (failed) {
+    return (
+      <code className="block whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm">
+        {source}
+      </code>
+    )
+  }
+
+  return (
+    <figure className="my-2 flex justify-center">
+      <img
+        alt={alt}
+        className="max-h-128 max-w-full rounded-md object-contain"
+        onError={() => {
+          setLoadFailed(true)
+        }}
+        src={src}
+      />
+    </figure>
+  )
+}

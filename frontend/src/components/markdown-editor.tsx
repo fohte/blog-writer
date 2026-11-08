@@ -27,6 +27,11 @@ import { listSources } from '#article/sources'
 import { ClaimEvidenceCard } from '#components/claim-evidence-card'
 import { evidenceDecorations } from '#editor/evidence-decorations'
 import { evidenceDrop } from '#editor/evidence-drop'
+import {
+  type ArticleImageUploader,
+  imageUploadExtension,
+} from '#editor/image-upload'
+import { markdownBlockWidgets } from '#editor/markdown-block-widgets'
 import { markdownDecorations } from '#editor/markdown-decorations'
 import { replaceBody } from '#editor/replace-body'
 import { editorTheme, markdownHighlightStyle } from '#editor/theme'
@@ -44,6 +49,7 @@ export interface MarkdownEditorProps {
   className?: string
   articleId?: string
   onEvidenceError?: (message: string) => void
+  uploadArticleImage?: ArticleImageUploader
   history: MoveHistory
   onViewChange?: (view: EditorView | null) => void
 }
@@ -70,12 +76,14 @@ export const MarkdownEditor = forwardRef<
     className,
     articleId,
     onEvidenceError,
+    uploadArticleImage,
     history,
     onViewChange,
   },
   ref,
 ) {
   const [evidenceError, setEvidenceError] = useState<string>()
+  const [imageUploadError, setImageUploadError] = useState<string>()
   const [activeEvidenceId, setActiveEvidenceId] = useState<string>()
   const [evidenceVersion, setEvidenceVersion] = useState(0)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -85,6 +93,8 @@ export const MarkdownEditor = forwardRef<
   const initialSelectionAtMount = useRef(initialSelection).current
   const onEvidenceErrorRef = useRef(onEvidenceError)
   onEvidenceErrorRef.current = onEvidenceError
+  const uploadArticleImageRef = useRef(uploadArticleImage)
+  uploadArticleImageRef.current = uploadArticleImage
   const onViewChangeRef = useRef(onViewChange)
   const openEvidence = useCallback((id: string) => {
     setActiveEvidenceId((current) => (current === id ? undefined : id))
@@ -160,6 +170,14 @@ export const MarkdownEditor = forwardRef<
           markdown({ extensions: GFM, codeLanguages: languages }),
           syntaxHighlighting(markdownHighlightStyle),
           markdownDecorations,
+          markdownBlockWidgets,
+          imageUploadExtension(
+            () => uploadArticleImageRef.current,
+            setImageUploadError,
+            () => {
+              setImageUploadError(undefined)
+            },
+          ),
           editorTheme,
           EditorView.lineWrapping,
           history.extension,
@@ -294,6 +312,11 @@ export const MarkdownEditor = forwardRef<
       {evidenceError !== undefined ? (
         <p className="text-sm text-destructive" role="alert">
           {evidenceError}
+        </p>
+      ) : null}
+      {imageUploadError !== undefined ? (
+        <p className="text-sm text-destructive" role="alert">
+          {imageUploadError}
         </p>
       ) : null}
     </>

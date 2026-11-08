@@ -55,6 +55,8 @@ function shouldHideMark(
     case 'StrikethroughMark':
       return !parent || !selectionIntersects(state, parent.from, parent.to)
     case 'LinkMark': {
+      if (parent?.name === 'Image')
+        return !selectionIntersects(state, parent.from, parent.to)
       if (parent?.name !== 'Link') return true
 
       const mark = state.doc.sliceString(from, to)

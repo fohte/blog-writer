@@ -5,6 +5,7 @@ import { afterEach, beforeEach, vi } from 'vitest'
 import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
+import type { ArticleImageUploader } from '#editor/image-upload'
 import { MarkdownEditor, type MarkdownEditorHandle } from '#editor/index'
 import { createMoveHistory, type MoveHistory } from '#outline/index'
 
@@ -21,7 +22,9 @@ interface MountedMarkdownEditor {
 type MarkdownEditorMountOptions = {
   articleId?: string
   className?: string
+  initialSelection?: { anchor: number; head?: number }
   onEvidenceError?: (message: string) => void
+  uploadArticleImage?: ArticleImageUploader
   prepareDoc?: (doc: Y.Doc) => void
 }
 
@@ -64,8 +67,14 @@ export function mountMarkdownEditor(
         {...(options.className !== undefined
           ? { className: options.className }
           : {})}
+        {...(options.initialSelection !== undefined
+          ? { initialSelection: options.initialSelection }
+          : {})}
         {...(options.onEvidenceError !== undefined
           ? { onEvidenceError: options.onEvidenceError }
+          : {})}
+        {...(options.uploadArticleImage !== undefined
+          ? { uploadArticleImage: options.uploadArticleImage }
           : {})}
         history={history}
         ref={editor}
@@ -101,8 +110,14 @@ export function mountMarkdownEditor(
             {...(options.className !== undefined
               ? { className: options.className }
               : {})}
+            {...(options.initialSelection !== undefined
+              ? { initialSelection: options.initialSelection }
+              : {})}
             {...(options.onEvidenceError !== undefined
               ? { onEvidenceError: options.onEvidenceError }
+              : {})}
+            {...(options.uploadArticleImage !== undefined
+              ? { uploadArticleImage: options.uploadArticleImage }
               : {})}
             history={history}
             ref={editor}
