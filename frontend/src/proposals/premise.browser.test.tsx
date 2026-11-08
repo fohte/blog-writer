@@ -410,6 +410,13 @@ describe('premise discussion panel', () => {
       method: 'Escape',
       cancel: () => userEvent.keyboard('{Escape}'),
     },
+    {
+      method: 'Escape in a premise field',
+      cancel: async () => {
+        await userEvent.click(page.getByRole('textbox', { name: '想定読者' }))
+        await userEvent.keyboard('{Escape}')
+      },
+    },
   ])(
     'drops the reply and proposals of a request cancelled with $method',
     async ({ cancel }) => {

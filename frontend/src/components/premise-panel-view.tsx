@@ -47,7 +47,14 @@ export function PremisePanelView({
     discussion?.messages.some(({ role }) => role === 'assistant') ?? false
 
   return (
-    <div className="flex flex-col gap-4">
+    <div
+      className="flex flex-col gap-4"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || discussion?.generating !== true) return
+        event.preventDefault()
+        discussion.onCancel()
+      }}
+    >
       {premiseFields.map(({ field, label }) => {
         const proposal = discussion?.proposals[field]
         return (
@@ -113,11 +120,6 @@ export function PremisePanelView({
         <section
           aria-label="前提の対話"
           className="flex flex-col gap-3.5 border-t border-border pt-3.5 text-sm leading-relaxed"
-          onKeyDown={(event) => {
-            if (event.key !== 'Escape' || !discussion.generating) return
-            event.preventDefault()
-            discussion.onCancel()
-          }}
         >
           <p className="text-xs text-muted-foreground">
             このやり取りは保存されません。残るのは採用した値だけです。
