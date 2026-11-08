@@ -123,7 +123,9 @@ function ArticleEditorPreview({
             ? ({ doc: articleDoc }) => (
                 <ArticlePremisePanel
                   discussion={{
+                    cancelled: false,
                     draft: '',
+                    elapsedSeconds: 0,
                     error: undefined,
                     generating: false,
                     messages: [
@@ -137,6 +139,7 @@ function ArticleEditorPreview({
                       },
                     ],
                     onAccept: () => {},
+                    onCancel: () => {},
                     onDraftChange: () => {},
                     onReject: () => {},
                     onSubmit: () => {},
