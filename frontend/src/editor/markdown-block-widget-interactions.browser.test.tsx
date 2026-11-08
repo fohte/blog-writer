@@ -115,6 +115,36 @@ describe('Markdown block widget interactions', () => {
     })
   })
 
+  it('activates a focused table link with Enter without editing the body', async () => {
+    const source = `top\n\n${linkTableSource}\n\nafter`
+    const { body, content } = mountMarkdownEditor(source)
+    const anchor = content?.querySelector<HTMLAnchorElement>('table a')
+    if (!content || !anchor) throw new Error('The table link did not mount')
+    let clicked = false
+    anchor.addEventListener('click', (event) => {
+      clicked = true
+      event.preventDefault()
+    })
+    anchor.focus()
+
+    await act(async () => {
+      await userEvent.keyboard('{Enter}')
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      clicked,
+      previewCount: content.querySelectorAll('table').length,
+      sourceVisible: hasEditorSource(content, linkTableSource),
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      clicked: true,
+      previewCount: 1,
+      sourceVisible: false,
+    })
+  })
+
   it('keeps a touch scroll on a table preview and enters only on tap', () => {
     const source = `before\n\n${tableSource}\n\nafter`
     const from = source.indexOf(tableSource)

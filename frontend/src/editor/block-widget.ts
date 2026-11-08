@@ -1,16 +1,20 @@
-import { Facet } from '@codemirror/state'
+import { type EditorState, Facet } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 
 import { DomWidget } from '#editor/dom-widget'
 
-export type BlockWidgetDecorator = (
-  element: HTMLElement,
-  view: EditorView,
-  sourceFrom: number,
-) => (() => void) | undefined
+export interface BlockWidgetDecorator {
+  decorate: (
+    element: HTMLElement,
+    view: EditorView,
+    sourceFrom: number,
+  ) => (() => void) | undefined
+  identity: (state: EditorState, sourceFrom: number) => string
+}
 
 interface BlockWidgetOptions {
   attachDecorators?: boolean
+  state: EditorState
   sourceFrom: number
 }
 
@@ -25,15 +29,23 @@ export const blockWidgetDecorators = Facet.define<
 export function createBlockWidget(
   createPreview: (view: EditorView) => HTMLElement,
   identity: string,
-  { attachDecorators = true, sourceFrom }: BlockWidgetOptions,
+  { attachDecorators = true, sourceFrom, state }: BlockWidgetOptions,
 ): DomWidget {
+  const equalityKey = attachDecorators
+    ? String(sourceFrom) +
+      '\u0000' +
+      state
+        .facet(blockWidgetDecorators)
+        .map((decorator) => decorator.identity(state, sourceFrom))
+        .join('\u0000')
+    : identity
   const refreshDecorators = (element: HTMLElement, view: EditorView) => {
     for (const cleanup of decoratorCleanupsByElement.get(element) ?? [])
       cleanup()
     const cleanups = attachDecorators
       ? view.state
           .facet(blockWidgetDecorators)
-          .map((decorate) => decorate(element, view, sourceFrom))
+          .map((decorator) => decorator.decorate(element, view, sourceFrom))
           .filter((cleanup): cleanup is () => void => cleanup !== undefined)
       : []
     decoratorCleanupsByElement.set(element, cleanups)
@@ -88,11 +100,12 @@ export function createBlockWidget(
         cleanupByElement.get(element)?.()
         cleanupByElement.delete(element)
       },
-      equalityKey: attachDecorators ? sourceFrom : identity,
+      equalityKey,
       shouldIgnoreEvent: (event) =>
-        event.type === 'keydown' &&
         event.target instanceof Element &&
-        event.target.closest('.cm-markdown-block-widget-handle') !== null,
+        event.target.closest(
+          'a, button, input, select, textarea, [tabindex], .cm-markdown-block-widget-handle',
+        ) !== null,
       updateElement: attachDecorators ? refreshDecorators : undefined,
     },
   )

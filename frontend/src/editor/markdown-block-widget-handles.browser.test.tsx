@@ -86,6 +86,100 @@ describe('Markdown block widget handles', () => {
     },
   )
 
+  it.each([1, 2, 3])(
+    'shows one move handle for an image with %i leading spaces',
+    async (indent) => {
+      const source = `${' '.repeat(indent)}${imageSource}\n\nAfter paragraph.`
+      const { body, content, host } = mountMarkdownEditor(
+        source,
+        [],
+        undefined,
+        {
+          initialSelection: {
+            anchor: source.indexOf('After paragraph.') + 1,
+          },
+          showMoveHandles: true,
+        },
+      )
+      const view = content ? EditorView.findFromDOM(content) : null
+      if (!content || !view)
+        throw new Error('The Markdown editor did not mount')
+      await act(async () => {
+        await vi.waitUntil(() => content.querySelector('figure') !== null)
+      })
+
+      const readOutput = () => ({
+        body: body.toJSON(),
+        blockCount: blockStarts(view.state).length,
+        handleOwners: [
+          ...host.querySelectorAll<HTMLButtonElement>('.cm-block-drag-handle'),
+        ].map((handle) =>
+          handle.closest('.cm-markdown-block-widget') ? 'widget' : 'inline',
+        ),
+        previewCount: content.querySelectorAll('figure').length,
+      })
+      expect(readOutput()).toEqual({
+        body: source,
+        blockCount: 2,
+        handleOwners: ['widget', 'inline'],
+        previewCount: 1,
+      })
+    },
+  )
+
+  it('updates the image move handle when an equal-length edit changes block ownership', () => {
+    const source = `x\n${imageSource}\n\nAfter paragraph.`
+    const replaced = `#\n${imageSource}\n\nAfter paragraph.`
+    const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
+      initialSelection: {
+        anchor: source.indexOf('After paragraph.') + 1,
+      },
+      showMoveHandles: true,
+    })
+    const view = content ? EditorView.findFromDOM(content) : null
+    if (!content || !view) throw new Error('The Markdown editor did not mount')
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      previewCount: content.querySelectorAll('figure').length,
+      widgetHandleCount: host.querySelectorAll(
+        '.cm-markdown-block-widget-handle',
+      ).length,
+    })
+    const before = readOutput()
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: 1, insert: '#' } })
+    })
+    const afterHeading = readOutput()
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: 1, insert: 'x' } })
+    })
+
+    const readTransitions = () => ({
+      before,
+      afterHeading,
+      restored: readOutput(),
+    })
+    const expectedTransitions = {
+      before: {
+        body: source,
+        previewCount: 1,
+        widgetHandleCount: 0,
+      },
+      afterHeading: {
+        body: replaced,
+        previewCount: 1,
+        widgetHandleCount: 1,
+      },
+      restored: {
+        body: source,
+        previewCount: 1,
+        widgetHandleCount: 0,
+      },
+    }
+    expect(readTransitions()).toEqual(expectedTransitions)
+  })
+
   it('opens the rendered block menu on Enter without editing the body', async () => {
     const source = `Before paragraph.\n\n${tableSource}\n\nAfter paragraph.`
     const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
@@ -113,6 +207,39 @@ describe('Markdown block widget handles', () => {
     expect(readOutput()).toEqual({
       body: source,
       menuItems: ['Move up', 'Move down'],
+      previewCount: 1,
+    })
+  })
+
+  it('does not send a paste from a focused widget handle to the editor', () => {
+    const source = `top\n\n${tableSource}\n\nafter`
+    const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
+      initialSelection: { anchor: 1 },
+      showMoveHandles: true,
+    })
+    const handle = host.querySelector<HTMLButtonElement>(
+      '.cm-markdown-block-widget-handle .cm-block-drag-handle',
+    )
+    if (!content || !handle)
+      throw new Error('The rendered table handle did not mount')
+    handle.focus()
+
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    const transfer = new DataTransfer()
+    transfer.setData('text/plain', 'PASTED')
+    Object.defineProperty(event, 'clipboardData', { value: transfer })
+    act(() => {
+      handle.dispatchEvent(event)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      focusedHandle: document.activeElement === handle,
+      previewCount: content.querySelectorAll('table').length,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      focusedHandle: true,
       previewCount: 1,
     })
   })

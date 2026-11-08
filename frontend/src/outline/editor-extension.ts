@@ -10,7 +10,10 @@ import {
   WidgetType,
 } from '@codemirror/view'
 
-import { blockWidgetDecorators } from '#editor/block-widget'
+import {
+  type BlockWidgetDecorator,
+  blockWidgetDecorators,
+} from '#editor/block-widget'
 import { refreshBlockWidgetExclusions } from '#editor/markdown-block-widget-exclusions'
 import { getBlockWidgetReplaceEnds } from '#editor/markdown-block-widgets'
 import { mountBlockMoveHandle } from '#outline/block-move-handle'
@@ -54,9 +57,8 @@ class BlockDragHandle extends WidgetType {
     super()
   }
 
-  override eq(other: WidgetType): boolean {
+  override eq(other: BlockDragHandle): boolean {
     return (
-      other instanceof BlockDragHandle &&
       this.history === other.history &&
       this.view === other.view &&
       this.composingViews === other.composingViews
@@ -79,11 +81,9 @@ class BlockDragHandle extends WidgetType {
     return wrapper
   }
 
-  override destroy(dom: Node): void {
-    if (dom instanceof HTMLElement) {
-      blockHandleCleanups.get(dom)?.()
-      blockHandleCleanups.delete(dom)
-    }
+  override destroy(dom: HTMLElement) {
+    blockHandleCleanups.get(dom)?.()
+    blockHandleCleanups.delete(dom)
   }
 }
 
@@ -202,6 +202,7 @@ function createDragPlugin(
     class {
       private readonly cleanupDropTarget: () => void
       private readonly preventCompositionShortcut = (event: KeyboardEvent) => {
+        // Capture these before CodeMirror skips keymaps during composition.
         if (
           composingViews.has(this.view) &&
           event.altKey &&
@@ -289,6 +290,12 @@ function moveAdjacent(
 
 export function createOutlineEditorExtension(history: MoveHistory): Extension {
   const composingViews = new WeakSet<EditorView>()
+  const blockWidgetHandleDecorator: BlockWidgetDecorator = {
+    decorate: (element, view, sourceFrom) =>
+      attachWidgetHandle(element, view, sourceFrom, history, composingViews),
+    identity: (state, sourceFrom) =>
+      blockStarts(state).includes(sourceFrom) ? 'owned' : 'nested',
+  }
   return [
     Prec.highest(
       keymap.of([
@@ -302,12 +309,11 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
         },
       ]),
     ),
-    blockWidgetDecorators.of((element, view, sourceFrom) =>
-      attachWidgetHandle(element, view, sourceFrom, history, composingViews),
-    ),
+    blockWidgetDecorators.of(blockWidgetHandleDecorator),
     createBlockHandleExtension(history, composingViews),
     createDragPlugin(history, composingViews),
     EditorView.theme({
+      // Other extensions read this to line their block widgets up with the text after the handle column.
       '.cm-content': {
         '--cm-line-inset': '1.5rem',
       },

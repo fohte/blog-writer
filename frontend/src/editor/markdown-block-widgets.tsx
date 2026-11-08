@@ -162,6 +162,7 @@ function imageData(state: EditorState, node: NodeLike) {
     alt: state.doc.sliceString(openingMark.to, altEndMark.from),
     from: line.from,
     lineTo: line.to,
+    nodeFrom: node.from,
     source,
     src: state.doc.sliceString(url.from, url.to),
     to: line.to,
@@ -196,7 +197,7 @@ function buildBlockWidgetDecorations(
         const widget = createBlockWidget(
           () => createMarkdownTablePreview(table),
           'table:' + source,
-          { sourceFrom: range.from },
+          { sourceFrom: range.from, state },
         )
         decorations.push(
           Decoration.replace({
@@ -223,7 +224,11 @@ function buildBlockWidgetDecorations(
               src: image.src,
             }),
           'image:' + image.source + (sourceVisible ? ':source' : ':rendered'),
-          { attachDecorators: !sourceVisible, sourceFrom: image.from },
+          {
+            attachDecorators: !sourceVisible,
+            sourceFrom: image.nodeFrom,
+            state,
+          },
         )
         if (sourceVisible) {
           decorations.push(
@@ -276,7 +281,7 @@ function buildBlockWidgetDecorations(
             )
           },
           'mermaid:' + source + (sourceVisible ? ':source' : ':rendered'),
-          { attachDecorators: !sourceVisible, sourceFrom: range.from },
+          { attachDecorators: !sourceVisible, sourceFrom: range.from, state },
         )
         if (sourceVisible) {
           decorations.push(
