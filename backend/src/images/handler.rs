@@ -291,6 +291,11 @@ mod tests {
         let oversized = vec![b'x'; MAX_UPLOAD_SIZE + 1];
         let actual = vec![
             call_json(api.clone(), upload_request(b"plain text")?).await?,
+            call_json(
+                api.clone(),
+                upload_request(&encoded(ImageFormat::Png)[..20])?,
+            )
+            .await?,
             call_json(api.clone(), upload_request(&oversized)?).await?,
             call_json(
                 api,
@@ -310,6 +315,7 @@ mod tests {
             actual,
             vec![
                 (415, json!({ "error": "Image format is not supported" })),
+                (422, json!({ "error": "Image could not be decoded" })),
                 (413, json!({ "error": "Image exceeds the size limit" })),
                 (400, json!({ "error": "Invalid image upload" })),
             ],

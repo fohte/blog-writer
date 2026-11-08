@@ -1,6 +1,9 @@
 use std::io::Cursor;
 
-use image::{DynamicImage, ImageDecoder, ImageError, ImageFormat, ImageReader, Limits};
+use image::{
+    DynamicImage, ImageDecoder, ImageError, ImageFormat, ImageReader, Limits,
+    codecs::webp::WebPDecoder,
+};
 use thiserror::Error;
 use webp::{Encoder, PixelLayout};
 
@@ -8,7 +11,8 @@ use crate::local_file_sync::sha256_hex;
 
 /// The largest dimension a WebP image can have.
 const MAX_DIMENSION: u32 = 16_383;
-const MAX_DECODED_BYTES: u64 = 256 * 1024 * 1024;
+/// Bounds the decoded buffers, which not every decoder counts against `Limits::max_alloc`.
+const MAX_PIXELS: u64 = 40_000_000;
 const WEBP_QUALITY: f32 = 80.0;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -50,6 +54,10 @@ pub(super) fn process(bytes: &[u8]) -> Result<ProcessedImage, ImageProcessError>
                 height,
             })
         }
+        // Re-encoding would silently keep only the first frame.
+        Some(ImageFormat::WebP) if is_animated_webp(bytes) => {
+            Err(ImageProcessError::UnsupportedFormat)
+        }
         Some(ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::WebP) => to_webp(reader),
         _ => Err(ImageProcessError::UnsupportedFormat),
     }
@@ -59,13 +67,20 @@ fn limits() -> Limits {
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_DIMENSION);
     limits.max_image_height = Some(MAX_DIMENSION);
-    limits.max_alloc = Some(MAX_DECODED_BYTES);
     limits
+}
+
+fn is_animated_webp(bytes: &[u8]) -> bool {
+    WebPDecoder::new(Cursor::new(bytes)).is_ok_and(|decoder| decoder.has_animation())
 }
 
 // Encoding from decoded pixels also removes EXIF data such as the shooting location.
 fn to_webp(reader: ImageReader<Cursor<&[u8]>>) -> Result<ProcessedImage, ImageProcessError> {
     let mut decoder = reader.into_decoder().map_err(decode_error)?;
+    let (encoded_width, encoded_height) = decoder.dimensions();
+    if u64::from(encoded_width) * u64::from(encoded_height) > MAX_PIXELS {
+        return Err(ImageProcessError::TooLarge);
+    }
     let orientation = decoder.orientation().map_err(decode_error)?;
     let mut image = DynamicImage::from_decoder(decoder).map_err(decode_error)?;
     image.apply_orientation(orientation);
@@ -132,6 +147,25 @@ mod tests {
         bytes
     }
 
+    fn chunk_size(bytes: &[u8]) -> [u8; 4] {
+        u32::try_from(bytes.len())
+            .expect("test chunk should fit in a RIFF size")
+            .to_le_bytes()
+    }
+
+    /// One-frame WebP animation, wrapping a still image's bitstream in an ANMF chunk.
+    fn animated_webp() -> Vec<u8> {
+        let still = encoded(ImageFormat::WebP, 1, 1);
+        let frame = [&[0; 16], &still[12..]].concat();
+        let riff_body = [
+            b"WEBPVP8X\x0A\0\0\0\x02\0\0\0\0\0\0\0\0\0ANIM\x06\0\0\0\0\0\0\0\0\0ANMF".as_slice(),
+            &chunk_size(&frame),
+            &frame,
+        ]
+        .concat();
+        [b"RIFF".as_slice(), &chunk_size(&riff_body), &riff_body].concat()
+    }
+
     fn webp_dimensions(data: &[u8]) -> (u32, u32) {
         let reader = ImageReader::with_format(Cursor::new(data), ImageFormat::WebP);
         reader
@@ -180,6 +214,8 @@ mod tests {
     #[case::unsupported_format(b"BM\0\0\0\0".to_vec(), ImageProcessError::UnsupportedFormat)]
     #[case::truncated_png(encoded(ImageFormat::Png, 4, 2)[..20].to_vec(), ImageProcessError::Undecodable)]
     #[case::too_wide(encoded(ImageFormat::Png, 16_384, 1), ImageProcessError::TooLarge)]
+    #[case::too_many_pixels(encoded(ImageFormat::Png, 8_000, 5_001), ImageProcessError::TooLarge)]
+    #[case::animated_webp(animated_webp(), ImageProcessError::UnsupportedFormat)]
     fn rejects_images_it_cannot_convert(
         #[case] input: Vec<u8>,
         #[case] expected: ImageProcessError,

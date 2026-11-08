@@ -25,7 +25,7 @@ comments:
       article_id: Article identifier from the article document.
       body: Imported or user-provided Markdown body.
   - table: images
-    tableComment: Stores article images until they are published.
+    tableComment: Stores images pasted into article drafts.
     columnComments:
       name: File name made of the SHA-256 of the data and its extension.
       data: Encoded image bytes.
