@@ -1,6 +1,8 @@
-import { syntaxTree } from '@codemirror/language'
+import { ensureSyntaxTree } from '@codemirror/language'
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import type { ResultAsync } from 'neverthrow'
+
+import { getBlockWidgetDOMRange } from '#editor/block-widget'
 
 type ArticleImageUploadError = { message: string }
 
@@ -59,11 +61,14 @@ function topLevelBlockEndAtWidget(
   const widget = target.closest<HTMLElement>('.cm-markdown-block-widget')
   if (!widget) return undefined
 
-  const first = view.posAtDOM(widget, -1)
-  const last = view.posAtDOM(widget, 1)
-  const widgetFrom = Math.min(first, last)
-  const widgetTo = Math.max(first, last)
-  const root = syntaxTree(view.state).topNode
+  const { from: widgetFrom, to: widgetTo } = getBlockWidgetDOMRange(
+    view,
+    widget,
+  )
+  const tree = ensureSyntaxTree(view.state, view.state.doc.length, 250)
+  if (!tree || tree.length < view.state.doc.length) return view.state.doc.length
+
+  const root = tree.topNode
   for (let node = root.firstChild; node; node = node.nextSibling) {
     if (node.from <= widgetFrom && widgetTo <= node.to) return node.to
   }

@@ -127,6 +127,37 @@ describe('image drops on rendered Markdown blocks', () => {
     expect(body.toJSON()).toEqual(expectedBody)
   })
 
+  it('inserts after a long list when dropping on its table', async () => {
+    const block = [
+      '- Before the table.',
+      '',
+      ...tableSource.split('\n').map((line) => `  ${line}`),
+      '',
+      '- After the table.',
+    ].join('\n')
+    const continuedItems = Array.from(
+      { length: 180 },
+      (_, index) => `- Continued item ${index.toString().padStart(3, '0')}`,
+    ).join('\n')
+    const source = `${block}\n${continuedItems}\n\n${sourceAfterBlock}`
+    const expectedBody = `${block}\n${continuedItems}\n\n${uploadedImageMarkdown}\n\n${sourceAfterBlock}`
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      uploadArticleImage: imageUploader(),
+      initialSelection: { anchor: source.length },
+    })
+    if (!content) throw new Error('The Markdown editor did not mount')
+    await waitForTable(content)
+    const target = content.querySelector<HTMLElement>('table td')
+    if (!target) throw new Error('The Markdown table did not mount')
+
+    await act(async () => {
+      dispatchFileDrop(content, target)
+      await vi.waitUntil(() => body.toJSON() !== source)
+    })
+
+    expect(body.toJSON()).toEqual(expectedBody)
+  })
+
   it('does not append blank lines after a block at the end of the document', async () => {
     const source = `${tableSource}\n`
     const { body, content } = mountMarkdownEditor(source, [], undefined, {

@@ -29,6 +29,15 @@ export const blockWidgetDecorators = Facet.define<
   readonly BlockWidgetDecorator[]
 >({ combine: (decorators) => decorators })
 
+export function getBlockWidgetDOMRange(
+  view: EditorView,
+  element: HTMLElement,
+): BlockWidgetSourceRange {
+  const first = view.posAtDOM(element, -1)
+  const last = view.posAtDOM(element, 1)
+  return { from: Math.min(first, last), to: Math.max(first, last) }
+}
+
 export function createBlockWidget(
   createPreview: (view: EditorView) => HTMLElement,
   identity: string,
@@ -85,10 +94,7 @@ export function createBlockWidget(
 
         event.preventDefault()
         event.stopPropagation()
-        const first = view.posAtDOM(element, -1)
-        const last = view.posAtDOM(element, 1)
-        const from = Math.min(first, last)
-        const to = Math.max(first, last)
+        const { from, to } = getBlockWidgetDOMRange(view, element)
         view.focus()
         view.dispatch({
           selection: { anchor: Math.min(from + 1, to) },
