@@ -1034,6 +1034,9 @@ First paragraph.
     await act(async () => {
       await userEvent.click(page.getByRole('tab', { name: 'メモ' }))
     })
+    await vi.waitUntil(
+      () => host?.querySelector('[data-testid="premise-panel"]') === null,
+    )
     states.push(readPremiseState())
 
     expect(states).toEqual([
