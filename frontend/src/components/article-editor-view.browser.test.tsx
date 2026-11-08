@@ -1247,6 +1247,55 @@ First paragraph.
     })
   })
 
+  it('switches to outline mode and back with the outline mode shortcut', async () => {
+    const article: Article = {
+      id: 'article-outline-mode',
+      title: 'A fresh draft',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# First\n\nParagraph\n')
+    renderWorkspace(article, articleDoc)
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await vi.waitFor(() => {
+      expect(host?.querySelector('.cm-content')).not.toBeNull()
+    })
+    const modifier = modifierKey()
+    const shortcut = async () => {
+      await act(async () => {
+        await userEvent.keyboard(
+          `{${modifier}>}{Shift>}O{/Shift}{/${modifier}}`,
+        )
+      })
+    }
+    const readScreen = () => {
+      const input = host?.querySelector<HTMLInputElement>(
+        'input[aria-label="見出しを編集"]',
+      )
+      return {
+        articleHidden: host?.querySelector('main')?.hidden,
+        editing: input?.value,
+        inputFocused: input !== undefined && document.activeElement === input,
+      }
+    }
+
+    const before = readScreen()
+    await shortcut()
+    const writing = readScreen()
+    // Sent from inside the heading input, the shortcut must not also reach the window listener.
+    await shortcut()
+    const readResult = () => ({ before, writing, after: readScreen() })
+
+    expect(readResult()).toEqual({
+      before: { articleHidden: false, editing: undefined, inputFocused: false },
+      writing: { articleHidden: true, editing: 'First', inputFocused: true },
+      after: { articleHidden: false, editing: undefined, inputFocused: false },
+    })
+  })
+
   it('guides an empty article to the premise or a new memo until a memo exists', async () => {
     const article: Article = {
       id: 'article-empty',

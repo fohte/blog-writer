@@ -247,6 +247,7 @@ export function App() {
           }}
           view={context.view}
           mobile={context.mobile}
+          writing={context.writing}
           onHeadingSelected={context.onHeadingSelected}
         />
       )}

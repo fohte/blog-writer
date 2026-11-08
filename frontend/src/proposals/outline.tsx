@@ -17,6 +17,7 @@ import { type LlmSettings, loadLlmSettings } from '#lib/llm-settings'
 import { postLlmResult } from '#lib/llm-sse'
 import { ArticleOutline } from '#outline/article-outline'
 import type { MoveHistory } from '#outline/move-history'
+import type { OutlineWriting } from '#outline/use-outline-keyboard'
 import {
   type RejectedSuggestion,
   rejectionKey,
@@ -54,6 +55,7 @@ export type OutlineProposalEditorContext = {
 export type OutlineProposalAccessoryContext = OutlineProposalEditorContext & {
   view: EditorView | null
   mobile?: boolean
+  writing?: OutlineWriting | undefined
   onHeadingSelected: () => void
   onActiveHeadingChange?: ((heading: Heading | undefined) => void) | undefined
 }
@@ -453,6 +455,7 @@ export function OutlineProposalAccessory({
   history,
   view,
   mobile = false,
+  writing,
   onHeadingSelected,
   onActiveHeadingChange,
 }: OutlineProposalAccessoryContext) {
@@ -477,6 +480,7 @@ export function OutlineProposalAccessory({
       history={history}
       view={view}
       mobile={mobile}
+      writing={writing}
       onHeadingSelected={onHeadingSelected}
       onActiveHeadingChange={onActiveHeadingChange}
       proposalState={state}
