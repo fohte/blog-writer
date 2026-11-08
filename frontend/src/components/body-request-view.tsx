@@ -211,7 +211,7 @@ export function BodyRequestView({
   onCandidateSelect,
   onRetry,
 }: BodyRequestViewProps) {
-  // Base UI re-reads the anchor only when the ref object changes, and a popup reopened before its close animation ends stays mounted.
+  // While a popup stays mounted through its close animation, Base UI ignores a new element in the same ref object.
   const anchorRef = useMemo(() => ({ current: anchor }), [anchor])
 
   return (

@@ -44,6 +44,7 @@ function readPopupTop() {
 
 describe('BodyRequestView', () => {
   beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     host = document.createElement('div')
     anchors = document.createElement('div')
     document.body.append(host, anchors)
@@ -56,19 +57,22 @@ describe('BodyRequestView', () => {
     })
     host.remove()
     anchors.remove()
+    vi.unstubAllGlobals()
   })
 
   it('moves the open popup when its anchor element changes', async () => {
-    const firstAnchor = createAnchor(300)
-    renderView(firstAnchor)
-    await vi.waitFor(() => {
-      expect(readPopupTop()).toEqual(324)
-    })
+    const waitForPopupTop = (top: number) =>
+      vi.waitFor(() => {
+        if (readPopupTop() !== top) throw new Error('The popup did not settle')
+      })
+    renderView(createAnchor(300))
+    await waitForPopupTop(324)
+    const initialTop = readPopupTop()
 
-    const secondAnchor = createAnchor(100)
-    renderView(secondAnchor)
-    await vi.waitFor(() => {
-      expect(readPopupTop()).toEqual(124)
-    })
+    renderView(createAnchor(100))
+    await waitForPopupTop(124)
+
+    const readResult = () => ({ initialTop, movedTop: readPopupTop() })
+    expect(readResult()).toEqual({ initialTop: 324, movedTop: 124 })
   })
 })
