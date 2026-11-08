@@ -9,7 +9,10 @@ import {
 import { EditorView, keymap, ViewPlugin } from '@codemirror/view'
 import { err, ok, type Result } from 'neverthrow'
 
-import { blockWidgetExclusionProviders } from '#editor/markdown-block-widget-exclusions'
+import {
+  blockWidgetExclusionProviders,
+  refreshBlockWidgetExclusions,
+} from '#editor/markdown-block-widget-exclusions'
 import {
   focusForSelection,
   hasOverlappingRange,
@@ -279,10 +282,13 @@ export class SuggestionLayerController<Metadata = unknown> {
     }
 
     view.dispatch({
-      effects: this.replaceSuggestions.of({
-        scope: this.effectScope,
-        value: validation.value,
-      }),
+      effects: [
+        this.replaceSuggestions.of({
+          scope: this.effectScope,
+          value: validation.value,
+        }),
+        refreshBlockWidgetExclusions.of(null),
+      ],
     })
     return ok(undefined)
   }
@@ -337,6 +343,7 @@ export class SuggestionLayerController<Metadata = unknown> {
           value: validation.value,
         }),
         replaceInFlight.of({ scope: this.effectScope, value: null }),
+        refreshBlockWidgetExclusions.of(null),
       ],
     })
     return ok(undefined)
@@ -359,7 +366,10 @@ export class SuggestionLayerController<Metadata = unknown> {
       return err({ type: 'overlapping-ranges' })
     }
     view.dispatch({
-      effects: replaceInFlight.of({ scope: this.effectScope, value: position }),
+      effects: [
+        replaceInFlight.of({ scope: this.effectScope, value: position }),
+        refreshBlockWidgetExclusions.of(null),
+      ],
     })
     return ok(undefined)
   }
@@ -399,7 +409,10 @@ export class SuggestionLayerController<Metadata = unknown> {
         to: suggestion.to,
         insert: suggestion.replacement,
       },
-      effects: removeSuggestion.of({ scope: this.effectScope, value: id }),
+      effects: [
+        removeSuggestion.of({ scope: this.effectScope, value: id }),
+        refreshBlockWidgetExclusions.of(null),
+      ],
       annotations: [
         Transaction.userEvent.of('input.type'),
         isolateHistory.of('full'),
@@ -421,7 +434,10 @@ export class SuggestionLayerController<Metadata = unknown> {
     const suggestion = this.findSuggestion(id)
     if (!view || !suggestion) return
     view.dispatch({
-      effects: removeSuggestion.of({ scope: this.effectScope, value: id }),
+      effects: [
+        removeSuggestion.of({ scope: this.effectScope, value: id }),
+        refreshBlockWidgetExclusions.of(null),
+      ],
     })
     view.focus()
     this.options.onResolve?.(suggestion, 'reject')

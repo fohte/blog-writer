@@ -588,6 +588,74 @@ describe('Markdown block widget interactions', () => {
     })
   })
 
+  it('moves a block from its handle after earlier text shifts its position', async () => {
+    const source = [
+      'Before paragraph.',
+      '',
+      tableSource,
+      '',
+      imageSource,
+      '',
+      'After paragraph.',
+    ].join('\n')
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      showMoveHandles: true,
+      initialSelection: { anchor: 0 },
+    })
+    const view = content ? EditorView.findFromDOM(content) : null
+    const tableHandle = content?.querySelectorAll<HTMLButtonElement>(
+      '.cm-block-drag-handle',
+    )[1]
+    if (!view || !content || !tableHandle)
+      throw new Error('The table move handle did not mount')
+
+    act(() => {
+      view.dispatch({
+        changes: {
+          from: 'Before paragraph.'.length,
+          insert: ' revised',
+        },
+      })
+    })
+    const handleConnectedAfterEdit = tableHandle.isConnected
+
+    await act(async () => {
+      await userEvent.click(tableHandle)
+    })
+    const menuItemElements = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ]
+    const moveDown = menuItemElements.find(
+      (item) => item.textContent === 'Move down',
+    )
+    const menuItems = menuItemElements.map((item) => item.textContent)
+    if (!moveDown) throw new Error('The table Move down action did not mount')
+    await act(async () => {
+      await userEvent.click(moveDown)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      handleConnectedAfterEdit,
+      handleCount: content.querySelectorAll('.cm-block-drag-handle').length,
+      menuItems,
+    })
+    expect(readOutput()).toEqual({
+      body: [
+        'Before paragraph. revised',
+        '',
+        imageSource,
+        '',
+        tableSource,
+        '',
+        'After paragraph.',
+      ].join('\n'),
+      handleConnectedAfterEdit: true,
+      handleCount: 4,
+      menuItems: ['Move up', 'Move down'],
+    })
+  })
+
   it.each([
     { block: 'table', markdown: tableSource, previewSelector: 'table' },
     { block: 'image', markdown: imageSource, previewSelector: 'figure' },
@@ -651,4 +719,62 @@ describe('Markdown block widget interactions', () => {
       })
     },
   )
+
+  it('restores image source when a suggestion is added after mounting', () => {
+    const source = `before\n\n${imageSource}\n\nafter`
+    const from = source.indexOf(imageSource)
+    const layer = new SuggestionLayerController()
+    const { body, content } = mountMarkdownEditor(
+      source,
+      [layer.extension],
+      undefined,
+      { initialSelection: { anchor: 0 } },
+    )
+    if (!content) throw new Error('The Markdown editor did not mount')
+    const initial = {
+      body: body.toJSON(),
+      renderedPreviewCount: content.querySelectorAll('figure').length,
+      sourceVisible: hasEditorSource(content, imageSource),
+    }
+    let suggestionSet = false
+
+    act(() => {
+      suggestionSet = layer
+        .setSuggestions([
+          {
+            id: 'image-suggestion',
+            from,
+            to: from + imageSource.length,
+            replacement: 'A revised image.',
+          },
+        ])
+        .isOk()
+    })
+
+    const readOutput = () => ({
+      initial,
+      afterSuggestion: {
+        body: body.toJSON(),
+        renderedPreviewCount: content.querySelectorAll('figure').length,
+        sourceVisible: hasEditorSource(content, imageSource),
+        suggestionMarker:
+          content.querySelector('.cm-suggestion-marker')?.textContent ?? null,
+      },
+      suggestionSet,
+    })
+    expect(readOutput()).toEqual({
+      initial: {
+        body: source,
+        renderedPreviewCount: 1,
+        sourceVisible: false,
+      },
+      afterSuggestion: {
+        body: source,
+        renderedPreviewCount: 0,
+        sourceVisible: true,
+        suggestionMarker: '提案',
+      },
+      suggestionSet: true,
+    })
+  })
 })
