@@ -299,6 +299,35 @@ describe('article sources', () => {
     first.destroy()
   })
 
+  it('reads a source saved before added times existed', () => {
+    const doc = new Y.Doc()
+    addSource(doc, {
+      id: 'source-a',
+      kind: 'pasted',
+      title: '以前の資料',
+      url: null,
+      fileName: null,
+      checkedAt: null,
+    })._unsafeUnwrap()
+    doc.getMap<Y.Map<unknown>>('sources').get('source-a')?.delete('addedAt')
+
+    expect(listSources(doc)).toEqual([
+      {
+        id: 'source-a',
+        kind: 'pasted',
+        title: '以前の資料',
+        url: null,
+        fileName: null,
+        checkedAt: null,
+        addedAt: null,
+        publishedAt: null,
+        status: 'ready',
+        summary: '',
+      },
+    ])
+    doc.destroy()
+  })
+
   it('preserves the original source when an ID is already present', () => {
     const doc = new Y.Doc()
     addSource(doc, {

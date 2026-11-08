@@ -647,11 +647,19 @@ describe('SourcePanel', () => {
     doc.destroy()
   })
 
+  const withMark = '資料ページ新規×example.invalid · 取得済み'
+  const withoutMark = '資料ページ×example.invalid · 取得済み'
+
   it.each([
-    ['added after the last visit', '2000-01-01T00:00:00.000Z', true, true],
-    ['added on a first visit', null, true, true],
-    ['added before the last visit', '2999-01-01T00:00:00.000Z', true, false],
-    ['saved before added times existed', null, false, false],
+    ['added after the last visit', '2000-01-01T00:00:00.000Z', true, withMark],
+    ['added on a first visit', null, true, withMark],
+    [
+      'added before the last visit',
+      '2999-01-01T00:00:00.000Z',
+      true,
+      withoutMark,
+    ],
+    ['saved before added times existed', null, false, withoutMark],
   ])('marks new sources for a source %s', (_, seenAt, hasAddedAt, expected) => {
     if (seenAt === null) window.localStorage.removeItem(seenKey)
     else window.localStorage.setItem(seenKey, seenAt)
@@ -667,7 +675,7 @@ describe('SourcePanel', () => {
     if (!hasAddedAt) updateSource(doc, id, { addedAt: null })._unsafeUnwrap()
     mountSourcePanel(doc)
 
-    expect(host?.textContent.includes('新規')).toBe(expected)
+    expect(readSourceRow()).toBe(expected)
     doc.destroy()
   })
 
