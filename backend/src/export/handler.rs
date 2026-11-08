@@ -23,6 +23,10 @@ pub struct DestinationListResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DestinationResponse {
     pub id: String,
+    pub repository: String,
+    pub base_branch: String,
+    /// Path inside the repository, where `{slug}` stands for the article slug.
+    pub path_template: String,
     pub format: ExportFormat,
     pub frontmatter_template: String,
 }
@@ -175,6 +179,9 @@ fn find_destination<'a>(
 fn to_destination_response(destination: &ExportDestination) -> DestinationResponse {
     DestinationResponse {
         id: destination.id.clone(),
+        repository: destination.repository.clone(),
+        base_branch: destination.base_branch.clone(),
+        path_template: destination.path_template.clone(),
         format: destination.format,
         frontmatter_template: destination.frontmatter_template.clone(),
     }

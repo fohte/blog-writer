@@ -481,9 +481,13 @@ export interface components {
       destinations: components['schemas']['DestinationResponse'][]
     }
     DestinationResponse: {
+      base_branch: string
       format: components['schemas']['ExportFormat']
       frontmatter_template: string
       id: string
+      /** @description Path inside the repository, where `{slug}` stands for the article slug. */
+      path_template: string
+      repository: string
     }
     ErrorResponse: {
       error: string

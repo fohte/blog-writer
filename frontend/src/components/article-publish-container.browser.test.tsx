@@ -52,9 +52,19 @@ const article: Article = {
 const destinations: ExportDestination[] = [
   {
     id: 'sample-site',
+    repository: 'example/site',
+    base_branch: 'main',
+    path_template: 'posts/{slug}.md',
     format: 'markdown',
     frontmatter_template: 'title: {{ title }}\ndate: {{ date }}',
   },
+]
+
+const destinationFacts = [
+  'リポジトリexample/site',
+  '取り込み先main',
+  'パスposts/{slug}.md',
+  '形式Markdown',
 ]
 
 function renderPublish(
@@ -240,6 +250,16 @@ async function exerciseConflictRefresh() {
   }
 }
 
+function readPublishSummary() {
+  return {
+    facts: [...document.querySelectorAll('dl > div')].map(
+      ({ textContent }) => textContent,
+    ),
+    resolvedPath: document.querySelector('label + p')?.textContent ?? null,
+    diffSize: document.querySelector('h2 + span')?.textContent ?? null,
+  }
+}
+
 function readDestinationState() {
   return {
     selectedDestination:
@@ -323,9 +343,54 @@ afterEach(() => {
   doc?.destroy()
   doc = undefined
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('ArticlePublishContainer', () => {
+  it('shows where the article will be published before any diff is requested', () => {
+    renderPublish()
+
+    expect(readPublishSummary()).toEqual({
+      facts: destinationFacts,
+      resolvedPath: '→ posts/sample-post.md',
+      diffSize: null,
+    })
+  })
+
+  it.each([
+    ['an empty slug', ''],
+    ['an invalid slug', 'not a slug'],
+  ])('leaves out the resolved path for %s', (_name, exportSlug) => {
+    renderPublish({ exportSlug })
+
+    expect(readPublishSummary()).toEqual({
+      facts: destinationFacts,
+      resolvedPath: null,
+      diffSize: null,
+    })
+  })
+
+  it('shows the changed line counts and when the destination was read', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 0, 15, 9, 5) })
+    renderPublish({}, { body: 'New line' })
+    getResponses.push({
+      status: 200,
+      payload: {
+        content:
+          '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\nOld line',
+        sha: 'base-sha',
+      },
+    })
+
+    await clickAndWait('差分を見る', waitForDiff)
+
+    expect(readPublishSummary()).toEqual({
+      facts: destinationFacts,
+      resolvedPath: '→ posts/sample-post.md',
+      diffSize: '+1 −1 · 取得 09:05',
+    })
+  })
+
   it('posts the exact content and sha shown in the diff', async () => {
     renderPublish()
     await clickAndWait('差分を見る', waitForDiff)
@@ -441,6 +506,9 @@ describe('ArticlePublishContainer', () => {
   it('requires a new diff after the publishing destination changes', async () => {
     const otherDestination: ExportDestination = {
       id: 'another-site',
+      repository: 'example/another-site',
+      base_branch: 'main',
+      path_template: 'posts/{slug}.md',
       format: 'markdown',
       frontmatter_template: 'title: {{ title }}',
     }
@@ -558,6 +626,9 @@ describe('ArticlePublishContainer', () => {
         destinations: [
           {
             id: 'sample-site',
+            repository: 'example/site',
+            base_branch: 'main',
+            path_template: 'posts/{slug}.mdx',
             format: 'mdx',
             frontmatter_template: 'title: {{ title }}\ndate: {{ date }}',
           },

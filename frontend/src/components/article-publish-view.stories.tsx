@@ -5,6 +5,9 @@ import { ArticlePublishView } from '#components/article-publish-view'
 const destinations = [
   {
     id: 'sample-site',
+    repository: 'example/site',
+    base_branch: 'main',
+    path_template: 'posts/{slug}.md',
     format: 'markdown',
     frontmatter_template: 'title: {{ title }}\ndate: {{ date }}',
   },
@@ -13,6 +16,9 @@ const multipleDestinations = [
   ...destinations,
   {
     id: 'another-site',
+    repository: 'example/another-site',
+    base_branch: 'release',
+    path_template: 'content/{slug}.md',
     format: 'markdown',
     frontmatter_template: 'title: {{ title }}',
   },
@@ -61,6 +67,9 @@ export const DiffReady: Story = {
     diff: {
       original: 'title: "Sample article"\n\nOld body',
       modified: 'title: "Sample article"\n\nUpdated body',
+      added: 1,
+      removed: 1,
+      fetchedAt: Date.UTC(2026, 0, 15, 7, 16),
     },
   },
 }
@@ -69,7 +78,13 @@ export const NewFile: Story = {
   name: 'the new file has no original content',
   args: {
     canPublish: true,
-    diff: { original: '', modified: 'title: "Sample article"\n\nNew body' },
+    diff: {
+      original: '',
+      modified: 'title: "Sample article"\n\nNew body',
+      added: 3,
+      removed: 0,
+      fetchedAt: Date.UTC(2026, 0, 15, 7, 16),
+    },
   },
 }
 
@@ -105,6 +120,9 @@ export const Conflict: Story = {
     diff: {
       original: 'title: "Sample article"\n\nNew destination body',
       modified: 'title: "Sample article"\n\nUpdated body',
+      added: 1,
+      removed: 1,
+      fetchedAt: Date.UTC(2026, 0, 15, 7, 16),
     },
     error: '公開先のファイルが変更されています。最新の差分を取り直しました。',
   },

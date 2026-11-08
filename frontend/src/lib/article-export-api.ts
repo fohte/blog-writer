@@ -33,6 +33,9 @@ function isDestinationList(
       (destination) =>
         isRecord(destination) &&
         typeof destination['id'] === 'string' &&
+        typeof destination['repository'] === 'string' &&
+        typeof destination['base_branch'] === 'string' &&
+        typeof destination['path_template'] === 'string' &&
         (destination['format'] === 'markdown' ||
           destination['format'] === 'mdx') &&
         typeof destination['frontmatter_template'] === 'string',
