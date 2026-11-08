@@ -16,6 +16,10 @@ import {
   resolveMoveConflict,
 } from '#article/move-conflicts'
 import { MoveConflictNotice } from '#components/move-conflict-notice'
+import {
+  blockWidgetExclusionProviders,
+  refreshBlockWidgetExclusions,
+} from '#editor/markdown-block-widget-exclusions'
 
 const rootsByDOM = new WeakMap<HTMLElement, Root>()
 const viewsByDoc = new WeakMap<Y.Doc, Set<() => void>>()
@@ -82,8 +86,12 @@ class MoveConflictWidget extends WidgetType {
   }
 
   override destroy(dom: HTMLElement): void {
-    rootsByDOM.get(dom)?.unmount()
+    const root = rootsByDOM.get(dom)
     rootsByDOM.delete(dom)
+    if (root)
+      queueMicrotask(() => {
+        root.unmount()
+      })
   }
 
   override ignoreEvent(): boolean {
@@ -137,7 +145,12 @@ class MoveConflictObserver {
   ) {
     this.refresh = () => {
       if (!this.destroyed)
-        this.view.dispatch({ effects: refreshMoveConflicts.of(null) })
+        this.view.dispatch({
+          effects: [
+            refreshMoveConflicts.of(null),
+            refreshBlockWidgetExclusions.of(null),
+          ],
+        })
     }
     this.body = doc.getText('body')
     this.body.observe(this.onBodyChange)
@@ -177,6 +190,12 @@ export function moveConflictExtension(doc: Y.Doc): Extension {
   return [
     moveConflictStateField(doc),
     moveConflictPlugin(doc),
+    blockWidgetExclusionProviders.of((state) =>
+      getMoveConflicts(doc).map(({ from, to }) => ({
+        from: Math.min(from, state.doc.length),
+        to: Math.min(to, state.doc.length),
+      })),
+    ),
     EditorView.baseTheme({
       '.cm-move-conflict-range': {
         textDecoration: 'underline dashed var(--muted-foreground)',

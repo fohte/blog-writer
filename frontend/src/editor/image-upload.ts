@@ -1,9 +1,11 @@
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import type { ResultAsync } from 'neverthrow'
 
+export type ArticleImageUploadError = { message: string }
+
 export type ArticleImageUploader = (
   file: File,
-) => ResultAsync<{ src: string }, Error>
+) => ResultAsync<{ src: string }, ArticleImageUploadError>
 
 type UploadPosition = { from: number; to: number }
 
@@ -29,8 +31,9 @@ class ImageUploadPlugin {
   paste(event: ClipboardEvent): boolean {
     const files = this.imageFiles(event.clipboardData?.files)
     const uploader = this.uploader()
-    if (!uploader || files.length === 0) return false
+    if (files.length === 0) return false
     event.preventDefault()
+    if (!uploader) return true
     void this.upload(files, uploader, {
       from: this.view.state.selection.main.from,
       to: this.view.state.selection.main.to,
@@ -41,11 +44,12 @@ class ImageUploadPlugin {
   drop(event: DragEvent): boolean {
     const files = this.imageFiles(event.dataTransfer?.files)
     const uploader = this.uploader()
-    if (!uploader || files.length === 0) return false
+    if (files.length === 0) return false
+    event.preventDefault()
+    if (!uploader) return true
     const position =
       this.view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
       this.view.state.selection.main.from
-    event.preventDefault()
     void this.upload(files, uploader, { from: position, to: position })
     return true
   }

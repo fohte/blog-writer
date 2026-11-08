@@ -1,45 +1,47 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { useLayoutEffect, useRef } from 'react'
+import { http, HttpResponse } from 'msw'
 
 import {
   createMarkdownImagePreview,
   type MarkdownImagePreviewProps,
 } from '#components/markdown-image-preview'
-
-function MarkdownImagePreviewStory(props: MarkdownImagePreviewProps) {
-  const container = useRef<HTMLDivElement>(null)
-
-  useLayoutEffect(() => {
-    if (container.current)
-      container.current.replaceChildren(createMarkdownImagePreview(props))
-  }, [props])
-
-  return <div ref={container} />
-}
+import { DOMPreview } from '#stories/dom-preview'
 
 const meta = {
   title: 'Editor/MarkdownImagePreview',
-  component: MarkdownImagePreviewStory,
+  render: (props: MarkdownImagePreviewProps) => (
+    <DOMPreview createElement={createMarkdownImagePreview} props={props} />
+  ),
 } satisfies Meta<MarkdownImagePreviewProps>
 
 export default meta
 type Story = StoryObj<typeof meta>
 
-const imageUrl =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='180'%3E%3Crect width='320' height='180' fill='%23dbeafe'/%3E%3C/svg%3E"
+const imageUrl = 'https://assets.example.test/images/landscape.svg?w=320&h=180'
 const source = `![A landscape](${imageUrl})`
+const imageSvg =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#dbeafe"/></svg>'
 
 export const Image: Story = {
-  name: 'the preview draws an image from its Markdown source URL.',
+  name: 'the preview draws an image using its width and height query parameters.',
   args: {
     alt: 'A landscape',
     source,
     src: imageUrl,
   },
+  parameters: {
+    msw: [
+      http.get('https://assets.example.test/images/landscape.svg', () =>
+        HttpResponse.text(imageSvg, {
+          headers: { 'Content-Type': 'image/svg+xml' },
+        }),
+      ),
+    ],
+  },
 }
 
 export const LoadFailure: Story = {
-  name: 'the preview shows the original Markdown when the image fails to load.',
+  name: 'the preview shows the original Markdown when an image URL with dimensions fails to load.',
   args: {
     alt: '',
     source: '![](https://assets.example.test/images/missing.webp?w=640&h=360)',

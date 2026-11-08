@@ -12,6 +12,10 @@ export class DomWidget extends WidgetType {
     return other instanceof DomWidget && other.identity === this.identity
   }
 
+  override ignoreEvent(): boolean {
+    return false
+  }
+
   override toDOM(view: EditorView): HTMLElement {
     return this.createElement(view)
   }

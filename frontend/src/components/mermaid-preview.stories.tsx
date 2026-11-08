@@ -1,25 +1,16 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { useLayoutEffect, useRef } from 'react'
 
 import {
   createMermaidPreviewElement,
   type MermaidPreviewProps,
 } from '#components/mermaid-preview'
-
-function MermaidPreviewStory(props: MermaidPreviewProps) {
-  const container = useRef<HTMLDivElement>(null)
-
-  useLayoutEffect(() => {
-    if (container.current)
-      container.current.replaceChildren(createMermaidPreviewElement(props))
-  }, [props])
-
-  return <div ref={container} />
-}
+import { DOMPreview } from '#stories/dom-preview'
 
 const meta = {
   title: 'Editor/MermaidPreview',
-  component: MermaidPreviewStory,
+  render: (props: MermaidPreviewProps) => (
+    <DOMPreview createElement={createMermaidPreviewElement} props={props} />
+  ),
 } satisfies Meta<MermaidPreviewProps>
 
 export default meta

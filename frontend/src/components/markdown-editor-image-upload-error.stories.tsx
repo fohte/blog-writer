@@ -14,6 +14,6 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const UploadFailed: Story = {
-  name: 'the editor shows an image upload error.',
-  args: { message: 'The image could not be uploaded.' },
+  name: 'the editor shows the message returned by a failed image upload.',
+  args: { message: 'The image upload could not be completed. Try again.' },
 }

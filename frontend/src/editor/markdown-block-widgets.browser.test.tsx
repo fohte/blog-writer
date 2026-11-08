@@ -13,8 +13,8 @@ const tableSource = [
   '| :--- | ---: |',
   '| Tables | Yes |',
 ].join('\n')
-const imageSource =
-  '![Sample](https://assets.example.test/images/sample.webp?w=640&h=360)'
+const imageUrl = 'https://assets.example.test/images/sample.webp?w=640&h=360'
+const imageSource = `![Sample](${imageUrl})`
 const mermaidSource = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
 
 function readTableRows(content: HTMLElement | null) {
@@ -32,6 +32,12 @@ function readTableAlignments(content: HTMLElement | null) {
   )
 }
 
+function hasEditorLine(content: HTMLElement | null, line: string) {
+  return [...(content?.querySelectorAll<HTMLElement>('.cm-line') ?? [])].some(
+    (editorLine) => editorLine.textContent === line,
+  )
+}
+
 function imageFile(): File {
   return new File(['image data'], 'sample.png', { type: 'image/png' })
 }
@@ -42,7 +48,7 @@ function fileTransfer(file: File): DataTransfer {
   return transfer
 }
 
-function dispatchImagePaste(content: HTMLElement | null, file: File): Event {
+function dispatchFilePaste(content: HTMLElement | null, file: File): Event {
   const event = new Event('paste', { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'clipboardData', {
     value: fileTransfer(file),
@@ -51,7 +57,7 @@ function dispatchImagePaste(content: HTMLElement | null, file: File): Event {
   return event
 }
 
-function dispatchImageDrop(content: HTMLElement | null, file: File): DragEvent {
+function dispatchFileDrop(content: HTMLElement | null, file: File): DragEvent {
   const view = content ? EditorView.findFromDOM(content) : null
   const coords = view?.coordsAtPos(0)
   const event = new DragEvent('drop', {
@@ -67,24 +73,24 @@ function dispatchImageDrop(content: HTMLElement | null, file: File): DragEvent {
 
 describe('Markdown block previews', () => {
   it('draws a GFM table outside the block and restores its exact source inside', () => {
-    const { body, content } = mountMarkdownEditor(tableSource)
+    const source = `before\n\n${tableSource}\n\nafter`
+    const { body, content } = mountMarkdownEditor(source)
     const view = content ? EditorView.findFromDOM(content) : null
     const read = () => ({
       body: body.toJSON(),
       alignment: readTableAlignments(content),
       rows: readTableRows(content),
-      sourceVisible:
-        content?.textContent.includes('| Feature | Offline |') ?? false,
+      sourceVisible: hasEditorLine(content, tableSource.split('\n')[0] ?? ''),
     })
     const outside = read()
-    const cursor = tableSource.indexOf('Tables') + 2
+    const cursor = source.indexOf('Tables') + 2
     view?.dispatch({ selection: { anchor: cursor } })
     const inside = read()
     const readOutput = () => ({ outside, inside })
 
     expect(readOutput()).toEqual({
       outside: {
-        body: tableSource,
+        body: source,
         alignment: ['left', 'right'],
         rows: [
           ['Feature', 'Offline'],
@@ -93,7 +99,7 @@ describe('Markdown block previews', () => {
         sourceVisible: false,
       },
       inside: {
-        body: tableSource,
+        body: source,
         alignment: [],
         rows: [],
         sourceVisible: true,
@@ -102,12 +108,13 @@ describe('Markdown block previews', () => {
   })
 
   it('renders inline GFM syntax in table cells', () => {
-    const source = [
+    const table = [
       '| Feature | Guide | Code |',
       '| --- | --- | --- |',
       '| **Bold** | [site](https://assets.example.test/guide?w=320&h=200) | `code` |',
       '| *Italic* | ~~Old~~ | ![Sample](https://assets.example.test/images/sample.webp?w=20&h=10) |',
     ].join('\n')
+    const source = `before\n\n${table}\n\nafter`
     const { body, content } = mountMarkdownEditor(source)
 
     const readOutput = () => ({
@@ -196,73 +203,75 @@ describe('Markdown block previews', () => {
   })
 
   it('draws an image outside its source and keeps the preview below editable source', () => {
-    const { body, content } = mountMarkdownEditor(imageSource)
+    const source = `before\n\n${imageSource}\n\nafter`
+    const { body, content } = mountMarkdownEditor(source)
     const view = content ? EditorView.findFromDOM(content) : null
     const read = () => ({
       body: body.toJSON(),
-      imageSrc: content?.querySelector('img')?.getAttribute('src') ?? null,
-      sourceVisible: content?.textContent.includes(imageSource) ?? false,
+      previewCount: content?.querySelectorAll('figure').length ?? 0,
+      sourceVisible: hasEditorLine(content, imageSource),
     })
     const outside = read()
-    const viewPosition = imageSource.indexOf('sample') + 2
+    const viewPosition = source.indexOf('sample') + 2
     view?.dispatch({ selection: { anchor: viewPosition } })
     const inside = read()
     const readOutput = () => ({ outside, inside })
 
     expect(readOutput()).toEqual({
       outside: {
-        body: imageSource,
-        imageSrc: 'https://assets.example.test/images/sample.webp?w=640&h=360',
+        body: source,
+        previewCount: 1,
         sourceVisible: false,
       },
       inside: {
-        body: imageSource,
-        imageSrc: 'https://assets.example.test/images/sample.webp?w=640&h=360',
+        body: source,
+        previewCount: 1,
         sourceVisible: true,
       },
     })
   })
 
   it('shows the original image Markdown when the image cannot load', () => {
-    const { body, content } = mountMarkdownEditor(imageSource)
-    content?.querySelector('img')?.dispatchEvent(new Event('error'))
+    const source = `before\n\n${imageSource}\n\nafter`
+    const { body, content } = mountMarkdownEditor(source)
+    content?.querySelector('figure img')?.dispatchEvent(new Event('error'))
 
     const readOutput = () => ({
       body: body.toJSON(),
-      fallback: content?.textContent ?? null,
+      fallback: content?.querySelector('figure code')?.textContent ?? null,
     })
-    expect(readOutput()).toEqual({ body: imageSource, fallback: imageSource })
+    expect(readOutput()).toEqual({ body: source, fallback: imageSource })
   })
 
   it('loads Mermaid only for a visible diagram and leaves source visible while editing', async () => {
-    const { body, content } = mountMarkdownEditor(mermaidSource)
+    const source = `before\n\n${mermaidSource}\n\nafter`
+    const { body, content } = mountMarkdownEditor(source)
     const view = content ? EditorView.findFromDOM(content) : null
     await act(async () => {
       await vi.waitUntil(() => content?.querySelector('svg') !== null)
     })
     const outside = {
       body: body.toJSON(),
-      sourceVisible: content?.textContent.includes(mermaidSource) ?? false,
+      sourceVisible: hasEditorLine(content, '```mermaid'),
       diagramCount: content?.querySelectorAll('svg').length ?? 0,
     }
-    const cursor = mermaidSource.indexOf('Draft') + 2
+    const cursor = source.indexOf('Draft') + 2
     view?.dispatch({ selection: { anchor: cursor } })
     const inside = {
       body: body.toJSON(),
-      sourceVisible:
-        content?.textContent.includes('Draft --> Preview') ?? false,
+      sourceVisible: hasEditorLine(content, '```mermaid'),
       diagramCount: content?.querySelectorAll('svg').length ?? 0,
     }
     const readOutput = () => ({ outside, inside })
 
     expect(readOutput()).toEqual({
       outside: {
-        body: mermaidSource,
+        body: source,
         sourceVisible: false,
         diagramCount: 1,
       },
       inside: {
-        body: mermaidSource,
+        body: source,
         sourceVisible: true,
         diagramCount: 1,
       },
@@ -270,7 +279,8 @@ describe('Markdown block previews', () => {
   })
 
   it('shows the Mermaid source and parser error when the diagram is invalid', async () => {
-    const source = '```mermaid\ngraph LR\n  Draft -->\n```'
+    const diagramSource = '```mermaid\ngraph LR\n  Draft -->\n```'
+    const source = `before\n\n${diagramSource}\n\nafter`
     const { body, content } = mountMarkdownEditor(source)
     await act(async () => {
       await vi.waitUntil(
@@ -283,13 +293,13 @@ describe('Markdown block previews', () => {
       hasError: content?.querySelector('[role="alert"]') !== null,
       sourceInPreview:
         content?.querySelector('figure pre code')?.textContent ?? null,
-      sourceVisible: content?.textContent.includes('Draft -->') ?? false,
+      sourceVisible: hasEditorLine(content, '```mermaid'),
     })
     expect(readOutput()).toEqual({
       body: source,
       hasError: true,
       sourceInPreview: 'graph LR\n  Draft -->',
-      sourceVisible: true,
+      sourceVisible: false,
     })
   })
 })
@@ -316,40 +326,101 @@ describe('image paste and drop uploads', () => {
       ],
       { uploadArticleImage: uploader },
     )
-    vi.spyOn(EditorView.prototype, 'posAtCoords').mockReturnValue(5)
-    const transfer = new DataTransfer()
-    transfer.items.add(
-      new File(['source text'], 'source.txt', { type: 'text/plain' }),
-    )
-    const drop = new DragEvent('drop', {
-      bubbles: true,
-      cancelable: true,
-      dataTransfer: transfer,
-    })
-    content?.dispatchEvent(drop)
+    const posAtCoords = vi
+      .spyOn(EditorView.prototype, 'posAtCoords')
+      .mockReturnValue(5)
+    try {
+      const transfer = new DataTransfer()
+      transfer.items.add(
+        new File(['source text'], 'source.txt', { type: 'text/plain' }),
+      )
+      const drop = new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer,
+      })
+      content?.dispatchEvent(drop)
 
-    await vi.waitUntil(
-      () => body.toJSON() === 'A ressource textearch sentence.',
-    )
+      await vi.waitUntil(
+        () => body.toJSON() === 'A ressource textearch sentence.',
+      )
 
-    const readOutput = () => ({
-      body: body.toJSON(),
-      defaultPrevented: drop.defaultPrevented,
-      uploadedFiles,
-    })
-    expect(readOutput()).toEqual({
-      body: 'A ressource textearch sentence.',
-      defaultPrevented: true,
-      uploadedFiles: [],
-    })
+      const readOutput = () => ({
+        body: body.toJSON(),
+        defaultPrevented: drop.defaultPrevented,
+        uploadedFiles,
+      })
+      expect(readOutput()).toEqual({
+        body: 'A ressource textearch sentence.',
+        defaultPrevented: true,
+        uploadedFiles: [],
+      })
+    } finally {
+      posAtCoords.mockRestore()
+    }
   })
 
   it.each([
-    { name: 'paste succeeds', method: 'paste', succeeds: true },
-    { name: 'paste displays a failure', method: 'paste', succeeds: false },
-    { name: 'drop succeeds', method: 'drop', succeeds: true },
-    { name: 'drop displays a failure', method: 'drop', succeeds: false },
-  ])('$name', async ({ method, succeeds }) => {
+    {
+      method: 'paste',
+      outcome: 'falls through',
+      expectedBody: 'A research sentence.',
+    },
+    {
+      method: 'drop',
+      outcome: 'inserts plain text',
+      expectedBody: 'A ressource textearch sentence.',
+    },
+  ])(
+    'does not upload a non-image file on $method and $outcome',
+    async ({ method, expectedBody }) => {
+      const uploadedFiles: string[] = []
+      const uploader: ArticleImageUploader = (file) => {
+        uploadedFiles.push(file.name)
+        return okAsync({
+          src: 'https://assets.example.test/images/uploaded.webp?w=320&h=200',
+        })
+      }
+      const { body, content } = mountMarkdownEditor(
+        'A research sentence.',
+        [],
+        undefined,
+        { uploadArticleImage: uploader, initialSelection: { anchor: 5 } },
+      )
+      const posAtCoords = vi
+        .spyOn(EditorView.prototype, 'posAtCoords')
+        .mockReturnValue(5)
+      try {
+        const file = new File(['source text'], 'source.txt', {
+          type: 'text/plain',
+        })
+        await act(async () => {
+          if (method === 'paste') dispatchFilePaste(content, file)
+          else dispatchFileDrop(content, file)
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        })
+        await vi.waitUntil(() => body.toJSON() === expectedBody)
+
+        const readOutput = () => ({
+          body: body.toJSON(),
+          uploadedFiles,
+        })
+        expect(readOutput()).toEqual({
+          body: expectedBody,
+          uploadedFiles: [],
+        })
+      } finally {
+        posAtCoords.mockRestore()
+      }
+    },
+  )
+
+  it.each([
+    { method: 'paste', outcome: 'succeeds', succeeds: true },
+    { method: 'paste', outcome: 'fails', succeeds: false },
+    { method: 'drop', outcome: 'succeeds', succeeds: true },
+    { method: 'drop', outcome: 'fails', succeeds: false },
+  ])('$method $outcome', async ({ method, succeeds }) => {
     const uploadedFiles: string[] = []
     const uploader: ArticleImageUploader = (file) => {
       uploadedFiles.push(file.name)
@@ -367,8 +438,8 @@ describe('image paste and drop uploads', () => {
     await act(async () => {
       event =
         method === 'paste'
-          ? dispatchImagePaste(content, file)
-          : dispatchImageDrop(content, file)
+          ? dispatchFilePaste(content, file)
+          : dispatchFileDrop(content, file)
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 

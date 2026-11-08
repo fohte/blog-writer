@@ -1,38 +1,46 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { useLayoutEffect, useRef } from 'react'
 
 import {
   createMarkdownTablePreview,
   type MarkdownTablePreviewProps,
 } from '#components/markdown-table-preview'
-
-function MarkdownTablePreviewStory(props: MarkdownTablePreviewProps) {
-  const container = useRef<HTMLDivElement>(null)
-
-  useLayoutEffect(() => {
-    if (container.current)
-      container.current.replaceChildren(createMarkdownTablePreview(props))
-  }, [props])
-
-  return <div ref={container} />
-}
+import { DOMPreview } from '#stories/dom-preview'
 
 const meta = {
   title: 'Editor/MarkdownTablePreview',
-  component: MarkdownTablePreviewStory,
+  render: (props: MarkdownTablePreviewProps) => (
+    <DOMPreview createElement={createMarkdownTablePreview} props={props} />
+  ),
 } satisfies Meta<MarkdownTablePreviewProps>
 
 export default meta
 type Story = StoryObj<typeof meta>
 
 export const AlignedTable: Story = {
-  name: 'the preview aligns each column according to the GFM delimiter row.',
+  name: 'the preview formats inline Markdown and aligns columns from the GFM delimiter row.',
   args: {
-    header: ['Feature', 'Offline', 'Status'],
+    header: ['Feature', 'Guide', 'Example'],
     alignment: ['left', 'center', 'right'],
     rows: [
-      ['Tables', 'Yes', 'Ready'],
-      ['Diagrams', 'Yes', 'Loading'],
+      [
+        '**Tables**',
+        '[dimensions](https://assets.example.test/guide?w=320&h=180)',
+        '`Ready`',
+      ],
+      [
+        '*Diagrams*',
+        '[offline guide](https://assets.example.test/offline)',
+        '~~Draft~~',
+      ],
     ],
+  },
+}
+
+export const UnsupportedLinkScheme: Story = {
+  name: 'the preview leaves an unsupported link scheme as Markdown text.',
+  args: {
+    header: ['Link'],
+    alignment: [null],
+    rows: [['[blocked](javascript:0)']],
   },
 }

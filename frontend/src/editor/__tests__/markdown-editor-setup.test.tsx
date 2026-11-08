@@ -7,7 +7,11 @@ import * as Y from 'yjs'
 import { getBody } from '#article/body'
 import type { ArticleImageUploader } from '#editor/image-upload'
 import { MarkdownEditor, type MarkdownEditorHandle } from '#editor/index'
-import { createMoveHistory, type MoveHistory } from '#outline/index'
+import {
+  createMoveHistory,
+  createOutlineEditorExtension,
+  type MoveHistory,
+} from '#outline/index'
 
 interface MountedMarkdownEditor {
   body: Y.Text
@@ -25,6 +29,7 @@ type MarkdownEditorMountOptions = {
   initialSelection?: { anchor: number; head?: number }
   onEvidenceError?: (message: string) => void
   uploadArticleImage?: ArticleImageUploader
+  showMoveHandles?: boolean
   prepareDoc?: (doc: Y.Doc) => void
 }
 
@@ -53,9 +58,15 @@ export function mountMarkdownEditor(
   const body = getBody(doc)
   body.insert(0, value)
   options.prepareDoc?.(doc)
-  const mountedExtensions = [...extensions, ...(extensionFactory?.(doc) ?? [])]
   const editor = createRef<MarkdownEditorHandle>()
   const history = createMoveHistory(doc)
+  const mountedExtensions = [
+    ...extensions,
+    ...(extensionFactory?.(doc) ?? []),
+    ...(options.showMoveHandles === true
+      ? [createOutlineEditorExtension(history)]
+      : []),
+  ]
 
   act(() => {
     root.render(

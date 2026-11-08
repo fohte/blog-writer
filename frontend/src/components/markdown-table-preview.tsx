@@ -78,13 +78,29 @@ function createInlineNode(
     const image = document.createElement('img')
     image.alt = source.slice(open.to, close.from)
     image.className = 'inline-block max-h-8 max-w-full align-middle'
+    image.referrerPolicy = 'no-referrer'
     image.setAttribute('src', source.slice(url.from, url.to))
+    image.addEventListener(
+      'error',
+      () => {
+        image.replaceWith(
+          document.createTextNode(source.slice(node.from, node.to)),
+        )
+      },
+      { once: true },
+    )
     return image
   }
 
   if (node.name === 'Link' || node.name === 'Autolink') {
     const url = children.find((child) => child.name === 'URL')
     if (!url) return null
+    const href = source.slice(url.from, url.to)
+    if (
+      !URL.canParse(href) ||
+      !['http:', 'https:', 'mailto:'].includes(new URL(href).protocol)
+    )
+      return null
 
     const marks = children.filter((child) => child.name === 'LinkMark')
     const open = marks.find((mark) => source.slice(mark.from, mark.to) === '[')
@@ -93,7 +109,7 @@ function createInlineNode(
     const labelTo = close?.from ?? url.to
     const anchor = document.createElement('a')
     anchor.className = 'text-primary underline underline-offset-4'
-    anchor.setAttribute('href', source.slice(url.from, url.to))
+    anchor.setAttribute('href', href)
     anchor.rel = 'noreferrer noopener'
     anchor.target = '_blank'
     appendInlineRange(

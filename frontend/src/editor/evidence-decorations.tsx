@@ -11,6 +11,10 @@ import * as Y from 'yjs'
 import { listEvidence, observeEvidence, pruneEvidence } from '#article/evidence'
 import { listSources } from '#article/sources'
 import type { EvidenceVerdict } from '#article/types'
+import {
+  blockWidgetExclusionProviders,
+  refreshBlockWidgetExclusions,
+} from '#editor/markdown-block-widget-exclusions'
 
 const refreshEffect = StateEffect.define()
 
@@ -53,41 +57,62 @@ class EvidenceWidget extends WidgetType {
 }
 
 export function evidenceDecorations(doc: Y.Doc, onOpen: (id: string) => void) {
-  return ViewPlugin.fromClass(
-    class {
-      decorations
-      private readonly unobserve: () => void
+  return [
+    ViewPlugin.fromClass(
+      class {
+        decorations
+        private readonly unobserve: () => void
 
-      constructor(view: EditorView) {
-        pruneEvidence(doc)
-        this.decorations = buildDecorations(view.state, doc, onOpen)
-        this.unobserve = observeEvidence(doc, () => {
-          requestAnimationFrame(() => {
-            if (!view.dom.isConnected) return
-            pruneEvidence(doc)
-            view.dispatch({ effects: refreshEffect.of(null) })
+        constructor(view: EditorView) {
+          pruneEvidence(doc)
+          this.decorations = buildDecorations(view.state, doc, onOpen)
+          this.unobserve = observeEvidence(doc, () => {
+            requestAnimationFrame(() => {
+              if (!view.dom.isConnected) return
+              pruneEvidence(doc)
+              view.dispatch({
+                effects: [
+                  refreshEffect.of(null),
+                  refreshBlockWidgetExclusions.of(null),
+                ],
+              })
+            })
           })
-        })
-      }
-
-      update(update: ViewUpdate): void {
-        if (update.docChanged) pruneEvidence(doc)
-        if (
-          update.docChanged ||
-          update.transactions.some((transaction) =>
-            transaction.effects.some((effect) => effect.is(refreshEffect)),
-          )
-        ) {
-          this.decorations = buildDecorations(update.state, doc, onOpen)
         }
-      }
 
-      destroy(): void {
-        this.unobserve()
-      }
-    },
-    { decorations: (plugin) => plugin.decorations },
-  )
+        update(update: ViewUpdate): void {
+          if (update.docChanged) pruneEvidence(doc)
+          if (
+            update.docChanged ||
+            update.transactions.some((transaction) =>
+              transaction.effects.some((effect) => effect.is(refreshEffect)),
+            )
+          ) {
+            this.decorations = buildDecorations(update.state, doc, onOpen)
+          }
+        }
+
+        destroy(): void {
+          this.unobserve()
+        }
+      },
+      { decorations: (plugin) => plugin.decorations },
+    ),
+    blockWidgetExclusionProviders.of((state) => {
+      const sourceIds = new Set(listSources(doc).map((source) => source.id))
+      return listEvidence(doc).flatMap((item) => {
+        if (item.sourceId !== null && !sourceIds.has(item.sourceId)) return []
+        const from = Y.createAbsolutePositionFromRelativePosition(
+          item.from,
+          doc,
+        )
+        const to = Y.createAbsolutePositionFromRelativePosition(item.to, doc)
+        if (!from || !to || to.index <= from.index) return []
+        const end = Math.min(to.index, state.doc.length)
+        return end > from.index ? [{ from: from.index, to: end }] : []
+      })
+    }),
+  ]
 }
 
 function buildDecorations(

@@ -1,18 +1,43 @@
 import { ResultAsync } from 'neverthrow'
 
+type Mermaid = typeof import('mermaid').default
+
 export interface MermaidPreviewProps {
   id: string
   source: string
   showSource?: boolean
 }
 
+let mermaidPromise: Promise<Mermaid> | undefined
+
+function loadMermaid(): Promise<Mermaid> {
+  mermaidPromise ??= import('mermaid').then(({ default: mermaid }) => {
+    mermaid.initialize({
+      startOnLoad: false,
+      suppressErrorRendering: true,
+    })
+    return mermaid
+  })
+  return mermaidPromise
+}
+
+function toError(error: unknown): Error {
+  if (error instanceof Error) return error
+  if (typeof error === 'object' && error !== null) {
+    if ('message' in error && typeof error.message === 'string')
+      return new Error(error.message)
+    if ('str' in error && typeof error.str === 'string')
+      return new Error(error.str)
+  }
+  return new Error(String(error))
+}
+
 function renderMermaidDiagram(id: string, source: string) {
   return ResultAsync.fromPromise(
-    import('mermaid')
-      .then(({ default: mermaid }) => mermaid.render(id, source))
+    loadMermaid()
+      .then((mermaid) => mermaid.render(id, source))
       .then(({ svg }) => svg),
-    (error: unknown) =>
-      error instanceof Error ? error : new Error(String(error)),
+    toError,
   )
 }
 

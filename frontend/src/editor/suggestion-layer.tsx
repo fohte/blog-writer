@@ -9,6 +9,7 @@ import {
 import { EditorView, keymap, ViewPlugin } from '@codemirror/view'
 import { err, ok, type Result } from 'neverthrow'
 
+import { blockWidgetExclusionProviders } from '#editor/markdown-block-widget-exclusions'
 import {
   focusForSelection,
   hasOverlappingRange,
@@ -186,16 +187,28 @@ export class SuggestionLayerController<Metadata = unknown> {
         }
       },
       provide: (field) => {
-        return EditorView.decorations.compute(
-          [field, suggestionActionsPresentation],
-          (state) =>
-            createSuggestionDecorations(
-              state.field(field),
-              state,
-              this,
-              options.display ?? 'marker',
-            ),
-        )
+        return [
+          EditorView.decorations.compute(
+            [field, suggestionActionsPresentation],
+            (state) =>
+              createSuggestionDecorations(
+                state.field(field),
+                state,
+                this,
+                options.display ?? 'marker',
+              ),
+          ),
+          blockWidgetExclusionProviders.from(
+            field,
+            (value) => () =>
+              value.inFlight
+                ? [
+                    ...value.suggestions.map(({ from, to }) => ({ from, to })),
+                    value.inFlight,
+                  ]
+                : value.suggestions.map(({ from, to }) => ({ from, to })),
+          ),
+        ]
       },
     })
 

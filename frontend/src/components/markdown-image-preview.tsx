@@ -25,6 +25,7 @@ export function createMarkdownImagePreview({
   const image = document.createElement('img')
   image.alt = alt
   image.className = 'max-h-128 max-w-full rounded-md object-contain'
+  image.referrerPolicy = 'no-referrer'
   image.setAttribute('src', src)
   image.addEventListener(
     'error',
