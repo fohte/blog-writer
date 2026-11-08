@@ -1,3 +1,6 @@
+import { isolateHistory } from '@codemirror/commands'
+import type { EditorView } from '@codemirror/view'
+
 import {
   findMoveBlockRange,
   flattenHeadingTree,
@@ -6,6 +9,15 @@ import {
 import type { Heading } from '#article/types'
 
 export type HeadingChange = { from: number; to: number; insert: string }
+
+export function applyHeadingChange(
+  view: EditorView,
+  change: HeadingChange | undefined,
+) {
+  if (!change) return
+  // Isolated so that the edit is never joined with typing in the body.
+  view.dispatch({ changes: change, annotations: isolateHistory.of('full') })
+}
 
 function lineEnd(markdown: string, from: number): number {
   const end = markdown.indexOf('\n', from)

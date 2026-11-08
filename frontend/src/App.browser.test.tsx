@@ -3158,11 +3158,13 @@ describe('the application research and evidence integrations', () => {
     })
     const proposalState = readOutlineState()
 
-    await act(async () => {
-      await userEvent.click(
-        page.getByRole('option', { name: /Second section/u }),
-      )
-    })
+    for (let tap = 0; tap < 2; tap += 1) {
+      await act(async () => {
+        await userEvent.click(
+          page.getByRole('option', { name: /Second section/u }),
+        )
+      })
+    }
 
     const actual = () => ({
       proposalState,

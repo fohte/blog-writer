@@ -246,6 +246,7 @@ export function App() {
             context.showSources()
           }}
           view={context.view}
+          mobile={context.mobile}
           onHeadingSelected={context.onHeadingSelected}
         />
       )}
