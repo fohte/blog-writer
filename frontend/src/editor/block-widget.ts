@@ -14,6 +14,9 @@ interface BlockWidgetOptions {
   sourceFrom: number
 }
 
+const decoratorCleanupsByElement = new WeakMap<HTMLElement, (() => void)[]>()
+const cleanupByElement = new WeakMap<HTMLElement, () => void>()
+
 export const blockWidgetDecorators = Facet.define<
   BlockWidgetDecorator,
   readonly BlockWidgetDecorator[]
@@ -24,22 +27,25 @@ export function createBlockWidget(
   identity: string,
   { attachDecorators = true, sourceFrom }: BlockWidgetOptions,
 ): DomWidget {
-  const cleanupByElement = new WeakMap<HTMLElement, () => void>()
-  const widgetIdentity = attachDecorators
-    ? `${identity}:${String(sourceFrom)}`
-    : identity
+  const refreshDecorators = (element: HTMLElement, view: EditorView) => {
+    for (const cleanup of decoratorCleanupsByElement.get(element) ?? [])
+      cleanup()
+    const cleanups = attachDecorators
+      ? view.state
+          .facet(blockWidgetDecorators)
+          .map((decorate) => decorate(element, view, sourceFrom))
+          .filter((cleanup): cleanup is () => void => cleanup !== undefined)
+      : []
+    decoratorCleanupsByElement.set(element, cleanups)
+    return true
+  }
   return new DomWidget(
     (view) => {
       const element = document.createElement('div')
       element.className = 'cm-markdown-block-widget'
       element.append(createPreview(view))
 
-      const cleanups = attachDecorators
-        ? view.state
-            .facet(blockWidgetDecorators)
-            .map((decorate) => decorate(element, view, sourceFrom))
-            .filter((cleanup): cleanup is () => void => cleanup !== undefined)
-        : []
+      refreshDecorators(element, view)
       const stopWidgetMouseDown = (event: MouseEvent) => {
         event.stopPropagation()
       }
@@ -70,18 +76,24 @@ export function createBlockWidget(
       cleanupByElement.set(element, () => {
         element.removeEventListener('mousedown', stopWidgetMouseDown)
         element.removeEventListener('click', enterSource)
-        for (const cleanup of cleanups) cleanup()
+        for (const cleanup of decoratorCleanupsByElement.get(element) ?? [])
+          cleanup()
+        decoratorCleanupsByElement.delete(element)
       })
       return element
     },
-    widgetIdentity,
-    (element) => {
-      cleanupByElement.get(element)?.()
-      cleanupByElement.delete(element)
+    identity,
+    {
+      destroyElement: (element) => {
+        cleanupByElement.get(element)?.()
+        cleanupByElement.delete(element)
+      },
+      equalityKey: attachDecorators ? sourceFrom : identity,
+      shouldIgnoreEvent: (event) =>
+        event.type === 'keydown' &&
+        event.target instanceof Element &&
+        event.target.closest('.cm-markdown-block-widget-handle') !== null,
+      updateElement: attachDecorators ? refreshDecorators : undefined,
     },
-    (event) =>
-      event.type === 'keydown' &&
-      event.target instanceof Element &&
-      event.target.closest('.cm-markdown-block-widget-handle') !== null,
   )
 }

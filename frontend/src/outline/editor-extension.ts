@@ -116,13 +116,17 @@ function attachWidgetHandle(
   const host = document.createElement('span')
   host.className = 'cm-markdown-block-widget-handle'
   element.prepend(host)
-  return mountBlockMoveHandle({
+  const cleanup = mountBlockMoveHandle({
     composingViews,
     host,
     history,
     positionDOM: element,
     view,
   })
+  return () => {
+    cleanup()
+    host.remove()
+  }
 }
 
 function createBlockHandleExtension(
