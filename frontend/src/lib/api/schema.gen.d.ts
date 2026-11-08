@@ -731,7 +731,7 @@ export interface components {
         }
     ResearchJobEvent:
       | {
-          data: components['schemas']['LlmProgress']
+          data: components['schemas']['ResearchJobProgress']
           /** @enum {string} */
           event: 'progress'
         }
@@ -744,6 +744,27 @@ export interface components {
           data: components['schemas']['LlmErrorPayload']
           /** @enum {string} */
           event: 'error'
+        }
+    ResearchJobProgress:
+      | {
+          /** @enum {string} */
+          kind: 'search'
+          query: string
+        }
+      | {
+          /** @enum {string} */
+          kind: 'fetching'
+          url: string
+        }
+      | {
+          /** @enum {string} */
+          kind: 'fetched'
+          url: string
+        }
+      | {
+          /** @enum {string} */
+          kind: 'unavailable'
+          url: string
         }
     ResearchJobRequest:
       | {

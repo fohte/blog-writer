@@ -26,6 +26,7 @@ import {
 } from '#lib/source-api'
 import {
   ResearchJobInterruptedError,
+  type ResearchJobProgress,
   runResearchJob,
 } from '#research/research-job'
 import {
@@ -345,7 +346,7 @@ export function researchFromHeading(
   question: string,
   researchedHeading: string | undefined,
   signal: AbortSignal,
-  onProgress: (query: string) => void,
+  onProgress: (step: ResearchJobProgress) => void,
   onSaving: () => void,
 ): ResultAsync<void, Error> {
   return runResearchJob(

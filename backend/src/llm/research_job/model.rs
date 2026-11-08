@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::{
-    llm::{LlmErrorPayload, LlmProgress},
-    research_claim_evidence::model::JudgeClaimEvidenceResult,
+    llm::LlmErrorPayload, research_claim_evidence::model::JudgeClaimEvidenceResult,
     research_key_points::model::ResearchKeyPointsResult,
 };
 
@@ -52,11 +51,19 @@ pub(crate) enum ResearchJobSourceStatus {
     Unavailable,
 }
 
-#[derive(Debug, ToSchema)]
-#[expect(dead_code, reason = "used as the OpenAPI response schema")]
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ResearchJobProgress {
+    Search { query: String },
+    Fetching { url: String },
+    Fetched { url: String },
+    Unavailable { url: String },
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub(crate) enum ResearchJobEvent {
-    Progress(LlmProgress),
+    Progress(ResearchJobProgress),
     Result(ResearchJobResult),
     Error(LlmErrorPayload),
 }

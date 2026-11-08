@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 
-import type { ResearchProgressStatus } from '#components/research-progress'
+import type {
+  ResearchProgressStatus,
+  ResearchProgressStep,
+} from '#components/research-progress'
 import { loadLlmSettings } from '#lib/llm-settings'
 import { researchFromHeading } from '#research/research-from-heading'
 import {
   acquireResearchLock,
+  mergeResearchStep,
   releaseResearchLock,
   ResearchJobInterruptedError,
 } from '#research/research-job'
 
 export type ResearchProgressState = {
   status: ResearchProgressStatus
-  queries: string[]
+  steps: ResearchProgressStep[]
   target?: string
   error?: string
 }
@@ -28,7 +32,7 @@ export function useHeadingResearch() {
       setProgress((current) => ({
         ...current,
         [articleId]: {
-          ...(current[articleId] ?? { status: 'running', queries: [] }),
+          ...(current[articleId] ?? { status: 'running', steps: [] }),
           ...patch,
         },
       }))
@@ -61,7 +65,7 @@ export function useHeadingResearch() {
         ...current,
         [articleId]: {
           status: 'running',
-          queries: [],
+          steps: [],
           target: headingText || questionInput.trim(),
         },
       }))
@@ -90,16 +94,16 @@ export function useHeadingResearch() {
         question,
         headingText || undefined,
         controller.signal,
-        (query) => {
+        (step) => {
           setProgress((current) => {
             const currentProgress = current[articleId]
             if (currentProgress?.status === 'cancelling') return current
             return {
               ...current,
               [articleId]: {
-                ...(currentProgress ?? { status: 'running', queries: [] }),
+                ...(currentProgress ?? { status: 'running', steps: [] }),
                 status: 'running',
-                queries: [...(currentProgress?.queries ?? []), query],
+                steps: mergeResearchStep(currentProgress?.steps ?? [], step),
               },
             }
           })
@@ -110,7 +114,7 @@ export function useHeadingResearch() {
             return {
               ...current,
               [articleId]: {
-                ...(current[articleId] ?? { status: 'running', queries: [] }),
+                ...(current[articleId] ?? { status: 'running', steps: [] }),
                 status: 'saving',
               },
             }

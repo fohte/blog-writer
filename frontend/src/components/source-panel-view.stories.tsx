@@ -135,7 +135,7 @@ export const RecheckErrorDuringResearch: Story = {
     researchError: '別の調査が実行中のため、根拠を再判定できませんでした。',
     researchProgress: {
       status: 'running',
-      queries: ['公開統計 2026'],
+      steps: [{ kind: 'search', query: '公開統計 2026' }],
       target: '利用状況',
       onCancel: () => {},
     },
@@ -171,7 +171,7 @@ export const WithEvidence: Story = {
     pending: [{ id: 'pending-a', label: 'data.example.invalid/2026' }],
     researchProgress: {
       status: 'running',
-      queries: ['公開統計 2026'],
+      steps: [{ kind: 'search', query: '公開統計 2026' }],
       target: '利用状況',
       onCancel: () => {},
     },
