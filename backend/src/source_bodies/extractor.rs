@@ -23,14 +23,28 @@ pub(crate) fn extract(html: &str, document_url: &str) -> Result<ExtractedSource,
     })
 }
 
-/// OGP and schema.org require ISO 8601 here, so any other format is treated as unknown.
+/// OGP and schema.org require ISO 8601 here, so a value that does not start with a real
+/// calendar date is treated as unknown.
 fn published_date(value: &str) -> Option<String> {
     let date = value.trim().get(..10)?;
-    let is_date = date.bytes().enumerate().all(|(index, byte)| match index {
+    let is_shaped = date.bytes().enumerate().all(|(index, byte)| match index {
         4 | 7 => byte == b'-',
         _ => byte.is_ascii_digit(),
     });
-    is_date.then(|| date.to_owned())
+    if !is_shaped {
+        return None;
+    }
+    let number = |range: std::ops::Range<usize>| date[range].parse::<u32>().ok();
+    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+    let is_leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year => 29,
+        2 => 28,
+        _ => return None,
+    };
+    (1..=days_in_month).contains(&day).then(|| date.to_owned())
 }
 
 #[cfg(test)]
@@ -52,6 +66,14 @@ mod tests {
     )]
     #[case::not_iso_8601(
         r#"<meta property="article:published_time" content="March 4, 2025">"#,
+        None
+    )]
+    #[case::leap_day(
+        r#"<meta property="article:published_time" content="2024-02-29">"#,
+        Some("2024-02-29")
+    )]
+    #[case::impossible_date(
+        r#"<meta property="article:published_time" content="2025-02-29T09:00:00Z">"#,
         None
     )]
     fn extracts_markdown_title_and_published_date_from_html(
