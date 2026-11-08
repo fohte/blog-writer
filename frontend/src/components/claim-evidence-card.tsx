@@ -1,6 +1,7 @@
 import { Button } from '@fohte/ui/button'
 
 import type { EvidenceVerdict, Source } from '#article/types'
+import { SuggestionDiff } from '#components/suggestion-diff'
 import { getSourceHost } from '#research/source-format'
 
 type ClaimEvidenceCardProps = {
@@ -10,6 +11,14 @@ type ClaimEvidenceCardProps = {
   checkedAt: string
   edited?: boolean
   onRemove?: () => void
+  suggestion?:
+    | {
+        original: string
+        replacement: string
+        onAccept: () => void
+        onReject: () => void
+      }
+    | undefined
 }
 
 const verdictLabels: Record<EvidenceVerdict, string | undefined> = {
@@ -36,6 +45,7 @@ export function ClaimEvidenceCard({
   checkedAt,
   edited = false,
   onRemove,
+  suggestion,
 }: ClaimEvidenceCardProps) {
   const host =
     source?.url === null || source?.url === undefined
@@ -87,6 +97,27 @@ export function ClaimEvidenceCard({
         <p className="whitespace-pre-wrap text-muted-foreground">
           要約: {source.summary || 'ありません。'}
         </p>
+      ) : null}
+      {suggestion ? (
+        <div aria-label="修正案" className="flex flex-col gap-2" role="group">
+          <SuggestionDiff
+            original={suggestion.original}
+            replacement={suggestion.replacement}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              onClick={suggestion.onReject}
+              size="xs"
+              type="button"
+              variant="outline"
+            >
+              却下
+            </Button>
+            <Button onClick={suggestion.onAccept} size="xs" type="button">
+              採用
+            </Button>
+          </div>
+        </div>
       ) : null}
       {onRemove ? (
         <Button
