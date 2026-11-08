@@ -2,7 +2,7 @@ import { Button } from '@fohte/ui/button'
 import { Input } from '@fohte/ui/input'
 import { List, ListItem } from '@fohte/ui/list'
 import { Popover, PopoverContent, PopoverTrigger } from '@fohte/ui/popover'
-import { type KeyboardEvent, useRef, useState } from 'react'
+import { type KeyboardEvent, useMemo, useState } from 'react'
 
 export type BodyRequestPhase = 'input' | 'error'
 
@@ -211,8 +211,8 @@ export function BodyRequestView({
   onCandidateSelect,
   onRetry,
 }: BodyRequestViewProps) {
-  const anchorRef = useRef<HTMLElement | null>(null)
-  anchorRef.current = anchor
+  // Base UI re-reads the anchor only when the ref object changes, and a popup reopened before its close animation ends stays mounted.
+  const anchorRef = useMemo(() => ({ current: anchor }), [anchor])
 
   return (
     <Popover anchor={anchorRef} onOpenChange={onOpenChange} open={open}>
