@@ -273,6 +273,7 @@ export function App() {
           <SourcePanel
             articleId={context.articleId}
             doc={context.doc}
+            visible={context.sourcesVisible}
             researchError={claimEvidence.recheckErrors[context.articleId]}
             researchProgress={
               progress === undefined

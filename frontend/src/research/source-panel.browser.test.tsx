@@ -10,9 +10,12 @@ import {
   listFindings,
   listSources,
   setFindings,
+  updateSource,
 } from '#article/index'
 import { isRecord } from '#lib/guards'
 import { SourcePanel } from '#research/source-panel'
+
+const seenKey = 'blog-writer.sources-seen-at.article-a'
 
 let host: HTMLDivElement | undefined
 let root: Root | undefined
@@ -31,7 +34,7 @@ function mountSourcePanel(doc: Y.Doc) {
   document.body.append(host)
   root = createRoot(host)
   act(() => {
-    root?.render(<SourcePanel articleId="article-a" doc={doc} />)
+    root?.render(<SourcePanel articleId="article-a" doc={doc} visible />)
   })
 }
 
@@ -181,10 +184,11 @@ async function settleUi(doc: Y.Doc) {
 
 function readOutput(doc: Y.Doc) {
   return {
-    sources: listSources(doc).map(({ checkedAt, ...source }) => ({
+    sources: listSources(doc).map(({ addedAt, checkedAt, ...source }) => ({
       ...source,
       id: 'generated-source',
       checkedAt: checkedAt === null ? null : 'normalized-date',
+      addedAt: addedAt === null ? null : 'normalized-date',
     })),
     findings: listFindings(doc).map(({ ...finding }) => ({
       ...finding,
@@ -325,14 +329,20 @@ function readEditableDropOutput(
     pastePrevented: pasteEvent.defaultPrevented,
     dragOverPrevented: dragOverEvent.defaultPrevented,
     dropPrevented: dropEvent.defaultPrevented,
-    sources: listSources(doc),
+    sources: listSources(doc).map(({ addedAt, ...source }) => ({
+      ...source,
+      addedAt: addedAt === null ? null : 'normalized-date',
+    })),
     fetchCalls: readFetchCalls(),
   }
 }
 
 function readDeleteOutput(doc: Y.Doc) {
   return {
-    sources: listSources(doc),
+    sources: listSources(doc).map(({ addedAt, ...source }) => ({
+      ...source,
+      addedAt: addedAt === null ? null : 'normalized-date',
+    })),
     findings: listFindings(doc),
     deleteCalls: readFetchCalls(),
   }
@@ -340,7 +350,10 @@ function readDeleteOutput(doc: Y.Doc) {
 
 function readDeleteFailureOutput(doc: Y.Doc) {
   return {
-    sources: listSources(doc),
+    sources: listSources(doc).map(({ addedAt, ...source }) => ({
+      ...source,
+      addedAt: addedAt === null ? null : 'normalized-date',
+    })),
     alert: host?.querySelector('[role="alert"]')?.textContent,
     deleteCalls: readFetchCalls(),
   }
@@ -380,9 +393,10 @@ function readAnalysisFailureOutput(doc: Y.Doc) {
 function readExistingAnalysisFailureOutput(doc: Y.Doc) {
   const sourceRow = host?.querySelector('[role="listitem"]')
   return {
-    sources: listSources(doc).map(({ checkedAt, ...source }) => ({
+    sources: listSources(doc).map(({ addedAt, checkedAt, ...source }) => ({
       ...source,
       checkedAt: checkedAt === null ? null : 'normalized-date',
+      addedAt: addedAt === null ? null : 'normalized-date',
     })),
     findings: listFindings(doc),
     alert: host?.querySelector('[role="alert"]')?.textContent,
@@ -439,6 +453,7 @@ beforeEach(() => {
   researchStatus = 200
   savedBodies = []
   window.localStorage.clear()
+  window.localStorage.setItem(seenKey, '2999-01-01T00:00:00.000Z')
   fetchMock = sourceFetchMock()
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -471,6 +486,7 @@ describe('SourcePanel', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: 'normalized-date',
+          addedAt: 'normalized-date',
           publishedAt: '2025-03-04',
           status: 'ready',
           summary: '利用者数は増加しました。',
@@ -518,6 +534,7 @@ describe('SourcePanel', () => {
           url: null,
           fileName: 'annual-summary.md',
           checkedAt: 'normalized-date',
+          addedAt: 'normalized-date',
           publishedAt: null,
           status: 'ready',
           summary: '利用者数は増加しました。',
@@ -551,6 +568,7 @@ describe('SourcePanel', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: 'normalized-date',
+          addedAt: 'normalized-date',
           publishedAt: '2025-03-04',
           status: 'ready',
           summary: '利用者数は増加しました。',
@@ -610,6 +628,7 @@ describe('SourcePanel', () => {
           url: null,
           fileName: 'annual-summary.md',
           checkedAt: 'normalized-date',
+          addedAt: 'normalized-date',
           publishedAt: null,
           status: 'ready',
           summary: '利用者数は増加しました。',
@@ -625,6 +644,30 @@ describe('SourcePanel', () => {
       ],
       renderedTitle: 'annual-summary',
     })
+    doc.destroy()
+  })
+
+  it.each([
+    ['added after the last visit', '2000-01-01T00:00:00.000Z', true, true],
+    ['added on a first visit', null, true, true],
+    ['added before the last visit', '2999-01-01T00:00:00.000Z', true, false],
+    ['saved before added times existed', null, false, false],
+  ])('marks new sources for a source %s', (_, seenAt, hasAddedAt, expected) => {
+    if (seenAt === null) window.localStorage.removeItem(seenKey)
+    else window.localStorage.setItem(seenKey, seenAt)
+    const doc = new Y.Doc()
+    const id = addSource(doc, {
+      id: 'source-new',
+      kind: 'url',
+      title: '資料ページ',
+      url: 'https://example.invalid/new',
+      fileName: null,
+      checkedAt: null,
+    })._unsafeUnwrap().id
+    if (!hasAddedAt) updateSource(doc, id, { addedAt: null })._unsafeUnwrap()
+    mountSourcePanel(doc)
+
+    expect(host?.textContent.includes('新規')).toBe(expected)
     doc.destroy()
   })
 
@@ -674,6 +717,7 @@ describe('SourcePanel', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: 'normalized-date',
+          addedAt: 'normalized-date',
           publishedAt: '2025-03-04',
           status: 'ready',
           summary: '利用者数は増加しました。',
@@ -759,6 +803,7 @@ describe('SourcePanel', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: null,
+          addedAt: 'normalized-date',
           publishedAt: null,
           status: 'unavailable',
           summary: '',
@@ -843,6 +888,7 @@ describe('SourcePanel', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: null,
+          addedAt: 'normalized-date',
           publishedAt: null,
           status: 'ready',
           summary: '',
@@ -891,6 +937,7 @@ describe('SourcePanel', () => {
             url: 'https://data.example.invalid/report',
             fileName: null,
             checkedAt: null,
+            addedAt: 'normalized-date',
             publishedAt: null,
             status: 'unavailable',
             summary: '',
@@ -915,6 +962,7 @@ describe('SourcePanel', () => {
             url: 'https://data.example.invalid/report',
             fileName: null,
             checkedAt: 'normalized-date',
+            addedAt: 'normalized-date',
             publishedAt: null,
             status: 'ready',
             summary: body,
@@ -965,6 +1013,7 @@ describe('SourcePanel', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: 'normalized-date',
+          addedAt: 'normalized-date',
           publishedAt: '2025-03-04',
           status: 'analysisFailed',
           summary: '',
@@ -1024,6 +1073,7 @@ describe('SourcePanel', () => {
             url: 'https://data.example.invalid/report',
             fileName: null,
             checkedAt: 'normalized-date',
+            addedAt: 'normalized-date',
             publishedAt: '2025-03-04',
             status: 'analysisFailed',
             summary: '',
@@ -1058,6 +1108,7 @@ describe('SourcePanel', () => {
             url: 'https://data.example.invalid/report',
             fileName: null,
             checkedAt: 'normalized-date',
+            addedAt: 'normalized-date',
             publishedAt: '2025-03-04',
             status: 'analysisFailed',
             summary: '',
@@ -1097,6 +1148,7 @@ describe('SourcePanel', () => {
             url: 'https://data.example.invalid/report',
             fileName: null,
             checkedAt: 'normalized-date',
+            addedAt: 'normalized-date',
             publishedAt: '2025-03-04',
             status: 'ready',
             summary: '利用者数は増加しました。',
@@ -1178,6 +1230,7 @@ describe('SourcePanel', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: 'normalized-date',
+          addedAt: 'normalized-date',
           publishedAt: null,
           status: 'analysisFailed',
           summary: '',
@@ -1223,6 +1276,7 @@ describe('SourcePanel', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: null,
+          addedAt: 'normalized-date',
           publishedAt: null,
           status: 'unavailable',
           summary: '',

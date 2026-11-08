@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useEffect, useMemo } from 'react'
 import * as Y from 'yjs'
 
-import { setBody, setPremise } from '#article/index'
+import { addSource, setBody, setPremise } from '#article/index'
 import {
   type ArticleEditorPanel,
   ArticleEditorView,
@@ -50,8 +50,20 @@ function ArticleEditorPreview({
     setPremise(nextDoc, 'audience', 'Readers learning the subject')
     setPremise(nextDoc, 'purpose', 'Explain one useful idea')
     setPremise(nextDoc, 'claim', 'A focused article is easier to follow')
+    if (sources)
+      addSource(nextDoc, {
+        id: 'story-source',
+        kind: 'pasted',
+        title: 'A reference',
+        url: null,
+        fileName: null,
+        checkedAt: null,
+      }).match(
+        () => undefined,
+        () => undefined,
+      )
     return nextDoc
-  }, [empty, longOutline, status])
+  }, [empty, longOutline, sources, status])
 
   useEffect(() => {
     if (!doc) return

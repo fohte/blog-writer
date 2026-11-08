@@ -41,6 +41,8 @@ export type Source = {
   publishedAt: string | null
   status: SourceStatus
   summary: string
+  /** ISO time the source was added, or null for a source saved before this was recorded. */
+  addedAt: string | null
 }
 
 export type Finding = {

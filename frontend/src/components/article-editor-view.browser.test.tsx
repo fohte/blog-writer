@@ -12,6 +12,7 @@ import * as Y from 'yjs'
 
 import {
   addMemo,
+  addSource,
   getBody,
   listMemos,
   moveBlock,
@@ -467,6 +468,40 @@ First paragraph.
         tabs: ['メモ', '前提', '資料'],
       },
     })
+  })
+
+  it('counts the sources on the sources tab as they are added', async () => {
+    await page.viewport(1280, 800)
+    const article: Article = {
+      id: 'article-source-count',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# First section\n')
+    renderWorkspace(article, articleDoc, {
+      sourcesPanel: <section>Reference material</section>,
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const readSourcesTab = () =>
+      [...(host?.querySelectorAll('[role="tab"]') ?? [])].at(-1)?.textContent
+    const withoutSources = readSourcesTab()
+    act(() => {
+      addSource(articleDoc, {
+        id: 'source-a',
+        kind: 'pasted',
+        title: 'A reference',
+        url: null,
+        fileName: null,
+        checkedAt: null,
+      })._unsafeUnwrap()
+    })
+
+    const readResult = () => ({ withoutSources, added: readSourcesTab() })
+    expect(readResult()).toEqual({ withoutSources: '資料', added: '資料 1' })
   })
 
   it('keeps a long desktop outline within a scrollable left column', async () => {

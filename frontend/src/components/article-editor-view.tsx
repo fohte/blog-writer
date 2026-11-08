@@ -10,6 +10,7 @@ import {
   getCachedEditorExtensions,
   getMoveHistory,
   useEmptyArticle,
+  useSourceCount,
 } from '#components/article-editor-document'
 import { ArticleEditorHeader } from '#components/article-editor-header'
 import { ArticleEditorMobileToolbar } from '#components/article-editor-mobile-toolbar'
@@ -101,6 +102,7 @@ export function ArticleEditorView({
     section: ArticleExportSection | undefined
   }>()
   const isEmpty = useEmptyArticle(doc)
+  const sourceCount = useSourceCount(doc)
   const history = doc ? getMoveHistory(doc) : undefined
   const body = doc ? getBody(doc) : undefined
   const [view, setView] = useState<EditorView | null>(null)
@@ -144,7 +146,16 @@ export function ArticleEditorView({
   }
   const context =
     doc && history
-      ? { articleId, doc, history, view, replaceBody, showSources, openExport }
+      ? {
+          articleId,
+          doc,
+          history,
+          view,
+          replaceBody,
+          showSources,
+          sourcesVisible: panel === 'sources',
+          openExport,
+        }
       : undefined
   const exportContent =
     exportView && context && exportScreen
@@ -233,14 +244,18 @@ export function ArticleEditorView({
     )
   }
 
-  const availablePanels: Array<{ value: ArticleEditorPanel; label: string }> = [
+  const availablePanels: Array<{
+    value: ArticleEditorPanel
+    label: string
+    count?: number
+  }> = [
     { value: 'memo', label: 'メモ' },
     { value: 'outline', label: '構成' },
     { value: 'body', label: '本文' },
     { value: 'premise', label: '前提' },
     ...(sourcesPanel == null
       ? []
-      : [{ value: 'sources' as const, label: '資料' }]),
+      : [{ value: 'sources' as const, label: '資料', count: sourceCount }]),
   ]
   const sidePanels = availablePanels.filter(({ value }) => isSidePanel(value))
   const selectedPanel = availablePanels.some(({ value }) => value === panel)
@@ -254,9 +269,15 @@ export function ArticleEditorView({
     : { hidden: false, inert: false, style: { display: 'block' } }
   const renderTabs = (panels: typeof availablePanels) => (
     <TabsList aria-label="表示する欄">
-      {panels.map(({ value, label }) => (
+      {panels.map(({ value, label, count = 0 }) => (
         <TabsTab key={value} value={value}>
           {label}
+          {count > 0 ? (
+            <span className="font-mono text-xs text-muted-foreground">
+              {' '}
+              {count}
+            </span>
+          ) : null}
         </TabsTab>
       ))}
     </TabsList>

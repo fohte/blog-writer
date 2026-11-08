@@ -17,7 +17,7 @@ import type {
 
 export type AddSourceInput = Omit<
   Source,
-  'publishedAt' | 'status' | 'summary'
+  'publishedAt' | 'status' | 'summary' | 'addedAt'
 > & {
   publishedAt?: string | null
   status?: SourceStatus
@@ -75,6 +75,7 @@ function readSource(id: string, source: SourceData): Source {
         ? status
         : 'ready',
     summary: asString(value('summary')),
+    addedAt: asNullableString(value('addedAt')),
   }
 }
 
@@ -107,6 +108,10 @@ export function listSources(doc: Y.Doc): Source[] {
     .sort((left, right) => left.title.localeCompare(right.title))
 }
 
+export function countSources(doc: Y.Doc): number {
+  return getSourcesMap(doc).size
+}
+
 export function listFindings(doc: Y.Doc, sourceId?: string): Finding[] {
   return [...getFindingsMap(doc).entries()]
     .map(([id, finding]) => readFinding(id, finding))
@@ -134,6 +139,7 @@ export function addSource(
   source.set('publishedAt', input.publishedAt ?? null)
   source.set('status', input.status ?? 'ready')
   source.set('summary', input.summary ?? '')
+  source.set('addedAt', new Date().toISOString())
   sources.set(input.id, source)
   return ok(readSource(input.id, source))
 }

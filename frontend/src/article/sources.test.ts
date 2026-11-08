@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
 import type { Finding, Source } from '#article/index'
@@ -70,7 +70,18 @@ function readDuplicateSourceOutput(
   }
 }
 
+const fixedNow = '2026-03-01T09:00:00.000Z'
+
 describe('article sources', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(fixedNow)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('stores typed source and finding data in the document maps', () => {
     const doc = new Y.Doc()
     const source = addSource(doc, {
@@ -105,6 +116,7 @@ describe('article sources', () => {
         url: 'https://data.example.invalid/report',
         fileName: null,
         checkedAt: '2026-01-14T00:00:00.000Z',
+        addedAt: fixedNow,
         publishedAt: '2025-12-01',
         status: 'ready',
         summary: '',
@@ -128,6 +140,7 @@ describe('article sources', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: '2026-01-14T00:00:00.000Z',
+          addedAt: fixedNow,
           publishedAt: '2025-12-01',
           status: 'ready',
           summary: '',
@@ -206,6 +219,7 @@ describe('article sources', () => {
           url: null,
           fileName: 'overview.pdf',
           checkedAt: null,
+          addedAt: fixedNow,
           publishedAt: null,
           status: 'ready',
           summary: '資料の要約です。',
@@ -219,6 +233,7 @@ describe('article sources', () => {
           url: null,
           fileName: 'overview.pdf',
           checkedAt: null,
+          addedAt: fixedNow,
           publishedAt: null,
           status: 'ready',
           summary: '資料の要約です。',
@@ -317,6 +332,7 @@ describe('article sources', () => {
           url: 'https://data.example.invalid/report',
           fileName: null,
           checkedAt: null,
+          addedAt: fixedNow,
           publishedAt: null,
           status: 'ready',
           summary: '',

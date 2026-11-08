@@ -15,6 +15,7 @@ const meta = {
       publishedAt: null,
       status: 'ready',
       summary: '調査結果の概要を説明しています。',
+      addedAt: null,
     },
     finding: {
       id: 'finding-a',
