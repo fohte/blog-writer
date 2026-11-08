@@ -15,6 +15,7 @@ import {
 import { SyncClientError, toSyncClientError } from '#lib/sync-client-errors'
 
 const ARTICLE_INDEX_DOC_ID = 'article-index'
+const EDIT_TIME_RESOLUTION_MS = 60_000
 
 export type SyncState = 'saved' | 'unsynced' | 'syncing' | 'synced'
 type AccessCheckResult = 'redirected' | 'reachable' | 'unreachable'
@@ -28,6 +29,8 @@ function isArticleFileSyncStatus(
 export type Article = {
   id: string
   createdAt: number
+  /** Unset until the article is first edited. */
+  updatedAt?: number
   title: string
   syncFilePath?: string
   syncFileHash?: string
@@ -162,6 +165,7 @@ class SyncClient implements SyncClientApi {
     return buildResult.andThen((document) =>
       Result.fromThrowable(() => {
         this.subscribeToDocument(document)
+        this.observeArticleEdits(docId, document.doc)
         this.documents.set(docId, document)
         this.emitChange()
         return document.doc
@@ -199,6 +203,7 @@ class SyncClient implements SyncClientApi {
       return err(new SyncClientError('Article not found', new Error(id)))
     return Result.fromThrowable(() => {
       entry.set('title', title)
+      this.markEdited(entry)
     }, toSyncClientError)()
   }
 
@@ -218,6 +223,7 @@ class SyncClient implements SyncClientApi {
     return [...this.index.doc.getMap<Y.Map<unknown>>('articles')]
       .map(([id, entry]) => {
         const createdAt = entry.get('createdAt')
+        const updatedAt = entry.get('updatedAt')
         const title = entry.get('title')
         const syncFilePath = entry.get('syncFilePath')
         const syncFileHash = entry.get('syncFileHash')
@@ -228,6 +234,7 @@ class SyncClient implements SyncClientApi {
         return {
           id,
           createdAt: typeof createdAt === 'number' ? createdAt : 0,
+          ...(typeof updatedAt === 'number' ? { updatedAt } : {}),
           title: typeof title === 'string' ? title : DEFAULT_ARTICLE_TITLE,
           ...(typeof syncFilePath === 'string' ? { syncFilePath } : {}),
           ...(typeof syncFileHash === 'string' ? { syncFileHash } : {}),
@@ -280,6 +287,27 @@ class SyncClient implements SyncClientApi {
 
   private emitChange() {
     for (const listener of this.listeners) listener()
+  }
+
+  private observeArticleEdits(id: string, doc: Y.Doc) {
+    // shortcut: move-conflict housekeeping is also local and counts as an edit, tag it with an origin if it reorders the list noticeably.
+    doc.on('update', (_update, _origin, _doc, transaction) => {
+      if (!transaction.local) return
+      const entry = this.index.doc.getMap<Y.Map<unknown>>('articles').get(id)
+      if (entry) this.markEdited(entry)
+    })
+  }
+
+  private markEdited(entry: Y.Map<unknown>) {
+    const now = this.options.now()
+    const previous = entry.get('updatedAt')
+    // Every keystroke is an update, and each write here grows the synced index.
+    if (
+      typeof previous === 'number' &&
+      now - previous < EDIT_TIME_RESOLUTION_MS
+    )
+      return
+    entry.set('updatedAt', now)
   }
 
   private subscribeToDocument(document: SyncDocument) {
