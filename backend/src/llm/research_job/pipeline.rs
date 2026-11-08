@@ -112,6 +112,7 @@ async fn fetch_source(
         url: url.clone(),
         final_url: None,
         title: None,
+        published_at: None,
         body: None,
         status: ResearchJobSourceStatus::Unavailable,
     };
@@ -142,6 +143,7 @@ async fn fetch_source(
         url,
         final_url: Some(final_url),
         title: Some(extracted.title),
+        published_at: extracted.published_at,
         body: Some(extracted.body),
         status: ResearchJobSourceStatus::Available,
     }

@@ -466,6 +466,8 @@ export interface components {
     }
     FetchSourceBodyResponse: {
       final_url: string
+      /** @description Calendar date (`YYYY-MM-DD`) the page says it was published, if any. */
+      published_at?: string | null
       source_id: string
       title: string
     }
@@ -689,6 +691,8 @@ export interface components {
       body?: string | null
       final_url?: string | null
       id: string
+      /** @description Calendar date (`YYYY-MM-DD`) the page says it was published, if any. */
+      published_at?: string | null
       status: components['schemas']['ResearchJobSourceStatus']
       title?: string | null
       url: string

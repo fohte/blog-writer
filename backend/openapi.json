@@ -1677,6 +1677,10 @@
           "final_url": {
             "type": "string"
           },
+          "published_at": {
+            "type": ["string", "null"],
+            "description": "Calendar date (`YYYY-MM-DD`) the page says it was published, if any."
+          },
           "source_id": {
             "type": "string"
           },
@@ -2345,6 +2349,10 @@
           },
           "id": {
             "type": "string"
+          },
+          "published_at": {
+            "type": ["string", "null"],
+            "description": "Calendar date (`YYYY-MM-DD`) the page says it was published, if any."
           },
           "status": {
             "$ref": "#/components/schemas/ResearchJobSourceStatus"

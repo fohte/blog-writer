@@ -41,6 +41,8 @@ pub struct FetchSourceBodyResponse {
     pub source_id: String,
     pub title: String,
     pub final_url: String,
+    /// Calendar date (`YYYY-MM-DD`) the page says it was published, if any.
+    pub published_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema, PartialEq, Eq)]
@@ -109,6 +111,7 @@ pub async fn fetch_from_url(
     Ok(Json(FetchSourceBodyResponse {
         source_id,
         title: extracted.title,
+        published_at: extracted.published_at,
         final_url,
     }))
 }
@@ -608,7 +611,8 @@ mod tests {
                     json!({
                         "source_id": "source-test",
                         "title": "Sample article",
-                        "final_url": "https://example.test/articles/sample"
+                        "final_url": "https://example.test/articles/sample",
+                        "published_at": null
                     })
                 ),
                 (

@@ -39,6 +39,8 @@ pub(crate) struct ResearchJobSource {
     pub url: String,
     pub final_url: Option<String>,
     pub title: Option<String>,
+    /// Calendar date (`YYYY-MM-DD`) the page says it was published, if any.
+    pub published_at: Option<String>,
     pub body: Option<String>,
     pub status: ResearchJobSourceStatus,
 }
