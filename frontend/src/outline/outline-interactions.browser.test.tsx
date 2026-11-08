@@ -17,11 +17,13 @@ import * as Y from 'yjs'
 import { addMemo, getBody, setBody } from '#article/index'
 import { MarkdownEditor } from '#components/markdown-editor'
 import { adoptMemoToHeading } from '#memos/adoption'
+import { createBodyMenuEditor as createBodyMenuEditorForTest } from '#outline/body-menu-editor.test-support.test'
 import {
   ArticleOutline,
   createMoveHistory,
   createOutlineEditorExtension,
 } from '#outline/index'
+import { dispatchDragEvents } from '#test-support/browser.test-support.test'
 
 const cleanups: (() => void)[] = []
 
@@ -39,57 +41,9 @@ function bodyDragHandle(
 }
 
 function createBodyMenuEditor(markdownText: string) {
-  const doc = new Y.Doc()
-  setBody(doc, markdownText)
-  const body = getBody(doc)
-  const history = createMoveHistory(doc)
-  const editorHost = document.createElement('div')
-  document.body.append(editorHost)
-  const root: Root = createRoot(editorHost)
-  const viewRef: { current: EditorView | null } = { current: null }
-  act(() => {
-    root.render(
-      createElement(MarkdownEditor, {
-        extensions: [createOutlineEditorExtension(history)],
-        history,
-        onViewChange: (view: EditorView | null) => {
-          viewRef.current = view
-        },
-        text: body,
-      }),
-    )
-  })
-  const view = viewRef.current
-  if (!view) throw new Error('The markdown editor did not mount')
-  cleanups.push(() => {
-    act(() => {
-      root.unmount()
-    })
-    history.destroy()
-    doc.destroy()
-    editorHost.remove()
-  })
-  return { body, doc, view }
-}
-
-function dispatchDrag(
-  source: HTMLElement,
-  target: HTMLElement,
-  position = target.getBoundingClientRect(),
-) {
-  const dataTransfer = new DataTransfer()
-  const eventOptions = {
-    bubbles: true,
-    cancelable: true,
-    clientX: position.left + position.width / 2,
-    clientY: position.top + position.height / 2,
-    dataTransfer,
-  }
-  source.dispatchEvent(new DragEvent('dragstart', eventOptions))
-  target.dispatchEvent(new DragEvent('dragenter', eventOptions))
-  target.dispatchEvent(new DragEvent('dragover', eventOptions))
-  target.dispatchEvent(new DragEvent('drop', eventOptions))
-  source.dispatchEvent(new DragEvent('dragend', eventOptions))
+  const editor = createBodyMenuEditorForTest(markdownText)
+  cleanups.push(editor.cleanup)
+  return editor
 }
 
 beforeEach(() => {
@@ -126,9 +80,12 @@ describe('outline interactions', () => {
         data: '日本語',
       }),
     )
+    const handleAfterComposition = bodyDragHandle(view, 0)
+    if (!handleAfterComposition)
+      throw new Error('The body move handle did not return after composition')
 
     await act(async () => {
-      await userEvent.click(handle)
+      await userEvent.click(handleAfterComposition)
     })
 
     const menuButtons = [
@@ -1049,6 +1006,49 @@ describe('outline interactions', () => {
       })
     },
   )
+  it('moves a block when the drop position is at the end of the document', async () => {
+    const markdownText =
+      'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.'
+    const { body, history, view } = createBodyMenuEditor(markdownText)
+    const sourceHandle = bodyDragHandle(view, 0)
+    const end = view.coordsAtPos(markdownText.length)
+    if (!sourceHandle || !end)
+      throw new Error('The source handle or document end has no geometry')
+    const dropPosition = {
+      x: end.left,
+      y: end.top + (end.bottom - end.top) * 0.75,
+    }
+    await act(async () => {
+      await vi.waitUntil(
+        () => view.posAtCoords(dropPosition) === markdownText.length,
+      )
+    })
+    const dropPositions: (number | null)[] = []
+    const posAtCoords = view.posAtCoords.bind(view)
+    vi.spyOn(view, 'posAtCoords').mockImplementation((coords) => {
+      const position = posAtCoords(coords)
+      dropPositions.push(position)
+      return position
+    })
+    const move = vi.spyOn(history, 'move')
+
+    act(() => {
+      dispatchDragEvents(sourceHandle, view.contentDOM, dropPosition)
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      editor: view.state.doc.toString(),
+      lastDropPosition: dropPositions.at(-1),
+      moveCalls: move.mock.calls.map(([input]) => input),
+    })
+    expect(readOutput()).toEqual({
+      body: 'Second paragraph.\n\nThird paragraph.\n\nFirst paragraph.\n',
+      editor: 'Second paragraph.\n\nThird paragraph.\n\nFirst paragraph.\n',
+      lastDropPosition: markdownText.length,
+      moveCalls: [{ from: 0, destination: markdownText.length }],
+    })
+  })
 
   it('keeps body drag handles clear of text at mobile width', async () => {
     const markdownText =
@@ -1755,7 +1755,7 @@ describe('outline interactions', () => {
     if (!alphaHandle || !alphaRow)
       throw new Error('The Alpha row or move handle is missing')
     act(() => {
-      dispatchDrag(alphaHandle, alphaRow)
+      dispatchDragEvents(alphaHandle, alphaRow)
     })
 
     const readOutput = () => ({
@@ -1843,7 +1843,10 @@ describe('outline interactions', () => {
         20,
       )
       act(() => {
-        dispatchDrag(wrapupHandle, overviewContainer, dropPosition)
+        dispatchDragEvents(wrapupHandle, overviewContainer, {
+          x: dropPosition.left + dropPosition.width / 2,
+          y: dropPosition.top + dropPosition.height / 2,
+        })
       })
 
       const readOutput = () => ({

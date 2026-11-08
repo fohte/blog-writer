@@ -7,6 +7,7 @@ import { addEvidence } from '#article/evidence'
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
 import { DomWidget } from '#editor/dom-widget'
 import { SuggestionLayerController } from '#editor/suggestion-layer'
+import { dispatchDragEvents } from '#test-support/browser.test-support.test'
 
 const tableSource = [
   '| Feature | Offline |',
@@ -30,26 +31,6 @@ function hasEditorSource(content: HTMLElement, source: string): boolean {
     .map((line) => line.textContent)
     .join('')
   return visibleText.includes(source.replaceAll('\n', ''))
-}
-
-function dispatchBlockDrag(
-  source: HTMLElement,
-  target: HTMLElement,
-  position: { x: number; y: number },
-) {
-  const dataTransfer = new DataTransfer()
-  const eventOptions = {
-    bubbles: true,
-    cancelable: true,
-    clientX: position.x,
-    clientY: position.y,
-    dataTransfer,
-  }
-  source.dispatchEvent(new DragEvent('dragstart', eventOptions))
-  target.dispatchEvent(new DragEvent('dragenter', eventOptions))
-  target.dispatchEvent(new DragEvent('dragover', eventOptions))
-  target.dispatchEvent(new DragEvent('drop', eventOptions))
-  source.dispatchEvent(new DragEvent('dragend', eventOptions))
 }
 
 describe('Markdown block widget interactions', () => {
@@ -661,7 +642,7 @@ describe('Markdown block widget interactions', () => {
       const lineBounds = target.getBoundingClientRect()
       const move = vi.spyOn(history, 'move')
       act(() => {
-        dispatchBlockDrag(handle, target, {
+        dispatchDragEvents(handle, target, {
           x: textBounds.left + textBounds.width / 2,
           y: lineBounds.bottom - 1,
         })

@@ -1,5 +1,11 @@
 import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
-import { type Extension, Prec, RangeSet, StateEffect } from '@codemirror/state'
+import {
+  type Extension,
+  Prec,
+  RangeSet,
+  StateEffect,
+  type Text,
+} from '@codemirror/state'
 import {
   EditorView,
   gutter,
@@ -73,15 +79,32 @@ function createBlockHandleGutter(
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
 ) {
+  const blockStartsByView = new WeakMap<
+    EditorView,
+    { doc: Text; from: number; to: number; starts: number[] }
+  >()
+  const getBlockStarts = (view: EditorView) => {
+    const from = view.viewport.from
+    const to = view.viewport.to
+    const cached = blockStartsByView.get(view)
+    if (
+      cached?.doc === view.state.doc &&
+      cached.from === from &&
+      cached.to === to
+    ) {
+      return cached.starts
+    }
+
+    const starts = blockStarts(view.state, from, to)
+    blockStartsByView.set(view, { doc: view.state.doc, from, to, starts })
+    return starts
+  }
+
   return gutter({
     class: 'cm-block-move-gutter',
     markers: (view) => {
       const replacedBlockEnds = getBlockWidgetReplaceEnds(view.state)
-      const starts = blockStarts(
-        view.state,
-        view.viewport.from,
-        view.viewport.to,
-      )
+      const starts = getBlockStarts(view)
       const markers = starts
         .filter((from) => !replacedBlockEnds.has(from))
         .map((from) =>

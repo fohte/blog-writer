@@ -23,7 +23,7 @@ export const suggestionLayerTheme = EditorView.baseTheme({
   '.cm-suggestion-marker-line': {
     position: 'relative',
   },
-  // Sits left of the whole line box so it stays clear of anything in the line's start padding, such as a block drag handle.
+  // Keep the marker outside the text line so it does not cover line content.
   '.cm-suggestion-marker': {
     position: 'absolute',
     right: 'calc(100% + 0.25rem)',
