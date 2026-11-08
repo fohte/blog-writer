@@ -613,6 +613,7 @@ describe('body request', () => {
     vi.stubGlobal('fetch', fetcher)
 
     await submitRequest(view, 'make it concise', () => signals.length === 1)
+    await vi.waitUntil(() => document.querySelector('#body-request') === null)
     const duringGeneration = {
       inputOpen: document.querySelector('#body-request') !== null,
       inFlight:
