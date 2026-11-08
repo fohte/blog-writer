@@ -112,7 +112,9 @@ pub enum ConfigError {
     NonUnicodeExportImage,
     #[error("either all or none of the BLOG_EXPORT_IMAGE_* variables must be set")]
     MissingExportImageConfiguration,
-    #[error("BLOG_EXPORT_IMAGE_ENDPOINT and BLOG_EXPORT_IMAGE_PUBLIC_URL must be HTTP(S) URLs")]
+    #[error(
+        "BLOG_EXPORT_IMAGE_ENDPOINT and BLOG_EXPORT_IMAGE_PUBLIC_URL must be HTTP(S) URLs without a query or fragment"
+    )]
     InvalidExportImageUrl,
     #[error("{LLM_PROVIDER_ENV} must name a supported provider")]
     InvalidLlmProvider,

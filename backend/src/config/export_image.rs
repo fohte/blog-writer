@@ -61,7 +61,11 @@ impl ExportImageConfig {
 fn http_url(value: &str) -> Result<Url, ConfigError> {
     Url::parse(value)
         .ok()
-        .filter(|url| matches!(url.scheme(), "http" | "https"))
+        .filter(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.query().is_none()
+                && url.fragment().is_none()
+        })
         .ok_or(ConfigError::InvalidExportImageUrl)
 }
 
@@ -138,6 +142,8 @@ mod tests {
     #[case::endpoint_is_not_a_url(ENDPOINT_ENV, "not a url")]
     #[case::endpoint_is_not_http(ENDPOINT_ENV, "ftp://storage.example")]
     #[case::public_url_is_relative(PUBLIC_URL_ENV, "/images")]
+    #[case::public_url_has_a_query(PUBLIC_URL_ENV, "https://assets.example?token=x")]
+    #[case::public_url_has_a_fragment(PUBLIC_URL_ENV, "https://assets.example#top")]
     fn rejects_invalid_urls(#[case] name: &'static str, #[case] value: &'static str) {
         let mut values = complete();
         values.insert(name, value);
