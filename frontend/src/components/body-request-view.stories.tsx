@@ -38,6 +38,22 @@ const candidates: readonly BodyRequestCandidate[] = [
   { id: 'write-from-sources', label: '資料をもとに書く', group: 'research' },
 ]
 
+const selectionCandidates: readonly BodyRequestCandidate[] = [
+  { id: 'concise', label: '簡潔にする', group: 'edit' },
+  { id: 'smooth-flow', label: '前後とのつながりを直す', group: 'edit' },
+  { id: 'follow-premise', label: '前提に沿って直す', group: 'edit' },
+  { id: 'verify-claims', label: '根拠を確かめる', group: 'research' },
+]
+
+const insertionCandidates: readonly BodyRequestCandidate[] = [
+  { id: 'add-example', label: '例を 1 つ足す', group: 'edit' },
+  {
+    id: 'research-section',
+    label: 'この見出しについて調べる',
+    group: 'research',
+  },
+]
+
 const meta = {
   component: BodyRequestView,
   render: (args) => <BodyRequestStory {...args} />,
@@ -69,13 +85,13 @@ export const ReadyToRequest: Story = {
 }
 
 export const SelectionTarget: Story = {
-  name: 'a request for selected text names the selection as its target',
-  args: { target: 'selection' },
+  name: 'a request for selected text names the selection as its target and lists the premise edit',
+  args: { target: 'selection', candidates: selectionCandidates },
 }
 
 export const InsertionTarget: Story = {
-  name: 'a request on a blank line names an insertion as its target',
-  args: { target: 'insertion' },
+  name: 'a request on a blank line names an insertion as its target and lists only what can write new text',
+  args: { target: 'insertion', candidates: insertionCandidates },
 }
 
 export const TouchRequest: Story = {

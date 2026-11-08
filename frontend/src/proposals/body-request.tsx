@@ -148,7 +148,9 @@ function readTarget(
   return range.from === range.to ? 'insertion' : 'paragraph'
 }
 
-function readSituation(view: EditorView, doc: Y.Doc): BodyRequestSituation {
+type CursorSituation = Omit<BodyRequestSituation, 'hasInstruction'>
+
+function readSituation(view: EditorView, doc: Y.Doc): CursorSituation {
   const { range, section } = readSelectionContext(view)
   return {
     target: readTarget(view, range),
@@ -159,7 +161,7 @@ function readSituation(view: EditorView, doc: Y.Doc): BodyRequestSituation {
   }
 }
 
-const closedSituation: BodyRequestSituation = {
+const closedSituation: CursorSituation = {
   target: 'paragraph',
   hasHeading: false,
   hasPremise: false,
@@ -179,10 +181,14 @@ export function BodyRequestAccessory({
   const [touchDevice, setTouchDevice] = useState(false)
   const mobileViewport = useMobileViewport()
   // The editor keeps its selection while the request input has focus, so typing does not change the target.
-  const situation = useMemo(
+  const cursorSituation = useMemo(
     () => (open && view ? readSituation(view, doc) : closedSituation),
     [open, view, doc],
   )
+  const situation: BodyRequestSituation = {
+    ...cursorSituation,
+    hasInstruction: instruction.trim().length > 0,
+  }
   const availableEditCandidates = editCandidatesFor(situation)
 
   const fail = useCallback((reason: string, title = '作成できませんでした') => {

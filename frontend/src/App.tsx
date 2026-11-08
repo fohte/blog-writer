@@ -161,7 +161,8 @@ export function App() {
             {
               id: 'research-from-heading',
               label: 'この見出しについて調べる',
-              isAvailable: ({ hasHeading }) => hasHeading,
+              isAvailable: ({ hasHeading, hasInstruction }) =>
+                hasHeading || hasInstruction,
               onSelect: ({ context: requestContext, instruction }) => {
                 const headingText = sectionHeadingText(requestContext.section)
                 if (instruction.trim().length === 0 && headingText.length === 0)
@@ -178,7 +179,8 @@ export function App() {
             {
               id: 'write-from-key-points',
               label: '資料をもとに書く',
-              isAvailable: () => hasKeyPoints(context.doc),
+              isAvailable: ({ hasHeading }) =>
+                hasHeading && hasKeyPoints(context.doc),
               createProposal: (selection, signal) =>
                 writeFromKeyPoints(context.doc, selection, signal),
             },

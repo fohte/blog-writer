@@ -7,6 +7,7 @@ export type BodyRequestSituation = {
   target: BodyRequestTarget
   hasHeading: boolean
   hasPremise: boolean
+  hasInstruction: boolean
 }
 
 type EditCandidate = BodyRequestCandidate & {
@@ -46,7 +47,10 @@ const editCandidates: readonly EditCandidate[] = [
 export function editCandidatesFor({
   target,
   hasPremise,
-}: BodyRequestSituation): readonly BodyRequestCandidate[] {
+}: Pick<
+  BodyRequestSituation,
+  'target' | 'hasPremise'
+>): readonly BodyRequestCandidate[] {
   return editCandidates.filter(
     ({ targets, needsPremise = false }) =>
       targets.includes(target) && (!needsPremise || hasPremise),

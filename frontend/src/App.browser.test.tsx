@@ -3385,10 +3385,11 @@ function addKeyPoint(articleDoc: Y.Doc) {
 describe('App write from key points integration', () => {
   it.each([
     {
-      name: 'a paragraph before any heading in an article without key points',
+      name: 'a paragraph before any heading in an article with key points',
       articleBody: 'An intro paragraph.\n\n# Target section\n\nBody text.',
       anchor: 0,
-      withKeyPoint: false,
+      withKeyPoint: true,
+      instruction: '',
       expected: [
         '簡潔にする',
         '例を 1 つ足す',
@@ -3397,10 +3398,39 @@ describe('App write from key points integration', () => {
       ],
     },
     {
+      name: 'a typed question before any heading',
+      articleBody: 'An intro paragraph.\n\n# Target section\n\nBody text.',
+      anchor: 0,
+      withKeyPoint: false,
+      instruction: 'A question',
+      expected: [
+        '簡潔にする',
+        '例を 1 つ足す',
+        '前後とのつながりを直す',
+        '根拠を確かめる',
+        'この見出しについて調べる',
+      ],
+    },
+    {
+      name: 'a paragraph under a heading in an article without key points',
+      articleBody: '# Target section\n\nBody text.',
+      anchor: '# Target section\n\n'.length,
+      withKeyPoint: false,
+      instruction: '',
+      expected: [
+        '簡潔にする',
+        '例を 1 つ足す',
+        '前後とのつながりを直す',
+        '根拠を確かめる',
+        'この見出しについて調べる',
+      ],
+    },
+    {
       name: 'a blank line under a heading in an article with key points',
       articleBody: '# Target section\n\n\n\nBody text.',
       anchor: '# Target section\n\n'.length,
       withKeyPoint: true,
+      instruction: '',
       expected: [
         '例を 1 つ足す',
         'この見出しについて調べる',
@@ -3409,7 +3439,7 @@ describe('App write from key points integration', () => {
     },
   ])(
     'offers the requests that fit $name',
-    async ({ articleBody, anchor, withKeyPoint, expected }) => {
+    async ({ articleBody, anchor, withKeyPoint, instruction, expected }) => {
       const articleDoc = new Y.Doc()
       doc = articleDoc
       setBody(articleDoc, articleBody)
@@ -3448,6 +3478,14 @@ describe('App write from key points integration', () => {
           throw new Error('The request candidates did not render')
         }
       })
+      if (instruction.length > 0) {
+        await act(async () => {
+          await userEvent.fill(
+            page.getByRole('textbox', { name: '本文への依頼' }),
+            instruction,
+          )
+        })
+      }
       expect(readLabels()).toEqual(expected)
     },
   )

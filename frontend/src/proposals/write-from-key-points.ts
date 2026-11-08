@@ -126,6 +126,14 @@ function targetHeading(
   return headings[index]
 }
 
+function readySources(doc: Y.Doc) {
+  return new Map(
+    listSources(doc)
+      .filter((source) => source.status === 'ready')
+      .map((source) => [source.id, source]),
+  )
+}
+
 function requestSources(
   doc: Y.Doc,
   target: RequestHeading,
@@ -140,11 +148,7 @@ function requestSources(
     ids.push(heading.id)
     headingIdsByText.set(heading.text, ids)
   }
-  const availableSources = new Map(
-    listSources(doc)
-      .filter((source) => source.status === 'ready')
-      .map((source) => [source.id, source]),
-  )
+  const availableSources = readySources(doc)
   const pointsBySource = new Map<string, CandidatePoint[]>()
   for (const finding of listFindings(doc)) {
     if (!availableSources.has(finding.sourceId)) continue
@@ -258,12 +262,10 @@ function buildProposal(
 }
 
 export function hasKeyPoints(doc: Y.Doc): boolean {
-  const readySourceIds = new Set(
-    listSources(doc)
-      .filter((source) => source.status === 'ready')
-      .map((source) => source.id),
+  const availableSources = readySources(doc)
+  return listFindings(doc).some(({ sourceId }) =>
+    availableSources.has(sourceId),
   )
-  return listFindings(doc).some(({ sourceId }) => readySourceIds.has(sourceId))
 }
 
 export function writeFromKeyPoints(
