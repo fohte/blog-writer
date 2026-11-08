@@ -19,6 +19,7 @@ export type OutlineKeyAction =
   | 'undo'
   | 'redo'
   | 'open-body'
+  | 'leave-outline-mode'
 
 export type OutlineHeadingEditing = {
   /** Changes whenever focus must return to the input, even on the same row. */
@@ -38,8 +39,11 @@ function actionForKey(
   const dirty = draft !== text
   const mod = event.metaKey || event.ctrlKey
   const key = event.key.toLowerCase()
-  if (writing && mod && (key === 'enter' || (event.shiftKey && key === 'o')))
-    return 'open-body'
+  // A held shortcut lands here right after it opened outline mode.
+  if (writing && mod && !event.repeat) {
+    if (key === 'enter') return 'open-body'
+    if (event.shiftKey && key === 'o') return 'leave-outline-mode'
+  }
   if (writing && !mod && key === 'backspace' && draft === '') return 'delete'
   if (mod && key === 'backspace') return 'delete'
   // A dirty draft keeps the input's own undo, so typing can be stepped back before it reaches the body.

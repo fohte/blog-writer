@@ -175,27 +175,57 @@ describe('outline mode', () => {
     })
   })
 
-  it.each([
-    ['Mod-Enter', { key: 'Enter', metaKey: true }],
-    ['Mod-Shift-O', { key: 'O', metaKey: true, shiftKey: true }],
-  ])(
-    '%s commits the draft and opens the body below the heading',
-    async (_, init) => {
-      await clickRow('B')
-      await type('Z')
-      await press(init)
-      const readResult = () => ({
-        ...snapshot(),
-        cursor: view.state.selection.main.head,
-      })
+  const readLeft = () => ({
+    ...snapshot(),
+    cursor: view.state.selection.main.head,
+  })
 
-      expect(readResult()).toEqual({
-        body: '# A\nu\n## Z\nv\n## C\nw\n# D\n',
-        editing: null,
-        focused: false,
-        opened: 1,
-        cursor: 11,
-      })
-    },
-  )
+  it.each([
+    ['Mod-Enter below the heading', { key: 'Enter', metaKey: true }, 11],
+    [
+      'Mod-Shift-O at the end of the heading',
+      { key: 'O', metaKey: true, shiftKey: true },
+      10,
+    ],
+  ])('%s commits the draft and opens the body', async (_, init, cursor) => {
+    await clickRow('B')
+    await type('Z')
+    await press(init)
+
+    expect(readLeft()).toEqual({
+      body: '# A\nu\n## Z\nv\n## C\nw\n# D\n',
+      editing: null,
+      focused: false,
+      opened: 1,
+      cursor,
+    })
+  })
+
+  it('gives Mod-Enter a line of its own above an adjacent heading', async () => {
+    await press({ key: 'Enter' })
+    await type('X')
+    await press({ key: 'Enter', metaKey: true })
+
+    expect(readLeft()).toEqual({
+      body: '# A\nu\n## X\n\n## B\nv\n## C\nw\n# D\n',
+      editing: null,
+      focused: false,
+      opened: 1,
+      cursor: 11,
+    })
+  })
+
+  it.each([
+    ['Mod-Enter', { key: 'Enter', metaKey: true, repeat: true }],
+    ['Mod-Shift-O', { key: 'O', metaKey: true, repeat: true, shiftKey: true }],
+  ])('stays in outline mode while %s is held down', async (_, init) => {
+    await press(init)
+
+    expect(snapshot()).toEqual({
+      body: initialBody,
+      editing: 'A',
+      focused: true,
+      opened: 0,
+    })
+  })
 })

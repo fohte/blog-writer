@@ -13,7 +13,7 @@ export function useOutlineMode(initial: boolean, available: boolean) {
         event.key.toLowerCase() === 'o'
       ) {
         event.preventDefault()
-        setOutlineMode((current) => !current)
+        if (!event.repeat) setOutlineMode((current) => !current)
       }
     }
     window.addEventListener('keydown', handleKeyDown)

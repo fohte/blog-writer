@@ -155,6 +155,18 @@ export function useOutlineKeyboard({
         )
       : clampedIndex
 
+  const openBody = (position: number) => {
+    // The editor cannot take focus until the body is shown again.
+    flushSync(() => {
+      writing?.onOpenBody()
+    })
+    view.focus()
+    view.dispatch({
+      selection: EditorSelection.cursor(position),
+      effects: EditorView.scrollIntoView(position, { y: 'start' }),
+    })
+  }
+
   const nextIndex = (action: OutlineKeyAction): number | undefined => {
     const { markdown, tree, flat: latest } = readHeadings(view)
     const heading = latest[clampedIndex]
@@ -187,18 +199,19 @@ export function useOutlineKeyboard({
       case 'exit':
         view.focus()
         return undefined
+      case 'leave-outline-mode':
+        openBody(view.state.doc.lineAt(heading.from).to)
+        return undefined
       case 'open-body': {
-        // The editor cannot take focus until the body is shown again.
-        flushSync(() => {
-          writing?.onOpenBody()
-        })
         const { doc } = view.state
-        const anchor = Math.min(doc.lineAt(heading.from).to + 1, doc.length)
-        view.focus()
-        view.dispatch({
-          selection: EditorSelection.cursor(anchor),
-          effects: EditorView.scrollIntoView(anchor, { y: 'start' }),
-        })
+        const line = doc.lineAt(heading.from)
+        // Without a line of its own, text typed below the heading would join the next heading or this one.
+        if (
+          line.number === doc.lines ||
+          latest.some(({ from }) => from === line.to + 1)
+        )
+          applyChange(view, { from: line.to, to: line.to, insert: '\n' })
+        openBody(line.to + 1)
         return undefined
       }
     }

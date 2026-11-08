@@ -1271,23 +1271,28 @@ First paragraph.
         )
       })
     }
-    const readScreen = () => ({
-      articleHidden: host?.querySelector('main')?.hidden,
-      editing: host?.querySelector<HTMLInputElement>(
+    const readScreen = () => {
+      const input = host?.querySelector<HTMLInputElement>(
         'input[aria-label="見出しを編集"]',
-      )?.value,
-    })
+      )
+      return {
+        articleHidden: host?.querySelector('main')?.hidden,
+        editing: input?.value,
+        inputFocused: input !== undefined && document.activeElement === input,
+      }
+    }
 
     const before = readScreen()
     await shortcut()
     const writing = readScreen()
+    // Sent from inside the heading input, the shortcut must not also reach the window listener.
     await shortcut()
     const readResult = () => ({ before, writing, after: readScreen() })
 
     expect(readResult()).toEqual({
-      before: { articleHidden: false, editing: undefined },
-      writing: { articleHidden: true, editing: 'First' },
-      after: { articleHidden: false, editing: undefined },
+      before: { articleHidden: false, editing: undefined, inputFocused: false },
+      writing: { articleHidden: true, editing: 'First', inputFocused: true },
+      after: { articleHidden: false, editing: undefined, inputFocused: false },
     })
   })
 
