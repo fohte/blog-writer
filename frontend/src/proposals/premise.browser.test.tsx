@@ -80,6 +80,7 @@ afterEach(() => {
     window.localStorage.setItem('blog-writer.llm.route', previousRoute)
   }
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('premise discussion panel', () => {
@@ -418,8 +419,9 @@ describe('premise discussion panel', () => {
       },
     },
   ])(
-    'drops the reply and proposals of a request cancelled with $method',
+    'counts the elapsed time, then drops the reply and proposals of a request cancelled with $method',
     async ({ cancel }) => {
+      vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
       const articleDoc = new Y.Doc()
       doc = articleDoc
       setPremise(articleDoc, 'audience', 'Existing readers')
@@ -447,6 +449,12 @@ describe('premise discussion panel', () => {
           }
         })
       })
+      act(() => {
+        vi.advanceTimersByTime(3000)
+      })
+      const generatingBar =
+        host?.querySelector('[role="status"]')?.parentElement?.textContent ??
+        null
       await act(async () => {
         await cancel()
       })
@@ -461,6 +469,7 @@ describe('premise discussion panel', () => {
       })
 
       const actual = () => ({
+        generatingBar,
         premise: getPremise(articleDoc),
         messages:
           host?.querySelectorAll('[aria-label="やり取り"] li').length ?? 0,
@@ -474,6 +483,7 @@ describe('premise discussion panel', () => {
         requestAborted: requestSignal?.aborted ?? null,
       })
       expect(actual()).toEqual({
+        generatingBar: '作成中 ··· 3s',
         premise: { audience: 'Existing readers', purpose: null, claim: null },
         messages: 0,
         proposals: 0,
