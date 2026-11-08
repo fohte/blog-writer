@@ -22,6 +22,7 @@ type MemoPanelViewProps = {
   error?: string | undefined
   openAdoptionMenuId?: string | undefined
   adoptionPresentation?: 'popover' | 'sheet' | undefined
+  cursorOffset?: number | undefined
   onDraftChange: (draft: string) => void
   onAddMemo: () => void
   onFilterChange: (filter: MemoFilter) => void
@@ -30,7 +31,7 @@ type MemoPanelViewProps = {
   onRestoreMemo: (id: string) => void
   onAdoptToHeading: (memoId: string, markerIndex: number) => void
   onInsertAsHeading?:
-    ((memoId: string, beforeFrom?: number) => void) | undefined
+    ((memoId: string, beforeFrom?: number, level?: number) => void) | undefined
   onOpenAdoptionMenuChange: (memoId: string | undefined) => void
 }
 
@@ -64,6 +65,7 @@ export function MemoPanelView({
   error,
   openAdoptionMenuId,
   adoptionPresentation,
+  cursorOffset,
   onDraftChange,
   onAddMemo,
   onFilterChange,
@@ -155,7 +157,24 @@ export function MemoPanelView({
               className="flex items-start gap-2 border-b border-border py-2 last:border-b-0"
               data-memo-id={memo.id}
               key={memo.id}
+              onKeyDown={(event) => {
+                // React also bubbles keys from the menu's portal, such as
+                // typing in its filter, which DOM containment excludes.
+                if (
+                  memo.state.kind === 'dismissed' ||
+                  !(event.target instanceof Node) ||
+                  !event.currentTarget.contains(event.target) ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.altKey ||
+                  event.key.toLowerCase() !== 'a'
+                )
+                  return
+                event.preventDefault()
+                onOpenAdoptionMenuChange(memo.id)
+              }}
               role="listitem"
+              tabIndex={-1}
             >
               {memo.state.kind === 'dismissed' ? null : (
                 <button
@@ -204,6 +223,7 @@ export function MemoPanelView({
                 <MemoAdoptionMenu
                   canMoveDown={index < visibleMemos.length - 1}
                   canMoveUp={index > 0}
+                  cursorOffset={cursorOffset}
                   headings={headings}
                   memo={memo}
                   onAdoptToHeading={onAdoptToHeading}

@@ -3,7 +3,7 @@ import { EditorView } from '@codemirror/view'
 import { act, useMemo, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { userEvent } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import * as Y from 'yjs'
 
 import {
@@ -296,17 +296,49 @@ function dispatchDragWithInterruption(
   source.dispatchEvent(new DragEvent('dragend', eventOptions))
 }
 
+function findNewHeadingButton() {
+  const button = document.body.querySelector<HTMLButtonElement>(
+    'button[aria-label="新しい見出しとして追加"]',
+  )
+  if (!button) throw new Error('The new heading target is missing')
+  return button
+}
+
+function moveCursorTo(position: number) {
+  currentView().dispatch({ selection: { anchor: position } })
+}
+
+async function chooseCursorHeadingLevel() {
+  const sameLevel = document.body.querySelector<HTMLButtonElement>(
+    '[aria-label="新しい見出しのレベル"] button',
+  )
+  if (!sameLevel) throw new Error('The heading level choice is missing')
+  await act(async () => {
+    await userEvent.click(sameLevel)
+  })
+}
+
+function readHeadingTargets() {
+  const section = [...document.body.querySelectorAll('section')].find(
+    (candidate) =>
+      candidate.querySelector('h3')?.textContent === '既存の見出しに採用',
+  )
+  if (!section) throw new Error('The existing heading targets are missing')
+  return [...section.querySelectorAll('button, p')].map(
+    (element) => element.textContent,
+  )
+}
+
 async function chooseEndInsertion() {
+  moveCursorTo(currentView().state.doc.length)
   const openMenu = findButton('採用') ?? findButton('変更')
   if (!openMenu) throw new Error('The memo target menu is missing')
   await act(async () => {
     await userEvent.click(openMenu)
   })
-  const insertAtEnd = findButton('末尾に追加')
-  if (!insertAtEnd)
-    throw new Error('The end insertion target is missing from the memo menu')
+  await chooseCursorHeadingLevel()
   await act(async () => {
-    await userEvent.click(insertAtEnd)
+    await userEvent.click(findNewHeadingButton())
   })
 }
 
@@ -1334,15 +1366,16 @@ body
 
 body`
     mount(initial, 'Add a summary')
+    moveCursorTo(initial.length)
     const chooseTarget = findButton('採用')
     if (!chooseTarget) throw new Error('The memo target menu is missing')
     await act(async () => {
       await userEvent.click(chooseTarget)
     })
-    const insertAtEnd = findButton('末尾に追加')
+    await chooseCursorHeadingLevel()
+    const insertAtEnd = findNewHeadingButton()
     const lastTarget = findButton('# Third')
-    if (!insertAtEnd || !lastTarget)
-      throw new Error('The memo menu targets are missing')
+    if (!lastTarget) throw new Error('The memo menu targets are missing')
     const menu = insertAtEnd.closest<HTMLElement>(
       '[data-slot="popover-content"] > div',
     )
@@ -1429,27 +1462,137 @@ body
     await act(async () => {
       await userEvent.click(chooseTarget)
     })
-    const insertBeforeSecond = findButton('「Second」の前')
-    if (!insertBeforeSecond)
-      throw new Error('The insertion target is missing from the memo menu')
     await act(async () => {
-      await userEvent.click(insertBeforeSecond)
+      await userEvent.click(findNewHeadingButton())
     })
 
     expect(readOutput()).toEqual({
-      body: '# First\n\none\n\n# Add a summary\n\n# Second\n\ntwo',
-      editor: '# First\n\none\n\n# Add a summary\n\n# Second\n\ntwo',
+      body: '# First\n\none\n\n## Add a summary\n\n# Second\n\ntwo',
+      editor: '# First\n\none\n\n## Add a summary\n\n# Second\n\ntwo',
       memos: [
         {
           id: 'memo-a',
           state: {
             kind: 'adopted',
-            heading: { from: 14, level: 1, text: 'Add a summary' },
+            heading: { from: 14, level: 2, text: 'Add a summary' },
           },
         },
       ],
       memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
     })
+  })
+
+  it('inserts a memo at the level chosen in the memo panel', async () => {
+    const initial = '# First\n\none\n\n# Second\n\ntwo'
+    mount(initial, 'memo')
+    moveCursorTo(initial.indexOf('two'))
+    const chooseTarget = findButton('採用')
+    if (!chooseTarget) throw new Error('The memo target menu is missing')
+    await act(async () => {
+      await userEvent.click(chooseTarget)
+    })
+    await chooseCursorHeadingLevel()
+    await act(async () => {
+      await userEvent.click(findNewHeadingButton())
+    })
+
+    expect(readOutput()).toEqual({
+      body: '# First\n\none\n\n# Second\n\ntwo\n\n# memo\n\n',
+      editor: '# First\n\none\n\n# Second\n\ntwo\n\n# memo\n\n',
+      memos: [
+        {
+          id: 'memo-a',
+          state: {
+            kind: 'adopted',
+            heading: { from: 29, level: 1, text: 'memo' },
+          },
+        },
+      ],
+      memoFilters: ['未整理 0', '採用済み 1', '見送り 0'],
+    })
+  })
+
+  it('narrows the existing headings with the filter', async () => {
+    mount('# First\n\n# Second\n\n# Third', 'memo')
+    const chooseTarget = findButton('採用')
+    if (!chooseTarget) throw new Error('The memo target menu is missing')
+    await act(async () => {
+      await userEvent.click(chooseTarget)
+    })
+    const filter = page.getByRole('textbox', { name: '見出しを絞り込む' })
+    const beforeFilter = readHeadingTargets()
+    await act(async () => {
+      await userEvent.fill(filter, 'SEC')
+    })
+    const afterMatch = readHeadingTargets()
+    await act(async () => {
+      await userEvent.fill(filter, 'missing')
+    })
+
+    const readFilterOutput = () => ({
+      beforeFilter,
+      afterMatch,
+      afterNoMatch: readHeadingTargets(),
+    })
+    expect(readFilterOutput()).toEqual({
+      beforeFilter: ['# First', '# Second', '# Third'],
+      afterMatch: ['# Second'],
+      afterNoMatch: ['一致する見出しはありません。'],
+    })
+  })
+
+  it('opens the adoption targets with A from a memo row', async () => {
+    mount('# First', 'memo')
+    document.body.querySelector<HTMLElement>('[data-memo-id="memo-a"]')?.focus()
+    await act(async () => {
+      await userEvent.keyboard('a')
+    })
+
+    const readFocus = () => ({
+      menuOpen: adoptionMenuIsOpen(),
+      focused: document.activeElement?.getAttribute('aria-label'),
+    })
+    await vi.waitFor(() => {
+      expect(readFocus()).toEqual({
+        menuOpen: true,
+        focused: '新しい見出しとして追加',
+      })
+    })
+  })
+
+  it('keeps typing in the heading filter from reopening or closing the menu', async () => {
+    mount('# First', 'memo')
+    const chooseTarget = findButton('採用')
+    if (!chooseTarget) throw new Error('The memo target menu is missing')
+    await act(async () => {
+      await userEvent.click(chooseTarget)
+    })
+    const filter = page.getByRole('textbox', { name: '見出しを絞り込む' })
+    await act(async () => {
+      await userEvent.click(filter)
+      await userEvent.keyboard('a')
+    })
+
+    const readOutcome = () => ({
+      menuOpen: adoptionMenuIsOpen(),
+      filter: document.body.querySelector<HTMLInputElement>(
+        'input[aria-label="見出しを絞り込む"]',
+      )?.value,
+    })
+    expect(readOutcome()).toEqual({ menuOpen: true, filter: 'a' })
+  })
+
+  it.each([
+    { case: 'a modified A', key: '{Control>}a{/Control}' },
+    { case: 'another key', key: 'b' },
+  ])('leaves the adoption targets closed for $case', async ({ key }) => {
+    mount('# First', 'memo')
+    document.body.querySelector<HTMLElement>('[data-memo-id="memo-a"]')?.focus()
+    await act(async () => {
+      await userEvent.keyboard(key)
+    })
+
+    expect(adoptionMenuIsOpen()).toBe(false)
   })
 
   it('inserts a memo at the end from the memo panel', async () => {
@@ -1460,23 +1603,20 @@ body
     await act(async () => {
       await userEvent.click(chooseTarget)
     })
-    const insertAtEnd = findButton('末尾に追加')
-    if (!insertAtEnd)
-      throw new Error('The end insertion target is missing from the memo menu')
     await act(async () => {
-      await userEvent.click(insertAtEnd)
+      await userEvent.click(findNewHeadingButton())
     })
 
     expect(readOutputWithAdoptionMenu()).toEqual({
       output: {
-        body: '# First\n\nbody\n\n# Add a summary\n\n',
-        editor: '# First\n\nbody\n\n# Add a summary\n\n',
+        body: '# First\n\nbody\n\n## Add a summary\n\n',
+        editor: '# First\n\nbody\n\n## Add a summary\n\n',
         memos: [
           {
             id: 'memo-a',
             state: {
               kind: 'adopted',
-              heading: { from: 15, level: 1, text: 'Add a summary' },
+              heading: { from: 15, level: 2, text: 'Add a summary' },
             },
           },
         ],
@@ -1493,11 +1633,8 @@ body
     await act(async () => {
       await userEvent.click(openMenu)
     })
-    const insertAtStart = findButton('先頭に追加')
-    if (!insertAtStart)
-      throw new Error('The first insertion target is missing from the menu')
     await act(async () => {
-      await userEvent.click(insertAtStart)
+      await userEvent.click(findNewHeadingButton())
     })
 
     expect(readOutput()).toEqual({
@@ -1797,11 +1934,8 @@ body
     await act(async () => {
       await userEvent.click(chooseTarget)
     })
-    const insertAtEnd = findButton('末尾に追加')
-    if (!insertAtEnd)
-      throw new Error('The end insertion target is missing from the memo menu')
     await act(async () => {
-      await userEvent.click(insertAtEnd)
+      await userEvent.click(findNewHeadingButton())
     })
 
     expect(readAdoptionFailureOutput()).toEqual({

@@ -25,6 +25,7 @@ const meta = {
   args: {
     memo,
     headings,
+    cursorOffset: 13,
     open: true,
     canMoveUp: false,
     canMoveDown: true,
@@ -41,7 +42,25 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const ExistingAndNewTargets: Story = {
-  name: 'the menu lists existing headings and insertion positions.',
+  name: 'the menu offers a heading one level below the cursor heading and lists existing headings.',
+}
+
+export const FilteredHeadings: Story = {
+  name: 'the filter narrows the existing headings to those that match.',
+  args: { defaultHeadingQuery: 'go' },
+}
+
+export const NoMatchingHeadings: Story = {
+  name: 'the filter says so when no existing heading matches.',
+  args: { defaultHeadingQuery: 'missing' },
+}
+
+export const DeepestHeading: Story = {
+  name: 'under a level six heading, level six is the only choice.',
+  args: {
+    cursorOffset: 0,
+    headings: [{ level: 6, text: 'Deepest', from: 0, to: 14, children: [] }],
+  },
 }
 
 export const Closed: Story = {

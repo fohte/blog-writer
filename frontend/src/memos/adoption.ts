@@ -38,6 +38,7 @@ export function insertMemoAsHeading(
   view: EditorView,
   memoId: string,
   beforeFrom?: number,
+  requestedLevel?: number,
 ): Result<void, MemoNotFoundError | InvalidHeadingError | InvalidMemoError> {
   const memo = listMemos(doc).find(({ id }) => id === memoId)
   if (!memo) return err(new MemoNotFoundError(memoId))
@@ -79,7 +80,7 @@ export function insertMemoAsHeading(
         : previousText.endsWith('\n')
           ? '\n'
           : '\n\n'
-  const level = target?.level ?? headings.at(-1)?.level ?? 2
+  const level = requestedLevel ?? target?.level ?? headings.at(-1)?.level ?? 2
   const markerIndex = position + separator.length
   const cursor = markerIndex + level + 1 + headingText.length
   const insertion = `${separator}${'#'.repeat(level)} ${headingText}\n\n`
