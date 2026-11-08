@@ -624,6 +624,10 @@ describe('body request', () => {
     vi.stubGlobal('fetch', fetcher)
 
     await submitRequest(view, 'make it concise', () => signals.length === 1)
+    await vi.waitFor(() => {
+      if (document.querySelector('#body-request'))
+        throw new Error('The request input did not close')
+    })
     const duringGeneration = {
       inputOpen: document.querySelector('#body-request') !== null,
       inFlight:
