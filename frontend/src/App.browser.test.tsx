@@ -554,6 +554,18 @@ describe('the application research and evidence integrations', () => {
             event: 'progress',
             data: { kind: 'search', query: 'Research topic' },
           },
+          {
+            event: 'progress',
+            data: { kind: 'fetching', url: 'https://example.invalid/a' },
+          },
+          {
+            event: 'progress',
+            data: { kind: 'fetched', url: 'https://example.invalid/a' },
+          },
+          {
+            event: 'progress',
+            data: { kind: 'fetching', url: 'https://example.invalid/b' },
+          },
         ])
       }
       if (init.method === 'POST' && url.endsWith('/save-if-unchanged'))
@@ -587,7 +599,7 @@ describe('the application research and evidence integrations', () => {
     })
     expect(readResult()).toEqual({
       query: { task: 'key_points', question: 'Research topic' },
-      progressQueries: '検索 “Research topic”',
+      progressQueries: '検索 “Research topic”取得済み example.invalid/a',
       sourceCount: 0,
       findingCount: 0,
       bodySaveCount: 0,

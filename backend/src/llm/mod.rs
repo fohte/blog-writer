@@ -74,7 +74,8 @@ fn sse_event(event: &impl Serialize) -> Event {
     let data = match serde_json::to_value(event) {
         Ok(data) => data,
         Err(error) => {
-            tracing::warn!(%error, "SSE event serialization failed");
+            let event_type = std::any::type_name_of_val(event);
+            tracing::warn!(%error, event_type, "SSE event serialization failed");
             return serialization_error_event();
         }
     };
