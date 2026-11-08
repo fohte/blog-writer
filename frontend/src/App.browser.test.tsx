@@ -170,6 +170,9 @@ async function renderApp(articleDoc = doc) {
     start: () => okAsync(undefined),
     openDocument: () => ok(articleDoc),
     createArticle: () => ok(article),
+    duplicateArticle: () => ok(article),
+    trashArticle: () => ok(undefined),
+    restoreArticle: () => ok(undefined),
     updateArticleTitle: () => ok(undefined),
     updateArticleExportSettings: () => ok(undefined),
     listArticles: () => [article],
@@ -188,6 +191,9 @@ async function renderApp(articleDoc = doc) {
     error: undefined,
     requiresAuthentication: false,
     createArticle: () => undefined,
+    duplicateArticle: () => {},
+    trashArticle: () => {},
+    restoreArticle: () => {},
   })
   await act(async () => {
     root?.render(<App />)

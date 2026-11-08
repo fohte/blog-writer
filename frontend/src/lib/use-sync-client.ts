@@ -1,7 +1,9 @@
+import type { Result } from 'neverthrow'
 import { useEffect, useState } from 'react'
 
 import type { Article, SyncClientApi, SyncState } from '#lib/sync-client'
 import { createSyncClient } from '#lib/sync-client'
+import type { SyncClientError } from '#lib/sync-client-errors'
 
 export function useSyncClient() {
   const [client, setClient] = useState<SyncClientApi>()
@@ -73,6 +75,18 @@ export function useSyncClient() {
     )
   }
 
+  const runArticleAction = (
+    action: (syncClient: SyncClientApi) => Result<unknown, SyncClientError>,
+  ) => {
+    if (!client) return
+    action(client).match(
+      () => undefined,
+      (actionError) => {
+        setError(actionError.message)
+      },
+    )
+  }
+
   return {
     articles,
     statuses,
@@ -82,5 +96,14 @@ export function useSyncClient() {
     requiresAuthentication,
     canCreate: client !== undefined && ready,
     createArticle,
+    duplicateArticle: (id: string) => {
+      runArticleAction((syncClient) => syncClient.duplicateArticle(id))
+    },
+    trashArticle: (id: string) => {
+      runArticleAction((syncClient) => syncClient.trashArticle(id))
+    },
+    restoreArticle: (id: string) => {
+      runArticleAction((syncClient) => syncClient.restoreArticle(id))
+    },
   }
 }

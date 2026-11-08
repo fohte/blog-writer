@@ -20,6 +20,9 @@ const meta = {
     onSortOrderChange: () => {},
     onCreateArticle: () => {},
     onOpenArticle: () => {},
+    onDuplicateArticle: () => {},
+    onTrashArticle: () => {},
+    onRestoreArticle: () => {},
     onOpenSettings: () => {},
     onLoginAgain: () => {},
   },
@@ -53,6 +56,13 @@ const articles: Article[] = [
     createdAt: Date.UTC(2025, 10, 20, 8),
   },
 ]
+
+const trashedArticle: Article = {
+  id: 'article-e',
+  title: 'A discarded draft',
+  createdAt: Date.UTC(2025, 9, 1, 8),
+  trashedAt: Date.UTC(2026, 0, 21, 8),
+}
 
 const statuses = {
   'article-a': 'synced',
@@ -88,6 +98,16 @@ export const SearchResults: Story = {
 export const NoSearchResults: Story = {
   name: 'the list says that no article matches the search text.',
   args: { articles, statuses, searchQuery: 'absent' },
+}
+
+export const WithTrash: Story = {
+  name: 'the list leaves out trashed articles and links to the trash beside the count.',
+  args: { articles: [...articles, trashedArticle], statuses },
+}
+
+export const OnlyTrash: Story = {
+  name: 'the list keeps a link to the trash when every article is trashed.',
+  args: { articles: [trashedArticle] },
 }
 
 export const LongTitle: Story = {

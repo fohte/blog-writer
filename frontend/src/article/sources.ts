@@ -37,6 +37,15 @@ function getFindingsMap(doc: Y.Doc): Y.Map<FindingData> {
   return doc.getMap('findings')
 }
 
+/** The server stores source bodies per article, so a copied article cannot read them. */
+export function clearResearch(doc: Y.Doc) {
+  doc.transact(() => {
+    getSourcesMap(doc).clear()
+    getFindingsMap(doc).clear()
+    doc.getMap('evidence').clear()
+  })
+}
+
 export function observeSources(doc: Y.Doc, listener: () => void): () => void {
   const sources = getSourcesMap(doc)
   const findings = getFindingsMap(doc)
