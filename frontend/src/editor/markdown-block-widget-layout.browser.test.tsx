@@ -84,6 +84,63 @@ describe('Markdown block widget layout', () => {
     })
   })
 
+  it('keeps the next handle aligned after Mermaid reports a syntax error', async () => {
+    const source = [
+      'before',
+      '',
+      '```mermaid',
+      'graph LR',
+      '  Draft -->',
+      '```',
+      '',
+      'after',
+    ].join('\n')
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      showMoveHandles: true,
+    })
+    if (!content) throw new Error('The editor did not mount')
+    const mountedView = EditorView.findFromDOM(content)
+    if (!mountedView) throw new Error('The editor view did not mount')
+    const view = mountedView
+    const readOffset = () => {
+      const line = [...content.querySelectorAll<HTMLElement>('.cm-line')].find(
+        (candidate) => candidate.textContent === 'after',
+      )
+      const handle = [
+        ...view.dom.querySelectorAll<HTMLButtonElement>(
+          '.cm-block-drag-handle',
+        ),
+      ].find(
+        (candidate) =>
+          candidate.dataset['blockFrom'] === String(source.indexOf('after')),
+      )
+      if (!line || !handle) return undefined
+      const lineRect = line.getBoundingClientRect()
+      const handleRect = handle.getBoundingClientRect()
+      return Math.round(
+        handleRect.top +
+          handleRect.height / 2 -
+          (lineRect.top + lineRect.height / 2),
+      )
+    }
+    await vi.waitUntil(
+      () =>
+        content.querySelector('figure [role="alert"]') !== null &&
+        readOffset() === 0,
+    )
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      errorShown: content.querySelector('figure [role="alert"]') !== null,
+      offset: readOffset(),
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      errorShown: true,
+      offset: 0,
+    })
+  })
+
   it('tabs through the body before one roving block handle stop', async () => {
     const source = 'First paragraph.\n\nSecond paragraph.'
     const before = document.createElement('button')
@@ -124,6 +181,8 @@ describe('Markdown block widget layout', () => {
     focusSequence.push(readFocus())
     await userEvent.keyboard('{ArrowDown}')
     focusSequence.push(readFocus())
+    await userEvent.keyboard('{ArrowUp}')
+    focusSequence.push(readFocus())
     await userEvent.keyboard('{Tab}')
     focusSequence.push(readFocus())
 
@@ -140,8 +199,15 @@ describe('Markdown block widget layout', () => {
     })
     expect(readOutput()).toEqual({
       body: source,
-      focusSequence: ['before', 'body', 'handle:0', 'handle:1', 'after'],
-      tabbableHandles: [String(source.indexOf('Second'))],
+      focusSequence: [
+        'before',
+        'body',
+        'handle:0',
+        'handle:1',
+        'handle:0',
+        'after',
+      ],
+      tabbableHandles: [String(source.indexOf('First'))],
     })
   })
 })
