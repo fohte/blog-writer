@@ -480,19 +480,21 @@ async fn openai_compatible_web_search_returns_annotations_and_streams_search_pro
 }
 
 #[rstest]
-#[case::usage_limit(429, "", "LLM provider usage limit reached")]
+#[case::usage_limit(429, "", "usage_limit", "LLM provider usage limit reached")]
 #[case::missing_answer(
     200,
     indoc! {"
         data: [DONE]
 
     "},
+    "invalid_response",
     "LLM provider returned invalid output"
 )]
 #[tokio::test]
 async fn openai_compatible_web_search_reports_provider_errors(
     #[case] status: u16,
     #[case] body: &str,
+    #[case] code: &str,
     #[case] message: &str,
 ) {
     let actual = openai_compatible_web_search_sse(status, body).await;
@@ -506,7 +508,7 @@ async fn openai_compatible_web_search_reports_provider_errors(
                     prefix: "data: ".to_owned(),
                     value: serde_json::json!({
                         "event": "error",
-                        "data": {"message": message}
+                        "data": {"code": code, "message": message}
                     }),
                 },
                 SseLine::Raw(String::new()),
@@ -516,8 +518,13 @@ async fn openai_compatible_web_search_reports_provider_errors(
 }
 
 #[rstest]
-#[case::rate_limit(429, "", "LLM provider usage limit reached")]
-#[case::http_error(500, "", "failed to start or communicate with the LLM provider")]
+#[case::rate_limit(429, "", "usage_limit", "LLM provider usage limit reached")]
+#[case::http_error(
+    500,
+    "",
+    "connection",
+    "failed to start or communicate with the LLM provider"
+)]
 #[case::missing_tool_call(
     200,
     indoc! {r#"
@@ -526,6 +533,7 @@ async fn openai_compatible_web_search_reports_provider_errors(
         data: [DONE]
 
     "#},
+    "invalid_response",
     "LLM provider did not return structured output"
 )]
 #[case::invalid_arguments(
@@ -536,6 +544,7 @@ async fn openai_compatible_web_search_reports_provider_errors(
         data: [DONE]
 
     "#},
+    "invalid_response",
     "LLM provider returned invalid output"
 )]
 #[case::invalid_response_type(
@@ -546,12 +555,14 @@ async fn openai_compatible_web_search_reports_provider_errors(
         data: [DONE]
 
     "#},
+    "invalid_response",
     "LLM output does not match the expected type"
 )]
 #[tokio::test]
 async fn openai_compatible_provider_reports_provider_errors(
     #[case] status: u16,
     #[case] body: &str,
+    #[case] code: &str,
     #[case] message: &str,
 ) {
     let (_, actual) = run_openai_compatible_call(status, body, Some("example-token")).await;
@@ -563,7 +574,7 @@ async fn openai_compatible_provider_reports_provider_errors(
                 SseLine::Raw("event: error".to_owned()),
                 SseLine::Data {
                     prefix: "data: ".to_owned(),
-                    value: serde_json::json!({"event":"error","data":{"message":message}}),
+                    value: serde_json::json!({"event":"error","data":{"code":code,"message":message}}),
                 },
                 SseLine::Raw(String::new()),
             ],
@@ -953,7 +964,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
                     prefix: "data: ".to_owned(),
                     value: serde_json::json!({
                         "event": "error",
-                        "data": {"message": "LLM provider returned invalid output"}
+                        "data": {"code": "invalid_response", "message": "LLM provider returned invalid output"}
                     }),
                 },
                 SseLine::Raw(String::new()),
@@ -967,7 +978,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
     "exit 1",
     indoc! {r#"
         event: error
-        data: {"data":{"message":"failed to start or communicate with the LLM provider"},"event":"error"}
+        data: {"data":{"code":"connection","message":"failed to start or communicate with the LLM provider"},"event":"error"}
 
     "#},
     32
@@ -978,7 +989,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
     "#},
     indoc! {r#"
         event: error
-        data: {"data":{"message":"LLM output does not match the expected type"},"event":"error"}
+        data: {"data":{"code":"invalid_response","message":"LLM output does not match the expected type"},"event":"error"}
 
     "#},
     32
@@ -989,7 +1000,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
     "#},
     indoc! {r#"
         event: error
-        data: {"data":{"message":"LLM provider did not return structured output"},"event":"error"}
+        data: {"data":{"code":"invalid_response","message":"LLM provider did not return structured output"},"event":"error"}
 
     "#},
     32
@@ -1001,7 +1012,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
     "#},
     indoc! {r#"
         event: error
-        data: {"data":{"message":"LLM provider returned invalid output"},"event":"error"}
+        data: {"data":{"code":"invalid_response","message":"LLM provider returned invalid output"},"event":"error"}
 
     "#},
     32
@@ -1012,7 +1023,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
     "#},
     indoc! {r#"
         event: error
-        data: {"data":{"message":"failed to start or communicate with the LLM provider"},"event":"error"}
+        data: {"data":{"code":"connection","message":"failed to start or communicate with the LLM provider"},"event":"error"}
 
     "#},
     32
@@ -1024,7 +1035,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
     "#},
     indoc! {r#"
         event: error
-        data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
+        data: {"data":{"code":"usage_limit","message":"LLM provider usage limit reached"},"event":"error"}
 
     "#},
     32
@@ -1035,7 +1046,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
     "#},
     indoc! {r#"
         event: error
-        data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
+        data: {"data":{"code":"usage_limit","message":"LLM provider usage limit reached"},"event":"error"}
 
     "#},
     32
@@ -1046,7 +1057,7 @@ async fn claude_code_web_search_reports_a_missing_answer() {
     "#},
     indoc! {r#"
         event: error
-        data: {"data":{"message":"LLM provider usage limit reached"},"event":"error"}
+        data: {"data":{"code":"usage_limit","message":"LLM provider usage limit reached"},"event":"error"}
 
     "#},
     1_000_000
@@ -1224,7 +1235,7 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
                         prefix: "data: ".to_owned(),
                         value: serde_json::json!({
                             "event": "error",
-                            "data": {"message": "LLM call exceeded the 10 minute time limit"}
+                            "data": {"code": "timeout", "message": "LLM call exceeded the 10 minute time limit"}
                         }),
                     },
                     SseLine::Raw(String::new()),
@@ -1235,16 +1246,66 @@ async fn enforces_the_call_timeout_and_stops_the_fake_process() {
     );
 }
 
-#[test]
-fn event_payloads_keep_their_openapi_wire_shape() {
-    let actual = serde_json::to_value(LlmEvent::Error(super::LlmErrorPayload {
-        message: "failed".to_owned(),
-    }))
-    .expect("event is serializable");
+#[rstest]
+#[case::provider(
+    LlmError::Provider,
+    "connection",
+    "failed to start or communicate with the LLM provider"
+)]
+#[case::cancelled(
+    LlmError::Cancelled,
+    "connection",
+    "LLM call was cancelled due to shutdown"
+)]
+#[case::invalid_output(
+    LlmError::InvalidOutput,
+    "invalid_response",
+    "LLM provider returned invalid output"
+)]
+#[case::missing_structured_output(
+    LlmError::MissingStructuredOutput,
+    "invalid_response",
+    "LLM provider did not return structured output"
+)]
+#[case::usage_limit(
+    LlmError::UsageLimit,
+    "usage_limit",
+    "LLM provider usage limit reached"
+)]
+#[case::timeout(
+    LlmError::Timeout,
+    "timeout",
+    "LLM call exceeded the 10 minute time limit"
+)]
+#[case::invalid_response(
+    LlmError::InvalidResponse,
+    "invalid_response",
+    "LLM output does not match the expected type"
+)]
+#[case::invalid_result(
+    LlmError::InvalidResult,
+    "invalid_response",
+    "LLM result does not match the request"
+)]
+#[case::serialize_result(
+    LlmError::SerializeResult,
+    "invalid_response",
+    "LLM result could not be serialized"
+)]
+fn event_payloads_keep_their_openapi_wire_shape(
+    #[case] error: LlmError,
+    #[case] code: &str,
+    #[case] message: &str,
+) {
+    let actual = serde_json::to_value(LlmEvent::Error(super::LlmErrorPayload::from(&error)))
+        .expect("event is serializable");
 
     assert_eq!(
         actual,
-        serde_json::json!({"event": "error", "data": {"message": "failed"}})
+        serde_json::json!({
+            "event": "error",
+            "data": {"code": code, "message": message}
+        })
     );
 }
 

@@ -1,4 +1,5 @@
 mod claude_code;
+mod error;
 mod handler;
 mod openai_compatible;
 pub(crate) mod research_job;
@@ -14,12 +15,12 @@ use futures_util::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use thiserror::Error;
 use tokio::sync::{mpsc, watch};
 use utoipa::ToSchema;
 
 use crate::config::{LlmConfig, ProviderName};
 
+pub(crate) use error::{LlmError, LlmErrorPayload};
 pub(crate) use router::router;
 
 #[cfg(test)]
@@ -50,28 +51,6 @@ pub(crate) struct WebSearchResult {
     pub citations: Vec<String>,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
-pub(crate) enum LlmError {
-    #[error("failed to start or communicate with the LLM provider")]
-    Provider,
-    #[error("LLM call was cancelled due to shutdown")]
-    Cancelled,
-    #[error("LLM provider returned invalid output")]
-    InvalidOutput,
-    #[error("LLM provider did not return structured output")]
-    MissingStructuredOutput,
-    #[error("LLM provider usage limit reached")]
-    UsageLimit,
-    #[error("LLM call exceeded the 10 minute time limit")]
-    Timeout,
-    #[error("LLM output does not match the expected type")]
-    InvalidResponse,
-    #[error("LLM result does not match the request")]
-    InvalidResult,
-    #[error("LLM result could not be serialized")]
-    SerializeResult,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub(crate) enum LlmEvent {
@@ -83,11 +62,6 @@ pub(crate) enum LlmEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct LlmProgress {
     pub query: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub(crate) struct LlmErrorPayload {
-    pub message: String,
 }
 
 impl LlmEvent {
@@ -106,7 +80,7 @@ impl LlmEvent {
     fn serialization_error_event() -> Event {
         let data = serde_json::json!({
             "event": "error",
-            "data": {"message": LlmError::SerializeResult.to_string()}
+            "data": LlmErrorPayload::from(&LlmError::SerializeResult)
         });
 
         Event::default().event("error").data(data.to_string())
@@ -247,21 +221,14 @@ impl WebSearchEvent {
                 Err(error) => {
                     tracing::warn!(error_kind = ?LlmError::SerializeResult, %error, "failed to serialize web search result");
                     Some(
-                        LlmEvent::Error(LlmErrorPayload {
-                            message: LlmError::SerializeResult.to_string(),
-                        })
-                        .into_sse_event(),
+                        LlmEvent::Error(LlmErrorPayload::from(&LlmError::SerializeResult))
+                            .into_sse_event(),
                     )
                 }
             },
             Self::Error(error) => {
                 tracing::warn!(error_kind = ?error, "LLM web search failed");
-                Some(
-                    LlmEvent::Error(LlmErrorPayload {
-                        message: error.to_string(),
-                    })
-                    .into_sse_event(),
-                )
+                Some(LlmEvent::Error(LlmErrorPayload::from(&error)).into_sse_event())
             }
             Self::Cancelled => None,
         }
@@ -443,23 +410,17 @@ where
                             %error,
                             "failed to serialize LLM result"
                         );
-                        LlmEvent::Error(LlmErrorPayload {
-                            message: LlmError::SerializeResult.to_string(),
-                        })
+                        LlmEvent::Error(LlmErrorPayload::from(&LlmError::SerializeResult))
                     }
                 },
                 Err(error) => {
                     tracing::warn!(error_kind = ?error, "failed to transform LLM result");
-                    LlmEvent::Error(LlmErrorPayload {
-                        message: error.to_string(),
-                    })
+                    LlmEvent::Error(LlmErrorPayload::from(&error))
                 }
             },
             Err(error) => {
                 tracing::warn!(error_kind = ?error, "LLM call failed");
-                LlmEvent::Error(LlmErrorPayload {
-                    message: error.to_string(),
-                })
+                LlmEvent::Error(LlmErrorPayload::from(&error))
             }
         };
         Some(Ok(event.into_sse_event()))

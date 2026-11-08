@@ -390,7 +390,7 @@ async fn streams_claim_evidence_with_a_verified_quote(
     "Research question: How does the example work?".to_owned(),
     vec![json!({
         "event": "error",
-        "data": {"message": "failed to start or communicate with the LLM provider"}
+        "data": {"code": "connection", "message": "failed to start or communicate with the LLM provider"}
     })],
 )]
 #[case::no_available_sources(

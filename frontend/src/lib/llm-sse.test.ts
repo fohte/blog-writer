@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { postLlmResult } from '#lib/llm-sse'
+import { LlmRequestError, postLlmResult } from '#lib/llm-sse'
 
 function responseFrom(chunks: string[]): Response {
   const stream = new ReadableStream<Uint8Array>({
@@ -100,6 +100,89 @@ describe('LLM SSE client', () => {
     )
 
     expect(result).toEqual({ kind: 'error', message: 'LLM unavailable' })
+  })
+
+  it.each([
+    {
+      name: 'a server error with a known code',
+      response: () =>
+        responseFrom([
+          'event: error\ndata: {"event":"error","data":{"code":"usage_limit","message":"limit reached"}}\n\n',
+        ]),
+      expected: { code: 'usage_limit', message: 'limit reached' },
+    },
+    {
+      name: 'a server error with an unknown code',
+      response: () =>
+        responseFrom([
+          'event: error\ndata: {"event":"error","data":{"code":"fictional_code","message":"unknown failure"}}\n\n',
+        ]),
+      expected: { code: null, message: 'unknown failure' },
+    },
+    {
+      name: 'malformed event data',
+      response: () => responseFrom(['data: {not json}\n\n']),
+      expected: {
+        code: 'invalid_response',
+        message: 'LLM stream returned invalid JSON',
+      },
+    },
+    {
+      name: 'a result of the wrong shape',
+      response: () =>
+        responseFrom([
+          'event: result\ndata: {"event":"result","data":{"other":1}}\n\n',
+        ]),
+      expected: {
+        code: 'invalid_response',
+        message: 'LLM stream returned an invalid result',
+      },
+    },
+    {
+      name: 'a response without a stream',
+      response: () => new Response(null, { status: 200 }),
+      expected: {
+        code: 'invalid_response',
+        message: 'LLM API returned no stream',
+      },
+    },
+    {
+      name: 'a server error status',
+      response: () => new Response(null, { status: 503 }),
+      expected: { code: 'connection', message: 'LLM API returned status 503' },
+    },
+    {
+      name: 'a client error status',
+      response: () => new Response(null, { status: 400 }),
+      expected: { code: null, message: 'LLM API returned status 400' },
+    },
+    {
+      name: 'a stream that ends without a result',
+      response: () => responseFrom([': keep-alive\n\n']),
+      expected: {
+        code: 'connection',
+        message: 'LLM stream ended without a result',
+      },
+    },
+  ])('classifies $name', async ({ response, expected }) => {
+    const result = await postLlmResult<
+      { request: string },
+      { summary: string }
+    >({
+      url: '/api/research/key-points',
+      body: { request: 'sample' },
+      signal: new AbortController().signal,
+      isResult: isSummaryResult,
+      fetcher: () => Promise.resolve(response()),
+    }).match(
+      () => null,
+      (error) => ({
+        code: error instanceof LlmRequestError ? error.code : null,
+        message: error.message,
+      }),
+    )
+
+    expect(result).toEqual(expected)
   })
 
   it('reports when a stream ends without a result event', async () => {

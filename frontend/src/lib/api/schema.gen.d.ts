@@ -509,7 +509,10 @@ export interface components {
       suggestion?: string | null
       verdict: components['schemas']['ClaimVerdict']
     }
+    /** @enum {string} */
+    LlmErrorCode: 'usage_limit' | 'invalid_response' | 'timeout' | 'connection'
     LlmErrorPayload: {
+      code: components['schemas']['LlmErrorCode']
       message: string
     }
     LlmEvent:

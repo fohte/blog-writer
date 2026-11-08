@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use crate::{
     app::AppState,
     error::{ApiJson, AppError, ErrorResponse},
-    llm::{LlmErrorPayload, LlmEvent, LlmProgress},
+    llm::{LlmError, LlmErrorPayload, LlmEvent, LlmProgress},
 };
 
 use super::{model::ResearchJobRequest, pipeline};
@@ -64,16 +64,12 @@ pub(crate) async fn run_research_job(
                                 Ok(result) => LlmEvent::Result(result),
                                 Err(error) => {
                                     tracing::warn!(%error, "research job result serialization failed");
-                                    LlmEvent::Error(LlmErrorPayload {
-                                        message: "LLM result could not be serialized".to_owned(),
-                                    })
+                                    LlmEvent::Error(LlmErrorPayload::from(&LlmError::SerializeResult))
                                 }
                             },
                             Err(error) => {
                                 tracing::warn!(error_kind = ?error, "research job failed");
-                                LlmEvent::Error(LlmErrorPayload {
-                                    message: error.to_string(),
-                                })
+                                LlmEvent::Error(LlmErrorPayload::from(&error))
                             }
                         })
                     }
