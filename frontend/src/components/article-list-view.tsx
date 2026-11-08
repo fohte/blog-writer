@@ -11,6 +11,8 @@ import { ArticleRowMenu } from '#components/article-row-menu'
 import { ArticleTrashDialog } from '#components/article-trash-dialog'
 import { OfflineBanner } from '#components/offline-banner'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
+import type { ArticlePulls } from '#hooks/use-article-pulls'
+import { formatArticlePull } from '#lib/article-export-api'
 import { type ArticleSortOrder, selectArticles } from '#lib/select-articles'
 import type {
   Article,
@@ -30,6 +32,7 @@ export interface ArticleListViewProps {
   canCreate: boolean
   readArticleBody: (id: string) => string
   readArticleSummary: (id: string) => ArticleSummary | undefined
+  readArticlePull: ArticlePulls['read']
   onSearchQueryChange: (query: string) => void
   onSortOrderChange: (sortOrder: ArticleSortOrder) => void
   onCreateArticle: () => void
@@ -74,6 +77,7 @@ export function ArticleListView({
   canCreate,
   readArticleBody,
   readArticleSummary,
+  readArticlePull,
   onSearchQueryChange,
   onSortOrderChange,
   onCreateArticle,
@@ -215,13 +219,20 @@ export function ArticleListView({
             ) : (
               <ul className="border-t border-border">
                 {visibleArticles.map(
-                  ({ id, title, createdAt, syncFileStatus }) => {
+                  ({
+                    id,
+                    title,
+                    createdAt,
+                    syncFileStatus,
+                    exportDestinationId,
+                  }) => {
                     const statusLabel =
                       syncFileStatus === 'external_changed'
                         ? '外部で変更あり'
                         : rowStatusLabels[statuses[id] ?? 'saved']
                     // shortcut: a remote edit arriving while the list stays open appears on the next render, subscribe to document updates if the stale count confuses writers.
                     const summary = readArticleSummary(id)
+                    const pull = readArticlePull(exportDestinationId, id)
 
                     return (
                       <li
@@ -243,6 +254,11 @@ export function ArticleListView({
                             ? formatArticleSummary(summary)
                             : null}
                         </span>
+                        {pull !== undefined ? (
+                          <span className="font-mono text-xs text-muted-foreground-strong">
+                            {formatArticlePull(pull)}
+                          </span>
+                        ) : null}
                         {statusLabel !== undefined ? (
                           <span className="font-mono text-xs text-muted-foreground-strong">
                             {statusLabel}

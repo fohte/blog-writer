@@ -11,7 +11,7 @@ use crate::{
     app::AppState,
     config::{ExportDestination, ExportFormat},
     error::{ApiJson, AppError, ErrorResponse},
-    export::github::{ArticleContent, ExportError, validate_article_target},
+    export::github::{ArticleContent, ArticlePull, ExportError, validate_article_target},
     images,
 };
 
@@ -29,6 +29,11 @@ pub struct DestinationResponse {
     pub path_template: String,
     pub format: ExportFormat,
     pub frontmatter_template: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ArticlePullListResponse {
+    pub pulls: Vec<ArticlePull>,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -80,6 +85,32 @@ pub async fn list_destinations(
         .collect();
 
     Ok(Json(DestinationListResponse { destinations }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/export/{destination_id}/pulls",
+    params(
+        ("destination_id" = String, Path, description = "Configured export destination ID")
+    ),
+    responses(
+        (status = 200, description = "Newest pull request of each article published to the destination", body = ArticlePullListResponse),
+        (status = 404, description = "Destination not found", body = ErrorResponse),
+        (status = 503, description = "Export publishing is not configured", body = ErrorResponse)
+    )
+)]
+pub async fn list_article_pulls(
+    State(state): State<AppState>,
+    Path(destination_id): Path<String>,
+) -> Result<Json<ArticlePullListResponse>, AppError> {
+    let export = state.export.as_ref().ok_or(AppError::ExportUnavailable)?;
+    let destination = find_destination(export.destinations(), &destination_id)?;
+    let pulls = export
+        .list_article_pulls(destination)
+        .await
+        .map_err(map_export_error)?;
+
+    Ok(Json(ArticlePullListResponse { pulls }))
 }
 
 #[utoipa::path(

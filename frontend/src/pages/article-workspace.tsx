@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { readBody } from '#article/index'
 import type { ArticleEditorIntegrationProps } from '#components/article-editor-view'
 import { ArticleListView } from '#components/article-list-view'
+import type { ArticlePulls } from '#hooks/use-article-pulls'
 import { useOnline } from '#hooks/use-online'
 import type { ArticleSortOrder } from '#lib/select-articles'
 import type { Article, SyncClientApi, SyncState } from '#lib/sync-client'
@@ -20,6 +21,7 @@ export type ArticleWorkspaceProps = {
   onTrashArticle: (id: string) => void
   onRestoreArticle: (id: string) => void
   onOpenSettings: () => void
+  readArticlePull: ArticlePulls['read']
 } & ArticleEditorIntegrationProps
 
 export function ArticleWorkspace({
@@ -42,6 +44,7 @@ export function ArticleWorkspace({
   onViewChange,
   outlineRenderer,
   premisePanel,
+  readArticlePull,
   sourcesPanel,
 }: ArticleWorkspaceProps) {
   const [selectedArticleId, setSelectedArticleId] = useState<string>()
@@ -104,6 +107,7 @@ export function ArticleWorkspace({
       readArticleBody={(id) =>
         client?.openDocument(id).map(readBody).unwrapOr('') ?? ''
       }
+      readArticlePull={readArticlePull}
       readArticleSummary={(id) => client?.getArticleSummary(id)}
       requiresAuthentication={requiresAuthentication}
       searchQuery={searchQuery}

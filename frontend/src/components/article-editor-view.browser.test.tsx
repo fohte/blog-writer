@@ -88,6 +88,7 @@ function renderWorkspace(
     return (
       <StrictMode>
         <ArticleWorkspace
+          readArticlePull={() => undefined}
           articles={articles}
           client={client}
           error={error}

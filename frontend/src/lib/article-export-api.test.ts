@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { getExportDestinations } from '#lib/article-export-api'
+import { getArticlePulls, getExportDestinations } from '#lib/article-export-api'
 
 const destination = {
   id: 'sample-site',
@@ -19,6 +19,40 @@ function readDestinations(payload: unknown) {
     (error) => ({ result: 'error', message: error.message }),
   )
 }
+
+describe('getArticlePulls', () => {
+  function readPulls(payload: unknown) {
+    return getArticlePulls(
+      () => Promise.resolve(Response.json(payload)),
+      'sample-site',
+    ).match(
+      (value) => ({ result: 'ok', value }),
+      (error) => ({ result: 'error', message: error.message }),
+    )
+  }
+  const pull = {
+    article_id: 'sample-article',
+    number: 14,
+    state: 'open',
+    url: 'https://github.com/example/site/pull/14',
+  }
+
+  it('accepts the pull requests of a destination', async () => {
+    const actual = await readPulls({ pulls: [pull] })
+
+    expect(actual).toEqual({ result: 'ok', value: { pulls: [pull] } })
+  })
+
+  it('rejects an unknown pull request state', async () => {
+    const actual = await readPulls({ pulls: [{ ...pull, state: 'draft' }] })
+
+    expect(actual).toEqual({
+      result: 'error',
+      message:
+        'PR の状態を読み込めませんでした: 応答の形式が正しくありません。',
+    })
+  })
+})
 
 describe('getExportDestinations', () => {
   it('accepts a destination with every field the publish form shows', async () => {

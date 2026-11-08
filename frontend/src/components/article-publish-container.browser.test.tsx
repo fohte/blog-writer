@@ -8,7 +8,7 @@ import * as Y from 'yjs'
 import { setBody } from '#article/body'
 import { exportArticleBody } from '#article/export'
 import { ArticlePublishContainer } from '#components/article-publish-container'
-import type { ExportDestination } from '#lib/article-export-api'
+import type { ArticlePull, ExportDestination } from '#lib/article-export-api'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
 vi.mock('#article/export', { spy: true })
@@ -60,6 +60,8 @@ const destinations: ExportDestination[] = [
   },
 ]
 
+const reloadPulls = vi.fn<() => void>()
+
 const destinationFacts = [
   'リポジトリexample/site',
   '取り込み先main',
@@ -73,6 +75,7 @@ function renderPublish(
     article?: Article
     destinations?: ExportDestination[]
     body?: string
+    pull?: ArticlePull
   } = {},
 ) {
   const host = document.createElement('div')
@@ -106,6 +109,7 @@ function renderPublish(
     root?.render(
       <ArticlePublishContainer
         article={options.article ?? { ...article, ...settings }}
+        articlePulls={{ read: () => options.pull, reload: reloadPulls }}
         client={client}
         destinations={options.destinations ?? destinations}
         doc={currentDoc}
@@ -260,6 +264,18 @@ function readPublishSummary() {
   }
 }
 
+function readPublishFooter() {
+  const footer = document.querySelector(
+    '[aria-label="PR を作成"] > div:last-child',
+  )
+  return {
+    text: footer?.querySelector('span')?.textContent ?? null,
+    buttons: [...(footer?.querySelectorAll('button') ?? [])].map(
+      ({ textContent }) => textContent,
+    ),
+  }
+}
+
 function readDestinationState() {
   return {
     selectedDestination:
@@ -388,6 +404,61 @@ describe('ArticlePublishContainer', () => {
       facts: destinationFacts,
       resolvedPath: '→ posts/sample-post.md',
       diffSize: '+1 −1 · 取得 09:05',
+    })
+  })
+
+  it('offers to add to an open pull request and rereads its state afterwards', async () => {
+    reloadPulls.mockClear()
+    renderPublish(
+      {},
+      {
+        pull: {
+          article_id: article.id,
+          number: 14,
+          state: 'open',
+          url: 'https://github.com/example/site/pull/14',
+        },
+      },
+    )
+    await clickAndWait('差分を見る', waitForDiff)
+    const beforePublish = readPublishFooter()
+    await clickAndWait('PR #14 に追加する', waitForPublishedLink)
+    const readOutput = () => ({
+      beforePublish,
+      afterPublish: readPublishFooter(),
+      reloads: reloadPulls.mock.calls.length,
+    })
+
+    expect(readOutput()).toEqual({
+      beforePublish: {
+        text: 'open な PR #14 があるので、そこにコミットを追加します。差分の確認後に公開先が変わっていたら、差分の確認からやり直します。',
+        buttons: ['差分を見る', 'PR #14 に追加する'],
+      },
+      afterPublish: {
+        text: 'PR に反映しました。 PR を開く',
+        buttons: ['差分を見る'],
+      },
+      reloads: 1,
+    })
+  })
+
+  it('offers a new pull request when the last one is already merged', async () => {
+    renderPublish(
+      {},
+      {
+        pull: {
+          article_id: article.id,
+          number: 11,
+          state: 'merged',
+          url: 'https://github.com/example/site/pull/11',
+        },
+      },
+    )
+    await clickAndWait('差分を見る', waitForDiff)
+
+    expect(readPublishFooter()).toEqual({
+      text: '差分の確認後に公開先が変わっていたら、差分の確認からやり直します。',
+      buttons: ['差分を見る', 'PR を作成'],
     })
   })
 

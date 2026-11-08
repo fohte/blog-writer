@@ -4,6 +4,7 @@ import type { components } from '#lib/api/schema.gen.d.ts'
 import { isRecord } from '#lib/guards'
 
 export type ExportDestination = components['schemas']['DestinationResponse']
+export type ArticlePull = components['schemas']['ArticlePull']
 type ArticleFileResponse = components['schemas']['ArticleFileResponse']
 
 export class ExportApiError extends Error {
@@ -39,6 +40,25 @@ function isDestinationList(
         (destination['format'] === 'markdown' ||
           destination['format'] === 'mdx') &&
         typeof destination['frontmatter_template'] === 'string',
+    )
+  )
+}
+
+function isArticlePullList(
+  value: unknown,
+): value is components['schemas']['ArticlePullListResponse'] {
+  return (
+    isRecord(value) &&
+    Array.isArray(value['pulls']) &&
+    value['pulls'].every(
+      (pull) =>
+        isRecord(pull) &&
+        typeof pull['article_id'] === 'string' &&
+        typeof pull['number'] === 'number' &&
+        (pull['state'] === 'open' ||
+          pull['state'] === 'closed' ||
+          pull['state'] === 'merged') &&
+        typeof pull['url'] === 'string',
     )
   )
 }
@@ -105,6 +125,20 @@ export function getExportDestinations(fetcher: typeof fetch) {
     isDestinationList,
     '公開先を読み込めませんでした',
   )
+}
+
+export function getArticlePulls(fetcher: typeof fetch, destinationId: string) {
+  return request(
+    fetcher,
+    `/api/export/${encodeURIComponent(destinationId)}/pulls`,
+    {},
+    isArticlePullList,
+    'PR の状態を読み込めませんでした',
+  )
+}
+
+export function formatArticlePull({ number, state }: ArticlePull) {
+  return `PR #${String(number)} ${state}`
 }
 
 export function getExportArticleFile(

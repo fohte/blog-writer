@@ -164,6 +164,22 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/export/{destination_id}/pulls': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get: operations['list_article_pulls']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/file-sync/configuration': {
     parameters: {
       query?: never
@@ -435,6 +451,18 @@ export interface components {
       purpose: string
       thesis: string
     }
+    ArticlePull: {
+      article_id: string
+      /** Format: int64 */
+      number: number
+      state: components['schemas']['ArticlePullState']
+      url: string
+    }
+    ArticlePullListResponse: {
+      pulls: components['schemas']['ArticlePull'][]
+    }
+    /** @enum {string} */
+    ArticlePullState: 'open' | 'closed' | 'merged'
     BodyRequest: {
       evidence_quotes?: string[] | null
       headings: string[]
@@ -1670,6 +1698,47 @@ export interface operations {
         }
       }
       /** @description Export publishing or, for an article with images, image publishing is not configured */
+      503: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+    }
+  }
+  list_article_pulls: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        /** @description Configured export destination ID */
+        destination_id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Newest pull request of each article published to the destination */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ArticlePullListResponse']
+        }
+      }
+      /** @description Destination not found */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Export publishing is not configured */
       503: {
         headers: {
           [name: string]: unknown
