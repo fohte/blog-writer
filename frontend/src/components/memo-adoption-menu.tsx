@@ -1,14 +1,22 @@
 import { Button } from '@fohte/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@fohte/ui/dialog'
+import { Input } from '@fohte/ui/input'
+import { Kbd } from '@fohte/ui/kbd'
 import { Popover, PopoverContent } from '@fohte/ui/popover'
-import { useRef } from 'react'
+import { SegmentedControl } from '@fohte/ui/segmented-control'
+import { type RefObject, useRef, useState } from 'react'
 
 import type { Heading, Memo } from '#article/index'
 import { flattenHeadingTreeWithDepth } from '#article/index'
+import { resolveNewHeadingPlacement } from '#memos/new-heading-placement'
 
 type MemoAdoptionMenuProps = {
   memo: Memo
   headings: Heading[]
+  /** The editor cursor, which decides where a new heading goes. */
+  cursorOffset?: number | undefined
+  /** The filter text the menu opens with. */
+  defaultHeadingQuery?: string | undefined
   open?: boolean
   /** `sheet` shows the targets in a bottom sheet with touch-sized rows for phones. */
   presentation?: 'popover' | 'sheet' | undefined
@@ -17,10 +25,25 @@ type MemoAdoptionMenuProps = {
   onOpenChange?: (open: boolean) => void
   onAdoptToHeading: (memoId: string, markerIndex: number) => void
   onInsertAsHeading?:
-    ((memoId: string, beforeFrom?: number) => void) | undefined
+    ((memoId: string, beforeFrom?: number, level?: number) => void) | undefined
   onMove: (direction: 'up' | 'down') => void
   onDismiss: () => void
   onRestore: () => void
+}
+
+type AdoptionTargetsProps = Pick<
+  MemoAdoptionMenuProps,
+  'memo' | 'headings' | 'onAdoptToHeading' | 'onInsertAsHeading'
+> & {
+  cursorOffset: number
+  defaultHeadingQuery: string
+  sheet: boolean
+  newHeadingRef: RefObject<HTMLButtonElement | null>
+  close: () => void
+}
+
+function headingDisplayText({ text }: Pick<Heading, 'text'>) {
+  return text || '無題の見出し'
 }
 
 function HeadingLabel({ heading }: { heading: Heading }) {
@@ -29,7 +52,143 @@ function HeadingLabel({ heading }: { heading: Heading }) {
       <span className="font-mono text-muted-foreground">
         {'#'.repeat(heading.level)}
       </span>{' '}
-      {heading.text || '無題の見出し'}
+      {headingDisplayText(heading)}
+    </>
+  )
+}
+
+// Rendered inside the popup so the level and filter reset on every open.
+function AdoptionTargets({
+  memo,
+  headings,
+  cursorOffset,
+  defaultHeadingQuery,
+  sheet,
+  newHeadingRef,
+  close,
+  onAdoptToHeading,
+  onInsertAsHeading,
+}: AdoptionTargetsProps) {
+  const [chosenLevel, setChosenLevel] = useState<number>()
+  const [query, setQuery] = useState(defaultHeadingQuery)
+  const flatHeadings = flattenHeadingTreeWithDepth(headings)
+  const placement = resolveNewHeadingPlacement(headings, cursorOffset)
+  const level =
+    chosenLevel !== undefined && placement.levels.includes(chosenLevel)
+      ? chosenLevel
+      : placement.defaultLevel
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const matchingHeadings = flatHeadings.filter(({ heading }) =>
+    headingDisplayText(heading).toLocaleLowerCase().includes(normalizedQuery),
+  )
+  const position =
+    placement.anchor === undefined
+      ? '本文の末尾'
+      : `${headingDisplayText(placement.anchor)} の末尾`
+  const anchorMarker =
+    placement.anchor === undefined
+      ? ''
+      : `${'#'.repeat(placement.anchor.level)} `
+  const insertNewHeading = () => {
+    onInsertAsHeading?.(memo.id, placement.beforeFrom, level)
+    close()
+  }
+  const targetClassName = sheet
+    ? 'h-12 w-full justify-start truncate px-4.5 text-base font-normal'
+    : 'w-full justify-start truncate'
+  const sectionTitleClassName = `text-xs text-muted-foreground-strong ${sheet ? 'px-4.5 pt-3' : ''}`
+
+  return (
+    <>
+      {onInsertAsHeading === undefined ? null : sheet ? (
+        <Button
+          className="h-13 w-full justify-between gap-2.5 px-4.5 text-base font-normal focus-visible:ring-inset"
+          onClick={insertNewHeading}
+          type="button"
+          variant="ghost"
+        >
+          <span className="shrink-0">新しい見出しとして追加</span>
+          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
+            {'#'.repeat(level)} {position}
+          </span>
+        </Button>
+      ) : (
+        <section className="flex flex-col gap-2">
+          <h3 className={sectionTitleClassName}>新しい見出しとして</h3>
+          <div className="flex items-center gap-2">
+            <SegmentedControl
+              aria-label="新しい見出しのレベル"
+              onValueChange={(value) => {
+                setChosenLevel(Number(value))
+              }}
+              options={placement.levels.map((option) => ({
+                value: String(option),
+                label: '#'.repeat(option),
+              }))}
+              value={String(level)}
+            />
+            <span className="min-w-0 truncate text-xs text-muted-foreground">
+              位置: {anchorMarker}
+              {position}
+            </span>
+          </div>
+          <Button
+            aria-label="新しい見出しとして追加"
+            className="w-full justify-start focus-visible:ring-inset"
+            onClick={insertNewHeading}
+            ref={newHeadingRef}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <span className="shrink-0 font-mono text-muted-foreground">
+              {'#'.repeat(level)}
+            </span>
+            <span className="min-w-0 truncate">{memo.text}</span>
+            <Kbd aria-hidden="true" className="ms-auto shrink-0">
+              ⏎
+            </Kbd>
+          </Button>
+        </section>
+      )}
+      <section className="flex flex-col gap-1">
+        <h3 className={sectionTitleClassName}>既存の見出しに採用</h3>
+        {sheet || flatHeadings.length === 0 ? null : (
+          <Input
+            aria-label="見出しを絞り込む"
+            onChange={(event) => {
+              setQuery(event.target.value)
+            }}
+            placeholder="見出しを絞り込む"
+            value={query}
+          />
+        )}
+        {matchingHeadings.length === 0 ? (
+          <p
+            className={`text-sm text-muted-foreground ${sheet ? 'px-4.5' : ''}`}
+          >
+            {flatHeadings.length === 0
+              ? '見出しはありません。'
+              : '一致する見出しはありません。'}
+          </p>
+        ) : (
+          matchingHeadings.map(({ heading }) => (
+            <Button
+              className={targetClassName}
+              key={heading.from}
+              onClick={() => {
+                onAdoptToHeading(memo.id, heading.from)
+                close()
+              }}
+              size={sheet ? 'default' : 'sm'}
+              type="button"
+              variant="ghost"
+            >
+              <HeadingLabel heading={heading} />
+            </Button>
+          ))
+        )}
+      </section>
     </>
   )
 }
@@ -37,6 +196,8 @@ function HeadingLabel({ heading }: { heading: Heading }) {
 export function MemoAdoptionMenu({
   memo,
   headings,
+  cursorOffset = 0,
+  defaultHeadingQuery = '',
   open = false,
   presentation = 'popover',
   canMoveUp,
@@ -49,80 +210,26 @@ export function MemoAdoptionMenu({
   onRestore,
 }: MemoAdoptionMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const flatHeadings = flattenHeadingTreeWithDepth(headings)
+  const newHeadingRef = useRef<HTMLButtonElement>(null)
   const sheet = presentation === 'sheet'
   const close = () => {
     onOpenChange?.(false)
   }
-  const targetClassName = sheet
-    ? 'h-12 w-full justify-start truncate px-4.5 text-base font-normal'
-    : 'w-full justify-start truncate'
-  const targetSize = sheet ? 'default' : 'sm'
-  const sectionTitleClassName = `text-xs text-muted-foreground-strong ${sheet ? 'px-4.5 pt-3' : ''}`
   const actionClassName = sheet ? 'h-11 text-sm' : ''
   const actionSize = sheet ? 'default' : 'sm'
 
   const targets = (
-    <>
-      {onInsertAsHeading === undefined ? null : (
-        <section className="flex flex-col gap-1">
-          <h3 className={sectionTitleClassName}>新しい見出しとして</h3>
-          {flatHeadings.map(({ heading }) => (
-            <Button
-              className={targetClassName}
-              key={`before-${String(heading.from)}`}
-              onClick={() => {
-                onInsertAsHeading(memo.id, heading.from)
-                close()
-              }}
-              size={targetSize}
-              type="button"
-              variant="ghost"
-            >
-              「{heading.text || '無題の見出し'}」の前
-            </Button>
-          ))}
-          <Button
-            className={targetClassName}
-            onClick={() => {
-              onInsertAsHeading(memo.id)
-              close()
-            }}
-            size={targetSize}
-            type="button"
-            variant="ghost"
-          >
-            {flatHeadings.length === 0 ? '先頭に追加' : '末尾に追加'}
-          </Button>
-        </section>
-      )}
-      <section className="flex flex-col gap-1">
-        <h3 className={sectionTitleClassName}>既存の見出しに採用</h3>
-        {flatHeadings.length === 0 ? (
-          <p
-            className={`text-sm text-muted-foreground ${sheet ? 'px-4.5' : ''}`}
-          >
-            見出しはありません。
-          </p>
-        ) : (
-          flatHeadings.map(({ heading }) => (
-            <Button
-              className={targetClassName}
-              key={heading.from}
-              onClick={() => {
-                onAdoptToHeading(memo.id, heading.from)
-                close()
-              }}
-              size={targetSize}
-              type="button"
-              variant="ghost"
-            >
-              <HeadingLabel heading={heading} />
-            </Button>
-          ))
-        )}
-      </section>
-    </>
+    <AdoptionTargets
+      close={close}
+      cursorOffset={cursorOffset}
+      defaultHeadingQuery={defaultHeadingQuery}
+      headings={headings}
+      memo={memo}
+      newHeadingRef={newHeadingRef}
+      onAdoptToHeading={onAdoptToHeading}
+      onInsertAsHeading={onInsertAsHeading}
+      sheet={sheet}
+    />
   )
 
   const actions = (
@@ -190,6 +297,7 @@ export function MemoAdoptionMenu({
       }}
       ref={triggerRef}
       size="sm"
+      title="採用先を選ぶ (A)"
       type="button"
       variant="outline"
     >
@@ -237,7 +345,10 @@ export function MemoAdoptionMenu({
   return (
     <Popover anchor={triggerRef} onOpenChange={onOpenChange} open={open}>
       {trigger}
-      <PopoverContent className="flex w-72 flex-col gap-3">
+      <PopoverContent
+        className="flex w-72 flex-col gap-3"
+        initialFocus={() => newHeadingRef.current ?? true}
+      >
         {/* Only the targets scroll so the row actions stay reachable in a long article. */}
         <div className="flex max-h-80 flex-col gap-4 overflow-y-auto">
           {targets}

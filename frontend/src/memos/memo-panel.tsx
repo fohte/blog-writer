@@ -45,6 +45,7 @@ export function MemoPanel({ doc, view, mobile = false }: MemoPanelProps) {
   return (
     <MemoPanelView
       adoptionPresentation={mobile ? 'sheet' : 'popover'}
+      cursorOffset={view?.state.selection.main.head}
       draft={draft}
       error={error}
       filter={filter}
@@ -70,10 +71,14 @@ export function MemoPanel({ doc, view, mobile = false }: MemoPanelProps) {
       {...(view === undefined
         ? {}
         : {
-            onInsertAsHeading: (memoId: string, beforeFrom?: number) => {
+            onInsertAsHeading: (
+              memoId: string,
+              beforeFrom?: number,
+              level?: number,
+            ) => {
               apply(() =>
                 memoAdoptionErrorMessage(() =>
-                  insertMemoAsHeading(doc, view, memoId, beforeFrom),
+                  insertMemoAsHeading(doc, view, memoId, beforeFrom, level),
                 ),
               )
             },

@@ -921,7 +921,9 @@ First paragraph.
       )
     })
     await act(async () => {
-      await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
+      await userEvent.click(
+        page.getByRole('button', { name: '新しい見出しとして追加' }),
+      )
     })
     const readMemoHeadingInsertionOutput = () => ({
       body: getBody(articleDoc).toJSON(),
@@ -971,14 +973,14 @@ First paragraph.
       {
         action: 'insert',
         state: {
-          body: `${initialBody}\n\n# Add a summary\n\n`,
-          editor: `${initialBody}\n\n# Add a summary\n\n`,
+          body: `${initialBody}\n\n## Add a summary\n\n`,
+          editor: `${initialBody}\n\n## Add a summary\n\n`,
           memos: [
             {
               id: 'memo-a',
               state: {
                 kind: 'adopted',
-                heading: { from: 18, level: 1, text: 'Add a summary' },
+                heading: { from: 18, level: 2, text: 'Add a summary' },
               },
             },
           ],
@@ -995,14 +997,14 @@ First paragraph.
       {
         action: 'redo',
         state: {
-          body: `${initialBody}\n\n# Add a summary\n\n`,
-          editor: `${initialBody}\n\n# Add a summary\n\n`,
+          body: `${initialBody}\n\n## Add a summary\n\n`,
+          editor: `${initialBody}\n\n## Add a summary\n\n`,
           memos: [
             {
               id: 'memo-a',
               state: {
                 kind: 'adopted',
-                heading: { from: 18, level: 1, text: 'Add a summary' },
+                heading: { from: 18, level: 2, text: 'Add a summary' },
               },
             },
           ],

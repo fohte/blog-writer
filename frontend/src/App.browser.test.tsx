@@ -3188,7 +3188,9 @@ describe('the application research and evidence integrations', () => {
       await userEvent.click(
         page.getByRole('button', { name: '採用', exact: true }),
       )
-      await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
+      await userEvent.click(
+        page.getByRole('button', { name: '新しい見出しとして追加' }),
+      )
     })
 
     const readResult = () => ({
@@ -3199,7 +3201,7 @@ describe('the application research and evidence integrations', () => {
       })),
     })
     expect(readResult()).toEqual({
-      body: '# Starting point\n\nA useful paragraph.\n\n# A useful thought\n\n',
+      body: '# Starting point\n\nA useful paragraph.\n\n## A useful thought\n\n',
       memos: [{ text: 'A useful thought', state: 'adopted' }],
     })
   })
