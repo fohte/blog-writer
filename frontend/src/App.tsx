@@ -58,6 +58,9 @@ export function App() {
     error,
     requiresAuthentication,
     createArticle,
+    duplicateArticle,
+    trashArticle,
+    restoreArticle,
   } = useSyncClient()
 
   useEffect(() => {
@@ -216,6 +219,9 @@ export function App() {
         />
       )}
       onCreateArticle={createArticle}
+      onDuplicateArticle={duplicateArticle}
+      onRestoreArticle={restoreArticle}
+      onTrashArticle={trashArticle}
       onOpenSettings={() => {
         setShowSettings(true)
       }}

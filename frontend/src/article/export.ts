@@ -1,6 +1,7 @@
 import { okAsync, ResultAsync } from 'neverthrow'
 
 import { DEFAULT_ARTICLE_TITLE } from '#article/constants'
+import { formatLocalDate } from '#article/format-local-date'
 
 export type ExportFormat = 'markdown' | 'mdx'
 
@@ -20,12 +21,7 @@ export function createArticleFrontmatter(
   title: string,
   createdAt: number,
 ): string {
-  const createdDate = new Date(createdAt)
-  const date = [
-    createdDate.getFullYear(),
-    String(createdDate.getMonth() + 1).padStart(2, '0'),
-    String(createdDate.getDate()).padStart(2, '0'),
-  ].join('-')
+  const date = formatLocalDate(createdAt)
   return template
     .replaceAll('{{ title }}', () => JSON.stringify(title))
     .replaceAll('{{ date }}', () => JSON.stringify(date))

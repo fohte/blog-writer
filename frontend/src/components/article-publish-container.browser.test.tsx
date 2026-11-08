@@ -75,6 +75,9 @@ function renderPublish(
     start: () => okAsync(undefined),
     openDocument: () => ok(currentDoc),
     createArticle: () => ok(article),
+    duplicateArticle: () => ok(article),
+    trashArticle: () => ok(undefined),
+    restoreArticle: () => ok(undefined),
     updateArticleTitle: () => ok(undefined),
     updateArticleExportSettings: (id, nextSettings) => {
       settingsUpdates.push({ id, settings: nextSettings })

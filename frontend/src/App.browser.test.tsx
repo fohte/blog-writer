@@ -170,6 +170,9 @@ async function renderApp(articleDoc = doc) {
     start: () => okAsync(undefined),
     openDocument: () => ok(articleDoc),
     createArticle: () => ok(article),
+    duplicateArticle: () => ok(article),
+    trashArticle: () => ok(undefined),
+    restoreArticle: () => ok(undefined),
     updateArticleTitle: () => ok(undefined),
     updateArticleExportSettings: () => ok(undefined),
     listArticles: () => [article],
@@ -188,6 +191,9 @@ async function renderApp(articleDoc = doc) {
     error: undefined,
     requiresAuthentication: false,
     createArticle: () => undefined,
+    duplicateArticle: () => {},
+    trashArticle: () => {},
+    restoreArticle: () => {},
   })
   await act(async () => {
     root?.render(<App />)
@@ -3188,7 +3194,9 @@ describe('the application research and evidence integrations', () => {
       await userEvent.click(
         page.getByRole('button', { name: '採用', exact: true }),
       )
-      await userEvent.click(page.getByRole('button', { name: '末尾に追加' }))
+      await userEvent.click(
+        page.getByRole('button', { name: '新しい見出しとして追加' }),
+      )
     })
 
     const readResult = () => ({
@@ -3199,7 +3207,7 @@ describe('the application research and evidence integrations', () => {
       })),
     })
     expect(readResult()).toEqual({
-      body: '# Starting point\n\nA useful paragraph.\n\n# A useful thought\n\n',
+      body: '# Starting point\n\nA useful paragraph.\n\n## A useful thought\n\n',
       memos: [{ text: 'A useful thought', state: 'adopted' }],
     })
   })

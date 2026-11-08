@@ -1,7 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
-import { moveBlock, readBody, setBody } from '#article/index'
+import { TRASH_RETENTION_MS } from '#article/constants'
+import {
+  addEvidence,
+  addSource,
+  getPremise,
+  listFindings,
+  listSources,
+  moveBlock,
+  readBody,
+  setBody,
+  setFindings,
+  setPremise,
+} from '#article/index'
 import type { Article, SyncClientOptions } from '#lib/sync-client'
 import { createSyncClient } from '#lib/sync-client'
 
@@ -240,12 +252,275 @@ describe('createSyncClient', () => {
         {
           id: article.id,
           createdAt: article.createdAt,
+          updatedAt: article.createdAt,
           title: 'A revised title',
         },
       ],
       articleDocumentHasTitle: false,
     })
     client.destroy()
+  })
+
+  it('records local edits at most once a minute', () => {
+    const { client, setNow } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    const body = client.openDocument(article.id)._unsafeUnwrap().getText('body')
+    const readUpdatedAt = () => client.listArticles()[0]?.updatedAt
+    const start = 1_800_000_100_000
+    const updatedAtAfter = (now: number, edit: () => void) => {
+      setNow(now)
+      edit()
+      return readUpdatedAt()
+    }
+    const insert = () => {
+      body.insert(0, 'x')
+    }
+
+    const readEditTimes = () => ({
+      beforeEditing: readUpdatedAt(),
+      firstEdit: updatedAtAfter(start, insert),
+      withinTheMinute: updatedAtAfter(start + 59_999, insert),
+      afterTheMinute: updatedAtAfter(start + 60_000, insert),
+      titleEdit: updatedAtAfter(start + 120_000, () => {
+        client.updateArticleTitle(article.id, 'A revised title')._unsafeUnwrap()
+      }),
+    })
+    expect(readEditTimes()).toEqual({
+      beforeEditing: undefined,
+      firstEdit: start,
+      withinTheMinute: start,
+      afterTheMinute: start + 60_000,
+      titleEdit: start + 120_000,
+    })
+    client.destroy()
+  })
+
+  it('keeps the edit time after a restart', () => {
+    const { client, savedDocuments } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    client
+      .openDocument(article.id)
+      ._unsafeUnwrap()
+      .getText('body')
+      .insert(0, 'x')
+    client.destroy()
+
+    const restored = createFixture(savedDocuments)
+
+    expect(restored.client.listArticles()).toEqual([
+      { ...article, updatedAt: article.createdAt },
+    ])
+    restored.client.destroy()
+  })
+
+  it('does not count a change received from elsewhere as a local edit', () => {
+    const { client } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    const peer = new Y.Doc()
+    peer.getText('body').insert(0, 'Written on another device')
+
+    Y.applyUpdate(
+      client.openDocument(article.id)._unsafeUnwrap(),
+      Y.encodeStateAsUpdate(peer),
+    )
+
+    expect(client.listArticles()).toEqual([article])
+    peer.destroy()
+    client.destroy()
+  })
+
+  it('duplicates an article without its research or publishing targets', async () => {
+    const { client, providers, setArticleId, setNow } = createFixture()
+    const sourceId = '018f0000-0000-7000-8000-000000000002'
+    const copyId = '018f0000-0000-7000-8000-000000000003'
+    setArticleId(sourceId)
+    client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
+    const provider = providers.at(-1)
+    provider?.emitStatus('connected')
+    provider?.emitSync(true)
+    const sourceDoc = client.openDocument(sourceId)._unsafeUnwrap()
+    setBody(sourceDoc, 'A paragraph.\n')
+    setPremise(sourceDoc, 'audience', 'Gardeners')
+    addSource(sourceDoc, {
+      id: 'source-a',
+      kind: 'url',
+      title: 'Example source',
+      url: 'https://example.invalid/report',
+      fileName: null,
+      checkedAt: '2026-02-01T00:00:00.000Z',
+      summary: 'A source summary.',
+    })._unsafeUnwrap()
+    setFindings(sourceDoc, 'source-a', [
+      { id: 'finding-a', text: 'A key point.', quote: 'A quotation.' },
+    ])._unsafeUnwrap()
+    addEvidence(sourceDoc, {
+      id: 'evidence-a',
+      from: 0,
+      to: 1,
+      claim: 'A',
+      sourceId: 'source-a',
+      quote: 'A quotation.',
+      verdict: 'supported',
+      checkedAt: '2026-02-01T00:00:00.000Z',
+    })._unsafeUnwrap()
+    client.updateArticleTitle(sourceId, 'A garden article')._unsafeUnwrap()
+    client
+      .updateArticleExportSettings(sourceId, { exportSlug: 'a-garden-article' })
+      ._unsafeUnwrap()
+    setArticleId(copyId)
+    setNow(1_800_000_100_000)
+
+    const copy = client.duplicateArticle(sourceId)._unsafeUnwrap()
+    const copyDoc = client.openDocument(copyId)._unsafeUnwrap()
+    const articles = client.listArticles()
+    const copiedBody = readBody(copyDoc)
+    const copiedPremise = getPremise(copyDoc)
+    const copiedSources = listSources(copyDoc)
+    const copiedFindings = listFindings(copyDoc)
+    const copiedEvidenceIds = [...copyDoc.getMap('evidence').keys()]
+    setBody(copyDoc, 'An edited copy.\n')
+
+    const readOutput = () => ({
+      copy,
+      articles,
+      copiedBody,
+      copiedPremise,
+      copiedSources,
+      copiedFindings,
+      copiedEvidenceIds,
+      sourceBodyAfterEditingCopy: readBody(sourceDoc),
+    })
+    expect(readOutput()).toEqual({
+      copy: {
+        id: copyId,
+        createdAt: 1_800_000_100_000,
+        title: 'A garden article のコピー',
+      },
+      articles: [
+        {
+          id: sourceId,
+          createdAt: 1_800_000_000_000,
+          updatedAt: 1_800_000_000_000,
+          title: 'A garden article',
+          exportSlug: 'a-garden-article',
+        },
+        {
+          id: copyId,
+          createdAt: 1_800_000_100_000,
+          title: 'A garden article のコピー',
+        },
+      ],
+      copiedBody: 'A paragraph.\n',
+      copiedPremise: { audience: 'Gardeners', purpose: null, claim: null },
+      copiedSources: [],
+      copiedFindings: [],
+      copiedEvidenceIds: [],
+      sourceBodyAfterEditingCopy: 'A paragraph.\n',
+    })
+    client.destroy()
+  })
+
+  it.each([
+    ['its local copy has not loaded', false],
+    ['it is still arriving from the server', true],
+  ])(
+    'refuses to duplicate an article while %s',
+    async (_name, localCopyLoaded) => {
+      const { client, setArticleId } = createFixture()
+      const article = client.createArticle()._unsafeUnwrap()
+      if (localCopyLoaded) await Promise.resolve()
+      setArticleId('018f0000-0000-7000-8000-000000000003')
+
+      const readOutput = () => ({
+        error: client.duplicateArticle(article.id)._unsafeUnwrapErr().message,
+        articles: client.listArticles(),
+      })
+      expect(readOutput()).toEqual({
+        error: 'The article is not ready to copy',
+        articles: [article],
+      })
+      client.destroy()
+    },
+  )
+
+  it('duplicates an article from its local copy while offline', async () => {
+    const { client, providers, setArticleId } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
+    providers.at(-1)?.emitConnectionClose()
+    const copyId = '018f0000-0000-7000-8000-000000000003'
+    setArticleId(copyId)
+
+    expect(client.duplicateArticle(article.id)._unsafeUnwrap()).toEqual({
+      id: copyId,
+      createdAt: article.createdAt,
+      title: 'Untitled article のコピー',
+    })
+    client.destroy()
+  })
+
+  it('keeps a trashed article across a restart until it is restored', () => {
+    const { client, savedDocuments, setNow } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    setNow(1_800_000_100_000)
+    client.trashArticle(article.id)._unsafeUnwrap()
+    client.destroy()
+
+    const restarted = createFixture(savedDocuments)
+    const afterRestart = restarted.client.listArticles()
+    restarted.client.restoreArticle(article.id)._unsafeUnwrap()
+
+    const readOutput = () => ({
+      afterRestart,
+      afterRestore: restarted.client.listArticles(),
+    })
+    expect(readOutput()).toEqual({
+      afterRestart: [
+        {
+          id: article.id,
+          createdAt: article.createdAt,
+          trashedAt: 1_800_000_100_000,
+          title: 'Untitled article',
+        },
+      ],
+      afterRestore: [article],
+    })
+    restarted.client.destroy()
+  })
+
+  it.each([
+    ['opens and lists a trashed article before it expires', -1, true],
+    ['stops opening and listing a trashed article once it expires', 0, false],
+  ])('%s', async (_name, offset, available) => {
+    const { client, savedDocuments } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    client.trashArticle(article.id)._unsafeUnwrap()
+    client.destroy()
+
+    const restarted = createFixture(savedDocuments)
+    const trashedAt = article.createdAt
+    restarted.setNow(trashedAt + TRASH_RETENTION_MS + offset)
+    await restarted.client.start()
+
+    const readOutput = () => ({
+      articles: restarted.client.listArticles(),
+      openedDocuments: restarted.providerAttempts.has(article.id),
+    })
+    expect(readOutput()).toEqual({
+      articles: available
+        ? [
+            {
+              id: article.id,
+              createdAt: article.createdAt,
+              trashedAt,
+              title: 'Untitled article',
+            },
+          ]
+        : [],
+      openedDocuments: available,
+    })
+    restarted.client.destroy()
   })
 
   it('persists export settings on the article index entry', async () => {
@@ -321,6 +596,7 @@ describe('createSyncClient', () => {
         {
           id: articleId,
           createdAt: 1_800_000_000_000,
+          updatedAt: 1_800_000_000_000,
           title: 'A revised title',
         },
       ],
@@ -468,6 +744,8 @@ describe('createSyncClient', () => {
     }
 
     setNow(startedAt + 1_000)
+    // Records the edit time now so its index write stays out of the count below.
+    body.insert(0, 'a')
     provider?.emitStatus('connected')
     provider?.emitSync(true)
     notifications = 0
