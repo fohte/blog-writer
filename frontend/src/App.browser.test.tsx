@@ -373,7 +373,10 @@ describe('the application research and evidence integrations', () => {
     if (!resolve) throw new Error('The research request did not start')
     resolve(
       serverEvents([
-        { event: 'progress', data: { query: 'Research topic' } },
+        {
+          event: 'progress',
+          data: { kind: 'search', query: 'Research topic' },
+        },
         {
           event: 'result',
           data: {
@@ -547,7 +550,22 @@ describe('the application research and evidence integrations', () => {
         if (typeof init.body === 'string')
           requestQuestion = JSON.parse(init.body) as unknown
         return serverEvents([
-          { event: 'progress', data: { query: 'Research topic' } },
+          {
+            event: 'progress',
+            data: { kind: 'search', query: 'Research topic' },
+          },
+          {
+            event: 'progress',
+            data: { kind: 'fetching', url: 'https://example.invalid/a' },
+          },
+          {
+            event: 'progress',
+            data: { kind: 'fetched', url: 'https://example.invalid/a' },
+          },
+          {
+            event: 'progress',
+            data: { kind: 'fetching', url: 'https://example.invalid/b' },
+          },
         ])
       }
       if (init.method === 'POST' && url.endsWith('/save-if-unchanged'))
@@ -571,7 +589,7 @@ describe('the application research and evidence integrations', () => {
 
     const readResult = () => ({
       query: requestQuestion,
-      progressQueries: document.body.querySelector('[aria-label="検索の進捗"]')
+      progressQueries: document.body.querySelector('[aria-label="調査の進捗"]')
         ?.textContent,
       sourceCount: listSources(doc).length,
       findingCount: listFindings(doc).length,
@@ -581,7 +599,7 @@ describe('the application research and evidence integrations', () => {
     })
     expect(readResult()).toEqual({
       query: { task: 'key_points', question: 'Research topic' },
-      progressQueries: '検索 “Research topic”',
+      progressQueries: '検索 “Research topic”取得済み example.invalid/a',
       sourceCount: 0,
       findingCount: 0,
       bodySaveCount: 0,
@@ -590,137 +608,142 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
-  it('adds research findings to an existing source with the same URL', async () => {
-    const url = 'https://example.invalid/research'
-    addSource(doc, {
-      id: 'source-existing',
-      kind: 'url',
-      title: 'Existing source',
-      url,
-      fileName: null,
-      checkedAt: '2026-02-01T00:00:00.000Z',
-      status: 'unavailable',
-      summary: 'The earlier summary.',
-    })._unsafeUnwrap()
-    setFindings(doc, 'source-existing', [
-      {
-        id: 'finding-existing',
-        researchedHeading: 'Earlier heading',
-        text: 'Earlier finding.',
-        quote: 'Earlier quote.',
-      },
-    ])._unsafeUnwrap()
-    const savedBodies: Array<{ url: string; body: unknown }> = []
-    installFetch((requestUrl, init) => {
-      if (requestUrl === '/api/research/jobs')
-        return serverEvents([
-          {
-            event: 'result',
-            data: {
-              analysis: {
-                task: 'key_points',
-                data: {
-                  sources: [
-                    {
-                      id: 'source-new',
-                      summary: 'The latest summary.',
-                      key_points: [
-                        { text: 'New finding.', quote: 'New quote.' },
-                      ],
-                    },
-                  ],
-                },
-              },
-              sources: [
-                {
-                  id: 'source-new',
-                  url,
-                  final_url: url,
-                  title: 'New title',
-                  status: 'available',
-                  body: 'New body.',
-                },
-              ],
-            },
-          },
-        ])
-      if (init.method === 'POST' && requestUrl.endsWith('/save-if-unchanged'))
-        savedBodies.push({
-          url: requestUrl,
-          body:
-            typeof init.body === 'string'
-              ? (JSON.parse(init.body) as unknown)
-              : init.body,
-        })
-      if (init.method === undefined || init.method === 'GET')
-        return new Response('', { status: 404 })
-      return new Response(null, { status: 204 })
-    })
-    await renderApp()
-    await openArticle()
-    await act(async () => {
-      await userEvent.click(
-        page.getByRole('button', { name: 'Research topic' }),
-      )
-      await userEvent.click(
-        page.getByRole('button', { name: 'この見出しについて調べる' }),
-      )
-    })
-    await waitFor(() => {
-      if (listFindings(doc).length !== 2)
-        throw new Error('The finding was not added to the existing source')
-    })
-
-    const readResult = () => ({
-      savedBodies,
-      sources: listSources(doc).map(({ id, title, url, status, summary }) => ({
-        id,
-        title,
+  it.each(['unavailable', 'loginRequired'] as const)(
+    'adds research findings to an existing %s source with the same URL',
+    async (savedStatus) => {
+      const url = 'https://example.invalid/research'
+      addSource(doc, {
+        id: 'source-existing',
+        kind: 'url',
+        title: 'Existing source',
         url,
-        status,
-        summary,
-      })),
-      findings: listFindings(doc).map(
-        ({ sourceId, text, quote, researchedHeading }) => ({
-          sourceId,
-          text,
-          quote,
-          researchedHeading,
-        }),
-      ),
-    })
-    expect(readResult()).toEqual({
-      savedBodies: [
+        fileName: null,
+        checkedAt: '2026-02-01T00:00:00.000Z',
+        status: savedStatus,
+        summary: 'The earlier summary.',
+      })._unsafeUnwrap()
+      setFindings(doc, 'source-existing', [
         {
-          url: '/api/articles/article-a/source-bodies/source-existing/save-if-unchanged',
-          body: { expected_body: null, body: 'New body.' },
-        },
-      ],
-      sources: [
-        {
-          id: 'source-existing',
-          title: 'Existing source',
-          url,
-          status: 'ready',
-          summary: 'The latest summary.',
-        },
-      ],
-      findings: [
-        {
-          sourceId: 'source-existing',
+          id: 'finding-existing',
+          researchedHeading: 'Earlier heading',
           text: 'Earlier finding.',
           quote: 'Earlier quote.',
-          researchedHeading: 'Earlier heading',
         },
-        {
-          sourceId: 'source-existing',
-          text: 'New finding.',
-          quote: 'New quote.',
-          researchedHeading: 'Research topic',
-        },
-      ],
-    })
-  })
+      ])._unsafeUnwrap()
+      const savedBodies: Array<{ url: string; body: unknown }> = []
+      installFetch((requestUrl, init) => {
+        if (requestUrl === '/api/research/jobs')
+          return serverEvents([
+            {
+              event: 'result',
+              data: {
+                analysis: {
+                  task: 'key_points',
+                  data: {
+                    sources: [
+                      {
+                        id: 'source-new',
+                        summary: 'The latest summary.',
+                        key_points: [
+                          { text: 'New finding.', quote: 'New quote.' },
+                        ],
+                      },
+                    ],
+                  },
+                },
+                sources: [
+                  {
+                    id: 'source-new',
+                    url,
+                    final_url: url,
+                    title: 'New title',
+                    status: 'available',
+                    body: 'New body.',
+                  },
+                ],
+              },
+            },
+          ])
+        if (init.method === 'POST' && requestUrl.endsWith('/save-if-unchanged'))
+          savedBodies.push({
+            url: requestUrl,
+            body:
+              typeof init.body === 'string'
+                ? (JSON.parse(init.body) as unknown)
+                : init.body,
+          })
+        if (init.method === undefined || init.method === 'GET')
+          return new Response('', { status: 404 })
+        return new Response(null, { status: 204 })
+      })
+      await renderApp()
+      await openArticle()
+      await act(async () => {
+        await userEvent.click(
+          page.getByRole('button', { name: 'Research topic' }),
+        )
+        await userEvent.click(
+          page.getByRole('button', { name: 'この見出しについて調べる' }),
+        )
+      })
+      await waitFor(() => {
+        if (listFindings(doc).length !== 2)
+          throw new Error('The finding was not added to the existing source')
+      })
+
+      const readResult = () => ({
+        savedBodies,
+        sources: listSources(doc).map(
+          ({ id, title, url, status, summary }) => ({
+            id,
+            title,
+            url,
+            status,
+            summary,
+          }),
+        ),
+        findings: listFindings(doc).map(
+          ({ sourceId, text, quote, researchedHeading }) => ({
+            sourceId,
+            text,
+            quote,
+            researchedHeading,
+          }),
+        ),
+      })
+      expect(readResult()).toEqual({
+        savedBodies: [
+          {
+            url: '/api/articles/article-a/source-bodies/source-existing/save-if-unchanged',
+            body: { expected_body: null, body: 'New body.' },
+          },
+        ],
+        sources: [
+          {
+            id: 'source-existing',
+            title: 'Existing source',
+            url,
+            status: 'ready',
+            summary: 'The latest summary.',
+          },
+        ],
+        findings: [
+          {
+            sourceId: 'source-existing',
+            text: 'Earlier finding.',
+            quote: 'Earlier quote.',
+            researchedHeading: 'Earlier heading',
+          },
+          {
+            sourceId: 'source-existing',
+            text: 'New finding.',
+            quote: 'New quote.',
+            researchedHeading: 'Research topic',
+          },
+        ],
+      })
+    },
+  )
 
   it('opens and closes evidence cards from the article marker', async () => {
     const markdown = '# Research topic\n\nA sentence to edit.\n'
@@ -2105,9 +2128,10 @@ describe('the application research and evidence integrations', () => {
       rollbackRequests,
       sourceBody: sourceBody ?? null,
       requestAborted: requestSignal?.aborted,
-      sources: listSources(doc).map(({ checkedAt, ...source }) => ({
+      sources: listSources(doc).map(({ addedAt, checkedAt, ...source }) => ({
         ...source,
         checkedAt: checkedAt === null ? null : 'saved',
+        addedAt: addedAt === null ? null : 'saved',
       })),
       evidence: listEvidence(doc).map(
         ({
@@ -2143,6 +2167,7 @@ describe('the application research and evidence integrations', () => {
           url: 'https://example.invalid/research',
           fileName: null,
           checkedAt: 'saved',
+          addedAt: 'saved',
           publishedAt: '2025-03-04',
           status: 'ready',
           summary: '',
@@ -2373,86 +2398,106 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
-  it('routes heading research through the configured local bridge', async () => {
-    window.localStorage.setItem('blog-writer.llm.route', 'local')
-    window.localStorage.setItem(
-      'blog-writer.llm.bridge-url',
-      'http://localhost:4141',
-    )
-    let requestUrl: string | undefined
-    let requestBody: unknown
-    installFetch((url, init) => {
-      requestUrl = url
-      if (typeof init.body === 'string')
-        requestBody = JSON.parse(init.body) as unknown
-      return serverEvents([
-        {
-          event: 'result',
-          data: {
-            analysis: {
-              task: 'key_points',
-              data: {
-                sources: [
-                  {
-                    id: 'source-local',
-                    summary: 'A local source summary.',
-                    key_points: [],
-                  },
-                ],
-              },
-            },
-            sources: [
-              {
-                id: 'source-local',
-                url: 'https://example.invalid/local',
-                title: null,
-                status: 'unavailable',
-                body: null,
-              },
-            ],
-          },
-        },
-      ])
-    })
-    await renderApp()
-    await openArticle()
-    await act(async () => {
-      await userEvent.click(
-        page.getByRole('button', { name: 'Research topic' }),
-      )
-      await userEvent.click(
-        page.getByRole('button', { name: 'この見出しについて調べる' }),
-      )
-    })
-    await waitFor(() => {
-      if (requestBody === undefined) throw new Error('Research did not start')
-    })
-
-    const readResult = () => ({
-      requestUrl,
-      requestBody,
-      sources: listSources(doc).map(({ id, title, url, status, summary }) => ({
-        id,
-        title,
-        url,
-        status,
-        summary,
-      })),
-    })
-    expect(readResult()).toEqual({
-      requestUrl: 'http://localhost:4141/api/research/jobs',
-      requestBody: { task: 'key_points', question: 'Research topic' },
-      sources: [
-        {
+  it.each([
+    ['unavailable', 'unavailable', false],
+    ['login_required', 'loginRequired', false],
+    ['login_required', 'loginRequired', true],
+  ] as const)(
+    'routes heading research through the configured local bridge for a %s source saved as %s (already listed: %s)',
+    async (sourceStatus, savedStatus, savedBefore) => {
+      if (savedBefore)
+        addSource(doc, {
           id: 'source-local',
+          kind: 'url',
           title: 'example.invalid',
           url: 'https://example.invalid/local',
+          fileName: null,
+          checkedAt: null,
           status: 'unavailable',
-          summary: 'A local source summary.',
-        },
-      ],
-    })
-  })
+          summary: '',
+        })._unsafeUnwrap()
+      window.localStorage.setItem('blog-writer.llm.route', 'local')
+      window.localStorage.setItem(
+        'blog-writer.llm.bridge-url',
+        'http://localhost:4141',
+      )
+      let requestUrl: string | undefined
+      let requestBody: unknown
+      installFetch((url, init) => {
+        requestUrl = url
+        if (typeof init.body === 'string')
+          requestBody = JSON.parse(init.body) as unknown
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'key_points',
+                data: {
+                  sources: [
+                    {
+                      id: 'source-local',
+                      summary: 'A local source summary.',
+                      key_points: [],
+                    },
+                  ],
+                },
+              },
+              sources: [
+                {
+                  id: 'source-local',
+                  url: 'https://example.invalid/local',
+                  title: null,
+                  status: sourceStatus,
+                  body: null,
+                },
+              ],
+            },
+          },
+        ])
+      })
+      await renderApp()
+      await openArticle()
+      await act(async () => {
+        await userEvent.click(
+          page.getByRole('button', { name: 'Research topic' }),
+        )
+        await userEvent.click(
+          page.getByRole('button', { name: 'この見出しについて調べる' }),
+        )
+      })
+      await waitFor(() => {
+        if (requestBody === undefined) throw new Error('Research did not start')
+      })
+
+      const readResult = () => ({
+        requestUrl,
+        requestBody,
+        sources: listSources(doc).map(
+          ({ id, title, url, status, summary }) => ({
+            id,
+            title,
+            url,
+            status,
+            summary,
+          }),
+        ),
+      })
+      expect(readResult()).toEqual({
+        requestUrl: 'http://localhost:4141/api/research/jobs',
+        requestBody: { task: 'key_points', question: 'Research topic' },
+        sources: [
+          {
+            id: 'source-local',
+            title: 'example.invalid',
+            url: 'https://example.invalid/local',
+            status: savedStatus,
+            summary: 'A local source summary.',
+          },
+        ],
+      })
+    },
+  )
 
   it('does not write sources when an existing source body cannot be read', async () => {
     const sourceId = 'source-existing'
@@ -2535,7 +2580,10 @@ describe('the application research and evidence integrations', () => {
     const readResult = () => ({
       bodyReadCount,
       bodyWriteCount,
-      sources: listSources(doc),
+      sources: listSources(doc).map(({ addedAt, ...source }) => ({
+        ...source,
+        addedAt: addedAt === null ? null : 'saved',
+      })),
       findings: listFindings(doc),
       errorMessage: exactRoleText('alert', readError),
     })
@@ -2550,6 +2598,7 @@ describe('the application research and evidence integrations', () => {
           url: 'https://example.invalid/research',
           fileName: null,
           checkedAt: '2026-02-01T00:00:00.000Z',
+          addedAt: 'saved',
           publishedAt: null,
           status: 'unavailable',
           summary: 'Earlier summary.',

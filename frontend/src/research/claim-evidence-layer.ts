@@ -19,7 +19,7 @@ export type ClaimEvidenceSuggestionMetadata = {
     researchId: string
     title: string
     url: string
-    status: 'available' | 'unavailable'
+    status: 'available' | 'unavailable' | 'login_required'
     body?: string
   }[]
   evidenceIds: string[]

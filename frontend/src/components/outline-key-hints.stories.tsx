@@ -12,3 +12,8 @@ type Story = StoryObj<typeof meta>
 export const AllKeys: Story = {
   name: 'The outline lists every key that edits headings.',
 }
+
+export const Writing: Story = {
+  name: 'Outline mode lists the keys that write headings and return to the body.',
+  args: { writing: true },
+}

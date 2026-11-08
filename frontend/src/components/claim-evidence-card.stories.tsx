@@ -14,6 +14,7 @@ const source: Source = {
   publishedAt: '2025-10-01',
   status: 'ready',
   summary: 'The report describes a measured change over time.',
+  addedAt: null,
 }
 
 const common = {

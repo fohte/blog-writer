@@ -7,6 +7,7 @@ import { LlmStreamInterruptedError, postLlmResult } from '#lib/llm-sse'
 
 type ResearchJobRequest = components['schemas']['ResearchJobRequest']
 type ResearchJobResult = components['schemas']['ResearchJobResult']
+export type ResearchJobProgress = components['schemas']['ResearchJobProgress']
 
 const activeResearchJobs = new Map<string, object>()
 
@@ -88,7 +89,9 @@ function isResearchJobResult(value: unknown): value is ResearchJobResult {
       (source['body'] === undefined ||
         source['body'] === null ||
         typeof source['body'] === 'string') &&
-      (source['status'] === 'available' || source['status'] === 'unavailable'),
+      (source['status'] === 'available' ||
+        source['status'] === 'unavailable' ||
+        source['status'] === 'login_required'),
   )
   return validAnalysis && validSources
 }
@@ -99,12 +102,34 @@ function researchApiUrl(settings: LlmSettings): string {
   return `${settings.bridgeUrl.replace(/\/+$/, '')}/api/research/jobs`
 }
 
+function isResearchJobProgress(value: unknown): value is ResearchJobProgress {
+  if (!isRecord(value)) return false
+  if (value['kind'] === 'search') return typeof value['query'] === 'string'
+  return (
+    (value['kind'] === 'fetching' ||
+      value['kind'] === 'fetched' ||
+      value['kind'] === 'unavailable') &&
+    typeof value['url'] === 'string'
+  )
+}
+
+export function mergeResearchStep(
+  steps: ResearchJobProgress[],
+  step: ResearchJobProgress,
+): ResearchJobProgress[] {
+  if (step.kind === 'search') return [...steps, step]
+  const index = steps.findIndex(
+    (current) => current.kind !== 'search' && current.url === step.url,
+  )
+  return index === -1 ? [...steps, step] : steps.with(index, step)
+}
+
 export function runResearchJob(
   fetcher: typeof fetch,
   settings: LlmSettings,
   request: ResearchJobRequest,
   signal: AbortSignal,
-  onProgress: (query: string) => void,
+  onProgress: (step: ResearchJobProgress) => void,
 ): ResultAsync<ResearchJobResult, Error> {
   const url = researchApiUrl(settings)
   if (url.length === 0)
@@ -117,12 +142,7 @@ export function runResearchJob(
     fetcher,
     isResult: isResearchJobResult,
     onEvent: (event, data) => {
-      if (
-        event === 'progress' &&
-        isRecord(data) &&
-        typeof data['query'] === 'string'
-      )
-        onProgress(data['query'])
+      if (event === 'progress' && isResearchJobProgress(data)) onProgress(data)
     },
   }).mapErr((error) =>
     error instanceof LlmStreamInterruptedError

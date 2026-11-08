@@ -28,7 +28,8 @@ export type MemoData = Y.Map<unknown>
 
 export type SourceKind = 'url' | 'file' | 'pasted'
 
-export type SourceStatus = 'ready' | 'unavailable' | 'analysisFailed'
+export type SourceStatus =
+  'ready' | 'unavailable' | 'loginRequired' | 'analysisFailed'
 
 export type Source = {
   id: string
@@ -41,6 +42,8 @@ export type Source = {
   publishedAt: string | null
   status: SourceStatus
   summary: string
+  /** ISO time the source was added, or null for a source saved before this was recorded. */
+  addedAt: string | null
 }
 
 export type Finding = {

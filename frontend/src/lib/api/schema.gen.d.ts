@@ -731,7 +731,7 @@ export interface components {
         }
     ResearchJobEvent:
       | {
-          data: components['schemas']['LlmProgress']
+          data: components['schemas']['ResearchJobProgress']
           /** @enum {string} */
           event: 'progress'
         }
@@ -744,6 +744,27 @@ export interface components {
           data: components['schemas']['LlmErrorPayload']
           /** @enum {string} */
           event: 'error'
+        }
+    ResearchJobProgress:
+      | {
+          /** @enum {string} */
+          kind: 'search'
+          query: string
+        }
+      | {
+          /** @enum {string} */
+          kind: 'fetching'
+          url: string
+        }
+      | {
+          /** @enum {string} */
+          kind: 'fetched'
+          url: string
+        }
+      | {
+          /** @enum {string} */
+          kind: 'unavailable'
+          url: string
         }
     ResearchJobRequest:
       | {
@@ -773,7 +794,7 @@ export interface components {
       url: string
     }
     /** @enum {string} */
-    ResearchJobSourceStatus: 'available' | 'unavailable'
+    ResearchJobSourceStatus: 'available' | 'unavailable' | 'login_required'
     ResearchKeyPoint: {
       quote: string
       text: string
@@ -1514,6 +1535,15 @@ export interface operations {
       }
       /** @description The page does not contain readable article content */
       422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description The source URL answered 401 or 403 */
+      424: {
         headers: {
           [name: string]: unknown
         }

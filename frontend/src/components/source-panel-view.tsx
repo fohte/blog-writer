@@ -10,6 +10,7 @@ import {
 } from 'react'
 
 import type { Finding, Source } from '#article/index'
+import { isUnfetchedSource } from '#article/index'
 import {
   ResearchProgress,
   type ResearchProgressProps,
@@ -48,6 +49,8 @@ type SourcePanelViewProps = {
   onRetrySource: (source: Source) => void
   researchProgress?: ResearchProgressProps | undefined
   researchError?: string | undefined
+  /** ISO time this device last left the sources tab, or null if it never opened it. */
+  seenAt?: string | null | undefined
 }
 
 // Mirrors the extensions the source body import accepts.
@@ -70,6 +73,7 @@ function getSourceLocation(source: Source): string {
 function getSourceState(source: Source, importing: boolean): string {
   if (importing) return importingLabel
   if (source.status === 'unavailable') return '取得できず'
+  if (source.status === 'loginRequired') return '取得できず (要ログイン)'
   if (source.status === 'analysisFailed') return '要約失敗'
   const checkedAt = formatCheckedAt(source.checkedAt)
   return checkedAt === undefined ? '取得済み' : `取得 ${checkedAt}`
@@ -107,6 +111,7 @@ export function SourcePanelView({
   onRetrySource,
   researchProgress,
   researchError,
+  seenAt = null,
 }: SourcePanelViewProps) {
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -242,6 +247,9 @@ export function SourcePanelView({
                       : null}
                   </span>
                 ) : null}
+                {source.addedAt !== null && source.addedAt > (seenAt ?? '') ? (
+                  <span className="shrink-0 font-mono text-xs">新規</span>
+                ) : null}
                 <Button
                   aria-label={`資料「${source.title}」を削除`}
                   className="-my-1"
@@ -263,7 +271,7 @@ export function SourcePanelView({
                 {details.join(' · ')}
               </p>
 
-              {source.status === 'unavailable' && !isPending ? (
+              {isUnfetchedSource(source) && !isPending ? (
                 <div className="mt-1 flex flex-col items-start gap-2">
                   <Button
                     onClick={() => {

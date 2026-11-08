@@ -773,6 +773,16 @@
               }
             }
           },
+          "424": {
+            "description": "The source URL answered 401 or 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "502": {
             "description": "The source URL could not be fetched",
             "content": {
@@ -2509,7 +2519,7 @@
             "required": ["data", "event"],
             "properties": {
               "data": {
-                "$ref": "#/components/schemas/LlmProgress"
+                "$ref": "#/components/schemas/ResearchJobProgress"
               },
               "event": {
                 "type": "string",
@@ -2540,6 +2550,62 @@
               "event": {
                 "type": "string",
                 "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "ResearchJobProgress": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["query", "kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["search"]
+              },
+              "query": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["url", "kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["fetching"]
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["url", "kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["fetched"]
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["url", "kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["unavailable"]
+              },
+              "url": {
+                "type": "string"
               }
             }
           }
@@ -2626,7 +2692,7 @@
       },
       "ResearchJobSourceStatus": {
         "type": "string",
-        "enum": ["available", "unavailable"]
+        "enum": ["available", "unavailable", "login_required"]
       },
       "ResearchKeyPoint": {
         "type": "object",

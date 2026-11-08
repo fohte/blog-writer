@@ -1,5 +1,7 @@
-import type { EditorView } from '@codemirror/view'
+import { EditorSelection } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 
 import { deriveHeadingTree, flattenHeadingTree } from '#article/index'
 import type { Heading } from '#article/types'
@@ -26,17 +28,25 @@ function readHeadings(view: EditorView) {
   return { markdown, tree, flat: flattenHeadingTree(tree) }
 }
 
+/** Present while outline mode shows only the headings. */
+export type OutlineWriting = { onOpenBody: () => void }
+
 export function useOutlineKeyboard({
   headings,
   history,
   selectedFrom,
   view,
+  writing,
 }: {
   headings: readonly Heading[]
   history: MoveHistory
   selectedFrom: number | undefined
   view: EditorView
-}): (OutlineHeadingEditing & { from: number }) | undefined {
+  writing: OutlineWriting | undefined
+}): {
+  editing: (OutlineHeadingEditing & { from: number }) | undefined
+  editRow: (from: number) => void
+} {
   // shortcut: an ordinal does not follow a concurrent edit above the row, which moves the selection and drops the draft; map a document position if editing the outline from several devices at once becomes common.
   const [index, setIndex] = useState<number>()
   const [focusKey, setFocusKey] = useState(0)
@@ -48,9 +58,30 @@ export function useOutlineKeyboard({
   const flatRef = useRef(flat)
   flatRef.current = flat
 
+  const isWriting = writing !== undefined
+
   useLayoutEffect(() => {
     transitioning.current = false
   }, [focusKey, index])
+
+  useEffect(() => {
+    if (!isWriting) {
+      setIndex(undefined)
+      return
+    }
+    // shortcut: an article without headings has no row to type into, so outline mode only shows the empty guide; add a first row if starting an article from outline mode is wanted.
+    setIndex(
+      (current) =>
+        current ??
+        Math.max(
+          flatRef.current.findIndex(
+            ({ from }) => from === selectedFromRef.current,
+          ),
+          0,
+        ),
+    )
+    setFocusKey((key) => key + 1)
+  }, [isWriting])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -75,10 +106,18 @@ export function useOutlineKeyboard({
     }
   }, [])
 
-  if (index === undefined) return undefined
+  const editRow = (from: number) => {
+    // Switching rows unmounts the input, so its draft has to be committed through blur first.
+    if (document.activeElement instanceof HTMLElement)
+      document.activeElement.blur()
+    setIndex(flat.findIndex((heading) => heading.from === from))
+    setFocusKey((key) => key + 1)
+  }
+
+  if (index === undefined) return { editing: undefined, editRow }
   const clampedIndex = Math.min(index, flat.length - 1)
   const current = flat[clampedIndex]
-  if (!current) return undefined
+  if (!current) return { editing: undefined, editRow }
 
   const rename = (draft: string) => {
     const { markdown, flat: latest } = readHeadings(view)
@@ -116,6 +155,18 @@ export function useOutlineKeyboard({
         )
       : clampedIndex
 
+  const openBody = (position: number) => {
+    // The editor cannot take focus until the body is shown again.
+    flushSync(() => {
+      writing?.onOpenBody()
+    })
+    view.focus()
+    view.dispatch({
+      selection: EditorSelection.cursor(position),
+      effects: EditorView.scrollIntoView(position, { y: 'start' }),
+    })
+  }
+
   const nextIndex = (action: OutlineKeyAction): number | undefined => {
     const { markdown, tree, flat: latest } = readHeadings(view)
     const heading = latest[clampedIndex]
@@ -148,24 +199,47 @@ export function useOutlineKeyboard({
       case 'exit':
         view.focus()
         return undefined
+      case 'leave-outline-mode':
+        openBody(view.state.doc.lineAt(heading.from).to)
+        return undefined
+      case 'open-body': {
+        const { doc } = view.state
+        const line = doc.lineAt(heading.from)
+        // Without a line of its own, text typed below the heading would join the next heading or this one.
+        if (
+          line.number === doc.lines ||
+          latest.some(({ from }) => from === line.to + 1)
+        )
+          applyChange(view, { from: line.to, to: line.to, insert: '\n' })
+        openBody(line.to + 1)
+        return undefined
+      }
     }
   }
 
   return {
-    from: current.from,
-    focusKey,
-    onAction: (action, draft) => {
-      transitioning.current = true
-      if (action !== 'delete') rename(draft)
-      setIndex(nextIndex(action))
-      setFocusKey((key) => key + 1)
-    },
-    onBlur: (draft) => {
-      if (transitioning.current) return
-      transitioning.current = true
-      rename(draft)
-      setIndex(undefined)
-      setFocusKey((key) => key + 1)
+    editRow,
+    editing: {
+      from: current.from,
+      focusKey,
+      writing: isWriting,
+      onAction: (action, draft) => {
+        transitioning.current = true
+        if (action !== 'delete') rename(draft)
+        setIndex(nextIndex(action))
+        setFocusKey((key) => key + 1)
+      },
+      onBlur: (draft) => {
+        if (transitioning.current) return
+        if (isWriting) {
+          rename(draft)
+          return
+        }
+        transitioning.current = true
+        rename(draft)
+        setIndex(undefined)
+        setFocusKey((key) => key + 1)
+      },
     },
   }
 }

@@ -3,9 +3,13 @@ import { Button } from '@fohte/ui/button'
 export type ResearchProgressStatus =
   'running' | 'saving' | 'cancelling' | 'complete' | 'interrupted' | 'failed'
 
+export type ResearchProgressStep =
+  | { kind: 'search'; query: string }
+  | { kind: 'fetching' | 'fetched' | 'unavailable'; url: string }
+
 export type ResearchProgressProps = {
   status: ResearchProgressStatus
-  queries: string[]
+  steps: ResearchProgressStep[]
   target?: string | undefined
   error?: string | undefined
   interruptedMessage?: string | undefined
@@ -21,15 +25,26 @@ const statusLabels: Record<ResearchProgressStatus, string> = {
   failed: '調査に失敗しました',
 }
 
+const fetchLabels = {
+  fetching: '取得中',
+  fetched: '取得済み',
+  unavailable: '取得できず',
+}
+
 export function ResearchProgress({
   status,
-  queries,
+  steps,
   target,
   error,
   interruptedMessage,
   onCancel,
 }: ResearchProgressProps) {
   const active = status === 'running' || status === 'saving'
+  // A stopped job will never finish these fetches, so "fetching" would be false.
+  const shownSteps =
+    status === 'interrupted' || status === 'failed'
+      ? steps.filter((step) => step.kind !== 'fetching')
+      : steps
   return (
     <div className="flex flex-col gap-1.5 border border-border bg-card p-3 text-xs">
       <div className="flex items-center gap-2">
@@ -43,14 +58,20 @@ export function ResearchProgress({
           </Button>
         ) : null}
       </div>
-      {status === 'complete' || queries.length === 0 ? null : (
+      {status === 'complete' || shownSteps.length === 0 ? null : (
         <ul
-          aria-label="検索の進捗"
+          aria-label="調査の進捗"
           className="flex flex-col gap-1.5 font-mono text-muted-foreground"
         >
-          {queries.map((query, index) => (
-            <li key={`${index.toString()}-${query}`}>検索 “{query}”</li>
-          ))}
+          {shownSteps.map((step, index) =>
+            step.kind === 'search' ? (
+              <li key={index}>検索 “{step.query}”</li>
+            ) : (
+              <li className="truncate" key={index} title={step.url}>
+                {fetchLabels[step.kind]} {step.url.replace(/^https?:\/\//, '')}
+              </li>
+            ),
+          )}
         </ul>
       )}
       {status === 'interrupted' ? (

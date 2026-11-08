@@ -12,6 +12,7 @@ import * as Y from 'yjs'
 
 import {
   addMemo,
+  addSource,
   getBody,
   listMemos,
   moveBlock,
@@ -467,6 +468,40 @@ First paragraph.
         tabs: ['メモ', '前提', '資料'],
       },
     })
+  })
+
+  it('counts the sources on the sources tab as they are added', async () => {
+    await page.viewport(1280, 800)
+    const article: Article = {
+      id: 'article-source-count',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# First section\n')
+    renderWorkspace(article, articleDoc, {
+      sourcesPanel: <section>Reference material</section>,
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const readSourcesTab = () =>
+      [...(host?.querySelectorAll('[role="tab"]') ?? [])].at(-1)?.textContent
+    const withoutSources = readSourcesTab()
+    act(() => {
+      addSource(articleDoc, {
+        id: 'source-a',
+        kind: 'pasted',
+        title: 'A reference',
+        url: null,
+        fileName: null,
+        checkedAt: null,
+      })._unsafeUnwrap()
+    })
+
+    const readResult = () => ({ withoutSources, added: readSourcesTab() })
+    expect(readResult()).toEqual({ withoutSources: '資料', added: '資料 1' })
   })
 
   it('keeps a long desktop outline within a scrollable left column', async () => {
@@ -1244,6 +1279,55 @@ First paragraph.
       tabBeforeShortcut: '前提',
       tabAfterShortcut: 'メモ',
       focusedElementId: 'new-memo',
+    })
+  })
+
+  it('switches to outline mode and back with the outline mode shortcut', async () => {
+    const article: Article = {
+      id: 'article-outline-mode',
+      title: 'A fresh draft',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, '# First\n\nParagraph\n')
+    renderWorkspace(article, articleDoc)
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    await vi.waitFor(() => {
+      expect(host?.querySelector('.cm-content')).not.toBeNull()
+    })
+    const modifier = modifierKey()
+    const shortcut = async () => {
+      await act(async () => {
+        await userEvent.keyboard(
+          `{${modifier}>}{Shift>}O{/Shift}{/${modifier}}`,
+        )
+      })
+    }
+    const readScreen = () => {
+      const input = host?.querySelector<HTMLInputElement>(
+        'input[aria-label="見出しを編集"]',
+      )
+      return {
+        articleHidden: host?.querySelector('main')?.hidden,
+        editing: input?.value,
+        inputFocused: input !== undefined && document.activeElement === input,
+      }
+    }
+
+    const before = readScreen()
+    await shortcut()
+    const writing = readScreen()
+    // Sent from inside the heading input, the shortcut must not also reach the window listener.
+    await shortcut()
+    const readResult = () => ({ before, writing, after: readScreen() })
+
+    expect(readResult()).toEqual({
+      before: { articleHidden: false, editing: undefined, inputFocused: false },
+      writing: { articleHidden: true, editing: 'First', inputFocused: true },
+      after: { articleHidden: false, editing: undefined, inputFocused: false },
     })
   })
 

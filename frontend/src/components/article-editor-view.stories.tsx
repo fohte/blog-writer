@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useEffect, useMemo } from 'react'
 import * as Y from 'yjs'
 
-import { setBody, setPremise } from '#article/index'
+import { addSource, setBody, setPremise } from '#article/index'
 import {
   type ArticleEditorPanel,
   ArticleEditorView,
@@ -22,6 +22,7 @@ type StoryArgs = {
   showSyncIssue: boolean
   longOutline: boolean
   empty: boolean
+  outlineMode: boolean
 }
 
 function ArticleEditorPreview({
@@ -33,6 +34,7 @@ function ArticleEditorPreview({
   showSyncIssue,
   longOutline,
   empty,
+  outlineMode,
 }: StoryArgs) {
   const doc = useMemo(() => {
     if (status !== 'ready') return undefined
@@ -48,8 +50,20 @@ function ArticleEditorPreview({
     setPremise(nextDoc, 'audience', 'Readers learning the subject')
     setPremise(nextDoc, 'purpose', 'Explain one useful idea')
     setPremise(nextDoc, 'claim', 'A focused article is easier to follow')
+    if (sources)
+      addSource(nextDoc, {
+        id: 'story-source',
+        kind: 'pasted',
+        title: 'A reference',
+        url: null,
+        fileName: null,
+        checkedAt: null,
+      }).match(
+        () => undefined,
+        () => undefined,
+      )
     return nextDoc
-  }, [empty, longOutline, status])
+  }, [empty, longOutline, sources, status])
 
   useEffect(() => {
     if (!doc) return
@@ -93,6 +107,7 @@ function ArticleEditorPreview({
         }
         exportScreen={integrations ? () => null : undefined}
         onRequest={integrations ? () => {} : undefined}
+        initialOutlineMode={outlineMode}
         initialPanel={initialPanel}
         layout={layout}
         onBack={() => {}}
@@ -106,6 +121,7 @@ function ArticleEditorPreview({
                 mobile,
                 onHeadingSelected,
                 view,
+                writing,
               }) => (
                 <div className="flex flex-col gap-4">
                   <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
@@ -118,6 +134,7 @@ function ArticleEditorPreview({
                       mobile={mobile}
                       onHeadingSelected={onHeadingSelected}
                       view={view}
+                      writing={writing}
                     />
                   ) : null}
                 </div>
@@ -204,6 +221,7 @@ const meta = {
     showSyncIssue: false,
     longOutline: false,
     empty: false,
+    outlineMode: false,
   },
 } satisfies Meta<StoryArgs>
 
@@ -232,6 +250,11 @@ export const DesktopSyncIssue: Story = {
 export const DesktopLongOutline: Story = {
   name: 'the desktop layout scrolls a long outline within the left column.',
   args: { longOutline: true },
+}
+
+export const DesktopOutlineMode: Story = {
+  name: 'outline mode replaces the article column with a wide list of editable headings.',
+  args: { outlineMode: true },
 }
 
 export const TabletLongOutline: Story = {

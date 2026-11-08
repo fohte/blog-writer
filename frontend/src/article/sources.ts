@@ -17,7 +17,7 @@ import type {
 
 export type AddSourceInput = Omit<
   Source,
-  'publishedAt' | 'status' | 'summary'
+  'publishedAt' | 'status' | 'summary' | 'addedAt'
 > & {
   publishedAt?: string | null
   status?: SourceStatus
@@ -58,6 +58,11 @@ export function observeSources(doc: Y.Doc, listener: () => void): () => void {
   }
 }
 
+/** Whether the source body could not be fetched, so a pasted body can replace it. */
+export function isUnfetchedSource({ status }: Pick<Source, 'status'>): boolean {
+  return status === 'unavailable' || status === 'loginRequired'
+}
+
 function readSource(id: string, source: SourceData): Source {
   const value = (key: string): unknown => source.get(key)
   const kind = value('kind')
@@ -71,10 +76,13 @@ function readSource(id: string, source: SourceData): Source {
     checkedAt: asNullableString(value('checkedAt')),
     publishedAt: asNullableString(value('publishedAt')),
     status:
-      status === 'unavailable' || status === 'analysisFailed'
+      status === 'unavailable' ||
+      status === 'loginRequired' ||
+      status === 'analysisFailed'
         ? status
         : 'ready',
     summary: asString(value('summary')),
+    addedAt: asNullableString(value('addedAt')),
   }
 }
 
@@ -107,6 +115,10 @@ export function listSources(doc: Y.Doc): Source[] {
     .sort((left, right) => left.title.localeCompare(right.title))
 }
 
+export function countSources(doc: Y.Doc): number {
+  return getSourcesMap(doc).size
+}
+
 export function listFindings(doc: Y.Doc, sourceId?: string): Finding[] {
   return [...getFindingsMap(doc).entries()]
     .map(([id, finding]) => readFinding(id, finding))
@@ -134,6 +146,7 @@ export function addSource(
   source.set('publishedAt', input.publishedAt ?? null)
   source.set('status', input.status ?? 'ready')
   source.set('summary', input.summary ?? '')
+  source.set('addedAt', new Date().toISOString())
   sources.set(input.id, source)
   return ok(readSource(input.id, source))
 }

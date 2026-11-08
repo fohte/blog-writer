@@ -39,6 +39,7 @@ const readySource = {
   publishedAt: null,
   status: 'ready',
   summary: '調査結果の概要を説明しています。',
+  addedAt: null,
 } as const
 
 const firstFinding = {
@@ -74,6 +75,19 @@ export const Unavailable: Story = {
   },
 }
 
+export const LoginRequired: Story = {
+  name: 'ログインが必要で取得できない資料に要ログインと表示する',
+  args: {
+    sources: [
+      {
+        ...readySource,
+        status: 'loginRequired',
+        summary: '',
+      },
+    ],
+  },
+}
+
 export const AnalysisFailed: Story = {
   name: '本文保存後に要約と要点の作成に失敗した資料を示す',
   args: {
@@ -92,6 +106,27 @@ export const Ready: Story = {
   name: '取得済み資料を一覧に表示する',
   args: {
     sources: [readySource],
+  },
+}
+
+export const NewlyAdded: Story = {
+  name: '資料タブを最後に見たあとに足された資料にだけ「新規」を付ける',
+  args: {
+    seenAt: '2026-02-01T00:00:00.000Z',
+    sources: [
+      {
+        ...readySource,
+        id: 'source-old',
+        title: '前から登録している資料',
+        addedAt: '2026-01-15T00:00:00.000Z',
+      },
+      {
+        ...readySource,
+        id: 'source-new',
+        title: '新しく足された資料',
+        addedAt: '2026-02-02T00:00:00.000Z',
+      },
+    ],
   },
 }
 
@@ -135,7 +170,7 @@ export const RecheckErrorDuringResearch: Story = {
     researchError: '別の調査が実行中のため、根拠を再判定できませんでした。',
     researchProgress: {
       status: 'running',
-      queries: ['公開統計 2026'],
+      steps: [{ kind: 'search', query: '公開統計 2026' }],
       target: '利用状況',
       onCancel: () => {},
     },
@@ -171,7 +206,7 @@ export const WithEvidence: Story = {
     pending: [{ id: 'pending-a', label: 'data.example.invalid/2026' }],
     researchProgress: {
       status: 'running',
-      queries: ['公開統計 2026'],
+      steps: [{ kind: 'search', query: '公開統計 2026' }],
       target: '利用状況',
       onCancel: () => {},
     },

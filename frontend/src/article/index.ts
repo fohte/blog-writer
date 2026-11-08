@@ -73,7 +73,9 @@ export { getPremise, setPremise } from '#article/premise'
 export type { AddFindingInput, AddSourceInput } from '#article/sources'
 export {
   addSource,
+  countSources,
   deleteSource,
+  isUnfetchedSource,
   listFindings,
   listSources,
   observeSources,

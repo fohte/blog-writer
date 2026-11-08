@@ -247,6 +247,7 @@ export function App() {
           }}
           view={context.view}
           mobile={context.mobile}
+          writing={context.writing}
           onHeadingSelected={context.onHeadingSelected}
         />
       )}
@@ -272,6 +273,7 @@ export function App() {
           <SourcePanel
             articleId={context.articleId}
             doc={context.doc}
+            visible={context.sourcesVisible}
             researchError={claimEvidence.recheckErrors[context.articleId]}
             researchProgress={
               progress === undefined
