@@ -6,16 +6,19 @@ import type * as Y from 'yjs'
 import type { MoveBlockInput } from '#article/index'
 import { findMoveBlockRange, flattenHeadingTree } from '#article/index'
 import type { Heading } from '#article/types'
+import { OutlineHeadingActions } from '#components/outline-heading-actions'
 import { OutlineKeyHints } from '#components/outline-key-hints'
 import { OutlineView } from '#components/outline-view'
 import { useArticleHeadings } from '#hooks/use-article-headings'
 import { useMoveConflictCounts } from '#hooks/use-move-conflict-counts'
+import { cn } from '#lib/utils'
 import {
   adoptMemoToHeading,
   insertMemoAsHeading,
   memoAdoptionErrorMessage,
 } from '#memos/adoption'
 import { useMemos } from '#memos/use-memos'
+import { outlineHeadingActions } from '#outline/heading-actions'
 import type { MoveHistory } from '#outline/move-history'
 import { useOutlineKeyboard } from '#outline/use-outline-keyboard'
 import type { OutlineProposalState } from '#proposals/outline'
@@ -25,6 +28,8 @@ export interface ArticleOutlineProps {
   history: MoveHistory
   view: EditorView
   activeFrom?: number
+  /** Taps select a heading for the action bar, and only a tap on the selected row opens the body. */
+  mobile?: boolean
   onHeadingSelected?: () => void
   onActiveHeadingChange?: ((heading: Heading | undefined) => void) | undefined
   proposalState?: OutlineProposalState
@@ -55,6 +60,7 @@ export function ArticleOutline({
   history,
   view,
   activeFrom,
+  mobile = false,
   onHeadingSelected,
   onActiveHeadingChange,
   proposalState,
@@ -189,7 +195,7 @@ export function ArticleOutline({
   })
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    <div className={cn('flex min-w-0 flex-col gap-4', mobile && 'pb-13')}>
       <OutlineView
         bodyLength={markdown.length}
         editing={editing}
@@ -208,6 +214,10 @@ export function ArticleOutline({
         {...(onProposalReject === undefined ? {} : { onProposalReject })}
         onSelect={(from) => {
           setError(undefined)
+          if (mobile && from !== selectedHeadingFrom) {
+            view.dispatch({ selection: EditorSelection.cursor(from) })
+            return
+          }
           view.focus()
           view.dispatch({
             selection: EditorSelection.cursor(from),
@@ -216,7 +226,11 @@ export function ArticleOutline({
           onHeadingSelected?.()
         }}
       />
-      {headings.length > 0 ? <OutlineKeyHints /> : null}
+      {mobile ? (
+        <OutlineHeadingActions {...outlineHeadingActions({ history, view })} />
+      ) : headings.length > 0 ? (
+        <OutlineKeyHints />
+      ) : null}
     </div>
   )
 }

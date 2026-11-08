@@ -796,7 +796,7 @@ First paragraph.
       memoCount: 1,
       memoScreen: { title: 'メモ', toolbar: false },
       screenAfterClose: { title: 'article', toolbar: true },
-      outlineScreen: { title: '構成', toolbar: false },
+      outlineScreen: { title: '構成', toolbar: true },
       screenAfterHeading: { title: 'article', toolbar: true },
       articleVisible: true,
       menuItems: ['前提', '設定'],

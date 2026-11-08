@@ -1,4 +1,3 @@
-import { isolateHistory } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
@@ -11,8 +10,8 @@ import type {
 import { adjacentMove, headingChildMove } from '#outline/block-ranges'
 import {
   addHeadingBelowChange,
+  applyHeadingChange as applyChange,
   deleteHeadingChange,
-  type HeadingChange,
   outdentHeadingMove,
   renameHeadingChange,
 } from '#outline/heading-edits'
@@ -20,12 +19,6 @@ import type { MoveHistory } from '#outline/move-history'
 
 // The outline shows history failures through `history.onError`.
 const ignore = () => undefined
-
-function applyChange(view: EditorView, change: HeadingChange | undefined) {
-  if (!change) return
-  // Isolated so that the edit is never joined with typing in the body.
-  view.dispatch({ changes: change, annotations: isolateHistory.of('full') })
-}
 
 function readHeadings(view: EditorView) {
   const markdown = view.state.doc.toString()
