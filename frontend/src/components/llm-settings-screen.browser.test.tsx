@@ -226,6 +226,19 @@ describe('LlmSettingsScreen', () => {
     expect(warnings).toEqual([false, true, false])
   })
 
+  it('stops warning before unloading once the screen is gone', async () => {
+    stubMemoryStorage()
+    stubFetch()
+    await mountSettingsScreen()
+    await clickButton('ローカル (この PC の中継)')
+
+    act(() => {
+      root?.unmount()
+    })
+
+    expect(isUnloadWarned()).toBe(false)
+  })
+
   it('saves the edited route on this device', async () => {
     stubMemoryStorage()
     stubFetch()
