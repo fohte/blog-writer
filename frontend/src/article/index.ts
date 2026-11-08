@@ -75,6 +75,7 @@ export {
   addSource,
   countSources,
   deleteSource,
+  isUnfetchedSource,
   listFindings,
   listSources,
   observeSources,

@@ -65,6 +65,7 @@ pub struct SourceBodyResponse {
         (status = 400, description = "Invalid request body", body = ErrorResponse),
         (status = 415, description = "The fetched page is not HTML", body = ErrorResponse),
         (status = 422, description = "The page does not contain readable article content", body = ErrorResponse),
+        (status = 424, description = "The source URL answered 401 or 403", body = ErrorResponse),
         (status = 502, description = "The source URL could not be fetched", body = ErrorResponse),
         (status = 503, description = "Source body storage is not configured", body = ErrorResponse)
     )
@@ -81,6 +82,12 @@ pub async fn fetch_from_url(
         .await
         .map_err(|error| {
             tracing::warn!(reason = error.code(), "source URL fetch failed");
+            if error.requires_login() {
+                return AppError::Client {
+                    status: StatusCode::FAILED_DEPENDENCY,
+                    message: "Source URL requires a login".to_owned(),
+                };
+            }
             AppError::Client {
                 status: StatusCode::BAD_GATEWAY,
                 message: "Source URL could not be fetched".to_owned(),
@@ -321,6 +328,18 @@ mod tests {
         }
     }
 
+    struct LoginWallFetcher;
+
+    impl SafeFetchService for LoginWallFetcher {
+        fn fetch<'a>(&'a self, _url: &'a str) -> SafeFetchFuture<'a> {
+            Box::pin(async {
+                Err(SafeFetchError::HttpStatus(
+                    axum::http::StatusCode::FORBIDDEN,
+                ))
+            })
+        }
+    }
+
     #[sqlx::test]
     async fn source_body_api_persists_and_reads_with_postgres(
         pool: PgPool,
@@ -348,6 +367,11 @@ mod tests {
             }),
         );
         let fetch_error_api = test_api(pool.clone(), None);
+        let login_wall_api = router().split_for_parts().0.with_state(AppState {
+            database: Some(pool.clone()),
+            safe_fetch: Arc::new(LoginWallFetcher),
+            ..AppState::default()
+        });
         let non_html_api = test_api(
             pool,
             Some(FetchResponse {
@@ -366,6 +390,7 @@ mod tests {
 
         let actual = vec![
             call_json(fetch_error_api, url_request()?).await?,
+            call_json(login_wall_api, url_request()?).await?,
             call_json(non_html_api, url_request()?).await?,
             call_json(api.clone(), url_request()?).await?,
             call_json(
@@ -605,6 +630,7 @@ mod tests {
             actual,
             vec![
                 (502, json!({"error": "Source URL could not be fetched"})),
+                (424, json!({"error": "Source URL requires a login"})),
                 (415, json!({"error": "Source URL did not return HTML"})),
                 (
                     200,

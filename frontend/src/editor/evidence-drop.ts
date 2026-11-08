@@ -8,6 +8,7 @@ import { registerBlockMoveUpdater } from '#article/move-block'
 import { addSource, type AddSourceInput } from '#article/sources'
 import { droppedClaim } from '#editor/evidence-range'
 import { loadLlmSettings } from '#lib/llm-settings'
+import { failedFetchStatus } from '#lib/source-api'
 import {
   ClaimEvidenceImportError,
   importClaimEvidence,
@@ -156,7 +157,7 @@ function saveImportFailure(
         url: error.url,
         fileName: null,
         checkedAt: sourceFailure ? null : new Date().toISOString(),
-        status: sourceFailure ? 'unavailable' : 'analysisFailed',
+        status: sourceFailure ? failedFetchStatus(error) : 'analysisFailed',
         summary: '',
       },
       sourceFailure

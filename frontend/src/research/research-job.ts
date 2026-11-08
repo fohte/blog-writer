@@ -89,7 +89,9 @@ function isResearchJobResult(value: unknown): value is ResearchJobResult {
       (source['body'] === undefined ||
         source['body'] === null ||
         typeof source['body'] === 'string') &&
-      (source['status'] === 'available' || source['status'] === 'unavailable'),
+      (source['status'] === 'available' ||
+        source['status'] === 'unavailable' ||
+        source['status'] === 'login_required'),
   )
   return validAnalysis && validSources
 }

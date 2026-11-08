@@ -2393,86 +2393,94 @@ describe('the application research and evidence integrations', () => {
     })
   })
 
-  it('routes heading research through the configured local bridge', async () => {
-    window.localStorage.setItem('blog-writer.llm.route', 'local')
-    window.localStorage.setItem(
-      'blog-writer.llm.bridge-url',
-      'http://localhost:4141',
-    )
-    let requestUrl: string | undefined
-    let requestBody: unknown
-    installFetch((url, init) => {
-      requestUrl = url
-      if (typeof init.body === 'string')
-        requestBody = JSON.parse(init.body) as unknown
-      return serverEvents([
-        {
-          event: 'result',
-          data: {
-            analysis: {
-              task: 'key_points',
-              data: {
-                sources: [
-                  {
-                    id: 'source-local',
-                    summary: 'A local source summary.',
-                    key_points: [],
-                  },
-                ],
+  it.each([
+    ['unavailable', 'unavailable'],
+    ['login_required', 'loginRequired'],
+  ] as const)(
+    'routes heading research through the configured local bridge for a %s source',
+    async (sourceStatus, savedStatus) => {
+      window.localStorage.setItem('blog-writer.llm.route', 'local')
+      window.localStorage.setItem(
+        'blog-writer.llm.bridge-url',
+        'http://localhost:4141',
+      )
+      let requestUrl: string | undefined
+      let requestBody: unknown
+      installFetch((url, init) => {
+        requestUrl = url
+        if (typeof init.body === 'string')
+          requestBody = JSON.parse(init.body) as unknown
+        return serverEvents([
+          {
+            event: 'result',
+            data: {
+              analysis: {
+                task: 'key_points',
+                data: {
+                  sources: [
+                    {
+                      id: 'source-local',
+                      summary: 'A local source summary.',
+                      key_points: [],
+                    },
+                  ],
+                },
               },
+              sources: [
+                {
+                  id: 'source-local',
+                  url: 'https://example.invalid/local',
+                  title: null,
+                  status: sourceStatus,
+                  body: null,
+                },
+              ],
             },
-            sources: [
-              {
-                id: 'source-local',
-                url: 'https://example.invalid/local',
-                title: null,
-                status: 'unavailable',
-                body: null,
-              },
-            ],
           },
-        },
-      ])
-    })
-    await renderApp()
-    await openArticle()
-    await act(async () => {
-      await userEvent.click(
-        page.getByRole('button', { name: 'Research topic' }),
-      )
-      await userEvent.click(
-        page.getByRole('button', { name: 'この見出しについて調べる' }),
-      )
-    })
-    await waitFor(() => {
-      if (requestBody === undefined) throw new Error('Research did not start')
-    })
+        ])
+      })
+      await renderApp()
+      await openArticle()
+      await act(async () => {
+        await userEvent.click(
+          page.getByRole('button', { name: 'Research topic' }),
+        )
+        await userEvent.click(
+          page.getByRole('button', { name: 'この見出しについて調べる' }),
+        )
+      })
+      await waitFor(() => {
+        if (requestBody === undefined) throw new Error('Research did not start')
+      })
 
-    const readResult = () => ({
-      requestUrl,
-      requestBody,
-      sources: listSources(doc).map(({ id, title, url, status, summary }) => ({
-        id,
-        title,
-        url,
-        status,
-        summary,
-      })),
-    })
-    expect(readResult()).toEqual({
-      requestUrl: 'http://localhost:4141/api/research/jobs',
-      requestBody: { task: 'key_points', question: 'Research topic' },
-      sources: [
-        {
-          id: 'source-local',
-          title: 'example.invalid',
-          url: 'https://example.invalid/local',
-          status: 'unavailable',
-          summary: 'A local source summary.',
-        },
-      ],
-    })
-  })
+      const readResult = () => ({
+        requestUrl,
+        requestBody,
+        sources: listSources(doc).map(
+          ({ id, title, url, status, summary }) => ({
+            id,
+            title,
+            url,
+            status,
+            summary,
+          }),
+        ),
+      })
+      expect(readResult()).toEqual({
+        requestUrl: 'http://localhost:4141/api/research/jobs',
+        requestBody: { task: 'key_points', question: 'Research topic' },
+        sources: [
+          {
+            id: 'source-local',
+            title: 'example.invalid',
+            url: 'https://example.invalid/local',
+            status: savedStatus,
+            summary: 'A local source summary.',
+          },
+        ],
+      })
+    },
+  )
 
   it('does not write sources when an existing source body cannot be read', async () => {
     const sourceId = 'source-existing'

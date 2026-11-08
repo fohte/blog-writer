@@ -49,6 +49,7 @@ pub(crate) struct ResearchJobSource {
 pub(crate) enum ResearchJobSourceStatus {
     Available,
     Unavailable,
+    LoginRequired,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

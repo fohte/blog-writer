@@ -1,5 +1,6 @@
 import { errAsync, okAsync, ResultAsync } from 'neverthrow'
 
+import type { SourceStatus } from '#article/index'
 import type { components } from '#lib/api/schema.gen.d.ts'
 import { isRecord } from '#lib/guards'
 
@@ -18,6 +19,20 @@ export class SourceBodyConflictError extends Error {
     )
     this.name = 'SourceBodyConflictError'
   }
+}
+
+class SourceLoginRequiredError extends Error {
+  constructor() {
+    super('ログインが必要なページのため、資料ページを取得できませんでした。')
+    this.name = 'SourceLoginRequiredError'
+  }
+}
+
+/** The status to store for a source whose page could not be fetched. */
+export function failedFetchStatus(error: Error): SourceStatus {
+  return error.cause instanceof SourceLoginRequiredError
+    ? 'loginRequired'
+    : 'unavailable'
 }
 
 function isStringRecord(
@@ -78,7 +93,13 @@ export function fetchSourceUrl(
     }),
     (cause) => new Error('資料ページを取得できませんでした。', { cause }),
   ).andThen((response) =>
-    responseJson(response, isFetchResponse, '資料ページを取得できませんでした'),
+    response.status === 424
+      ? errAsync(new SourceLoginRequiredError())
+      : responseJson(
+          response,
+          isFetchResponse,
+          '資料ページを取得できませんでした',
+        ),
   )
 }
 
