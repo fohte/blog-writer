@@ -61,16 +61,45 @@ const settle = () =>
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
 
-const mountSettingsScreen = async () => {
+const mountSettingsScreen = async (onBack: () => void = () => {}) => {
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
 
   act(() => {
-    root?.render(<LlmSettingsScreen onBack={() => {}} />)
+    root?.render(<LlmSettingsScreen onBack={onBack} />)
   })
 
   await settle()
+}
+
+const clickLogo = () =>
+  act(async () => {
+    await userEvent.click(page.getByTitle('記事の一覧へ'))
+  })
+
+const clickDialogButton = (name: string) =>
+  act(async () => {
+    // The modal's inert backdrop intercepts pointer-driven clicks on this test page.
+    ;[
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-slot="dialog-content"] button',
+      ),
+    ]
+      .find((button) => button.textContent === name)
+      ?.click()
+    await Promise.resolve()
+  })
+
+const isLeaveDialogOpen = () =>
+  document
+    .querySelector('[data-slot="dialog-content"]')
+    ?.hasAttribute('data-open') ?? false
+
+const isUnloadWarned = () => {
+  const event = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(event)
+  return event.defaultPrevented
 }
 
 const clickButton = (name: string) =>
@@ -136,6 +165,65 @@ describe('LlmSettingsScreen', () => {
       messages: ['未保存の変更あり'],
       stored: {},
     })
+  })
+
+  it('asks before leaving with unsaved changes', async () => {
+    stubMemoryStorage()
+    stubFetch()
+    const onBack = vi.fn()
+    await mountSettingsScreen(onBack)
+    await clickButton('ローカル (この PC の中継)')
+
+    const readLeaveState = () => ({
+      dialogOpen: isLeaveDialogOpen(),
+      backCalls: onBack.mock.calls.length,
+    })
+    await clickLogo()
+    const whileAsking = readLeaveState()
+    await clickDialogButton('編集に戻る')
+    await settle()
+    const afterStaying = readLeaveState()
+    await clickLogo()
+    await clickDialogButton('保存せずに離れる')
+    const afterLeaving = onBack.mock.calls.length
+
+    const readLeaveOutput = () => ({ whileAsking, afterStaying, afterLeaving })
+    expect(readLeaveOutput()).toEqual({
+      whileAsking: { dialogOpen: true, backCalls: 0 },
+      afterStaying: { dialogOpen: false, backCalls: 0 },
+      afterLeaving: 1,
+    })
+  })
+
+  it('leaves without asking when nothing is unsaved', async () => {
+    stubMemoryStorage()
+    stubFetch()
+    const onBack = vi.fn()
+    await mountSettingsScreen(onBack)
+
+    await clickLogo()
+
+    const readLeaveOutput = () => ({
+      dialogOpen: isLeaveDialogOpen(),
+      backCalls: onBack.mock.calls.length,
+    })
+    expect(readLeaveOutput()).toEqual({ dialogOpen: false, backCalls: 1 })
+  })
+
+  it('warns before unloading the page only while changes are unsaved', async () => {
+    stubMemoryStorage()
+    stubFetch()
+    await mountSettingsScreen()
+
+    const warnings = [isUnloadWarned()]
+    await clickButton('ローカル (この PC の中継)')
+    await fillBridgeUrl('http://127.0.0.1:4000')
+    warnings.push(isUnloadWarned())
+    await clickButton('保存')
+    await settle()
+    warnings.push(isUnloadWarned())
+
+    expect(warnings).toEqual([false, true, false])
   })
 
   it('saves the edited route on this device', async () => {
