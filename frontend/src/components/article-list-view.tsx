@@ -3,13 +3,16 @@ import { Input } from '@fohte/ui/input'
 import { Kbd } from '@fohte/ui/kbd'
 import { SegmentedControl } from '@fohte/ui/segmented-control'
 import { SearchIcon } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { AppHeader } from '#components/app-header'
+import { ArticleRowMenu } from '#components/article-row-menu'
+import { ArticleTrashDialog } from '#components/article-trash-dialog'
 import { OfflineBanner } from '#components/offline-banner'
 import { ReauthenticationPrompt } from '#components/reauthentication-prompt'
+import { formatLocalDate } from '#lib/format-local-date'
 import { type ArticleSortOrder, selectArticles } from '#lib/select-articles'
-import type { Article, SyncState } from '#lib/sync-client'
+import type { Article, SyncState, TrashedArticle } from '#lib/sync-client'
 
 export interface ArticleListViewProps {
   articles: Article[]
@@ -25,6 +28,9 @@ export interface ArticleListViewProps {
   onSortOrderChange: (sortOrder: ArticleSortOrder) => void
   onCreateArticle: () => void
   onOpenArticle: (id: string) => void
+  onDuplicateArticle: (id: string) => void
+  onTrashArticle: (id: string) => void
+  onRestoreArticle: (id: string) => void
   onOpenSettings: () => void
   onLoginAgain: () => void
 }
@@ -38,13 +44,6 @@ const sortOptions: Array<{ value: ArticleSortOrder; label: string }> = [
   { value: 'edited', label: '最近編集した順' },
   { value: 'created', label: '作成した順' },
 ]
-
-function formatCreatedDate(createdAt: number) {
-  const date = new Date(createdAt)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${String(date.getFullYear())}-${month}-${day}`
-}
 
 export function ArticleListView({
   articles,
@@ -60,12 +59,22 @@ export function ArticleListView({
   onSortOrderChange,
   onCreateArticle,
   onOpenArticle,
+  onDuplicateArticle,
+  onTrashArticle,
+  onRestoreArticle,
   onOpenSettings,
   onLoginAgain,
 }: ArticleListViewProps) {
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const [trashOpen, setTrashOpen] = useState(false)
+  const activeArticles = articles.filter(
+    ({ trashedAt }) => trashedAt === undefined,
+  )
+  const trashedArticles = articles.filter(
+    (article): article is TrashedArticle => article.trashedAt !== undefined,
+  )
   const visibleArticles = selectArticles(
-    articles,
+    activeArticles,
     searchQuery,
     sortOrder,
     readArticleBody,
@@ -106,7 +115,7 @@ export function ArticleListView({
       <main className="mx-auto flex w-full max-w-240 flex-col gap-5 px-6 pt-10 pb-20">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="flex-auto text-2xl font-bold">記事</h1>
-          {articles.length > 0 ? (
+          {activeArticles.length > 0 ? (
             <div className="relative min-w-0 grow basis-70 md:max-w-90">
               <SearchIcon
                 aria-hidden="true"
@@ -150,7 +159,7 @@ export function ArticleListView({
           <ReauthenticationPrompt onLoginAgain={onLoginAgain} />
         ) : null}
 
-        {articles.length === 0 ? (
+        {activeArticles.length === 0 ? (
           <p className="border border-border px-3 py-4 text-sm">
             記事はまだありません
           </p>
@@ -201,20 +210,48 @@ export function ArticleListView({
                         <span className="w-28 text-right font-mono text-xs text-muted-foreground-strong">
                           作成{' '}
                           <time dateTime={new Date(createdAt).toISOString()}>
-                            {formatCreatedDate(createdAt)}
+                            {formatLocalDate(createdAt)}
                           </time>
                         </span>
+                        <ArticleRowMenu
+                          onDuplicate={() => {
+                            onDuplicateArticle(id)
+                          }}
+                          onTrash={() => {
+                            onTrashArticle(id)
+                          }}
+                        />
                       </li>
                     )
                   },
                 )}
               </ul>
             )}
-            <p className="text-xs text-muted-foreground-strong">
-              {visibleArticles.length} 件
-            </p>
           </>
         )}
+
+        <div className="flex gap-4 text-xs text-muted-foreground-strong empty:hidden">
+          {activeArticles.length > 0 ? (
+            <span>{visibleArticles.length} 件</span>
+          ) : null}
+          {trashedArticles.length > 0 ? (
+            <button
+              className="underline underline-offset-3"
+              onClick={() => {
+                setTrashOpen(true)
+              }}
+              type="button"
+            >
+              ゴミ箱 ({trashedArticles.length})
+            </button>
+          ) : null}
+        </div>
+        <ArticleTrashDialog
+          articles={trashedArticles}
+          onOpenChange={setTrashOpen}
+          onRestore={onRestoreArticle}
+          open={trashOpen}
+        />
       </main>
     </div>
   )

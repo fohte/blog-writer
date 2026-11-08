@@ -35,11 +35,19 @@ let root: Root
 let olderDoc: Y.Doc
 let newerDoc: Y.Doc
 
-function renderWorkspace() {
+function renderWorkspace(listedArticles = articles) {
+  const handlers = {
+    onDuplicateArticle: vi.fn<(id: string) => void>(),
+    onTrashArticle: vi.fn<(id: string) => void>(),
+    onRestoreArticle: vi.fn<(id: string) => void>(),
+  }
   const client: SyncClientApi = {
     start: () => okAsync(undefined),
     openDocument: (id) => ok(id === 'older' ? olderDoc : newerDoc),
     createArticle: () => ok(olderArticle),
+    duplicateArticle: () => ok(olderArticle),
+    trashArticle: () => ok(undefined),
+    restoreArticle: () => ok(undefined),
     updateArticleTitle: () => ok(undefined),
     updateArticleExportSettings: () => ok(undefined),
     listArticles: () => articles,
@@ -53,16 +61,20 @@ function renderWorkspace() {
   act(() => {
     root.render(
       <ArticleWorkspace
-        articles={articles}
+        articles={listedArticles}
         client={client}
         onCreateArticle={() => undefined}
+        onDuplicateArticle={handlers.onDuplicateArticle}
         onOpenSettings={() => {}}
+        onRestoreArticle={handlers.onRestoreArticle}
+        onTrashArticle={handlers.onTrashArticle}
         ready
         requiresAuthentication={false}
         statuses={{}}
       />,
     )
   })
+  return handlers
 }
 
 function readList() {
@@ -70,7 +82,7 @@ function readList() {
     `input[aria-label="${SEARCH_LABEL}"]`,
   )
   return {
-    titles: [...host.querySelectorAll('main li button')].map(
+    titles: [...host.querySelectorAll('main li button:not([aria-label])')].map(
       (row) => row.textContent,
     ),
     sort: host.querySelector('[aria-pressed="true"]')?.textContent,
@@ -177,6 +189,76 @@ describe('article list', () => {
       })
     },
   )
+
+  it.each([
+    ['複製', 'onDuplicateArticle'],
+    ['ゴミ箱へ移す', 'onTrashArticle'],
+  ] as const)(
+    'runs %s from a row without opening the article',
+    async (label, handler) => {
+      const handlers = renderWorkspace()
+
+      await act(async () => {
+        await userEvent.click(
+          page.getByRole('button', { name: '記事の操作' }).first(),
+        )
+      })
+      await act(async () => {
+        await userEvent.click(page.getByRole('menuitem', { name: label }))
+      })
+
+      await vi.waitFor(() => {
+        const readOutput = () => ({
+          calls: handlers[handler].mock.calls,
+          menuOpen: document.querySelector('[role="menu"]') !== null,
+          list: readList(),
+        })
+        expect(readOutput()).toEqual({
+          calls: [['newer']],
+          menuOpen: false,
+          list: {
+            titles: [NEWER_TITLE, OLDER_TITLE],
+            sort: '最近編集した順',
+            query: '',
+            searchFocused: false,
+          },
+        })
+      })
+    },
+  )
+
+  it('leaves trashed articles out of the list and restores them from the trash', async () => {
+    const handlers = renderWorkspace([
+      ...articles,
+      {
+        id: 'trashed',
+        title: 'A trashed article',
+        createdAt: Date.UTC(2026, 0, 5),
+        trashedAt: Date.UTC(2026, 0, 25),
+      },
+    ])
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: 'ゴミ箱 (1)' }))
+    })
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '戻す' }))
+    })
+
+    const readOutput = () => ({
+      restored: handlers.onRestoreArticle.mock.calls,
+      list: readList(),
+    })
+    expect(readOutput()).toEqual({
+      restored: [['trashed']],
+      list: {
+        titles: [NEWER_TITLE, OLDER_TITLE],
+        sort: '最近編集した順',
+        query: '',
+        searchFocused: false,
+      },
+    })
+  })
 
   it('keeps the search and the order after returning from an article', async () => {
     renderWorkspace()

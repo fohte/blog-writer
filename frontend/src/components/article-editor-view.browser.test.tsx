@@ -59,6 +59,9 @@ function renderWorkspace(
       start: () => okAsync(undefined),
       openDocument: () => ok(articleDoc),
       createArticle: () => ok(article),
+      duplicateArticle: () => ok(article),
+      trashArticle: () => ok(undefined),
+      restoreArticle: () => ok(undefined),
       updateArticleTitle: (id, title) => {
         setArticles((currentArticles) => {
           const nextArticles = currentArticles.map((currentArticle) =>
@@ -88,7 +91,10 @@ function renderWorkspace(
           client={client}
           error={error}
           onCreateArticle={() => undefined}
+          onDuplicateArticle={() => {}}
           onOpenSettings={onOpenSettings}
+          onRestoreArticle={() => {}}
+          onTrashArticle={() => {}}
           ready
           requiresAuthentication={requiresAuthentication}
           statuses={{ [article.id]: syncStatus }}
@@ -1573,6 +1579,9 @@ First paragraph.
       start: () => okAsync(undefined),
       openDocument: (id) => ok(documents.get(id) ?? firstDoc),
       createArticle: () => ok(firstArticle),
+      duplicateArticle: () => ok(firstArticle),
+      trashArticle: () => ok(undefined),
+      restoreArticle: () => ok(undefined),
       updateArticleTitle: () => ok(undefined),
       updateArticleExportSettings: () => ok(undefined),
       listArticles: () => [firstArticle, secondArticle],

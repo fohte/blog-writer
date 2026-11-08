@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 
-import { moveBlock, readBody, setBody } from '#article/index'
+import { TRASH_RETENTION_MS } from '#article/constants'
+import {
+  addSource,
+  getPremise,
+  listSources,
+  moveBlock,
+  readBody,
+  setBody,
+  setPremise,
+} from '#article/index'
 import type { Article, SyncClientOptions } from '#lib/sync-client'
 import { createSyncClient } from '#lib/sync-client'
 
@@ -315,6 +324,155 @@ describe('createSyncClient', () => {
     expect(client.listArticles()).toEqual([article])
     peer.destroy()
     client.destroy()
+  })
+
+  it('duplicates an article without its research or publishing targets', async () => {
+    const { client, setArticleId, setNow } = createFixture()
+    const sourceId = '018f0000-0000-7000-8000-000000000002'
+    const copyId = '018f0000-0000-7000-8000-000000000003'
+    setArticleId(sourceId)
+    client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
+    const sourceDoc = client.openDocument(sourceId)._unsafeUnwrap()
+    setBody(sourceDoc, 'A paragraph.\n')
+    setPremise(sourceDoc, 'audience', 'Gardeners')
+    addSource(sourceDoc, {
+      id: 'source-a',
+      kind: 'url',
+      title: 'Example source',
+      url: 'https://example.invalid/report',
+      fileName: null,
+      checkedAt: '2026-02-01T00:00:00.000Z',
+      summary: 'A source summary.',
+    })._unsafeUnwrap()
+    client.updateArticleTitle(sourceId, 'A garden article')._unsafeUnwrap()
+    client
+      .updateArticleExportSettings(sourceId, { exportSlug: 'a-garden-article' })
+      ._unsafeUnwrap()
+    setArticleId(copyId)
+    setNow(1_800_000_100_000)
+
+    const copy = client.duplicateArticle(sourceId)._unsafeUnwrap()
+    const copyDoc = client.openDocument(copyId)._unsafeUnwrap()
+    const articles = client.listArticles()
+    const copiedBody = readBody(copyDoc)
+    const copiedPremise = getPremise(copyDoc)
+    const copiedSources = listSources(copyDoc)
+    setBody(copyDoc, 'An edited copy.\n')
+
+    const readOutput = () => ({
+      copy,
+      articles,
+      copiedBody,
+      copiedPremise,
+      copiedSources,
+      sourceBodyAfterEditingCopy: readBody(sourceDoc),
+    })
+    expect(readOutput()).toEqual({
+      copy: {
+        id: copyId,
+        createdAt: 1_800_000_100_000,
+        title: 'A garden article のコピー',
+      },
+      articles: [
+        {
+          id: sourceId,
+          createdAt: 1_800_000_000_000,
+          updatedAt: 1_800_000_000_000,
+          title: 'A garden article',
+          exportSlug: 'a-garden-article',
+        },
+        {
+          id: copyId,
+          createdAt: 1_800_000_100_000,
+          title: 'A garden article のコピー',
+        },
+      ],
+      copiedBody: 'A paragraph.\n',
+      copiedPremise: { audience: 'Gardeners', purpose: null, claim: null },
+      copiedSources: [],
+      sourceBodyAfterEditingCopy: 'A paragraph.\n',
+    })
+    client.destroy()
+  })
+
+  it('refuses to duplicate an article whose local copy has not loaded', () => {
+    const { client, setArticleId } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    setArticleId('018f0000-0000-7000-8000-000000000003')
+
+    const readOutput = () => ({
+      error: client.duplicateArticle(article.id)._unsafeUnwrapErr().message,
+      articles: client.listArticles(),
+    })
+    expect(readOutput()).toEqual({
+      error: 'The article is not ready to copy',
+      articles: [article],
+    })
+    client.destroy()
+  })
+
+  it('keeps a trashed article across a restart until it is restored', () => {
+    const { client, savedDocuments, setNow } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    setNow(1_800_000_100_000)
+    client.trashArticle(article.id)._unsafeUnwrap()
+    client.destroy()
+
+    const restarted = createFixture(savedDocuments)
+    const afterRestart = restarted.client.listArticles()
+    restarted.client.restoreArticle(article.id)._unsafeUnwrap()
+
+    const readOutput = () => ({
+      afterRestart,
+      afterRestore: restarted.client.listArticles(),
+    })
+    expect(readOutput()).toEqual({
+      afterRestart: [
+        {
+          id: article.id,
+          createdAt: article.createdAt,
+          trashedAt: 1_800_000_100_000,
+          title: 'Untitled article',
+        },
+      ],
+      afterRestore: [article],
+    })
+    restarted.client.destroy()
+  })
+
+  it.each([
+    ['opens and lists a trashed article before it expires', -1, true],
+    ['stops opening and listing a trashed article once it expires', 0, false],
+  ])('%s', async (_name, offset, available) => {
+    const { client, savedDocuments } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    client.trashArticle(article.id)._unsafeUnwrap()
+    client.destroy()
+
+    const restarted = createFixture(savedDocuments)
+    const trashedAt = article.createdAt
+    restarted.setNow(trashedAt + TRASH_RETENTION_MS + offset)
+    await restarted.client.start()
+
+    const readOutput = () => ({
+      articles: restarted.client.listArticles(),
+      openedDocuments: restarted.providerAttempts.has(article.id),
+    })
+    expect(readOutput()).toEqual({
+      articles: available
+        ? [
+            {
+              id: article.id,
+              createdAt: article.createdAt,
+              trashedAt,
+              title: 'Untitled article',
+            },
+          ]
+        : [],
+      openedDocuments: available,
+    })
+    restarted.client.destroy()
   })
 
   it('persists export settings on the article index entry', async () => {

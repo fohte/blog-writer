@@ -16,6 +16,9 @@ export type ArticleWorkspaceProps = {
   ready: boolean
   requiresAuthentication: boolean
   onCreateArticle: () => Article | undefined
+  onDuplicateArticle: (id: string) => void
+  onTrashArticle: (id: string) => void
+  onRestoreArticle: (id: string) => void
   onOpenSettings: () => void
 } & ArticleEditorIntegrationProps
 
@@ -27,6 +30,9 @@ export function ArticleWorkspace({
   ready,
   requiresAuthentication,
   onCreateArticle,
+  onDuplicateArticle,
+  onTrashArticle,
+  onRestoreArticle,
   onOpenSettings,
   bodyAccessory,
   onRequest,
@@ -87,8 +93,11 @@ export function ArticleWorkspace({
       onLoginAgain={() => {
         window.location.reload()
       }}
+      onDuplicateArticle={onDuplicateArticle}
       onOpenArticle={setSelectedArticleId}
       onOpenSettings={onOpenSettings}
+      onRestoreArticle={onRestoreArticle}
+      onTrashArticle={onTrashArticle}
       onSearchQueryChange={setSearchQuery}
       onSortOrderChange={setSortOrder}
       offline={!online}

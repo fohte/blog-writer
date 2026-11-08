@@ -2,7 +2,8 @@ import { err, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 import { v7 } from 'uuid'
 import * as Y from 'yjs'
 
-import { DEFAULT_ARTICLE_TITLE } from '#article/constants'
+import { DEFAULT_ARTICLE_TITLE, TRASH_RETENTION_MS } from '#article/constants'
+import { clearResearch } from '#article/sources'
 import type { ArticleFileSyncStatus } from '#lib/file-sync-api'
 import {
   buildSyncDocument,
@@ -31,6 +32,8 @@ export type Article = {
   createdAt: number
   /** Unset until the article is first edited. */
   updatedAt?: number
+  /** Unset unless the article is in the trash. */
+  trashedAt?: number
   title: string
   syncFilePath?: string
   syncFileHash?: string
@@ -39,6 +42,8 @@ export type Article = {
   exportSlug?: string
   exportFrontmatter?: string
 }
+
+export type TrashedArticle = Article & { trashedAt: number }
 
 type ArticleExportSettings = {
   exportDestinationId?: string | undefined
@@ -63,6 +68,9 @@ export interface SyncClientApi {
   start(): ResultAsync<void, SyncClientError>
   openDocument(docId: string): Result<Y.Doc, SyncClientError>
   createArticle(): Result<Article, SyncClientError>
+  duplicateArticle(id: string): Result<Article, SyncClientError>
+  trashArticle(id: string): Result<void, SyncClientError>
+  restoreArticle(id: string): Result<void, SyncClientError>
   updateArticleTitle(id: string, title: string): Result<void, SyncClientError>
   updateArticleExportSettings(
     id: string,
@@ -174,56 +182,66 @@ class SyncClient implements SyncClientApi {
   }
 
   createArticle() {
-    return Result.fromThrowable(
-      () => ({
-        id: this.options.createArticleId(),
-        createdAt: this.options.now(),
-        title: DEFAULT_ARTICLE_TITLE,
-      }),
-      toSyncClientError,
-    )().andThen((article) =>
-      this.openDocument(article.id).andThen(() =>
-        Result.fromThrowable(() => {
-          const entry = new Y.Map<unknown>()
-          entry.set('createdAt', article.createdAt)
-          entry.set('title', article.title)
-          this.index.doc
-            .getMap<Y.Map<unknown>>('articles')
-            .set(article.id, entry)
-          this.emitChange()
-          return article
-        }, toSyncClientError)(),
-      ),
-    )
+    return this.addArticle(DEFAULT_ARTICLE_TITLE)
+  }
+
+  duplicateArticle(id: string) {
+    const article = this.listArticles().find((candidate) => candidate.id === id)
+    const source = this.documents.get(id)
+    // Before the local copy loads, the document is empty and so would be the duplicate.
+    if (!article || source?.persistence.synced !== true)
+      return err(
+        new SyncClientError('The article is not ready to copy', new Error(id)),
+      )
+    // shortcut: an article this device has not received from the server yet copies as empty, wait for its first sync if that happens in practice.
+    return this.addArticle(`${article.title} のコピー`, (copy) => {
+      Y.applyUpdate(copy, Y.encodeStateAsUpdate(source.doc))
+      clearResearch(copy)
+    })
+  }
+
+  trashArticle(id: string) {
+    return this.updateEntry(id, (entry) => {
+      entry.set('trashedAt', this.options.now())
+    })
+  }
+
+  restoreArticle(id: string) {
+    return this.updateEntry(id, (entry) => {
+      entry.delete('trashedAt')
+    })
   }
 
   updateArticleTitle(id: string, title: string) {
-    const entry = this.index.doc.getMap<Y.Map<unknown>>('articles').get(id)
-    if (!entry)
-      return err(new SyncClientError('Article not found', new Error(id)))
-    return Result.fromThrowable(() => {
+    return this.updateEntry(id, (entry) => {
       entry.set('title', title)
       this.markEdited(entry)
-    }, toSyncClientError)()
+    })
   }
 
   updateArticleExportSettings(id: string, settings: ArticleExportSettings) {
-    const entry = this.index.doc.getMap<Y.Map<unknown>>('articles').get(id)
-    if (!entry)
-      return err(new SyncClientError('Article not found', new Error(id)))
-    return Result.fromThrowable(() => {
+    return this.updateEntry(id, (entry) => {
       for (const [key, value] of Object.entries(settings)) {
         if (value === undefined) entry.delete(key)
         else entry.set(key, value)
       }
-    }, toSyncClientError)()
+    })
   }
 
   listArticles(): Article[] {
+    const now = this.options.now()
     return [...this.index.doc.getMap<Y.Map<unknown>>('articles')]
+      .filter(([, entry]) => {
+        const trashedAt = entry.get('trashedAt')
+        // shortcut: expired articles only stop being listed and opened, their data stays on the server, purge it if storage becomes a concern.
+        return (
+          typeof trashedAt !== 'number' || now - trashedAt < TRASH_RETENTION_MS
+        )
+      })
       .map(([id, entry]) => {
         const createdAt = entry.get('createdAt')
         const updatedAt = entry.get('updatedAt')
+        const trashedAt = entry.get('trashedAt')
         const title = entry.get('title')
         const syncFilePath = entry.get('syncFilePath')
         const syncFileHash = entry.get('syncFileHash')
@@ -235,6 +253,7 @@ class SyncClient implements SyncClientApi {
           id,
           createdAt: typeof createdAt === 'number' ? createdAt : 0,
           ...(typeof updatedAt === 'number' ? { updatedAt } : {}),
+          ...(typeof trashedAt === 'number' ? { trashedAt } : {}),
           title: typeof title === 'string' ? title : DEFAULT_ARTICLE_TITLE,
           ...(typeof syncFilePath === 'string' ? { syncFilePath } : {}),
           ...(typeof syncFileHash === 'string' ? { syncFileHash } : {}),
@@ -287,6 +306,40 @@ class SyncClient implements SyncClientApi {
 
   private emitChange() {
     for (const listener of this.listeners) listener()
+  }
+
+  private addArticle(title: string, initialize?: (doc: Y.Doc) => void) {
+    return Result.fromThrowable(
+      () => ({
+        id: this.options.createArticleId(),
+        createdAt: this.options.now(),
+        title,
+      }),
+      toSyncClientError,
+    )().andThen((article) =>
+      this.openDocument(article.id).andThen((doc) =>
+        Result.fromThrowable(() => {
+          initialize?.(doc)
+          const entry = new Y.Map<unknown>()
+          entry.set('createdAt', article.createdAt)
+          entry.set('title', article.title)
+          this.index.doc
+            .getMap<Y.Map<unknown>>('articles')
+            .set(article.id, entry)
+          this.emitChange()
+          return article
+        }, toSyncClientError)(),
+      ),
+    )
+  }
+
+  private updateEntry(id: string, update: (entry: Y.Map<unknown>) => void) {
+    const entry = this.index.doc.getMap<Y.Map<unknown>>('articles').get(id)
+    if (!entry)
+      return err(new SyncClientError('Article not found', new Error(id)))
+    return Result.fromThrowable(() => {
+      update(entry)
+    }, toSyncClientError)()
   }
 
   private observeArticleEdits(id: string, doc: Y.Doc) {
