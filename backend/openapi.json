@@ -2509,7 +2509,7 @@
             "required": ["data", "event"],
             "properties": {
               "data": {
-                "$ref": "#/components/schemas/LlmProgress"
+                "$ref": "#/components/schemas/ResearchJobProgress"
               },
               "event": {
                 "type": "string",
@@ -2540,6 +2540,62 @@
               "event": {
                 "type": "string",
                 "enum": ["error"]
+              }
+            }
+          }
+        ]
+      },
+      "ResearchJobProgress": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["query", "kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["search"]
+              },
+              "query": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["url", "kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["fetching"]
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["url", "kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["fetched"]
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["url", "kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["unavailable"]
+              },
+              "url": {
+                "type": "string"
               }
             }
           }

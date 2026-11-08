@@ -25,8 +25,8 @@ use crate::{
 };
 
 use super::model::{
-    ResearchJobAnalysis, ResearchJobRequest, ResearchJobResult, ResearchJobSource,
-    ResearchJobSourceStatus,
+    ResearchJobAnalysis, ResearchJobProgress, ResearchJobRequest, ResearchJobResult,
+    ResearchJobSource, ResearchJobSourceStatus,
 };
 
 const MAX_CITATIONS: usize = 5;
@@ -38,7 +38,7 @@ pub(crate) type JobFuture =
 pub(crate) fn start(
     app_state: AppState,
     request: ResearchJobRequest,
-    progress: mpsc::UnboundedSender<String>,
+    progress: mpsc::UnboundedSender<ResearchJobProgress>,
 ) -> JobFuture {
     let AppState {
         llm, safe_fetch, ..
@@ -50,7 +50,7 @@ async fn execute(
     state: LlmState,
     fetcher: Arc<dyn SafeFetchService>,
     request: ResearchJobRequest,
-    progress: mpsc::UnboundedSender<String>,
+    progress: mpsc::UnboundedSender<ResearchJobProgress>,
 ) -> Result<ResearchJobResult, LlmError> {
     let search_prompt = search_prompt(&request);
     let progress_sender = progress.clone();
@@ -59,7 +59,7 @@ async fn execute(
         SEARCH_SYSTEM_PROMPT.to_owned(),
         search_prompt,
         move |query| {
-            let _ = progress_sender.send(query);
+            let _ = progress_sender.send(ResearchJobProgress::Search { query });
         },
     )
     .await?;
@@ -71,8 +71,13 @@ async fn execute(
         .take(MAX_CITATIONS)
         .enumerate()
     {
-        let _ = progress.send(format!("資料を取得中: {url}"));
-        sources.push(fetch_source(fetcher.as_ref(), index, url).await);
+        let _ = progress.send(ResearchJobProgress::Fetching { url: url.clone() });
+        let source = fetch_source(fetcher.as_ref(), index, url.clone()).await;
+        let _ = progress.send(match source.status {
+            ResearchJobSourceStatus::Available => ResearchJobProgress::Fetched { url },
+            ResearchJobSourceStatus::Unavailable => ResearchJobProgress::Unavailable { url },
+        });
+        sources.push(source);
     }
 
     let analysis = analyze(&state, &request, &sources).await?;

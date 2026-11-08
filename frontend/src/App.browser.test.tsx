@@ -373,7 +373,10 @@ describe('the application research and evidence integrations', () => {
     if (!resolve) throw new Error('The research request did not start')
     resolve(
       serverEvents([
-        { event: 'progress', data: { query: 'Research topic' } },
+        {
+          event: 'progress',
+          data: { kind: 'search', query: 'Research topic' },
+        },
         {
           event: 'result',
           data: {
@@ -547,7 +550,10 @@ describe('the application research and evidence integrations', () => {
         if (typeof init.body === 'string')
           requestQuestion = JSON.parse(init.body) as unknown
         return serverEvents([
-          { event: 'progress', data: { query: 'Research topic' } },
+          {
+            event: 'progress',
+            data: { kind: 'search', query: 'Research topic' },
+          },
         ])
       }
       if (init.method === 'POST' && url.endsWith('/save-if-unchanged'))
@@ -571,7 +577,7 @@ describe('the application research and evidence integrations', () => {
 
     const readResult = () => ({
       query: requestQuestion,
-      progressQueries: document.body.querySelector('[aria-label="検索の進捗"]')
+      progressQueries: document.body.querySelector('[aria-label="調査の進捗"]')
         ?.textContent,
       sourceCount: listSources(doc).length,
       findingCount: listFindings(doc).length,

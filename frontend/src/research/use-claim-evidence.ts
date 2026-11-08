@@ -8,7 +8,10 @@ import {
   removeEvidence,
   setEvidence,
 } from '#article/index'
-import type { ResearchProgressStatus } from '#components/research-progress'
+import type {
+  ResearchProgressStatus,
+  ResearchProgressStep,
+} from '#components/research-progress'
 import type {
   SuggestionDecision,
   TextSuggestion,
@@ -38,6 +41,7 @@ import {
 import { saveResearchJobResult } from '#research/research-from-heading'
 import {
   acquireResearchLock,
+  mergeResearchStep,
   releaseResearchLock,
   ResearchJobInterruptedError,
   runResearchJob,
@@ -45,7 +49,7 @@ import {
 
 type ClaimEvidenceProgressState = {
   status: ResearchProgressStatus
-  queries: string[]
+  steps: ResearchProgressStep[]
   target?: string
   error?: string
   interruptedMessage?: string
@@ -75,7 +79,7 @@ export function useClaimEvidence() {
       setProgress((current) => ({
         ...current,
         [articleId]: {
-          ...(current[articleId] ?? { status: 'running', queries: [] }),
+          ...(current[articleId] ?? { status: 'running', steps: [] }),
           ...patch,
         },
       }))
@@ -141,7 +145,7 @@ export function useClaimEvidence() {
         ...current,
         [metadata.articleId]: {
           status: 'running',
-          queries: [],
+          steps: [],
           target: '保存済みの資料で再判定',
         },
       }))
@@ -155,7 +159,7 @@ export function useClaimEvidence() {
         }
         setProgress((current) => ({
           ...current,
-          [metadata.articleId]: { status: 'complete', queries: [] },
+          [metadata.articleId]: { status: 'complete', steps: [] },
         }))
       }
       void judgeClaimEvidenceFromSources(
@@ -239,7 +243,7 @@ export function useClaimEvidence() {
       if (claimEvidenceLayerOverlaps(doc, range, resolveSuggestion)) {
         patchProgress(articleId, {
           status: 'failed',
-          queries: [],
+          steps: [],
           error: 'この範囲には別の提案が表示されています。',
         })
         return
@@ -263,7 +267,7 @@ export function useClaimEvidence() {
         releaseResearchLock(articleId, controller)
         patchProgress(articleId, {
           status: 'failed',
-          queries: [],
+          steps: [],
           error: '対象の範囲に調査を表示できませんでした。',
         })
         return
@@ -271,7 +275,7 @@ export function useClaimEvidence() {
       controllers.current.set(articleId, controller)
       setProgress((current) => ({
         ...current,
-        [articleId]: { status: 'running', queries: [] },
+        [articleId]: { status: 'running', steps: [] },
       }))
       const settings = loadLlmSettings(() => window.localStorage)
       if (settings.isErr()) {
@@ -296,16 +300,16 @@ export function useClaimEvidence() {
           ...(after === undefined ? {} : { after }),
         },
         controller.signal,
-        (query) => {
+        (step) => {
           setProgress((current) => {
             const currentProgress = current[articleId]
             if (currentProgress?.status === 'cancelling') return current
             return {
               ...current,
               [articleId]: {
-                ...(currentProgress ?? { status: 'running', queries: [] }),
+                ...(currentProgress ?? { status: 'running', steps: [] }),
                 status: 'running',
-                queries: [...(currentProgress?.queries ?? []), query],
+                steps: mergeResearchStep(currentProgress?.steps ?? [], step),
               },
             }
           })

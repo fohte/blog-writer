@@ -66,25 +66,32 @@ pub(crate) struct LlmProgress {
 
 impl LlmEvent {
     fn into_sse_event(self) -> Event {
-        let data = match serde_json::to_value(self) {
-            Ok(data) => data,
-            Err(_) => return Self::serialization_error_event(),
-        };
-        let Some(name) = data.get("event").and_then(Value::as_str).map(str::to_owned) else {
-            return Self::serialization_error_event();
-        };
-
-        Event::default().event(name).data(data.to_string())
+        sse_event(&self)
     }
+}
 
-    fn serialization_error_event() -> Event {
-        let data = serde_json::json!({
-            "event": "error",
-            "data": LlmErrorPayload::from(&LlmError::SerializeResult)
-        });
+fn sse_event(event: &impl Serialize) -> Event {
+    let data = match serde_json::to_value(event) {
+        Ok(data) => data,
+        Err(error) => {
+            tracing::warn!(%error, "SSE event serialization failed");
+            return serialization_error_event();
+        }
+    };
+    let Some(name) = data.get("event").and_then(Value::as_str).map(str::to_owned) else {
+        return serialization_error_event();
+    };
 
-        Event::default().event("error").data(data.to_string())
-    }
+    Event::default().event(name).data(data.to_string())
+}
+
+fn serialization_error_event() -> Event {
+    let data = serde_json::json!({
+        "event": "error",
+        "data": LlmErrorPayload::from(&LlmError::SerializeResult)
+    });
+
+    Event::default().event("error").data(data.to_string())
 }
 
 #[derive(Clone)]

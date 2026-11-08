@@ -11,10 +11,13 @@ use tokio::sync::mpsc;
 use crate::{
     app::AppState,
     error::{ApiJson, AppError, ErrorResponse},
-    llm::{LlmError, LlmErrorPayload, LlmEvent, LlmProgress},
+    llm::{LlmErrorPayload, sse_event},
 };
 
-use super::{model::ResearchJobRequest, pipeline};
+use super::{
+    model::{ResearchJobEvent, ResearchJobProgress, ResearchJobRequest},
+    pipeline,
+};
 
 #[utoipa::path(
     post,
@@ -39,6 +42,7 @@ pub(crate) async fn run_research_job(
             future,
             progress_receiver,
             progress_closed: false,
+            outcome: None,
             finished: false,
         },
         |mut state| async move {
@@ -46,11 +50,25 @@ pub(crate) async fn run_research_job(
                 return None;
             }
             loop {
+                // The job can finish in the same poll that queued its last progress.
+                if let Some(outcome) = state.outcome.take() {
+                    let event = match state.progress_receiver.try_recv() {
+                        Ok(progress) => {
+                            state.outcome = Some(outcome);
+                            ResearchJobEvent::Progress(progress)
+                        }
+                        Err(_) => {
+                            state.finished = true;
+                            outcome
+                        }
+                    };
+                    return Some((Ok(sse_event(&event)), state));
+                }
                 let event = tokio::select! {
                     biased;
-                    query = state.progress_receiver.recv(), if !state.progress_closed => {
-                        match query {
-                            Some(query) => Some(LlmEvent::Progress(LlmProgress { query })),
+                    progress = state.progress_receiver.recv(), if !state.progress_closed => {
+                        match progress {
+                            Some(progress) => ResearchJobEvent::Progress(progress),
                             None => {
                                 state.progress_closed = true;
                                 continue;
@@ -58,25 +76,17 @@ pub(crate) async fn run_research_job(
                         }
                     }
                     result = &mut state.future => {
-                        state.finished = true;
-                        Some(match result {
-                            Ok(result) => match serde_json::to_value(result) {
-                                Ok(result) => LlmEvent::Result(result),
-                                Err(error) => {
-                                    tracing::warn!(%error, "research job result serialization failed");
-                                    LlmEvent::Error(LlmErrorPayload::from(&LlmError::SerializeResult))
-                                }
-                            },
+                        state.outcome = Some(match result {
+                            Ok(result) => ResearchJobEvent::Result(result),
                             Err(error) => {
                                 tracing::warn!(error_kind = ?error, "research job failed");
-                                LlmEvent::Error(LlmErrorPayload::from(&error))
+                                ResearchJobEvent::Error(LlmErrorPayload::from(&error))
                             }
-                        })
+                        });
+                        continue;
                     }
                 };
-                if let Some(event) = event {
-                    return Some((Ok(event.into_sse_event()), state));
-                }
+                return Some((Ok(sse_event(&event)), state));
             }
         },
     );
@@ -122,7 +132,8 @@ fn validate_request(request: ResearchJobRequest) -> Result<ResearchJobRequest, A
 
 struct ResearchJobStream {
     future: pipeline::JobFuture,
-    progress_receiver: mpsc::UnboundedReceiver<String>,
+    progress_receiver: mpsc::UnboundedReceiver<ResearchJobProgress>,
     progress_closed: bool,
+    outcome: Option<ResearchJobEvent>,
     finished: bool,
 }
