@@ -130,8 +130,9 @@ function createRequestEditor(
 }
 
 async function useViewport(width: number, height: number) {
+  const { innerHeight, innerWidth } = window
   await page.viewport(width, height)
-  onTestFinished(() => page.viewport(414, 896))
+  onTestFinished(() => page.viewport(innerWidth, innerHeight))
 }
 
 function pressMod(view: EditorView, key: string) {

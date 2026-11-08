@@ -7,8 +7,8 @@ class RequestMarker extends GutterMarker {
     button.type = 'button'
     button.className = 'cm-body-request-marker'
     button.textContent = '>'
-    button.setAttribute('aria-label', '依頼を入力')
-    // The keyboard opens the request with a shortcut, and this button is recreated whenever the cursor changes lines.
+    button.title = '依頼を入力'
+    // CodeMirror hides gutters from assistive technology, so the editor's shortcut is the way in without a pointer.
     button.tabIndex = -1
     return button
   }
