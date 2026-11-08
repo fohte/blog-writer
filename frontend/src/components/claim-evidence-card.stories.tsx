@@ -61,6 +61,20 @@ export const Contradicted: Story = {
   args: { ...common, verdict: 'contradicted' },
 }
 
+export const WithSuggestion: Story = {
+  name: 'the outdated card shows the proposed rewrite with reject and adopt buttons.',
+  args: {
+    ...common,
+    verdict: 'outdated',
+    suggestion: {
+      original: 'The value rose by 3% last year.',
+      replacement: 'The value rose by 5% last year.',
+      onAccept: () => {},
+      onReject: () => {},
+    },
+  },
+}
+
 export const EditedAfterCheck: Story = {
   name: 'the card marks the sentence for review because it was edited after the check.',
   args: { ...common, verdict: 'supported', edited: true },

@@ -42,6 +42,44 @@ type LayerManager = {
 
 const managers = new WeakMap<Y.Doc, LayerManager>()
 
+const suggestionListeners = new WeakMap<Y.Doc, Set<() => void>>()
+
+function notifySuggestionListeners(doc: Y.Doc) {
+  suggestionListeners.get(doc)?.forEach((listener) => {
+    listener()
+  })
+}
+
+/** Suggestions live in the editor state, so a doc observer does not see them resolve. */
+export function observeClaimEvidenceSuggestions(
+  doc: Y.Doc,
+  listener: () => void,
+): () => void {
+  const listeners = suggestionListeners.get(doc) ?? new Set()
+  suggestionListeners.set(doc, listeners)
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+export function findClaimEvidenceSuggestion(doc: Y.Doc, evidenceId: string) {
+  return managers
+    .get(doc)
+    ?.layer.getSuggestions()
+    .find(({ metadata }) => metadata?.evidenceIds.includes(evidenceId) === true)
+}
+
+export function decideClaimEvidenceSuggestion(
+  doc: Y.Doc,
+  id: string,
+  decision: SuggestionDecision,
+) {
+  const layer = managers.get(doc)?.layer
+  if (decision === 'accept') layer?.accept(id)
+  else layer?.reject(id)
+}
+
 function getManager(
   doc: Y.Doc,
   onResolve: ResolveHandler,
@@ -52,7 +90,10 @@ function getManager(
     manager = {
       layer: createSuggestionLayer<ClaimEvidenceSuggestionMetadata>({
         trackAcceptedRanges: true,
-        onResolve: (...args) => manager?.onResolve(...args),
+        onResolve: (...args) => {
+          manager?.onResolve(...args)
+          notifySuggestionListeners(doc)
+        },
         onInFlightRangeEdited: () => manager?.onRangeEdited(),
         // Cancelling from the editor stops the check the same way editing its range does.
         onCancelInFlight: () => manager?.onRangeEdited(),
@@ -84,7 +125,9 @@ export function setClaimEvidenceSuggestion(
   suggestion: TextSuggestion<ClaimEvidenceSuggestionMetadata>,
   onResolve: ResolveHandler,
 ) {
-  return getManager(doc, onResolve).layer.addSuggestion(suggestion)
+  const result = getManager(doc, onResolve).layer.addSuggestion(suggestion)
+  notifySuggestionListeners(doc)
+  return result
 }
 
 export function setClaimEvidenceInFlight(
