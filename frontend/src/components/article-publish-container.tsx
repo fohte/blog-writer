@@ -15,6 +15,7 @@ import {
   getExportArticleFile,
   publishArticle,
 } from '#lib/article-export-api'
+import { countDiffLines } from '#lib/count-diff-lines'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
 type ArticlePublishContainerProps = {
@@ -32,6 +33,9 @@ type PreparedPublish = {
   content: string
   sha: string | null
   original: string
+  added: number
+  removed: number
+  fetchedAt: number
 }
 
 function publishFingerprint(
@@ -242,6 +246,7 @@ export function ArticlePublishContainer({
       setBusyAction(undefined)
       return undefined
     }
+    const original = fileResult.file.content ?? ''
     setPrepared({
       destinationId,
       slug,
@@ -249,7 +254,9 @@ export function ArticlePublishContainer({
       body,
       content,
       sha: fileResult.file.sha,
-      original: fileResult.file.content ?? '',
+      original,
+      ...countDiffLines(original, content),
+      fetchedAt: Date.now(),
     })
     setBusyAction(undefined)
     return currentRequestId
@@ -310,7 +317,13 @@ export function ArticlePublishContainer({
       diff={
         prepared === undefined
           ? undefined
-          : { original: prepared.original, modified: prepared.content }
+          : {
+              original: prepared.original,
+              modified: prepared.content,
+              added: prepared.added,
+              removed: prepared.removed,
+              fetchedAt: prepared.fetchedAt,
+            }
       }
       error={error}
       frontmatter={frontmatter}

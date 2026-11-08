@@ -10,6 +10,7 @@ import {
 import { Textarea } from '@fohte/ui/textarea'
 
 import { isValidArticleSlug } from '#article/export'
+import { formatLocalTime } from '#article/format-local-date'
 import { TextDiffView } from '#components/text-diff-view'
 import type { ExportDestination } from '#lib/article-export-api'
 
@@ -19,7 +20,15 @@ export type ArticlePublishViewProps = {
   destinationUnavailable?: boolean | undefined
   slug: string
   frontmatter: string
-  diff?: { original: string; modified: string } | undefined
+  diff?:
+    | {
+        original: string
+        modified: string
+        added: number
+        removed: number
+        fetchedAt: number
+      }
+    | undefined
   busyAction?: 'diff' | 'publish' | undefined
   canPublish?: boolean | undefined
   error?: string | undefined
@@ -57,6 +66,19 @@ export function ArticlePublishView({
   const selectedDestination = destinations.find(
     ({ id }) => id === selectedDestinationId,
   )
+  const destinationFacts =
+    selectedDestination === undefined
+      ? []
+      : [
+          ['リポジトリ', selectedDestination.repository],
+          ['取り込み先', selectedDestination.base_branch],
+          ['パス', selectedDestination.path_template],
+          ['形式', formatLabels[selectedDestination.format]],
+        ]
+  const resolvedPath =
+    selectedDestination !== undefined && isValidArticleSlug(slug)
+      ? selectedDestination.path_template.replace('{slug}', slug)
+      : undefined
 
   return (
     <section aria-label="PR を作成" className="flex flex-col gap-5">
@@ -87,29 +109,36 @@ export function ArticlePublishView({
             </SelectContent>
           </Select>
         </label>
-        {selectedDestination === undefined ? null : (
-          <p>
-            形式{' '}
-            <span className="text-foreground">
-              {formatLabels[selectedDestination.format]}
-            </span>
-          </p>
-        )}
+        <dl className="flex flex-col gap-1.5 empty:hidden">
+          {destinationFacts.map(([label, value]) => (
+            <div className="flex gap-4" key={label}>
+              <dt className="w-18 shrink-0">{label}</dt>
+              <dd className="min-w-0 wrap-anywhere text-foreground">{value}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
       <div className="grid gap-5 md:grid-cols-2">
-        <label className="flex flex-col gap-1.5 text-xs font-bold text-muted-foreground-strong">
-          slug
-          <Input
-            autoComplete="off"
-            className="font-mono font-normal text-foreground"
-            disabled={busy}
-            onChange={(event) => {
-              onSlugChange(event.currentTarget.value)
-            }}
-            placeholder="example-post"
-            value={slug}
-          />
-        </label>
+        <div className="flex flex-col gap-1.5">
+          <label className="flex flex-col gap-1.5 text-xs font-bold text-muted-foreground-strong">
+            slug
+            <Input
+              autoComplete="off"
+              className="font-mono font-normal text-foreground"
+              disabled={busy}
+              onChange={(event) => {
+                onSlugChange(event.currentTarget.value)
+              }}
+              placeholder="example-post"
+              value={slug}
+            />
+          </label>
+          {resolvedPath !== undefined ? (
+            <p className="font-mono text-xs wrap-anywhere text-muted-foreground-strong">
+              → {resolvedPath}
+            </p>
+          ) : null}
+        </div>
         <label className="flex flex-col gap-1.5 text-xs font-bold text-muted-foreground-strong">
           frontmatter
           <Textarea
@@ -125,9 +154,15 @@ export function ArticlePublishView({
       </div>
       {diff !== undefined ? (
         <section className="flex flex-col gap-2">
-          <h2 className="text-base font-bold">
-            公開先の現在のファイルとの差分
-          </h2>
+          <div className="flex flex-wrap items-baseline gap-x-3">
+            <h2 className="text-base font-bold">
+              公開先の現在のファイルとの差分
+            </h2>
+            <span className="font-mono text-xs text-muted-foreground-strong">
+              +{diff.added} −{diff.removed} · 取得{' '}
+              {formatLocalTime(diff.fetchedAt)}
+            </span>
+          </div>
           <TextDiffView
             modified={diff.modified}
             modifiedLabel="公開する内容"

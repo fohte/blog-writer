@@ -54,11 +54,17 @@ export const PublishSelected: Story = {
         destinations={[
           {
             id: 'sample-site',
+            repository: 'example/site',
+            base_branch: 'main',
+            path_template: 'posts/{slug}.mdx',
             format: 'mdx',
             frontmatter_template: 'title: {{ title }}',
           },
         ]}
         diff={{
+          added: 2,
+          removed: 2,
+          fetchedAt: Date.UTC(2026, 0, 15, 7, 16),
           original: 'title: "小さな記事"\n\n古い本文',
           modified: 'title: "小さな記事の書き方"\n\n新しい本文',
         }}

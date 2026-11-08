@@ -30,6 +30,9 @@ const article: Article = {
 const destinations: ExportDestination[] = [
   {
     id: 'sample-site',
+    repository: 'example/site',
+    base_branch: 'main',
+    path_template: 'posts/{slug}.md',
     format: 'markdown',
     frontmatter_template: 'title: {{ title }}',
   },

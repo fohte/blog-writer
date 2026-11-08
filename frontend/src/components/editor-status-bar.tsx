@@ -1,5 +1,6 @@
 import { Kbd } from '@fohte/ui/kbd'
 
+import { formatLocalTime } from '#article/format-local-date'
 import { altLabel, modLabel, writeMemoKeyLabel } from '#lib/key-labels'
 import type { LlmRoute } from '#lib/llm-settings'
 import type { SyncState } from '#lib/sync-client'
@@ -15,13 +16,6 @@ const llmRouteLabels: Record<LlmRoute, string> = {
   server: 'LLM サーバー',
   local: 'LLM ローカル',
 }
-
-const formatTime = (time: number) =>
-  new Date(time).toLocaleTimeString('ja-JP', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  })
 
 type EditorStatusBarProps = {
   syncStatus?: SyncState | undefined
@@ -42,7 +36,7 @@ export function EditorStatusBar({
         端末に保存済み
         {syncStatus === undefined ? '' : serverStateLabels[syncStatus]}
         {syncStatus === 'synced' && syncedAt !== undefined
-          ? ` ${formatTime(syncedAt)}`
+          ? ` ${formatLocalTime(syncedAt)}`
           : ''}
       </span>
       {llmRoute === undefined ? null : <span>{llmRouteLabels[llmRoute]}</span>}
