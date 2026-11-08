@@ -102,12 +102,20 @@ export function createBlockWidget(
       },
       equalityKey,
       shouldIgnoreEvent: (event) => {
-        if (
+        const isFileDrop =
           event.type === 'drop' &&
           event instanceof DragEvent &&
           (event.dataTransfer?.files.length ?? 0) > 0
-        ) {
-          return false
+        if (isFileDrop) {
+          const files = [...(event.dataTransfer?.files ?? [])]
+          if (files.some((file) => file.type.startsWith('image/'))) return false
+          if (
+            event.target instanceof Element &&
+            event.target.closest('.cm-markdown-block-widget')
+          ) {
+            event.preventDefault()
+            return true
+          }
         }
         if (!(event.target instanceof Element)) return false
 

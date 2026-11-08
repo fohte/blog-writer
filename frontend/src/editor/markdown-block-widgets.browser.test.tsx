@@ -609,4 +609,44 @@ describe('image paste and drop uploads', () => {
       }
     },
   )
+
+  it('ignores a dropped non-image file on a widget move handle', async () => {
+    const source = `${tableSource}\n\nAfter paragraph.`
+    const uploadedFiles: string[] = []
+    const uploader: ArticleImageUploader = (file) => {
+      uploadedFiles.push(file.name)
+      return okAsync({
+        src: 'https://assets.example.test/images/uploaded.webp?w=320&h=200',
+      })
+    }
+    const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
+      uploadArticleImage: uploader,
+      initialSelection: { anchor: source.length },
+      showMoveHandles: true,
+    })
+    if (!content) throw new Error('The Markdown editor did not mount')
+    await act(async () => {
+      await vi.waitUntil(() => content.querySelector('table') !== null)
+    })
+    const target = host.querySelector<HTMLElement>(
+      '.cm-markdown-block-widget-handle .cm-block-drag-handle',
+    )
+    if (!target) throw new Error('The widget move handle did not mount')
+
+    const drop = dispatchFileDrop(
+      content,
+      new File(['source text'], 'source.txt', { type: 'text/plain' }),
+      target,
+    )
+    const readOutput = () => ({
+      body: body.toJSON(),
+      defaultPrevented: drop.defaultPrevented,
+      uploadedFiles,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      defaultPrevented: true,
+      uploadedFiles: [],
+    })
+  })
 })
