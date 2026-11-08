@@ -152,13 +152,20 @@ export function validateSuggestions<Metadata = unknown>(
   return ok(ordered)
 }
 
+export function suggestionAtCursor<Position extends SuggestionPosition>(
+  suggestions: readonly Position[],
+  head: number,
+): Position | undefined {
+  // The start wins over the end, or the later of two touching suggestions could never be focused.
+  return (
+    suggestions.find(({ from }) => from === head) ??
+    suggestions.find(({ from, to }) => head >= from && head <= to)
+  )
+}
+
 export function focusForSelection<Metadata = unknown>(
   suggestions: readonly TextSuggestion<Metadata>[],
   head: number,
 ): string | null {
-  return (
-    suggestions.find(
-      (suggestion) => head >= suggestion.from && head <= suggestion.to,
-    )?.id ?? null
-  )
+  return suggestionAtCursor(suggestions, head)?.id ?? null
 }

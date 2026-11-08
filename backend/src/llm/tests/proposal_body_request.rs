@@ -448,7 +448,7 @@ async fn rejects_an_empty_instruction() -> Result<(), Box<dyn std::error::Error>
     "",
     "",
     json!({
-        "data": {"message": "LLM result does not match the request"},
+        "data": {"code": "invalid_response", "message": "LLM result does not match the request"},
         "event": "error"
     })
 )]
@@ -456,7 +456,7 @@ async fn rejects_an_empty_instruction() -> Result<(), Box<dyn std::error::Error>
     "",
     " \n ",
     json!({
-        "data": {"message": "LLM result does not match the request"},
+        "data": {"code": "invalid_response", "message": "LLM result does not match the request"},
         "event": "error"
     })
 )]
