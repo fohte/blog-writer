@@ -240,11 +240,80 @@ describe('createSyncClient', () => {
         {
           id: article.id,
           createdAt: article.createdAt,
+          updatedAt: article.createdAt,
           title: 'A revised title',
         },
       ],
       articleDocumentHasTitle: false,
     })
+    client.destroy()
+  })
+
+  it('records local edits at most once a minute', () => {
+    const { client, setNow } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    const body = client.openDocument(article.id)._unsafeUnwrap().getText('body')
+    const readUpdatedAt = () => client.listArticles()[0]?.updatedAt
+    const start = 1_800_000_100_000
+    const updatedAtAfter = (now: number, edit: () => void) => {
+      setNow(now)
+      edit()
+      return readUpdatedAt()
+    }
+    const insert = () => {
+      body.insert(0, 'x')
+    }
+
+    const readEditTimes = () => ({
+      beforeEditing: readUpdatedAt(),
+      firstEdit: updatedAtAfter(start, insert),
+      withinTheMinute: updatedAtAfter(start + 59_999, insert),
+      afterTheMinute: updatedAtAfter(start + 60_000, insert),
+      titleEdit: updatedAtAfter(start + 120_000, () => {
+        client.updateArticleTitle(article.id, 'A revised title')._unsafeUnwrap()
+      }),
+    })
+    expect(readEditTimes()).toEqual({
+      beforeEditing: undefined,
+      firstEdit: start,
+      withinTheMinute: start,
+      afterTheMinute: start + 60_000,
+      titleEdit: start + 120_000,
+    })
+    client.destroy()
+  })
+
+  it('keeps the edit time after a restart', () => {
+    const { client, savedDocuments } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    client
+      .openDocument(article.id)
+      ._unsafeUnwrap()
+      .getText('body')
+      .insert(0, 'x')
+    client.destroy()
+
+    const restored = createFixture(savedDocuments)
+
+    expect(restored.client.listArticles()).toEqual([
+      { ...article, updatedAt: article.createdAt },
+    ])
+    restored.client.destroy()
+  })
+
+  it('does not count a change received from elsewhere as a local edit', () => {
+    const { client } = createFixture()
+    const article = client.createArticle()._unsafeUnwrap()
+    const peer = new Y.Doc()
+    peer.getText('body').insert(0, 'Written on another device')
+
+    Y.applyUpdate(
+      client.openDocument(article.id)._unsafeUnwrap(),
+      Y.encodeStateAsUpdate(peer),
+    )
+
+    expect(client.listArticles()).toEqual([article])
+    peer.destroy()
     client.destroy()
   })
 
@@ -321,6 +390,7 @@ describe('createSyncClient', () => {
         {
           id: articleId,
           createdAt: 1_800_000_000_000,
+          updatedAt: 1_800_000_000_000,
           title: 'A revised title',
         },
       ],
@@ -468,6 +538,8 @@ describe('createSyncClient', () => {
     }
 
     setNow(startedAt + 1_000)
+    // Records the edit time now so its index write stays out of the count below.
+    body.insert(0, 'a')
     provider?.emitStatus('connected')
     provider?.emitSync(true)
     notifications = 0
