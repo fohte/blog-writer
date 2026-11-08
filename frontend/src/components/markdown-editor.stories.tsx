@@ -1,6 +1,7 @@
+import type { EditorView } from '@codemirror/view'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { okAsync } from 'neverthrow'
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
@@ -23,6 +24,7 @@ interface StoryArgs {
   initialSelection?: { anchor: number; head?: number }
   evidence?: StoryEvidence[]
   showMoveHandles?: boolean
+  focusedBlockFrom?: number
   showRequestMarker?: boolean
 }
 
@@ -54,6 +56,8 @@ const otherSyntaxContent = [
 
 const noEvidence: StoryEvidence[] = []
 const storySourceTitles = ['Example research report', 'Example survey']
+const blockMoveContent =
+  '# Overview\n\nA first paragraph.\n\n## Details\n\nA second paragraph.\n'
 const uploadArticleImage: ArticleImageUploader = () =>
   okAsync({
     src: 'https://assets.example.test/images/uploaded.webp?w=640&h=360',
@@ -65,8 +69,40 @@ function MarkdownEditorPreview({
   initialSelection,
   evidence = noEvidence,
   showMoveHandles = false,
+  focusedBlockFrom,
   showRequestMarker = false,
 }: StoryArgs) {
+  const viewRef = useRef<EditorView | null>(null)
+  const focusStoryHandle = useCallback(
+    (view: EditorView | null) => {
+      viewRef.current = view
+      if (!view) return
+      if (focusedBlockFrom === undefined) {
+        const active = view.dom.ownerDocument.activeElement
+        if (
+          active instanceof HTMLButtonElement &&
+          active.matches('.cm-block-drag-handle') &&
+          view.dom.contains(active)
+        ) {
+          view.focus()
+        }
+        return
+      }
+      const handle = [
+        ...view.dom.querySelectorAll<HTMLButtonElement>(
+          '.cm-block-drag-handle',
+        ),
+      ].find(
+        (candidate) =>
+          candidate.dataset['blockFrom'] === String(focusedBlockFrom),
+      )
+      handle?.focus()
+    },
+    [focusedBlockFrom],
+  )
+  useEffect(() => {
+    if (viewRef.current) focusStoryHandle(viewRef.current)
+  }, [focusStoryHandle])
   const { body, doc, history, extensions } = useMemo(() => {
     const doc = new Y.Doc()
     const body = getBody(doc)
@@ -122,6 +158,7 @@ function MarkdownEditorPreview({
         uploadArticleImage={uploadArticleImage}
         {...(className === undefined ? {} : { className })}
         {...(initialSelection ? { initialSelection } : {})}
+        onViewChange={focusStoryHandle}
       />
     </div>
   )
@@ -262,8 +299,17 @@ export const MultiSourceEvidenceMarkers: Story = {
 export const BlockMoveHandles: Story = {
   name: 'the editor shows drag handles beside Markdown blocks.',
   args: {
-    content:
-      '# Overview\n\nA first paragraph.\n\n## Details\n\nA second paragraph.\n',
+    content: blockMoveContent,
+    initialSelection: { anchor: 0 },
+    showMoveHandles: true,
+  },
+}
+
+export const KeyboardFocusedBlockHandle: Story = {
+  name: 'the editor shows a keyboard-focused block move handle.',
+  args: {
+    content: blockMoveContent,
+    focusedBlockFrom: 0,
     initialSelection: { anchor: 0 },
     showMoveHandles: true,
   },

@@ -205,6 +205,15 @@ export function createAccessibleBlockHandleGutter() {
       private readonly onKeyDown = (event: KeyboardEvent) => {
         const target = event.target
         if (
+          event.key === 'Tab' &&
+          event.shiftKey &&
+          target instanceof Node &&
+          this.view.contentDOM.contains(target)
+        ) {
+          this.clearFocusRestoration()
+          return
+        }
+        if (
           target instanceof Node &&
           this.view.contentDOM.contains(target) &&
           event.key !== 'Tab'

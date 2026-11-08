@@ -11,10 +11,13 @@ const tableSource = '| Feature | Offline |\n| --- | --- |\n| Tables | Yes |'
 const imageSource =
   "![Sample](data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='1'%20height='1'%3E%3C/svg%3E)"
 const mermaidSource = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
-const controls: HTMLElement[] = []
+const controls: (HTMLElement | (() => void))[] = []
 
 afterEach(() => {
-  for (const control of controls) control.remove()
+  for (const control of controls) {
+    if (typeof control === 'function') control()
+    else control.remove()
+  }
   controls.length = 0
 })
 
@@ -213,6 +216,62 @@ describe('Markdown block widget layout', () => {
     })
   })
 
+  it('does not restore a handle after Shift+Tab leaves the editor', async () => {
+    const source = 'First paragraph.\n\nSecond paragraph.'
+    const previousTabIndex = document.body.getAttribute('tabindex')
+    document.body.setAttribute('tabindex', '-1')
+    controls.push(() => {
+      if (previousTabIndex === null) {
+        document.body.removeAttribute('tabindex')
+      } else {
+        document.body.setAttribute('tabindex', previousTabIndex)
+      }
+    })
+    const { body: articleBody, content } = mountMarkdownEditor(
+      source,
+      [],
+      undefined,
+      { showMoveHandles: true },
+    )
+    if (!content) throw new Error('The editor did not mount')
+    const mountedView = EditorView.findFromDOM(content)
+    if (!mountedView) throw new Error('The editor view did not mount')
+    const view = mountedView
+    content.focus()
+    await vi.waitUntil(() => document.activeElement === content)
+    content.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        key: 'Tab',
+        shiftKey: true,
+      }),
+    )
+    document.body.focus()
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve()
+        })
+      })
+    })
+
+    const readOutput = () => ({
+      body: articleBody.toJSON(),
+      focusedBlockFrom:
+        document.activeElement instanceof HTMLButtonElement
+          ? document.activeElement.dataset['blockFrom']
+          : null,
+      focus: document.activeElement === document.body ? 'body' : 'other',
+      editor: view.state.doc.toString(),
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      focusedBlockFrom: null,
+      focus: 'body',
+      editor: source,
+    })
+  })
+
   it('keeps Tab and arrow focus on the current block in a long scrolling body', async () => {
     const paragraphs = Array.from(
       { length: 300 },
@@ -297,7 +356,8 @@ describe('Markdown block widget layout', () => {
           ? document.activeElement.dataset['blockFrom']
           : null,
       scrollAdvanced: scrollContainer.scrollTop > scrollTopAfterTab,
-      tabStayedNearCaret: scrollTopAfterTab >= scrollTopBeforeTab - 100,
+      tabStayedNearCaret:
+        Math.abs(scrollTopAfterTab - scrollTopBeforeTab) <= 100,
     })
     expect(readOutput()).toEqual({
       body: source,
