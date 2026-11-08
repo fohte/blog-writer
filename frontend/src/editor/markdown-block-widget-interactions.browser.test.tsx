@@ -897,79 +897,105 @@ describe('Markdown block widget interactions', () => {
     })
   })
 
-  it('keeps the table handle usable after entering its Markdown source', async () => {
-    const source = [
-      'Before paragraph.',
-      '',
-      tableSource,
-      '',
-      imageSource,
-      '',
-      'After paragraph.',
-    ].join('\n')
-    const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
-      showMoveHandles: true,
-      initialSelection: { anchor: 0 },
-    })
-    if (!content) throw new Error('The Markdown editor did not mount')
-    const table = content.querySelector('table')
-    if (!table) throw new Error('The table preview did not mount')
+  it.each([
+    {
+      block: 'table',
+      markdown: tableSource,
+      previewSelector: 'table',
+      sourcePreviewCount: 0,
+    },
+    {
+      block: 'image',
+      markdown: imageSource,
+      previewSelector: 'figure',
+      sourcePreviewCount: 1,
+    },
+    {
+      block: 'Mermaid diagram',
+      markdown: mermaidSource,
+      previewSelector: 'figure',
+      sourcePreviewCount: 1,
+    },
+  ])(
+    'keeps the $block handle usable after entering its Markdown source',
+    async ({ block, markdown, previewSelector, sourcePreviewCount }) => {
+      const source = `Before paragraph.\n\n${markdown}\n\nAfter paragraph.`
+      const { body, content, host, history } = mountMarkdownEditor(
+        source,
+        [],
+        undefined,
+        {
+          showMoveHandles: true,
+          initialSelection: { anchor: source.indexOf(markdown) + 2 },
+        },
+      )
+      if (!content) throw new Error('The Markdown editor did not mount')
+      if (block === 'Mermaid diagram') {
+        await act(async () => {
+          await vi.waitUntil(() => content.querySelector('svg') !== null)
+        })
+      }
+      const afterSource = {
+        body: body.toJSON(),
+        previewCount: content.querySelectorAll(previewSelector).length,
+        sourceVisible: hasEditorSource(content, markdown),
+        handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
+      }
+      const handle = host.querySelectorAll<HTMLButtonElement>(
+        '.cm-block-drag-handle',
+      )[1]
+      if (!handle) throw new Error(`The ${block} move handle did not mount`)
 
-    await act(async () => {
-      await userEvent.click(table)
-    })
-    const afterSource = {
-      body: body.toJSON(),
-      renderedTableCount: content.querySelectorAll('table').length,
-      sourceVisible: hasEditorSource(content, tableSource),
-      handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
-    }
-    const tableHandle = host.querySelectorAll<HTMLButtonElement>(
-      '.cm-block-drag-handle',
-    )[1]
-    if (!tableHandle) throw new Error('The table move handle did not mount')
+      const move = vi.spyOn(history, 'move')
+      await act(async () => {
+        await userEvent.click(
+          page.getByRole('button', { name: 'Move block' }).nth(1),
+        )
+      })
+      const menuItemElements = [
+        ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+      ]
+      const afterHandle = {
+        previewCount: content.querySelectorAll(previewSelector).length,
+        sourceVisible: hasEditorSource(content, markdown),
+        menuItems: menuItemElements.map((item) => item.textContent),
+        handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
+      }
+      const moveDown = menuItemElements.find(
+        (item) => item.textContent === 'Move down',
+      )
+      if (!moveDown)
+        throw new Error(`The ${block} Move down action did not mount`)
+      await act(async () => {
+        await userEvent.click(moveDown)
+      })
 
-    await act(async () => {
-      await userEvent.click(tableHandle)
-    })
-    const menuItemElements = [
-      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    ]
-    const moveDown = menuItemElements.find(
-      (item) => item.textContent === 'Move down',
-    )
-    const menuItems = menuItemElements.map((item) => item.textContent)
-    if (!moveDown) throw new Error('The table Move down action did not mount')
-    await act(async () => {
-      await userEvent.click(moveDown)
-    })
-
-    const readOutput = () => ({
-      afterSource,
-      body: body.toJSON(),
-      handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
-      menuItems,
-    })
-    expect(readOutput()).toEqual({
-      afterSource: {
-        body: source,
-        renderedTableCount: 0,
-        sourceVisible: true,
-        handleCount: 4,
-      },
-      body: [
-        'Before paragraph.',
-        '',
-        imageSource,
-        '',
-        tableSource,
-        '',
-        'After paragraph.',
-      ].join('\n'),
-      handleCount: 4,
-      menuItems: ['Move up', 'Move down'],
-    })
-  })
+      const readOutput = () => ({
+        afterSource,
+        afterHandle,
+        body: body.toJSON(),
+        moveCalls: move.mock.calls.map(([input]) => input),
+      })
+      expect(readOutput()).toEqual({
+        afterSource: {
+          body: source,
+          previewCount: sourcePreviewCount,
+          sourceVisible: true,
+          handleCount: 3,
+        },
+        afterHandle: {
+          previewCount: sourcePreviewCount,
+          sourceVisible: true,
+          menuItems: ['Move up', 'Move down'],
+          handleCount: 3,
+        },
+        body: `Before paragraph.\n\nAfter paragraph.\n\n${markdown}\n`,
+        moveCalls: [
+          { from: source.indexOf(markdown), destination: source.length },
+        ],
+      })
+    },
+  )
 
   it('moves a block from its handle after earlier text shifts its position', async () => {
     const source = [

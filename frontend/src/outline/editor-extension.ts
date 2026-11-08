@@ -1,5 +1,5 @@
 import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
-import { type Extension, Prec, StateEffect } from '@codemirror/state'
+import { type Extension, Prec, StateEffect, type Text } from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -19,6 +19,31 @@ import type { MoveHistory } from '#outline/move-history'
 
 const refreshBlockHandles = StateEffect.define()
 const blockHandleCleanups = new WeakMap<HTMLElement, () => void>()
+const blockStartsByView = new WeakMap<
+  EditorView,
+  { doc: Text; from: number; to: number; starts: number[] }
+>()
+
+function getVisibleBlockStarts(view: EditorView): number[] {
+  const { from, to } = view.viewport
+  const cached = blockStartsByView.get(view)
+  if (
+    cached?.doc === view.state.doc &&
+    cached.from === from &&
+    cached.to === to
+  ) {
+    return cached.starts
+  }
+
+  const starts = blockStarts(view.state, from, to)
+  blockStartsByView.set(view, {
+    doc: view.state.doc,
+    from,
+    to,
+    starts,
+  })
+  return starts
+}
 
 class BlockDragHandle extends WidgetType {
   constructor(
@@ -68,11 +93,7 @@ function createBlockHandleDecorations(
   composingViews: WeakSet<EditorView>,
 ): DecorationSet {
   const replacedBlocks = getBlockWidgetReplaceEnds(view.state)
-  const decorations = blockStarts(
-    view.state,
-    view.viewport.from,
-    view.viewport.to,
-  )
+  const decorations = getVisibleBlockStarts(view)
     .filter((from) => !replacedBlocks.has(from))
     .map((from) =>
       Decoration.widget({
