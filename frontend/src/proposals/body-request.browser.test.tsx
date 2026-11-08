@@ -299,7 +299,7 @@ describe('body request', () => {
     expect(document.querySelector('#body-request')?.tagName).toEqual('INPUT')
   })
 
-  it('opens only for the platform Mod-K shortcut', async () => {
+  it('stays closed for the modifier of the other platform', async () => {
     const { view } = createRequestEditor()
 
     await act(async () => {
