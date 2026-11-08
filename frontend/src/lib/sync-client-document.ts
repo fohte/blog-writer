@@ -34,7 +34,11 @@ export type SyncDocument = {
   doc: Y.Doc
   persistence: LocalPersistence
   status: SyncState
-  /** Last time this tab was in sync with the server. Kept in memory, so unset after a reload. */
+  /**
+   * Last time this tab was in sync with the server, counting updates made while
+   * connected because y-websocket does not acknowledge individual updates.
+   * Kept in memory, so unset after a reload.
+   */
   syncedAt: number | undefined
   connectProvider: () => Result<void, SyncClientError>
   notifyError: (error: SyncClientError) => void

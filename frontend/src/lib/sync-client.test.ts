@@ -477,6 +477,10 @@ describe('createSyncClient', () => {
     unsubscribe()
     provider?.emitConnectionClose()
     editAt(startedAt + 120_000)
+    setNow(startedAt + 180_000)
+    provider?.emitStatus('connected')
+    provider?.emitSync(true)
+    read()
 
     expect(readings).toEqual([
       { syncedAt: undefined, notifications: 0 },
@@ -484,6 +488,7 @@ describe('createSyncClient', () => {
       { syncedAt: startedAt + 30_000, notifications: 0 },
       { syncedAt: startedAt + 60_000, notifications: 1 },
       { syncedAt: startedAt + 60_000, notifications: 1 },
+      { syncedAt: startedAt + 180_000, notifications: 1 },
     ])
     client.destroy()
   })
