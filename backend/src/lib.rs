@@ -7,6 +7,7 @@ mod frontend;
 pub mod health;
 pub mod host_origin;
 pub(crate) mod html;
+pub(crate) mod images;
 #[expect(dead_code, reason = "LLM call helpers have no production callers yet")]
 mod llm;
 pub mod llm_context;
