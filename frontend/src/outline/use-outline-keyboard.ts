@@ -44,6 +44,7 @@ export function useOutlineKeyboard({
   selectedFrom: number | undefined
   view: EditorView
 }): (OutlineHeadingEditing & { from: number }) | undefined {
+  // shortcut: an ordinal does not follow a concurrent edit above the row, which moves the selection and drops the draft; map a document position if editing the outline from several devices at once becomes common.
   const [index, setIndex] = useState<number>()
   const [focusKey, setFocusKey] = useState(0)
   // Moving through the history focuses the editor, and a row can unmount while focused; neither is the user leaving.
@@ -100,6 +101,18 @@ export function useOutlineKeyboard({
     return moved === -1 ? clampedIndex : moved
   }
 
+  // History does not report where a heading went, and the nearest match resolves duplicate texts.
+  const followText = (text: string) =>
+    readHeadings(view).flat.reduce<number | undefined>(
+      (nearest, heading, position) =>
+        heading.text === text &&
+        (nearest === undefined ||
+          Math.abs(position - clampedIndex) < Math.abs(nearest - clampedIndex))
+          ? position
+          : nearest,
+      undefined,
+    ) ?? clampedIndex
+
   const moveAndFollow = (
     input: Parameters<MoveHistory['move']>[0] | undefined,
   ) =>
@@ -135,10 +148,10 @@ export function useOutlineKeyboard({
         return Math.max(clampedIndex - 1, 0)
       case 'undo':
         history.undo(view).match(ignore, ignore)
-        return clampedIndex
+        return followText(heading.text)
       case 'redo':
         history.redo(view).match(ignore, ignore)
-        return clampedIndex
+        return followText(heading.text)
       case 'exit':
         view.focus()
         return undefined

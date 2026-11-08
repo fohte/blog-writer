@@ -223,26 +223,54 @@ describe('outline keyboard editing', () => {
       const moved = snapshot()
       await press({ key: 'z', metaKey: true })
 
-      const readResult = () => ({ moved, undone: snapshot().body })
+      const readResult = () => ({ moved, undone: snapshot() })
 
       expect(readResult()).toEqual({
         moved: { body: expected, selected, focused: true },
-        undone: initialBody,
+        undone: { body: initialBody, selected, focused: true },
       })
     },
   )
+
+  it('keeps the draft while an IME composition handles Enter', async () => {
+    await enterOutline()
+    await type('Draft')
+    await press({ key: 'Enter', isComposing: true })
+
+    expect(snapshot()).toEqual({
+      body: initialBody,
+      selected: 'Draft',
+      focused: true,
+    })
+  })
+
+  it('leaves mod+z to the input while the draft has changes', async () => {
+    await enterOutline()
+    await type('Renamed')
+    await press({ key: 'ArrowDown' })
+    await type('Draft')
+    await press({ key: 'z', metaKey: true })
+
+    expect(snapshot()).toEqual({
+      body: '# Renamed\nu\n## B\nv\n## C\nw\n# D\n',
+      selected: 'Draft',
+      focused: true,
+    })
+  })
 
   it('returns to the body with Escape after applying the draft', async () => {
     await enterOutline()
     await type('Renamed')
     await press({ key: 'Escape' })
 
-    expect(snapshot()).toEqual({
+    const readResult = () => ({ ...snapshot(), editorFocused: view.hasFocus })
+
+    expect(readResult()).toEqual({
       body: '# Renamed\nu\n## B\nv\n## C\nw\n# D\n',
       selected: null,
       focused: false,
+      editorFocused: true,
     })
-    expect(view.hasFocus).toBe(true)
   })
 
   it('leaves the outline and applies the draft when focus moves away', async () => {
