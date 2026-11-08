@@ -926,12 +926,10 @@ describe('SourcePanel', () => {
     const readResult = () => ({
       row: readSourceRow(),
       alert: host?.querySelector('[role="alert"]')?.textContent,
-      pasteActionVisible: hasElementWithText('button', '本文を貼り付けて登録'),
     })
     expect(readResult()).toEqual({
-      row: 'data.example.invalid×data.example.invalid · 取得できず (要ログイン)',
+      row: 'data.example.invalid×data.example.invalid · 取得できず (要ログイン)本文を貼り付けて登録',
       alert: 'ログインが必要なページのため、資料ページを取得できませんでした。',
-      pasteActionVisible: true,
     })
     doc.destroy()
   })
