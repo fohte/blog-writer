@@ -10,6 +10,7 @@ import {
   openBodyRequest,
   transitionProposalEditorExtensions,
 } from '#editor/index'
+import { useArticlePulls } from '#hooks/use-article-pulls'
 import {
   ExportApiError,
   type ExportDestination,
@@ -62,6 +63,7 @@ export function App() {
     trashArticle,
     restoreArticle,
   } = useSyncClient()
+  const articlePulls = useArticlePulls(exportDestinations)
 
   useEffect(() => {
     let active = true
@@ -211,6 +213,7 @@ export function App() {
       exportScreen={(context) => (
         <ArticleExportContainer
           article={articles.find(({ id }) => id === context.articleId)}
+          articlePulls={articlePulls}
           client={client}
           context={context}
           destinationError={exportDestinationsError}
@@ -292,6 +295,7 @@ export function App() {
         )
       }}
       premisePanel={(context) => <PremiseDiscussionPanel doc={context.doc} />}
+      readArticlePull={articlePulls.read}
       ready={canCreate}
       requiresAuthentication={requiresAuthentication}
       statuses={statuses}

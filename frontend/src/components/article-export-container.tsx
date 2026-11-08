@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { ArticleExportContext } from '#components/article-editor-view'
 import {
@@ -9,12 +9,17 @@ import { ArticleFileSaveSection } from '#components/article-file-save-section'
 import { ArticleFileSyncSection } from '#components/article-file-sync-section'
 import { ArticlePublishContainer } from '#components/article-publish-container'
 import { SyncStatus } from '#components/sync-status'
-import type { ExportDestination } from '#lib/article-export-api'
+import type { ArticlePulls } from '#hooks/use-article-pulls'
+import {
+  type ExportDestination,
+  formatArticlePull,
+} from '#lib/article-export-api'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
 type ArticleExportContainerProps = {
   context: ArticleExportContext
   article?: Article | undefined
+  articlePulls: ArticlePulls
   client?: SyncClientApi | undefined
   destinations?: ExportDestination[] | undefined
   destinationError?: string | undefined
@@ -36,12 +41,20 @@ function describeFileSync(article: Article | undefined) {
 export function ArticleExportContainer({
   context,
   article,
+  articlePulls,
   client,
   destinations,
   destinationError,
   fileSyncEnabled,
 }: ArticleExportContainerProps) {
   const { articleId, doc, replaceBody, syncStatus, onBack } = context
+  const pull =
+    article === undefined
+      ? undefined
+      : articlePulls.read(article.exportDestinationId, article.id)
+  const { reload: reloadPulls } = articlePulls
+  // A pull request can be merged on GitHub long after the app loaded.
+  useEffect(reloadPulls, [reloadPulls])
   const canPublish =
     article !== undefined &&
     client !== undefined &&
@@ -63,9 +76,11 @@ export function ArticleExportContainer({
             value: 'publish' as const,
             label: '公開先へ PR',
             detail:
-              destinationError === undefined
-                ? '差分を確認してから PR を作成'
-                : '公開先を読み込めませんでした',
+              destinationError !== undefined
+                ? '公開先を読み込めませんでした'
+                : pull !== undefined
+                  ? formatArticlePull(pull)
+                  : '差分を確認してから PR を作成',
           },
         ]
       : []),
@@ -115,6 +130,7 @@ export function ArticleExportContainer({
           {canPublish ? (
             <ArticlePublishContainer
               article={article}
+              articlePulls={articlePulls}
               client={client}
               destinations={destinations}
               doc={doc}

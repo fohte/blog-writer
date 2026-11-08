@@ -1005,6 +1005,54 @@
         }
       }
     },
+    "/api/export/{destination_id}/pulls": {
+      "get": {
+        "operationId": "list_article_pulls",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "description": "Configured export destination ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest pull request of each article, among the 100 newest pull requests of the destination",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticlePullListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Destination not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Export publishing is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/file-sync/configuration": {
       "get": {
         "operationId": "get_configuration",
@@ -1613,6 +1661,42 @@
           }
         }
       },
+      "ArticlePull": {
+        "type": "object",
+        "required": ["article_id", "number", "state", "url"],
+        "properties": {
+          "article_id": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/ArticlePullState"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "ArticlePullListResponse": {
+        "type": "object",
+        "required": ["pulls"],
+        "properties": {
+          "pulls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArticlePull"
+            }
+          }
+        }
+      },
+      "ArticlePullState": {
+        "type": "string",
+        "enum": ["open", "closed", "merged"]
+      },
       "BodyRequest": {
         "type": "object",
         "required": ["instruction", "premise", "headings", "section", "target"],
@@ -1757,8 +1841,18 @@
       },
       "DestinationResponse": {
         "type": "object",
-        "required": ["id", "format", "frontmatter_template"],
+        "required": [
+          "id",
+          "repository",
+          "base_branch",
+          "path_template",
+          "format",
+          "frontmatter_template"
+        ],
         "properties": {
+          "base_branch": {
+            "type": "string"
+          },
           "format": {
             "$ref": "#/components/schemas/ExportFormat"
           },
@@ -1766,6 +1860,13 @@
             "type": "string"
           },
           "id": {
+            "type": "string"
+          },
+          "path_template": {
+            "type": "string",
+            "description": "Path inside the repository, where `{slug}` stands for the article slug."
+          },
+          "repository": {
             "type": "string"
           }
         }

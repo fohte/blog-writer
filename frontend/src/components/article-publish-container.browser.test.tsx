@@ -8,7 +8,7 @@ import * as Y from 'yjs'
 import { setBody } from '#article/body'
 import { exportArticleBody } from '#article/export'
 import { ArticlePublishContainer } from '#components/article-publish-container'
-import type { ExportDestination } from '#lib/article-export-api'
+import type { ArticlePull, ExportDestination } from '#lib/article-export-api'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
 vi.mock('#article/export', { spy: true })
@@ -52,9 +52,21 @@ const article: Article = {
 const destinations: ExportDestination[] = [
   {
     id: 'sample-site',
+    repository: 'example/site',
+    base_branch: 'main',
+    path_template: 'posts/{slug}.md',
     format: 'markdown',
     frontmatter_template: 'title: {{ title }}\ndate: {{ date }}',
   },
+]
+
+const reloadPulls = vi.fn<() => void>()
+
+const destinationFacts = [
+  'リポジトリexample/site',
+  '取り込み先main',
+  'パスposts/{slug}.md',
+  '形式Markdown',
 ]
 
 function renderPublish(
@@ -63,6 +75,7 @@ function renderPublish(
     article?: Article
     destinations?: ExportDestination[]
     body?: string
+    pull?: ArticlePull
   } = {},
 ) {
   const host = document.createElement('div')
@@ -84,6 +97,7 @@ function renderPublish(
       return ok(undefined)
     },
     listArticles: () => [article],
+    getArticleSummary: () => undefined,
     getStatus: () => undefined,
     getSyncedAt: () => undefined,
     getError: () => undefined,
@@ -95,6 +109,7 @@ function renderPublish(
     root?.render(
       <ArticlePublishContainer
         article={options.article ?? { ...article, ...settings }}
+        articlePulls={{ read: () => options.pull, reload: reloadPulls }}
         client={client}
         destinations={options.destinations ?? destinations}
         doc={currentDoc}
@@ -239,6 +254,28 @@ async function exerciseConflictRefresh() {
   }
 }
 
+function readPublishSummary() {
+  return {
+    facts: [...document.querySelectorAll('dl > div')].map(
+      ({ textContent }) => textContent,
+    ),
+    resolvedPath: document.querySelector('label + p')?.textContent ?? null,
+    diffSize: document.querySelector('h2 + span')?.textContent ?? null,
+  }
+}
+
+function readPublishFooter() {
+  const footer = document.querySelector(
+    '[aria-label="PR を作成"] > div:last-child',
+  )
+  return {
+    text: footer?.querySelector('span')?.textContent ?? null,
+    buttons: [...(footer?.querySelectorAll('button') ?? [])].map(
+      ({ textContent }) => textContent,
+    ),
+  }
+}
+
 function readDestinationState() {
   return {
     selectedDestination:
@@ -322,9 +359,109 @@ afterEach(() => {
   doc?.destroy()
   doc = undefined
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('ArticlePublishContainer', () => {
+  it('shows where the article will be published before any diff is requested', () => {
+    renderPublish()
+
+    expect(readPublishSummary()).toEqual({
+      facts: destinationFacts,
+      resolvedPath: '→ posts/sample-post.md',
+      diffSize: null,
+    })
+  })
+
+  it.each([
+    ['an empty slug', ''],
+    ['an invalid slug', 'not a slug'],
+  ])('leaves out the resolved path for %s', (_name, exportSlug) => {
+    renderPublish({ exportSlug })
+
+    expect(readPublishSummary()).toEqual({
+      facts: destinationFacts,
+      resolvedPath: null,
+      diffSize: null,
+    })
+  })
+
+  it('shows the changed line counts and when the destination was read', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 0, 15, 9, 5) })
+    renderPublish({}, { body: 'New line' })
+    getResponses.push({
+      status: 200,
+      payload: {
+        content:
+          '---\ntitle: "Sample article"\ndate: "2026-01-15"\n---\n\nOld line',
+        sha: 'base-sha',
+      },
+    })
+
+    await clickAndWait('差分を見る', waitForDiff)
+
+    expect(readPublishSummary()).toEqual({
+      facts: destinationFacts,
+      resolvedPath: '→ posts/sample-post.md',
+      diffSize: '+1 −1 · 取得 09:05',
+    })
+  })
+
+  it('offers to add to an open pull request and rereads its state afterwards', async () => {
+    reloadPulls.mockClear()
+    renderPublish(
+      {},
+      {
+        pull: {
+          article_id: article.id,
+          number: 14,
+          state: 'open',
+          url: 'https://github.com/example/site/pull/14',
+        },
+      },
+    )
+    await clickAndWait('差分を見る', waitForDiff)
+    const beforePublish = readPublishFooter()
+    await clickAndWait('PR #14 に追加する', waitForPublishedLink)
+    const readOutput = () => ({
+      beforePublish,
+      afterPublish: readPublishFooter(),
+      reloads: reloadPulls.mock.calls.length,
+    })
+
+    expect(readOutput()).toEqual({
+      beforePublish: {
+        text: 'open な PR #14 があるので、そこにコミットを追加します。差分の確認後に公開先が変わっていたら、差分の確認からやり直します。',
+        buttons: ['差分を見る', 'PR #14 に追加する'],
+      },
+      afterPublish: {
+        text: 'PR に反映しました。 PR を開く',
+        buttons: ['差分を見る'],
+      },
+      reloads: 1,
+    })
+  })
+
+  it('offers a new pull request when the last one is already merged', async () => {
+    renderPublish(
+      {},
+      {
+        pull: {
+          article_id: article.id,
+          number: 11,
+          state: 'merged',
+          url: 'https://github.com/example/site/pull/11',
+        },
+      },
+    )
+    await clickAndWait('差分を見る', waitForDiff)
+
+    expect(readPublishFooter()).toEqual({
+      text: '差分の確認後に公開先が変わっていたら、差分の確認からやり直します。',
+      buttons: ['差分を見る', 'PR を作成'],
+    })
+  })
+
   it('posts the exact content and sha shown in the diff', async () => {
     renderPublish()
     await clickAndWait('差分を見る', waitForDiff)
@@ -440,6 +577,9 @@ describe('ArticlePublishContainer', () => {
   it('requires a new diff after the publishing destination changes', async () => {
     const otherDestination: ExportDestination = {
       id: 'another-site',
+      repository: 'example/another-site',
+      base_branch: 'main',
+      path_template: 'posts/{slug}.md',
       format: 'markdown',
       frontmatter_template: 'title: {{ title }}',
     }
@@ -557,6 +697,9 @@ describe('ArticlePublishContainer', () => {
         destinations: [
           {
             id: 'sample-site',
+            repository: 'example/site',
+            base_branch: 'main',
+            path_template: 'posts/{slug}.mdx',
             format: 'mdx',
             frontmatter_template: 'title: {{ title }}\ndate: {{ date }}',
           },

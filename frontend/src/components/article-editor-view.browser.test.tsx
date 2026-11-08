@@ -76,6 +76,7 @@ function renderWorkspace(
       },
       updateArticleExportSettings: () => ok(undefined),
       listArticles: () => articlesRef.current,
+      getArticleSummary: () => undefined,
       getStatus: () => syncStatus,
       getSyncedAt: () => syncedAt,
       getError: () => undefined,
@@ -87,6 +88,7 @@ function renderWorkspace(
     return (
       <StrictMode>
         <ArticleWorkspace
+          readArticlePull={() => undefined}
           articles={articles}
           client={client}
           error={error}
@@ -1585,6 +1587,7 @@ First paragraph.
       updateArticleTitle: () => ok(undefined),
       updateArticleExportSettings: () => ok(undefined),
       listArticles: () => [firstArticle, secondArticle],
+      getArticleSummary: () => undefined,
       getStatus: () => 'synced',
       getSyncedAt: () => undefined,
       getError: () => undefined,

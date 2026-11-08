@@ -176,6 +176,7 @@ async function renderApp(articleDoc = doc) {
     updateArticleTitle: () => ok(undefined),
     updateArticleExportSettings: () => ok(undefined),
     listArticles: () => [article],
+    getArticleSummary: () => undefined,
     getStatus: () => 'synced' as const,
     getSyncedAt: () => undefined,
     getError: () => undefined,

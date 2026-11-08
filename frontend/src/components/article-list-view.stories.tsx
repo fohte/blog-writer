@@ -1,9 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
 import { ArticleListView } from '#components/article-list-view'
-import type { Article } from '#lib/sync-client'
+import type { ArticlePulls } from '#hooks/use-article-pulls'
+import type { Article, ArticleSummary } from '#lib/sync-client'
 
 const emptyBody: (id: string) => string = () => ''
+const noSummary: (id: string) => ArticleSummary | undefined = () => undefined
+const noPull: ArticlePulls['read'] = () => undefined
 
 const meta = {
   component: ArticleListView,
@@ -16,6 +19,8 @@ const meta = {
     requiresAuthentication: false,
     canCreate: true,
     readArticleBody: emptyBody,
+    readArticleSummary: noSummary,
+    readArticlePull: noPull,
     onSearchQueryChange: () => {},
     onSortOrderChange: () => {},
     onCreateArticle: () => {},
@@ -98,6 +103,54 @@ export const SearchResults: Story = {
 export const NoSearchResults: Story = {
   name: 'the list says that no article matches the search text.',
   args: { articles, statuses, searchQuery: 'absent' },
+}
+
+const summaries: Record<string, ArticleSummary> = {
+  'article-a': { unorganizedMemoCount: 7, bodyIsEmpty: false },
+  'article-b': { unorganizedMemoCount: 3, bodyIsEmpty: true },
+  'article-c': { unorganizedMemoCount: 0, bodyIsEmpty: true },
+  'article-d': { unorganizedMemoCount: 0, bodyIsEmpty: false },
+}
+
+export const WithSummaries: Story = {
+  name: 'the list shows the unorganized memo count and a missing body only on the rows they apply to.',
+  args: { articles, readArticleSummary: (id) => summaries[id] },
+}
+
+export const WithPullRequests: Story = {
+  name: 'the list shows the pull request state only on the rows that have one',
+  args: {
+    articles,
+    readArticlePull: (_destinationId, articleId) =>
+      articleId === 'article-a'
+        ? {
+            article_id: articleId,
+            number: 14,
+            state: 'open',
+            url: 'https://github.com/example/site/pull/14',
+          }
+        : articleId === 'article-c'
+          ? {
+              article_id: articleId,
+              number: 11,
+              state: 'merged',
+              url: 'https://github.com/example/site/pull/11',
+            }
+          : undefined,
+  },
+}
+
+export const SyncProgress: Story = {
+  name: 'the list counts the synchronized articles while the rest are still in progress.',
+  args: {
+    articles,
+    statuses: {
+      'article-a': 'synced',
+      'article-b': 'syncing',
+      'article-c': 'syncing',
+      'article-d': 'syncing',
+    },
+  },
 }
 
 export const WithTrash: Story = {

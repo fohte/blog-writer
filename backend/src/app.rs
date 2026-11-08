@@ -796,6 +796,9 @@ mod tests {
                 json!({
                     "destinations": [{
                         "id": "site-one",
+                        "repository": "writer/notes",
+                        "base_branch": "main",
+                        "path_template": "posts/{slug}.mdx",
                         "format": "mdx",
                         "frontmatter_template": "title: {{ title }}"
                     }]

@@ -9,16 +9,19 @@ import {
   prependArticleFrontmatter,
 } from '#article/export'
 import { ArticlePublishView } from '#components/article-publish-view'
+import type { ArticlePulls } from '#hooks/use-article-pulls'
 import {
   ExportConflictError,
   type ExportDestination,
   getExportArticleFile,
   publishArticle,
 } from '#lib/article-export-api'
+import { countDiffLines } from '#lib/count-diff-lines'
 import type { Article, SyncClientApi } from '#lib/sync-client'
 
 type ArticlePublishContainerProps = {
   article: Article
+  articlePulls: ArticlePulls
   doc: Y.Doc
   destinations: ExportDestination[]
   client: SyncClientApi
@@ -32,6 +35,9 @@ type PreparedPublish = {
   content: string
   sha: string | null
   original: string
+  added: number
+  removed: number
+  fetchedAt: number
 }
 
 function publishFingerprint(
@@ -53,6 +59,7 @@ function defaultFrontmatter(destination: ExportDestination, article: Article) {
 
 export function ArticlePublishContainer({
   article,
+  articlePulls,
   doc,
   destinations,
   client,
@@ -107,6 +114,7 @@ export function ArticlePublishContainer({
   const selectedDestinationId = selectedDestination?.id
   const destinationUnavailable =
     article.exportDestinationId !== undefined && !savedDestinationExists
+  const pull = articlePulls.read(selectedDestinationId, article.id)
 
   function isCurrentRequest(id: number) {
     return mounted.current && requestId.current === id
@@ -242,6 +250,7 @@ export function ArticlePublishContainer({
       setBusyAction(undefined)
       return undefined
     }
+    const original = fileResult.file.content ?? ''
     setPrepared({
       destinationId,
       slug,
@@ -249,7 +258,9 @@ export function ArticlePublishContainer({
       body,
       content,
       sha: fileResult.file.sha,
-      original: fileResult.file.content ?? '',
+      original,
+      ...countDiffLines(original, content),
+      fetchedAt: Date.now(),
     })
     setBusyAction(undefined)
     return currentRequestId
@@ -296,6 +307,7 @@ export function ArticlePublishContainer({
     } else {
       setPrepared(undefined)
       setPublishedUrl(result.url)
+      articlePulls.reload()
     }
     setBusyAction(undefined)
   }
@@ -310,7 +322,13 @@ export function ArticlePublishContainer({
       diff={
         prepared === undefined
           ? undefined
-          : { original: prepared.original, modified: prepared.content }
+          : {
+              original: prepared.original,
+              modified: prepared.content,
+              added: prepared.added,
+              removed: prepared.removed,
+              fetchedAt: prepared.fetchedAt,
+            }
       }
       error={error}
       frontmatter={frontmatter}
@@ -329,6 +347,7 @@ export function ArticlePublishContainer({
         setPublishedUrl(undefined)
         updateSettings({ slug: value })
       }}
+      openPull={pull?.state === 'open' ? pull : undefined}
       publishedUrl={publishedUrl}
       selectedDestinationId={selectedDestinationId}
       slug={slug}
