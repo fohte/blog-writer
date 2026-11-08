@@ -2,7 +2,10 @@ import { indentMore } from '@codemirror/commands'
 import { Facet } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 
-import type { SuggestionPosition } from '#editor/suggestion-layer-range'
+import {
+  suggestionAtCursor,
+  type SuggestionPosition,
+} from '#editor/suggestion-layer-range'
 
 export type SuggestionDirection = 'next' | 'previous'
 
@@ -22,10 +25,11 @@ function adjacentStop(
   head: number,
   direction: SuggestionDirection,
 ): SuggestionPosition | undefined {
-  // Comparing with the cursor rather than the focused stop keeps moving when a stop starts where the focused one ends.
-  return direction === 'next'
-    ? (stops.find(({ from }) => from > head) ?? stops[0])
-    : (stops.findLast(({ to }) => to < head) ?? stops.at(-1))
+  if (direction === 'next') {
+    return stops.find(({ from }) => from > head) ?? stops[0]
+  }
+  const start = suggestionAtCursor(stops, head)?.from ?? head
+  return stops.findLast(({ from }) => from < start) ?? stops.at(-1)
 }
 
 export function moveToAdjacentSuggestion(

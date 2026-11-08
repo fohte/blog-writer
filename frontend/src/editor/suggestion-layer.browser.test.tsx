@@ -1752,19 +1752,26 @@ describe('suggestion layer', () => {
       return { id, from, to: from + text.length, replacement: 'revised' }
     }
 
-    function createEditorWithTwoSuggestions(extensions: Extension[] = []) {
-      const editor = createEditor(initialText, undefined, extensions)
-      editor.layer
-        .setSuggestions([
-          lineSuggestion('first', selectedFrom, 'selected sentence'),
-          lineSuggestion('second', closingFrom, 'closing sentence'),
-        ])
-        .match(
+    function setLayerSuggestions(
+      layer: ReturnType<typeof createSuggestionLayer>,
+      suggestions: ReturnType<typeof lineSuggestion>[],
+    ): void {
+      act(() => {
+        layer.setSuggestions(suggestions).match(
           () => undefined,
           () => {
             throw new Error('Could not set suggestions')
           },
         )
+      })
+    }
+
+    function createEditorWithTwoSuggestions(extensions: Extension[] = []) {
+      const editor = createEditor(initialText, undefined, extensions)
+      setLayerSuggestions(editor.layer, [
+        lineSuggestion('first', selectedFrom, 'selected sentence'),
+        lineSuggestion('second', closingFrom, 'closing sentence'),
+      ])
       return editor
     }
 
@@ -1836,29 +1843,19 @@ describe('suggestion layer', () => {
 
     it('counts the suggestions of every layer and follows a change in another layer', () => {
       const otherLayer = createSuggestionLayer()
-      const { host, setSuggestion, view } = createEditor(
-        initialText,
-        undefined,
-        [otherLayer.extension],
-      )
-      setSuggestion(lineSuggestion('own', selectedFrom, 'selected sentence'))
-      const setOtherLayer = (
-        suggestions: Parameters<typeof otherLayer.setSuggestions>[0],
-      ) => {
-        act(() => {
-          otherLayer.setSuggestions(suggestions).match(
-            () => undefined,
-            () => {
-              throw new Error('Could not set the other layer suggestions')
-            },
-          )
-        })
-      }
-      setOtherLayer([lineSuggestion('other', openingFrom, 'opening sentence')])
+      const { host, layer, view } = createEditor(initialText, undefined, [
+        otherLayer.extension,
+      ])
+      setLayerSuggestions(layer, [
+        lineSuggestion('own', selectedFrom, 'selected sentence'),
+      ])
+      setLayerSuggestions(otherLayer, [
+        lineSuggestion('other', openingFrom, 'opening sentence'),
+      ])
       moveCursor(view, selectedFrom)
       const withOtherLayer = readBar(host)
 
-      setOtherLayer([])
+      setLayerSuggestions(otherLayer, [])
 
       const readOutput = () => ({ withOtherLayer, alone: readBar(host) })
       expect(readOutput()).toEqual({
@@ -1874,9 +1871,7 @@ describe('suggestion layer', () => {
       moveCursor(view, selectedFrom)
 
       const click = async (name: string) => {
-        const button = host.querySelector(`button[aria-label="${name}"]`)
-        if (!button) throw new Error(`Missing the ${name} button`)
-        await userEvent.click(button)
+        await clickSheetButton(host, name)
         return { cursor: view.state.selection.main.head, bar: readBar(host) }
       }
       const output = {
@@ -1892,6 +1887,59 @@ describe('suggestion layer', () => {
         previous: { cursor: selectedFrom, bar: '段落を置き換え‹1/2›却下採用' },
         wrapped: { cursor: closingFrom, bar: '段落を置き換え‹2/2›却下採用' },
         editorFocused: true,
+      })
+    })
+
+    function clickSheetButton(host: HTMLElement, name: string) {
+      const button = host.querySelector(`button[aria-label="${name}"]`)
+      if (!button) throw new Error(`Missing the ${name} button`)
+      return userEvent.click(button)
+    }
+
+    it('reaches and leaves the later of two touching suggestions', async () => {
+      const { host, layer, view } = createEditor(initialText, undefined, [
+        suggestionActionsPresentation.of('sheet'),
+      ])
+      setLayerSuggestions(layer, [
+        lineSuggestion('first', 0, 'opening'),
+        lineSuggestion('second', 'opening'.length, ' sentence'),
+      ])
+      moveCursor(view, 0)
+
+      await clickSheetButton(host, '次の提案')
+      const afterNext = readBar(host)
+      await clickSheetButton(host, '前の提案')
+
+      const readOutput = () => ({ afterNext, afterPrevious: readBar(host) })
+      expect(readOutput()).toEqual({
+        afterNext: '選択範囲を置き換え‹2/2›却下採用',
+        afterPrevious: '選択範囲を置き換え‹1/2›却下採用',
+      })
+    })
+
+    it('moves back to a suggestion in another layer from the bottom sheet', async () => {
+      const otherLayer = createSuggestionLayer()
+      const { host, layer, view } = createEditor(initialText, undefined, [
+        suggestionActionsPresentation.of('sheet'),
+        otherLayer.extension,
+      ])
+      setLayerSuggestions(layer, [
+        lineSuggestion('own', closingFrom, 'closing sentence'),
+      ])
+      setLayerSuggestions(otherLayer, [
+        lineSuggestion('other', selectedFrom, 'selected sentence'),
+      ])
+      moveCursor(view, closingFrom)
+
+      await clickSheetButton(host, '前の提案')
+
+      const readOutput = () => ({
+        cursor: view.state.selection.main.head,
+        bar: readBar(host),
+      })
+      expect(readOutput()).toEqual({
+        cursor: selectedFrom,
+        bar: '段落を置き換え‹1/2›却下採用',
       })
     })
   })
