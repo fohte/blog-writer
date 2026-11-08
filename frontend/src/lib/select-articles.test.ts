@@ -4,9 +4,9 @@ import { type ArticleSortOrder, selectArticles } from '#lib/select-articles'
 import type { Article } from '#lib/sync-client'
 
 const articles: Article[] = [
-  { id: 'first', title: 'Morning Routine', createdAt: 100, updatedAt: 500 },
-  { id: 'second', title: 'Unedited draft', createdAt: 300 },
-  { id: 'third', title: 'Garden notes', createdAt: 200, updatedAt: 400 },
+  { id: 'first', title: 'Morning Routine', createdAt: 100, updatedAt: 400 },
+  { id: 'second', title: 'Unedited draft', createdAt: 450 },
+  { id: 'third', title: 'Garden notes', createdAt: 200, updatedAt: 500 },
 ]
 
 const bodies: Record<string, string> = {
@@ -21,7 +21,7 @@ describe('selectArticles', () => {
       'puts recent edits first, using the creation time of an unedited article',
       '',
       'edited',
-      ['first', 'third', 'second'],
+      ['third', 'second', 'first'],
     ],
     [
       'lists the oldest article first',
@@ -30,7 +30,7 @@ describe('selectArticles', () => {
       ['first', 'third', 'second'],
     ],
     ['finds a title ignoring case', 'ROUTINE', 'edited', ['first']],
-    ['finds body text ignoring case', 'short', 'edited', ['first', 'third']],
+    ['finds body text ignoring case', 'short', 'edited', ['third', 'first']],
     ['ignores surrounding spaces', '  beans ', 'edited', ['third']],
     ['keeps the sort order of matches', 'short', 'created', ['first', 'third']],
     ['returns nothing without a match', 'absent', 'edited', []],
