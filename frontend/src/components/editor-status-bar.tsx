@@ -1,5 +1,6 @@
 import { Kbd } from '@fohte/ui/kbd'
 
+import { altLabel, modLabel, writeMemoKeyLabel } from '#lib/key-labels'
 import type { LlmRoute } from '#lib/llm-settings'
 import type { SyncState } from '#lib/sync-client'
 
@@ -14,10 +15,6 @@ const llmRouteLabels: Record<LlmRoute, string> = {
   server: 'LLM サーバー',
   local: 'LLM ローカル',
 }
-
-const isApple = /Mac|iPhone|iPad/u.test(navigator.userAgent)
-const modLabel = isApple ? '⌘' : 'Ctrl+'
-const altLabel = isApple ? '⌥' : 'Alt+'
 
 const formatTime = (time: number) =>
   new Date(time).toLocaleTimeString('ja-JP', {
@@ -54,7 +51,7 @@ export function EditorStatusBar({
       )}
       <span className="flex-1" />
       <span>
-        <Kbd>{modLabel}K</Kbd> 依頼
+        <Kbd>{modLabel}J</Kbd> 依頼
       </span>
       <span>
         <Kbd>Tab</Kbd> 提案を選ぶ・採用
@@ -62,6 +59,9 @@ export function EditorStatusBar({
       <span>
         <Kbd>{altLabel}↑</Kbd>
         <Kbd>{altLabel}↓</Kbd> 移動
+      </span>
+      <span>
+        <Kbd>{writeMemoKeyLabel}</Kbd> メモ
       </span>
     </footer>
   )

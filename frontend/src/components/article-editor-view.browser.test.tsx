@@ -1151,6 +1151,44 @@ First paragraph.
     })
   })
 
+  it('moves to the memo input with the memo shortcut from another tab', async () => {
+    const article: Article = {
+      id: 'article-memo-shortcut',
+      title: 'A fresh draft',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    renderWorkspace(article, articleDoc)
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const modifier = modifierKey()
+
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: '前提を決める' }))
+    })
+    const tabBeforeShortcut = host?.querySelector(
+      '[role="tab"][aria-selected="true"]',
+    )?.textContent
+    await act(async () => {
+      await userEvent.keyboard(`{${modifier}>}{Shift>}M{/Shift}{/${modifier}}`)
+    })
+
+    const readShortcutOutput = () => ({
+      tabBeforeShortcut,
+      tabAfterShortcut: host?.querySelector(
+        '[role="tab"][aria-selected="true"]',
+      )?.textContent,
+      focusedElementId: document.activeElement?.id,
+    })
+    expect(readShortcutOutput()).toEqual({
+      tabBeforeShortcut: '前提',
+      tabAfterShortcut: 'メモ',
+      focusedElementId: 'new-memo',
+    })
+  })
+
   it('guides an empty article to the premise or a new memo until a memo exists', async () => {
     const article: Article = {
       id: 'article-empty',
@@ -1168,7 +1206,7 @@ First paragraph.
       host?.querySelector('[role="tab"][aria-selected="true"]')?.textContent
     const hasStartButtons = () =>
       [...(host?.querySelectorAll('button') ?? [])].some(
-        (button) => button.textContent === 'メモを書く',
+        (button) => button.textContent === '前提を決める',
       )
     const startButtonsBeforeMemo = hasStartButtons()
 
@@ -1217,7 +1255,7 @@ First paragraph.
     })
     const hasStartButtons = () =>
       [...(host?.querySelectorAll('button') ?? [])].some(
-        (button) => button.textContent === 'メモを書く',
+        (button) => button.textContent === '前提を決める',
       )
     const startButtonsBeforeTyping = hasStartButtons()
     const editor = host?.querySelector<HTMLElement>('.cm-content')

@@ -4,7 +4,6 @@ import { Tabs, TabsList, TabsPanel, TabsTab } from '@fohte/ui/tabs'
 import { err, ok, type Result } from 'neverthrow'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
 import type * as Y from 'yjs'
 
 import { getBody } from '#article/index'
@@ -28,6 +27,7 @@ import {
 } from '#editor/index'
 import { useMobileViewport } from '#hooks/use-mobile-viewport'
 import { useVisualViewportArea } from '#hooks/use-visual-viewport-area'
+import { useWriteMemo } from '#hooks/use-write-memo'
 import type { SyncState } from '#lib/sync-client'
 import { MemoPanel } from '#memos/memo-panel'
 import {
@@ -156,6 +156,7 @@ export function ArticleEditorView({
   const visibleArea = useVisualViewportArea()
   const mobileVisibleArea = isMobile ? visibleArea : undefined
   const [panel, setPanel] = useState<ArticleEditorPanel>(initialPanel)
+  const writeMemo = useWriteMemo(setPanel)
   const [exportView, setExportView] = useState<{
     section: ArticleExportSection | undefined
   }>()
@@ -221,13 +222,6 @@ export function ArticleEditorView({
     editorViewRef.current = nextView
     setView(nextView)
     onViewChange?.(nextView)
-  }
-
-  const writeMemo = () => {
-    flushSync(() => {
-      setPanel('memo')
-    })
-    document.getElementById('new-memo')?.focus()
   }
 
   const renderPanel = (target: ArticleEditorPanel) => {
