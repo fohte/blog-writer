@@ -8,6 +8,7 @@ import { findMoveBlockRange, flattenHeadingTree } from '#article/index'
 import type { Heading } from '#article/types'
 import { OutlineView } from '#components/outline-view'
 import { useArticleHeadings } from '#hooks/use-article-headings'
+import { useMoveConflictCounts } from '#hooks/use-move-conflict-counts'
 import {
   adoptMemoToHeading,
   insertMemoAsHeading,
@@ -68,6 +69,7 @@ export function ArticleOutline({
     }
     return counts
   }, [memos])
+  const moveConflictCounts = useMoveConflictCounts(doc, headings)
   const [error, setError] = useState<string>()
   const activeHeadingCompartment = useMemo(() => new Compartment(), [])
   const headingsRef = useRef(headings)
@@ -187,6 +189,7 @@ export function ArticleOutline({
       {...(error === undefined ? {} : { error })}
       {...(proposalState === undefined ? {} : { proposalState })}
       memoCounts={memoCounts}
+      moveConflictCounts={moveConflictCounts}
       onMove={handleMove}
       onAdoptMemo={handleAdoptMemo}
       onInsertMemo={handleInsertMemo}

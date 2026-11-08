@@ -9,7 +9,12 @@ import {
 import { createRoot, type Root } from 'react-dom/client'
 import * as Y from 'yjs'
 
+import { deriveHeadingTree } from '#article/headings'
 import type { MoveConflict } from '#article/move-conflict-detection'
+import {
+  type MoveConflictDestination,
+  moveConflictDestination,
+} from '#article/move-conflict-headings'
 import {
   getMoveConflicts,
   observeMoveConflicts,
@@ -25,6 +30,7 @@ class MoveConflictWidget extends WidgetType {
   constructor(
     readonly doc: Y.Doc,
     readonly conflict: MoveConflict,
+    readonly destination: MoveConflictDestination | undefined,
   ) {
     super()
   }
@@ -36,7 +42,9 @@ class MoveConflictWidget extends WidgetType {
       this.conflict.text === other.conflict.text &&
       this.conflict.from === other.conflict.from &&
       this.conflict.to === other.conflict.to &&
-      this.conflict.target === other.conflict.target
+      this.conflict.target === other.conflict.target &&
+      this.destination?.section === other.destination?.section &&
+      this.destination?.parent === other.destination?.parent
     )
   }
 
@@ -48,6 +56,7 @@ class MoveConflictWidget extends WidgetType {
     const render = (status?: string) => {
       root.render(
         <MoveConflictNotice
+          destination={this.destination}
           onKeep={() => {
             resolveMoveConflict(this.doc, this.conflict.id, 'keep').match(
               () => {
@@ -96,7 +105,12 @@ function refreshViews(doc: Y.Doc): void {
 }
 
 function buildDecorations(doc: Y.Doc): DecorationSet {
-  const decorations = getMoveConflicts(doc).flatMap((conflict) => {
+  const conflicts = getMoveConflicts(doc)
+  const headings =
+    conflicts.length === 0
+      ? []
+      : deriveHeadingTree(doc.getText('body').toJSON())
+  const decorations = conflicts.flatMap((conflict) => {
     return [
       Decoration.mark({ class: 'cm-move-conflict-range' }).range(
         conflict.from,
@@ -105,7 +119,11 @@ function buildDecorations(doc: Y.Doc): DecorationSet {
       Decoration.widget({
         block: true,
         side: 1,
-        widget: new MoveConflictWidget(doc, conflict),
+        widget: new MoveConflictWidget(
+          doc,
+          conflict,
+          moveConflictDestination(headings, conflict.target),
+        ),
       }).range(conflict.to),
     ]
   })
