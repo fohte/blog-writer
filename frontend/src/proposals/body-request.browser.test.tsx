@@ -114,12 +114,12 @@ function createRequestEditor(
   return { body, view, unmountAccessory }
 }
 
-function pressModK(view: EditorView) {
+function pressMod(view: EditorView, key: string) {
   view.focus()
   const modifier = navigator.platform.includes('Mac') ? 'metaKey' : 'ctrlKey'
   const event = new KeyboardEvent('keydown', {
     bubbles: true,
-    key: 'k',
+    key,
     [modifier]: true,
   })
   view.contentDOM.dispatchEvent(event)
@@ -138,7 +138,7 @@ function pressNonModK(view: EditorView) {
 
 async function openRequestInput(view: EditorView): Promise<HTMLInputElement> {
   await act(async () => {
-    pressModK(view)
+    pressMod(view, 'j')
     await Promise.resolve()
   })
   const input = document.querySelector<HTMLInputElement>('#body-request')
@@ -286,6 +286,17 @@ describe('body request', () => {
       error: '作成できませんでした · 本文エディターを準備できませんでした。',
       selected: false,
     })
+  })
+
+  it.each(['j', 'k'])('opens for the platform Mod-%s shortcut', async (key) => {
+    const { view } = createRequestEditor()
+
+    await act(async () => {
+      pressMod(view, key)
+      await Promise.resolve()
+    })
+
+    expect(document.querySelector('#body-request')?.tagName).toEqual('INPUT')
   })
 
   it('opens only for the platform Mod-K shortcut', async () => {

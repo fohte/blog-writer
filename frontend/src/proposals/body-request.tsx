@@ -101,15 +101,15 @@ export function bodyRequestExtensions(
   return [
     manager.layer.extension,
     Prec.high(
-      keymap.of([
-        {
-          key: 'Mod-k',
+      keymap.of(
+        ['Mod-j', 'Mod-k'].map((key) => ({
+          key,
           run: () => {
             manager.openRequest()
             return true
           },
-        },
-      ]),
+        })),
+      ),
     ),
   ]
 }
