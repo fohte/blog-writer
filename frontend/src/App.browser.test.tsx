@@ -2123,9 +2123,10 @@ describe('the application research and evidence integrations', () => {
       rollbackRequests,
       sourceBody: sourceBody ?? null,
       requestAborted: requestSignal?.aborted,
-      sources: listSources(doc).map(({ checkedAt, ...source }) => ({
+      sources: listSources(doc).map(({ addedAt, checkedAt, ...source }) => ({
         ...source,
         checkedAt: checkedAt === null ? null : 'saved',
+        addedAt: addedAt === null ? null : 'saved',
       })),
       evidence: listEvidence(doc).map(
         ({
@@ -2161,6 +2162,7 @@ describe('the application research and evidence integrations', () => {
           url: 'https://example.invalid/research',
           fileName: null,
           checkedAt: 'saved',
+          addedAt: 'saved',
           publishedAt: '2025-03-04',
           status: 'ready',
           summary: '',
@@ -2553,7 +2555,10 @@ describe('the application research and evidence integrations', () => {
     const readResult = () => ({
       bodyReadCount,
       bodyWriteCount,
-      sources: listSources(doc),
+      sources: listSources(doc).map(({ addedAt, ...source }) => ({
+        ...source,
+        addedAt: addedAt === null ? null : 'saved',
+      })),
       findings: listFindings(doc),
       errorMessage: exactRoleText('alert', readError),
     })
@@ -2568,6 +2573,7 @@ describe('the application research and evidence integrations', () => {
           url: 'https://example.invalid/research',
           fileName: null,
           checkedAt: '2026-02-01T00:00:00.000Z',
+          addedAt: 'saved',
           publishedAt: null,
           status: 'unavailable',
           summary: 'Earlier summary.',

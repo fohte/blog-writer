@@ -86,6 +86,7 @@ function mount({
     view: null,
     replaceBody: () => ok(undefined),
     showSources: () => {},
+    sourcesVisible: false,
     openExport: () => {},
     section,
     syncStatus: 'synced',

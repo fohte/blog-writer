@@ -21,6 +21,7 @@ import {
   type SourceEvidence,
   SourcePanelView,
 } from '#components/source-panel-view'
+import { useSourcesSeenAt } from '#hooks/use-sources-seen-at'
 import { loadLlmSettings } from '#lib/llm-settings'
 import { deleteSourceBody } from '#lib/source-api'
 import { getSourceHost } from '#research/source-format'
@@ -33,6 +34,7 @@ import {
 type SourcePanelProps = {
   articleId: string
   doc: Y.Doc
+  visible: boolean
   researchProgress?: ResearchProgressProps | undefined
   researchError?: string | undefined
 }
@@ -98,9 +100,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function SourcePanel({
   articleId,
   doc,
+  visible,
   researchProgress,
   researchError,
 }: SourcePanelProps) {
+  const seenAt = useSourcesSeenAt(articleId, visible)
   const [snapshot, setSnapshot] = useState(() => getSnapshot(doc))
   const [pending, setPending] = useState<PendingSource[]>([])
   const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null)
@@ -382,6 +386,7 @@ export function SourcePanel({
       pending={pending}
       researchProgress={researchProgress}
       researchError={researchError}
+      seenAt={seenAt}
       sources={snapshot.sources}
     />
   )

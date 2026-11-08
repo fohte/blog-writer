@@ -48,6 +48,8 @@ type SourcePanelViewProps = {
   onRetrySource: (source: Source) => void
   researchProgress?: ResearchProgressProps | undefined
   researchError?: string | undefined
+  /** ISO time this device last left the sources tab, or null if it never opened it. */
+  seenAt?: string | null | undefined
 }
 
 // Mirrors the extensions the source body import accepts.
@@ -107,6 +109,7 @@ export function SourcePanelView({
   onRetrySource,
   researchProgress,
   researchError,
+  seenAt = null,
 }: SourcePanelViewProps) {
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -241,6 +244,9 @@ export function SourcePanelView({
                       ? ` · 要確認 ${counts.needsReview.toString()}`
                       : null}
                   </span>
+                ) : null}
+                {source.addedAt !== null && source.addedAt > (seenAt ?? '') ? (
+                  <span className="shrink-0 font-mono text-xs">新規</span>
                 ) : null}
                 <Button
                   aria-label={`資料「${source.title}」を削除`}

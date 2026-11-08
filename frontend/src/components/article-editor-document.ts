@@ -2,7 +2,7 @@ import type { Extension } from '@codemirror/state'
 import { useCallback, useSyncExternalStore } from 'react'
 import type * as Y from 'yjs'
 
-import { getBody, listMemos } from '#article/index'
+import { countSources, getBody, listMemos } from '#article/index'
 import { createMoveHistory, type MoveHistory } from '#outline/index'
 
 // Extension instances may hold article state and must survive StrictMode replays.
@@ -29,8 +29,8 @@ export function getCachedEditorExtensions(
   return extensions
 }
 
-export function useEmptyArticle(doc: Y.Doc | undefined) {
-  const subscribe = useCallback(
+function useDocumentUpdates(doc: Y.Doc | undefined) {
+  return useCallback(
     (listener: () => void) => {
       doc?.on('update', listener)
       return () => {
@@ -39,11 +39,20 @@ export function useEmptyArticle(doc: Y.Doc | undefined) {
     },
     [doc],
   )
+}
+
+export function useEmptyArticle(doc: Y.Doc | undefined) {
   return useSyncExternalStore(
-    subscribe,
+    useDocumentUpdates(doc),
     () =>
       doc !== undefined &&
       getBody(doc).length === 0 &&
       listMemos(doc).length === 0,
+  )
+}
+
+export function useSourceCount(doc: Y.Doc | undefined) {
+  return useSyncExternalStore(useDocumentUpdates(doc), () =>
+    doc === undefined ? 0 : countSources(doc),
   )
 }

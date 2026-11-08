@@ -19,6 +19,7 @@ export type ArticleEditorContext = {
   view: EditorView | null
   replaceBody: (value: string) => Result<void, EditorNotReadyError>
   showSources: () => void
+  sourcesVisible: boolean
   openExport: (section?: ArticleExportSection) => void
 }
 export type ArticleExportContext = ArticleEditorContext & {

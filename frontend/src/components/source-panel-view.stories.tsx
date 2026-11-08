@@ -39,6 +39,7 @@ const readySource = {
   publishedAt: null,
   status: 'ready',
   summary: '調査結果の概要を説明しています。',
+  addedAt: null,
 } as const
 
 const firstFinding = {
@@ -92,6 +93,27 @@ export const Ready: Story = {
   name: '取得済み資料を一覧に表示する',
   args: {
     sources: [readySource],
+  },
+}
+
+export const NewlyAdded: Story = {
+  name: '資料タブを最後に見たあとに足された資料にだけ「新規」を付ける',
+  args: {
+    seenAt: '2026-02-01T00:00:00.000Z',
+    sources: [
+      {
+        ...readySource,
+        id: 'source-old',
+        title: '前から登録している資料',
+        addedAt: '2026-01-15T00:00:00.000Z',
+      },
+      {
+        ...readySource,
+        id: 'source-new',
+        title: '新しく足された資料',
+        addedAt: '2026-02-02T00:00:00.000Z',
+      },
+    ],
   },
 }
 

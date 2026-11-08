@@ -94,6 +94,7 @@ function BannerHarness({
             return ok(undefined)
           },
           showSources: () => {},
+          sourcesVisible: false,
           openExport: (section) => {
             openedSections.push(section)
           },
