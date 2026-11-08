@@ -26,8 +26,11 @@ import {
   OutlineProposalRow,
   proposalHandlers,
 } from '#components/outline-proposal-row'
+import { OutlineRowBadges } from '#components/outline-row-badges'
 import {
+  blockFrom,
   type FlatHeading,
+  type OutlineDropTarget,
   outlineViewEntries,
   sectionEnd,
   siblingHeading,
@@ -40,12 +43,6 @@ import type {
   OutlineSuggestion,
 } from '#proposals/outline'
 
-type OutlineDropTarget =
-  | { kind: 'move'; from: number; placement: 'before' | 'after' | 'child' }
-  | { kind: 'memo-heading'; from: number }
-  | { kind: 'memo-gap'; beforeFrom?: number }
-  | { kind: 'block-gap'; beforeFrom?: number }
-
 export interface OutlineViewProps {
   headings: Heading[]
   bodyLength: number
@@ -55,6 +52,8 @@ export interface OutlineViewProps {
   error?: string
   /** Adopted memo counts keyed by the heading's `from`. */
   memoCounts?: Readonly<Record<number, number>> | undefined
+  /** Leftover move conflict counts keyed by the heading's `from`. */
+  moveConflictCounts?: Readonly<Record<number, number>> | undefined
   onAdoptMemo?: ((memoId: string, markerIndex: number) => void) | undefined
   onInsertMemo?: (memoId: string, beforeFrom?: number) => void
   proposalState?: OutlineProposalState
@@ -64,13 +63,6 @@ export interface OutlineViewProps {
   onProposalReject?: (id: string) => void
 }
 
-function blockFrom(source: { data: Record<string, unknown> }) {
-  return source.data['kind'] === 'block' &&
-    typeof source.data['from'] === 'number'
-    ? source.data['from']
-    : undefined
-}
-
 function OutlineRow({
   heading,
   depth,
@@ -78,6 +70,7 @@ function OutlineRow({
   allHeadings,
   active,
   memoCount,
+  moveConflictCount,
   dropTarget,
   onMemoDropTargetChange,
   openMenu,
@@ -94,6 +87,7 @@ function OutlineRow({
   allHeadings: FlatHeading[]
   active: boolean
   memoCount: number
+  moveConflictCount: number
   dropTarget: OutlineDropTarget | undefined
   onMemoDropTargetChange: (target: OutlineDropTarget | undefined) => void
   openMenu: boolean
@@ -280,15 +274,12 @@ function OutlineRow({
       />
     </>
   )
-  const memoBadge =
-    memoCount > 0 ? (
-      <span
-        className="font-mono text-xs text-muted-foreground"
-        title="採用済みのメモ"
-      >
-        メモ {memoCount}
-      </span>
-    ) : null
+  const badges = (
+    <OutlineRowBadges
+      memoCount={memoCount}
+      moveConflictCount={moveConflictCount}
+    />
+  )
 
   return (
     <div
@@ -314,7 +305,7 @@ function OutlineRow({
           original={text}
           proposal={proposal}
           selected={active}
-          trailing={memoBadge}
+          trailing={badges}
           {...proposalHandlers(onProposalAccept, onProposalReject)}
         />
       ) : (
@@ -337,7 +328,7 @@ function OutlineRow({
             {'#'.repeat(heading.level)}
           </span>
           <span className="min-w-0 flex-1 truncate">{text}</span>
-          {memoBadge}
+          {badges}
         </div>
       )}
     </div>
@@ -352,6 +343,7 @@ export function OutlineView({
   dropTarget,
   error,
   memoCounts,
+  moveConflictCounts,
   onAdoptMemo,
   onInsertMemo,
   proposalState,
@@ -458,6 +450,9 @@ export function OutlineView({
                   }
                   heading={entry.heading}
                   memoCount={memoCounts?.[entry.heading.from] ?? 0}
+                  moveConflictCount={
+                    moveConflictCounts?.[entry.heading.from] ?? 0
+                  }
                   onAdoptMemo={onAdoptMemo}
                   onMemoDropTargetChange={setLocalGapDropTarget}
                   onMove={onMove}

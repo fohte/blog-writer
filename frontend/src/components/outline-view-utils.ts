@@ -5,6 +5,19 @@ import type { OutlineSuggestion } from '#proposals/outline'
 
 export type FlatHeading = ReturnType<typeof flattenHeadingTreeWithDepth>[number]
 
+export type OutlineDropTarget =
+  | { kind: 'move'; from: number; placement: 'before' | 'after' | 'child' }
+  | { kind: 'memo-heading'; from: number }
+  | { kind: 'memo-gap'; beforeFrom?: number }
+  | { kind: 'block-gap'; beforeFrom?: number }
+
+export function blockFrom(source: { data: Record<string, unknown> }) {
+  return source.data['kind'] === 'block' &&
+    typeof source.data['from'] === 'number'
+    ? source.data['from']
+    : undefined
+}
+
 type OutlineViewEntry =
   | {
       kind: 'heading'

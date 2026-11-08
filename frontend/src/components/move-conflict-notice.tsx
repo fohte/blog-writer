@@ -1,14 +1,28 @@
 import { Button } from '@fohte/ui/button'
 
+import type { MoveConflictDestination } from '#article/move-conflict-headings'
+
 export type MoveConflictNoticeProps = {
   text: string
+  destination?: MoveConflictDestination | undefined
   status?: string
   onMove?: () => void
   onKeep?: () => void
 }
 
+function describeDestination(destination?: MoveConflictDestination): string {
+  if (!destination)
+    return 'この文は、移動前のセクションに書き足されたものです。'
+  const place =
+    destination.parent === undefined
+      ? `「${destination.section}」`
+      : `「${destination.parent}」の下の「${destination.section}」`
+  return `この文が書かれた箇所は、${place}へ移動されています。`
+}
+
 export function MoveConflictNotice({
   text,
+  destination,
   status,
   onMove,
   onKeep,
@@ -21,7 +35,7 @@ export function MoveConflictNotice({
     >
       <p className="text-sm leading-loose whitespace-pre-wrap">{text}</p>
       <p className="text-xs leading-relaxed text-muted-foreground">
-        この文は、移動前のセクションに書き足されたものです。
+        {describeDestination(destination)}
       </p>
       {status !== undefined && status.length > 0 && (
         <p className="text-xs text-destructive" role="alert">
