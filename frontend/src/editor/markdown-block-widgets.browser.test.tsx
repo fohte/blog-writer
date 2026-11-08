@@ -20,6 +20,9 @@ const linkedTableSource = [
 ].join('\n')
 const imageUrl = 'https://assets.example.test/images/sample.webp?w=640&h=360'
 const imageSource = `![Sample](${imageUrl})`
+const uploadedImageUrl =
+  'https://assets.example.test/images/uploaded.webp?w=320&h=200'
+const uploadedImageMarkdown = `![](${uploadedImageUrl})`
 const localImageSource =
   "![Sample](data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='1'%20height='1'%3E%3C/svg%3E)"
 const mermaidSource = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
@@ -518,6 +521,7 @@ describe('image paste and drop uploads', () => {
     {
       target: 'a table cell',
       source: `${linkedTableSource}\n\nAfter paragraph.`,
+      expectedBody: `${linkedTableSource}\n\n${uploadedImageMarkdown}\n\nAfter paragraph.`,
       selector: 'table td',
       previewSelector: 'table',
       showMoveHandles: false,
@@ -525,6 +529,7 @@ describe('image paste and drop uploads', () => {
     {
       target: 'an image',
       source: `${localImageSource}\n\nAfter paragraph.`,
+      expectedBody: `${localImageSource}\n\n${uploadedImageMarkdown}\n\nAfter paragraph.`,
       selector: 'figure img',
       previewSelector: 'figure img',
       showMoveHandles: false,
@@ -532,6 +537,7 @@ describe('image paste and drop uploads', () => {
     {
       target: 'an SVG diagram',
       source: `${mermaidSource}\n\nAfter paragraph.`,
+      expectedBody: `${mermaidSource}\n\n${uploadedImageMarkdown}\n\nAfter paragraph.`,
       selector: 'svg',
       previewSelector: 'svg',
       showMoveHandles: false,
@@ -539,6 +545,7 @@ describe('image paste and drop uploads', () => {
     {
       target: 'a table link',
       source: `${linkedTableSource}\n\nAfter paragraph.`,
+      expectedBody: `${linkedTableSource}\n\n${uploadedImageMarkdown}\n\nAfter paragraph.`,
       selector: 'table a',
       previewSelector: 'table a',
       showMoveHandles: false,
@@ -546,19 +553,24 @@ describe('image paste and drop uploads', () => {
     {
       target: 'a widget move handle',
       source: `${tableSource}\n\nAfter paragraph.`,
+      expectedBody: `${tableSource}\n\n${uploadedImageMarkdown}\n\nAfter paragraph.`,
       selector: '.cm-markdown-block-widget-handle .cm-block-drag-handle',
       previewSelector: 'table',
       showMoveHandles: true,
     },
   ])(
     'uploads a dropped image from $target',
-    async ({ source, selector, previewSelector, showMoveHandles }) => {
+    async ({
+      source,
+      expectedBody,
+      selector,
+      previewSelector,
+      showMoveHandles,
+    }) => {
       const uploadedFiles: string[] = []
       const uploader: ArticleImageUploader = (file) => {
         uploadedFiles.push(file.name)
-        return okAsync({
-          src: 'https://assets.example.test/images/uploaded.webp?w=320&h=200',
-        })
+        return okAsync({ src: uploadedImageUrl })
       }
       const { body, content, host } = mountMarkdownEditor(
         source,
@@ -581,32 +593,22 @@ describe('image paste and drop uploads', () => {
         content.querySelector<HTMLElement>(selector)
       if (!target) throw new Error('The file drop target did not mount')
 
-      const posAtCoords = vi
-        .spyOn(EditorView.prototype, 'posAtCoords')
-        .mockReturnValue(source.length)
-      const expectedBody =
-        source +
-        '![](https://assets.example.test/images/uploaded.webp?w=320&h=200)'
       let drop: DragEvent | undefined
-      try {
-        await act(async () => {
-          drop = dispatchFileDrop(content, imageFile(), target)
-          await vi.waitUntil(() => body.toJSON() === expectedBody)
-        })
+      await act(async () => {
+        drop = dispatchFileDrop(content, imageFile(), target)
+        await vi.waitUntil(() => body.toJSON() === expectedBody)
+      })
 
-        const readOutput = () => ({
-          body: body.toJSON(),
-          defaultPrevented: drop?.defaultPrevented ?? false,
-          uploadedFiles,
-        })
-        expect(readOutput()).toEqual({
-          body: expectedBody,
-          defaultPrevented: true,
-          uploadedFiles: ['sample.png'],
-        })
-      } finally {
-        posAtCoords.mockRestore()
-      }
+      const readOutput = () => ({
+        body: body.toJSON(),
+        defaultPrevented: drop?.defaultPrevented ?? false,
+        uploadedFiles,
+      })
+      expect(readOutput()).toEqual({
+        body: expectedBody,
+        defaultPrevented: true,
+        uploadedFiles: ['sample.png'],
+      })
     },
   )
 
@@ -615,9 +617,7 @@ describe('image paste and drop uploads', () => {
     const uploadedFiles: string[] = []
     const uploader: ArticleImageUploader = (file) => {
       uploadedFiles.push(file.name)
-      return okAsync({
-        src: 'https://assets.example.test/images/uploaded.webp?w=320&h=200',
-      })
+      return okAsync({ src: uploadedImageUrl })
     }
     const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
       uploadArticleImage: uploader,

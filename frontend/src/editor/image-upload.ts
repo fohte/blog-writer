@@ -1,13 +1,50 @@
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import type { ResultAsync } from 'neverthrow'
 
+import { getBlockWidgetSourceRange } from '#editor/block-widget'
+
 type ArticleImageUploadError = { message: string }
 
 export type ArticleImageUploader = (
   file: File,
 ) => ResultAsync<{ src: string }, ArticleImageUploadError>
 
-type UploadPosition = { from: number; to: number }
+type UploadPosition = {
+  from: number
+  standaloneBlock?: boolean
+  to: number
+}
+
+function lineBreaksAtEnd(value: string): number {
+  let count = 0
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    if (value[index] !== '\n') break
+    count += 1
+  }
+  return count
+}
+
+function lineBreaksAtStart(value: string): number {
+  let count = 0
+  for (const character of value) {
+    if (character !== '\n') break
+    count += 1
+  }
+  return count
+}
+
+function standaloneBlockInsertion(
+  before: string,
+  after: string,
+  markdown: string,
+): { insert: string; cursorOffset: number } {
+  const prefix = '\n'.repeat(Math.max(0, 2 - lineBreaksAtEnd(before)))
+  const suffix = '\n'.repeat(Math.max(0, 2 - lineBreaksAtStart(after)))
+  return {
+    insert: prefix + markdown + suffix,
+    cursorOffset: prefix.length + markdown.length,
+  }
+}
 
 class ImageUploadPlugin {
   private readonly pending = new Set<UploadPosition>()
@@ -47,10 +84,23 @@ class ImageUploadPlugin {
     if (files.length === 0) return false
     event.preventDefault()
     if (!uploader) return true
+    const widgetRange = getBlockWidgetSourceRange(event.target)
+    const validWidgetRange =
+      widgetRange &&
+      widgetRange.from >= 0 &&
+      widgetRange.from <= widgetRange.to &&
+      widgetRange.to <= this.view.state.doc.length
+        ? widgetRange
+        : undefined
     const position =
+      validWidgetRange?.to ??
       this.view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
       this.view.state.selection.main.from
-    void this.upload(files, uploader, { from: position, to: position })
+    void this.upload(files, uploader, {
+      from: position,
+      to: position,
+      ...(validWidgetRange ? { standaloneBlock: true } : {}),
+    })
     return true
   }
 
@@ -93,9 +143,17 @@ class ImageUploadPlugin {
       .join('\n')
     const from = Math.min(position.from, this.view.state.doc.length)
     const to = Math.min(Math.max(position.to, from), this.view.state.doc.length)
+    const insertion =
+      position.standaloneBlock === true
+        ? standaloneBlockInsertion(
+            this.view.state.doc.sliceString(0, from),
+            this.view.state.doc.sliceString(from),
+            markdown,
+          )
+        : { insert: markdown, cursorOffset: markdown.length }
     this.view.dispatch({
-      changes: { from, to, insert: markdown },
-      selection: { anchor: from + markdown.length },
+      changes: { from, to, insert: insertion.insert },
+      selection: { anchor: from + insertion.cursorOffset },
     })
   }
 }

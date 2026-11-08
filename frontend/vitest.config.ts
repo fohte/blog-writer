@@ -18,13 +18,17 @@ const tapBodyElement: BrowserCommand<[selector: string]> = async (
     await context.iframe.locator(selector).first().tap()
   }
 }
+const getWidgetDropFixturePaths: BrowserCommand = () => ({
+  image: path.join(dirname, 'src/editor/__tests__/fixtures/drop-image.svg'),
+  text: path.join(dirname, 'src/editor/__tests__/fixtures/drop-text.txt'),
+})
 
 export default mergeConfig(
   viteConfig,
   defineConfig({
     test: {
       browser: {
-        commands: { tapBodyElement },
+        commands: { getWidgetDropFixturePaths, tapBodyElement },
       },
       exclude: [
         'src/article/move-conflicts.test-support.test.ts',
@@ -58,6 +62,7 @@ export default mergeConfig(
             exclude: [
               'src/**/*.ime.browser.test.tsx',
               'src/outline/outline-touch-interactions.browser.test.tsx',
+              'src/editor/markdown-block-widget-cdp-drop.browser.test.tsx',
             ],
             browser: {
               enabled: true,
@@ -77,12 +82,31 @@ export default mergeConfig(
             exclude: [
               'src/**/*.ime.browser.test.tsx',
               'src/outline/outline-touch-interactions.browser.test.tsx',
+              'src/editor/markdown-block-widget-cdp-drop.browser.test.tsx',
             ],
             browser: {
               enabled: true,
               provider: playwright(),
               headless: true,
               instances: [{ browser: 'webkit' }],
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-cdp-chromium',
+            include: [
+              'src/editor/markdown-block-widget-cdp-drop.browser.test.tsx',
+            ],
+            browser: {
+              enabled: true,
+              api: { allowWrite: true, allowExec: true },
+              provider: playwright({
+                launchOptions: { args: [...BLOCK_EXTERNAL_REQUESTS_ARGS] },
+              }),
+              headless: true,
+              instances: [{ browser: 'chromium' }],
             },
           },
         },

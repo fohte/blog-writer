@@ -12,14 +12,18 @@ export interface BlockWidgetDecorator {
   identity: (state: EditorState, sourceFrom: number) => string
 }
 
+export type BlockWidgetSourceRange = Readonly<{ from: number; to: number }>
+
 interface BlockWidgetOptions {
   attachDecorators?: boolean
   state: EditorState
   sourceFrom: number
+  sourceRange: BlockWidgetSourceRange
 }
 
 const decoratorCleanupsByElement = new WeakMap<HTMLElement, (() => void)[]>()
 const cleanupByElement = new WeakMap<HTMLElement, () => void>()
+const sourceRangeByElement = new WeakMap<HTMLElement, BlockWidgetSourceRange>()
 
 export const blockWidgetDecorators = Facet.define<
   BlockWidgetDecorator,
@@ -29,16 +33,25 @@ export const blockWidgetDecorators = Facet.define<
 export function createBlockWidget(
   createPreview: (view: EditorView) => HTMLElement,
   identity: string,
-  { attachDecorators = true, sourceFrom, state }: BlockWidgetOptions,
+  {
+    attachDecorators = true,
+    sourceFrom,
+    sourceRange,
+    state,
+  }: BlockWidgetOptions,
 ): DomWidget {
   const equalityKey = attachDecorators
-    ? String(sourceFrom) +
+    ? String(sourceRange.from) +
+      '\u0000' +
+      String(sourceRange.to) +
+      '\u0000' +
+      String(sourceFrom) +
       '\u0000' +
       state
         .facet(blockWidgetDecorators)
         .map((decorator) => decorator.identity(state, sourceFrom))
         .join('\u0000')
-    : identity
+    : String(sourceRange.from) + '\u0000' + String(sourceRange.to)
   const refreshDecorators = (element: HTMLElement, view: EditorView) => {
     for (const cleanup of decoratorCleanupsByElement.get(element) ?? [])
       cleanup()
@@ -56,6 +69,7 @@ export function createBlockWidget(
       const element = document.createElement('div')
       element.className = 'cm-markdown-block-widget'
       element.append(createPreview(view))
+      sourceRangeByElement.set(element, sourceRange)
 
       refreshDecorators(element, view)
       const stopWidgetMouseDown = (event: MouseEvent) => {
@@ -83,14 +97,21 @@ export function createBlockWidget(
           scrollIntoView: true,
         })
       }
+      const allowFileDrop = (event: DragEvent) => {
+        if (event.dataTransfer?.types.includes('Files') === true)
+          event.preventDefault()
+      }
       element.addEventListener('mousedown', stopWidgetMouseDown)
       element.addEventListener('click', enterSource)
+      element.addEventListener('dragover', allowFileDrop)
       cleanupByElement.set(element, () => {
         element.removeEventListener('mousedown', stopWidgetMouseDown)
         element.removeEventListener('click', enterSource)
+        element.removeEventListener('dragover', allowFileDrop)
         for (const cleanup of decoratorCleanupsByElement.get(element) ?? [])
           cleanup()
         decoratorCleanupsByElement.delete(element)
+        sourceRangeByElement.delete(element)
       })
       return element
     },
@@ -132,4 +153,12 @@ export function createBlockWidget(
       updateElement: attachDecorators ? refreshDecorators : undefined,
     },
   )
+}
+
+export function getBlockWidgetSourceRange(
+  target: EventTarget | null,
+): BlockWidgetSourceRange | undefined {
+  if (!(target instanceof Element)) return undefined
+  const element = target.closest<HTMLElement>('.cm-markdown-block-widget')
+  return element ? sourceRangeByElement.get(element) : undefined
 }

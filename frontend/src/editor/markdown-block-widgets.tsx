@@ -197,7 +197,7 @@ function buildBlockWidgetDecorations(
         const widget = createBlockWidget(
           () => createMarkdownTablePreview(table),
           'table:' + source,
-          { sourceFrom: range.from, state },
+          { sourceFrom: range.from, sourceRange: range, state },
         )
         decorations.push(
           Decoration.replace({
@@ -227,6 +227,7 @@ function buildBlockWidgetDecorations(
           {
             attachDecorators: !sourceVisible,
             sourceFrom: image.nodeFrom,
+            sourceRange: range,
             state,
           },
         )
@@ -281,7 +282,12 @@ function buildBlockWidgetDecorations(
             )
           },
           'mermaid:' + source + (sourceVisible ? ':source' : ':rendered'),
-          { attachDecorators: !sourceVisible, sourceFrom: range.from, state },
+          {
+            attachDecorators: !sourceVisible,
+            sourceFrom: range.from,
+            sourceRange: range,
+            state,
+          },
         )
         if (sourceVisible) {
           decorations.push(
