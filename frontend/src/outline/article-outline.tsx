@@ -6,6 +6,7 @@ import type * as Y from 'yjs'
 import type { MoveBlockInput } from '#article/index'
 import { findMoveBlockRange, flattenHeadingTree } from '#article/index'
 import type { Heading } from '#article/types'
+import { OutlineKeyHints } from '#components/outline-key-hints'
 import { OutlineView } from '#components/outline-view'
 import { useArticleHeadings } from '#hooks/use-article-headings'
 import { useMoveConflictCounts } from '#hooks/use-move-conflict-counts'
@@ -16,6 +17,7 @@ import {
 } from '#memos/adoption'
 import { useMemos } from '#memos/use-memos'
 import type { MoveHistory } from '#outline/move-history'
+import { useOutlineKeyboard } from '#outline/use-outline-keyboard'
 import type { OutlineProposalState } from '#proposals/outline'
 
 export interface ArticleOutlineProps {
@@ -179,31 +181,42 @@ export function ArticleOutline({
     )
   }, [headings, onActiveHeadingChange, selectedHeadingFrom])
 
+  const editing = useOutlineKeyboard({
+    headings,
+    history,
+    selectedFrom: selectedHeadingFrom,
+    view,
+  })
+
   return (
-    <OutlineView
-      bodyLength={markdown.length}
-      headings={headings}
-      {...(selectedHeadingFrom === undefined
-        ? {}
-        : { activeFrom: selectedHeadingFrom })}
-      {...(error === undefined ? {} : { error })}
-      {...(proposalState === undefined ? {} : { proposalState })}
-      memoCounts={memoCounts}
-      moveConflictCounts={moveConflictCounts}
-      onMove={handleMove}
-      onAdoptMemo={handleAdoptMemo}
-      onInsertMemo={handleInsertMemo}
-      {...(onProposalAccept === undefined ? {} : { onProposalAccept })}
-      {...(onProposalReject === undefined ? {} : { onProposalReject })}
-      onSelect={(from) => {
-        setError(undefined)
-        view.focus()
-        view.dispatch({
-          selection: EditorSelection.cursor(from),
-          effects: EditorView.scrollIntoView(from, { y: 'start' }),
-        })
-        onHeadingSelected?.()
-      }}
-    />
+    <div className="flex min-w-0 flex-col gap-4">
+      <OutlineView
+        bodyLength={markdown.length}
+        editing={editing}
+        headings={headings}
+        {...(selectedHeadingFrom === undefined
+          ? {}
+          : { activeFrom: selectedHeadingFrom })}
+        {...(error === undefined ? {} : { error })}
+        {...(proposalState === undefined ? {} : { proposalState })}
+        memoCounts={memoCounts}
+        moveConflictCounts={moveConflictCounts}
+        onMove={handleMove}
+        onAdoptMemo={handleAdoptMemo}
+        onInsertMemo={handleInsertMemo}
+        {...(onProposalAccept === undefined ? {} : { onProposalAccept })}
+        {...(onProposalReject === undefined ? {} : { onProposalReject })}
+        onSelect={(from) => {
+          setError(undefined)
+          view.focus()
+          view.dispatch({
+            selection: EditorSelection.cursor(from),
+            effects: EditorView.scrollIntoView(from, { y: 'start' }),
+          })
+          onHeadingSelected?.()
+        }}
+      />
+      <OutlineKeyHints />
+    </div>
   )
 }

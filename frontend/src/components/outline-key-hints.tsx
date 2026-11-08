@@ -1,0 +1,56 @@
+import { Kbd } from '@fohte/ui/kbd'
+import type { ReactNode } from 'react'
+
+import { altLabel, modLabel } from '#lib/key-labels'
+
+const hints: Array<{ keys: ReactNode; description: string }> = [
+  {
+    keys: <Kbd>{modLabel}1</Kbd>,
+    description: '構成欄へ (Esc で本文へ戻る)',
+  },
+  {
+    keys: (
+      <>
+        <Kbd>↑</Kbd>
+        <Kbd>↓</Kbd>
+      </>
+    ),
+    description: '見出しを選ぶ。そのまま打てば書き換え',
+  },
+  { keys: <Kbd>⏎</Kbd>, description: '下に見出しを足す' },
+  {
+    keys: (
+      <>
+        <Kbd>Tab</Kbd>
+        <Kbd>⇧Tab</Kbd>
+      </>
+    ),
+    description: '階層を下げる / 上げる',
+  },
+  {
+    keys: (
+      <>
+        <Kbd>{altLabel}↑</Kbd>
+        <Kbd>{altLabel}↓</Kbd>
+      </>
+    ),
+    description: '配下ごと移動',
+  },
+  {
+    keys: <Kbd>{modLabel}⌫</Kbd>,
+    description: '見出しを消す (段落は上の見出しに残る)',
+  },
+]
+
+export function OutlineKeyHints() {
+  return (
+    <dl className="flex flex-col gap-1 px-2 text-xs text-muted-foreground pointer-coarse:hidden">
+      {hints.map(({ keys, description }) => (
+        <div className="flex gap-3" key={description}>
+          <dt className="flex w-20 shrink-0 gap-1">{keys}</dt>
+          <dd>{description}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
