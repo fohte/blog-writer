@@ -588,6 +588,80 @@ describe('Markdown block widget interactions', () => {
     })
   })
 
+  it('keeps the table handle usable after entering its Markdown source', async () => {
+    const source = [
+      'Before paragraph.',
+      '',
+      tableSource,
+      '',
+      imageSource,
+      '',
+      'After paragraph.',
+    ].join('\n')
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      showMoveHandles: true,
+      initialSelection: { anchor: 0 },
+    })
+    if (!content) throw new Error('The Markdown editor did not mount')
+    const table = content.querySelector('table')
+    if (!table) throw new Error('The table preview did not mount')
+
+    await act(async () => {
+      await userEvent.click(table)
+    })
+    const afterSource = {
+      body: body.toJSON(),
+      renderedTableCount: content.querySelectorAll('table').length,
+      sourceVisible: hasEditorSource(content, tableSource),
+      handleCount: content.querySelectorAll('.cm-block-drag-handle').length,
+    }
+    const tableHandle = content.querySelectorAll<HTMLButtonElement>(
+      '.cm-block-drag-handle',
+    )[1]
+    if (!tableHandle) throw new Error('The table move handle did not mount')
+
+    await act(async () => {
+      await userEvent.click(tableHandle)
+    })
+    const menuItemElements = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ]
+    const moveDown = menuItemElements.find(
+      (item) => item.textContent === 'Move down',
+    )
+    const menuItems = menuItemElements.map((item) => item.textContent)
+    if (!moveDown) throw new Error('The table Move down action did not mount')
+    await act(async () => {
+      await userEvent.click(moveDown)
+    })
+
+    const readOutput = () => ({
+      afterSource,
+      body: body.toJSON(),
+      handleCount: content.querySelectorAll('.cm-block-drag-handle').length,
+      menuItems,
+    })
+    expect(readOutput()).toEqual({
+      afterSource: {
+        body: source,
+        renderedTableCount: 0,
+        sourceVisible: true,
+        handleCount: 4,
+      },
+      body: [
+        'Before paragraph.',
+        '',
+        imageSource,
+        '',
+        tableSource,
+        '',
+        'After paragraph.',
+      ].join('\n'),
+      handleCount: 4,
+      menuItems: ['Move up', 'Move down'],
+    })
+  })
+
   it('moves a block from its handle after earlier text shifts its position', async () => {
     const source = [
       'Before paragraph.',

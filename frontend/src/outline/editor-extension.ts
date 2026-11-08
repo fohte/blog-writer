@@ -72,10 +72,11 @@ function createDecorations(
   view: EditorView,
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
+  starts: readonly number[],
+  replacedBlockEnds: ReadonlyMap<number, number>,
 ) {
-  const replacedBlockEnds = getBlockWidgetReplaceEnds(view.state)
   return Decoration.set(
-    blockStarts(view.state, view.viewport.from, view.viewport.to).map((from) =>
+    starts.map((from) =>
       Decoration.widget({
         widget: new BlockDragHandle(from, history, view, composingViews),
         side: -1,
@@ -88,6 +89,16 @@ function createDecorations(
   )
 }
 
+function equalBlockWidgetReplaceEnds(
+  first: ReadonlyMap<number, number>,
+  second: ReadonlyMap<number, number>,
+): boolean {
+  return (
+    first.size === second.size &&
+    [...first].every(([from, to]) => second.get(from) === to)
+  )
+}
+
 function createDragPlugin(
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
@@ -95,6 +106,8 @@ function createDragPlugin(
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
+      private starts: number[]
+      private replacedBlockEnds: ReadonlyMap<number, number>
       private readonly cleanupDropTarget: () => void
       private readonly preventCompositionShortcut = (event: KeyboardEvent) => {
         // Capture these before CodeMirror skips keymaps during composition.
@@ -108,7 +121,19 @@ function createDragPlugin(
       }
 
       constructor(readonly view: EditorView) {
-        this.decorations = createDecorations(view, history, composingViews)
+        this.starts = blockStarts(
+          view.state,
+          view.viewport.from,
+          view.viewport.to,
+        )
+        this.replacedBlockEnds = getBlockWidgetReplaceEnds(view.state)
+        this.decorations = createDecorations(
+          view,
+          history,
+          composingViews,
+          this.starts,
+          this.replacedBlockEnds,
+        )
         view.contentDOM.addEventListener(
           'keydown',
           this.preventCompositionShortcut,
@@ -156,20 +181,39 @@ function createDragPlugin(
             this.decorations = this.decorations.map(update.changes)
           return
         }
-        if (
-          !update.docChanged &&
-          !update.viewportChanged &&
-          !update.selectionSet &&
-          !update.transactions.some((transaction) =>
-            transaction.effects.some(
-              (effect) =>
-                effect.is(refreshBlockHandles) ||
-                effect.is(refreshBlockWidgetExclusions),
-            ),
-          )
+        const refreshHandles = update.transactions.some((transaction) =>
+          transaction.effects.some((effect) => effect.is(refreshBlockHandles)),
         )
+        const refreshExclusions = update.transactions.some((transaction) =>
+          transaction.effects.some((effect) =>
+            effect.is(refreshBlockWidgetExclusions),
+          ),
+        )
+        const startsChanged =
+          update.docChanged || update.viewportChanged || refreshHandles
+        if (!startsChanged && !update.selectionSet && !refreshExclusions) return
+        if (startsChanged) {
+          this.starts = blockStarts(
+            this.view.state,
+            this.view.viewport.from,
+            this.view.viewport.to,
+          )
+        }
+        const replacedBlockEnds = getBlockWidgetReplaceEnds(this.view.state)
+        if (
+          !startsChanged &&
+          equalBlockWidgetReplaceEnds(this.replacedBlockEnds, replacedBlockEnds)
+        ) {
           return
-        this.decorations = createDecorations(this.view, history, composingViews)
+        }
+        this.replacedBlockEnds = replacedBlockEnds
+        this.decorations = createDecorations(
+          this.view,
+          history,
+          composingViews,
+          this.starts,
+          this.replacedBlockEnds,
+        )
       }
 
       startComposition() {
