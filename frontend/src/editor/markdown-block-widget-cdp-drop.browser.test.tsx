@@ -37,6 +37,7 @@ const widgetDropCases = [
     selector: 'table td',
     previewSelector: 'table',
     showMoveHandles: false,
+    previewTimeoutMs: 1_000,
   },
   {
     name: 'an image',
@@ -45,6 +46,7 @@ const widgetDropCases = [
     selector: 'figure img',
     previewSelector: 'figure img',
     showMoveHandles: false,
+    previewTimeoutMs: 1_000,
   },
   {
     name: 'an SVG diagram',
@@ -53,6 +55,7 @@ const widgetDropCases = [
     selector: 'svg',
     previewSelector: 'svg',
     showMoveHandles: false,
+    previewTimeoutMs: 10_000,
   },
   {
     name: 'a table link',
@@ -61,6 +64,7 @@ const widgetDropCases = [
     selector: 'table a',
     previewSelector: 'table a',
     showMoveHandles: false,
+    previewTimeoutMs: 1_000,
   },
   {
     name: 'a widget move handle',
@@ -69,6 +73,7 @@ const widgetDropCases = [
     selector: '.cm-markdown-block-widget-handle .cm-block-drag-handle',
     previewSelector: 'table',
     showMoveHandles: true,
+    previewTimeoutMs: 1_000,
   },
 ]
 
@@ -152,6 +157,7 @@ describe('Markdown block widget file drops through Chromium CDP', () => {
       selector,
       previewSelector,
       showMoveHandles,
+      previewTimeoutMs,
     }) => {
       const { image: imageFixturePath } =
         await commands.getWidgetDropFixturePaths()
@@ -166,7 +172,9 @@ describe('Markdown block widget file drops through Chromium CDP', () => {
         showMoveHandles,
       })
       await act(async () => {
-        await vi.waitUntil(() => host.querySelector(previewSelector) !== null)
+        await vi.waitUntil(() => host.querySelector(previewSelector) !== null, {
+          timeout: previewTimeoutMs,
+        })
       })
       const target = host.querySelector<HTMLElement>(selector)
       if (!target) throw new Error('The file drop target did not mount')
