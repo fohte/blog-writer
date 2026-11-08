@@ -25,6 +25,9 @@ export function createBlockWidget(
   { attachDecorators = true, sourceFrom }: BlockWidgetOptions,
 ): DomWidget {
   const cleanupByElement = new WeakMap<HTMLElement, () => void>()
+  const widgetIdentity = attachDecorators
+    ? `${identity}:${String(sourceFrom)}`
+    : identity
   return new DomWidget(
     (view) => {
       const element = document.createElement('div')
@@ -71,7 +74,7 @@ export function createBlockWidget(
       })
       return element
     },
-    identity,
+    widgetIdentity,
     (element) => {
       cleanupByElement.get(element)?.()
       cleanupByElement.delete(element)

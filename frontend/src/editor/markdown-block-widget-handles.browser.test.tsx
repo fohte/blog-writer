@@ -149,6 +149,65 @@ describe('Markdown block widget handles', () => {
   })
 
   it.each([
+    {
+      initial: `${mermaidSource}\n\nAfter paragraph.`,
+      next: `- A diagram\n  ${mermaidSource.replaceAll('\n', '\n  ')}\n\nAfter paragraph.`,
+      expectedWidgetHandleCount: 0,
+    },
+    {
+      initial: `- A diagram\n  ${mermaidSource.replaceAll('\n', '\n  ')}\n\nAfter paragraph.`,
+      next: `${mermaidSource}\n\nAfter paragraph.`,
+      expectedWidgetHandleCount: 1,
+    },
+  ])(
+    'updates the move handle when a Mermaid block changes top-level status',
+    async ({ initial, next, expectedWidgetHandleCount }) => {
+      const { body, content, doc, host } = mountMarkdownEditor(
+        initial,
+        [],
+        undefined,
+        {
+          initialSelection: {
+            anchor: initial.indexOf('After paragraph.') + 1,
+          },
+          showMoveHandles: true,
+        },
+      )
+      const view = content ? EditorView.findFromDOM(content) : null
+      if (!content || !view)
+        throw new Error('The Markdown editor did not mount')
+
+      await act(async () => {
+        await vi.waitUntil(() => content.querySelector('figure') !== null)
+      })
+
+      act(() => {
+        doc.transact(() => {
+          body.delete(0, body.length)
+          body.insert(0, next)
+        })
+        view.dispatch({
+          selection: { anchor: next.indexOf('After paragraph.') + 1 },
+        })
+      })
+
+      const readOutput = () => ({
+        body: body.toJSON(),
+        previewCount: content.querySelectorAll('.cm-markdown-block-widget')
+          .length,
+        widgetHandleCount: host.querySelectorAll(
+          '.cm-markdown-block-widget-handle',
+        ).length,
+      })
+      expect(readOutput()).toEqual({
+        body: next,
+        previewCount: 1,
+        widgetHandleCount: expectedWidgetHandleCount,
+      })
+    },
+  )
+
+  it.each([
     { key: 'Backspace', altKey: false, withSuggestion: false },
     { key: 'Delete', altKey: false, withSuggestion: false },
     {
