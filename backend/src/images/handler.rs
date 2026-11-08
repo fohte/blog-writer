@@ -17,6 +17,7 @@ use crate::{
 };
 
 use super::{
+    content_type,
     process::{self, ImageProcessError},
     storage,
 };
@@ -104,15 +105,10 @@ async fn get_image(
         .await
         .map_err(database_error)?
         .ok_or(AppError::NotFound)?;
-    let content_type = if name.ends_with(".gif") {
-        "image/gif"
-    } else {
-        "image/webp"
-    };
 
     Ok((
         [
-            (CONTENT_TYPE, content_type),
+            (CONTENT_TYPE, content_type(&name)),
             // The name is a content hash, so the bytes never change. `private` keeps unpublished
             // images out of the CDN in front of the app.
             (CACHE_CONTROL, "private, max-age=31536000, immutable"),
@@ -154,7 +150,7 @@ fn database(state: &AppState) -> Result<&sqlx::AnyPool, AppError> {
     })
 }
 
-fn database_error(error: sqlx::Error) -> AppError {
+pub(super) fn database_error(error: sqlx::Error) -> AppError {
     tracing::error!(error = %error, "image storage query failed");
     AppError::Internal("Image storage failed".to_owned())
 }

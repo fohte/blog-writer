@@ -153,9 +153,7 @@ impl ExportService {
         article_id: &str,
         slug: &str,
     ) -> Result<Option<RemoteFile>, ExportError> {
-        if !valid_article_id(article_id) || !valid_slug(slug) {
-            return Err(ExportError::InvalidInput);
-        }
+        validate_article_target(article_id, slug)?;
         let (owner, repo) = destination
             .repository_parts()
             .ok_or(ExportError::InvalidConfiguration)?;
@@ -178,9 +176,7 @@ impl ExportService {
         request: &ArticleContent,
         safe_fetch: Arc<dyn SafeFetchService>,
     ) -> Result<String, ExportError> {
-        if !valid_article_id(article_id) || !valid_slug(&request.slug) {
-            return Err(ExportError::InvalidInput);
-        }
+        validate_article_target(article_id, &request.slug)?;
         let (owner, repo) = destination
             .repository_parts()
             .ok_or(ExportError::InvalidConfiguration)?;
@@ -454,6 +450,14 @@ fn article_reference<'a>(
     if pull.is_some() { branch } else { base_branch }
 }
 
+pub(super) fn validate_article_target(article_id: &str, slug: &str) -> Result<(), ExportError> {
+    if valid_article_id(article_id) && valid_slug(slug) {
+        Ok(())
+    } else {
+        Err(ExportError::InvalidInput)
+    }
+}
+
 fn valid_article_id(article_id: &str) -> bool {
     !article_id.is_empty()
         && article_id
@@ -608,6 +612,7 @@ mod tests {
                 octo_sts_url: octo_sts.uri(),
                 octo_sts_identity: "writer-export".to_owned(),
                 octo_sts_sa_token_path: token_file.clone(),
+                images: None,
             },
             github.uri(),
         )

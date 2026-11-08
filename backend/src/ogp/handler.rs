@@ -102,6 +102,7 @@ mod tests {
     fn test_state(response: Option<FetchResponse>) -> AppState {
         AppState {
             export: None,
+            image_publisher: None,
             llm: LlmState::default(),
             database: None,
             sync: None,
