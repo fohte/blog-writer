@@ -67,6 +67,7 @@ export interface SyncClientApi {
   ): Result<void, SyncClientError>
   listArticles(): Article[]
   getStatus(docId: string): SyncState | undefined
+  getSyncedAt(docId: string): number | undefined
   getError(): SyncClientError | undefined
   requiresAuthentication(): boolean
   subscribe(listener: () => void): () => void
@@ -247,6 +248,10 @@ class SyncClient implements SyncClientApi {
 
   getStatus(docId: string) {
     return this.documents.get(docId)?.status
+  }
+
+  getSyncedAt(docId: string) {
+    return this.documents.get(docId)?.syncedAt
   }
 
   getError() {

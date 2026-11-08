@@ -65,6 +65,7 @@ export function ArticleWorkspace({
         requiresAuthentication={requiresAuthentication}
         sourcesPanel={sourcesPanel}
         syncStatus={statuses[article.id] ?? client.getStatus(article.id)}
+        syncedAt={client.getSyncedAt(article.id)}
       />
     )
   }

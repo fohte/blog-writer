@@ -443,6 +443,56 @@ describe('createSyncClient', () => {
     client.destroy()
   })
 
+  it('records the last time a document was in sync and notifies only when the minute changes', async () => {
+    const { client, providers, setNow } = createFixture()
+    const startedAt = 1_800_000_000_000
+    await client.start()
+    const created = client.createArticle()._unsafeUnwrap()
+    await Promise.resolve()
+    const provider = providers.find(({ docId }) => docId === created.id)
+    const body = client.openDocument(created.id)._unsafeUnwrap().getText('body')
+    let notifications = 0
+    const readings = [
+      { syncedAt: client.getSyncedAt(created.id), notifications },
+    ]
+    const unsubscribe = client.subscribe(() => {
+      notifications += 1
+    })
+    const read = () => {
+      readings.push({ syncedAt: client.getSyncedAt(created.id), notifications })
+    }
+    const editAt = (time: number) => {
+      setNow(time)
+      body.insert(0, 'a')
+      read()
+    }
+
+    setNow(startedAt + 1_000)
+    provider?.emitStatus('connected')
+    provider?.emitSync(true)
+    notifications = 0
+    read()
+    editAt(startedAt + 30_000)
+    editAt(startedAt + 60_000)
+    unsubscribe()
+    provider?.emitConnectionClose()
+    editAt(startedAt + 120_000)
+    setNow(startedAt + 180_000)
+    provider?.emitStatus('connected')
+    provider?.emitSync(true)
+    read()
+
+    expect(readings).toEqual([
+      { syncedAt: undefined, notifications: 0 },
+      { syncedAt: startedAt + 1_000, notifications: 0 },
+      { syncedAt: startedAt + 30_000, notifications: 0 },
+      { syncedAt: startedAt + 60_000, notifications: 1 },
+      { syncedAt: startedAt + 60_000, notifications: 1 },
+      { syncedAt: startedAt + 180_000, notifications: 1 },
+    ])
+    client.destroy()
+  })
+
   it('marks a document unsynced when its first connection attempt closes', async () => {
     const { client, providers } = createFixture()
     await client.start()
