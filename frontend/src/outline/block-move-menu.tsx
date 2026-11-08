@@ -29,8 +29,11 @@ export function mountBlockMoveMenu({
   let root: Root | undefined
   let menuOpen = false
   const currentFrom = () => {
-    if (!view.contentDOM.contains(button)) return undefined
-    const position = view.posAtDOM(button)
+    if (!view.dom.contains(button)) return undefined
+    const position = view.contentDOM.contains(button)
+      ? view.posAtDOM(button)
+      : Number(button.dataset['blockFrom'])
+    if (!Number.isInteger(position)) return undefined
     const replacedBlockEnds = getBlockWidgetReplaceEnds(view.state)
     return blockStarts(view.state).find(
       (blockFrom) =>

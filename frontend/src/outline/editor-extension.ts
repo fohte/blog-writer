@@ -1,16 +1,13 @@
 import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
-import { type Extension, Prec, StateEffect } from '@codemirror/state'
+import { type Extension, Prec, RangeSet, StateEffect } from '@codemirror/state'
 import {
-  Decoration,
-  type DecorationSet,
   EditorView,
+  gutter,
+  GutterMarker,
   keymap,
   ViewPlugin,
-  type ViewUpdate,
-  WidgetType,
 } from '@codemirror/view'
 
-import { refreshBlockWidgetExclusions } from '#editor/markdown-block-widget-exclusions'
 import { getBlockWidgetReplaceEnds } from '#editor/markdown-block-widgets'
 import { mountBlockMoveMenu } from '#outline/block-move-menu'
 import { adjacentMove, blockStarts, bodyDropInput } from '#outline/block-ranges'
@@ -19,7 +16,7 @@ import type { MoveHistory } from '#outline/move-history'
 const refreshBlockHandles = StateEffect.define()
 const blockHandleCleanups = new WeakMap<HTMLElement, () => void>()
 
-class BlockDragHandle extends WidgetType {
+class BlockDragHandle extends GutterMarker {
   constructor(
     private readonly from: number,
     private readonly history: MoveHistory,
@@ -31,6 +28,7 @@ class BlockDragHandle extends WidgetType {
 
   override eq(other: BlockDragHandle): boolean {
     return (
+      this.from === other.from &&
       this.history === other.history &&
       this.view === other.view &&
       this.composingViews === other.composingViews
@@ -43,6 +41,7 @@ class BlockDragHandle extends WidgetType {
     const menuHost = document.createElement('span')
     button.type = 'button'
     button.className = 'cm-block-drag-handle'
+    button.dataset['blockFrom'] = String(this.from)
     button.setAttribute('aria-label', 'Move block')
     button.setAttribute('aria-haspopup', 'menu')
     button.setAttribute('aria-expanded', 'false')
@@ -62,41 +61,46 @@ class BlockDragHandle extends WidgetType {
     return wrapper
   }
 
-  override destroy(dom: HTMLElement) {
-    blockHandleCleanups.get(dom)?.()
-    blockHandleCleanups.delete(dom)
+  override destroy(dom: Node) {
+    if (dom instanceof HTMLElement) {
+      blockHandleCleanups.get(dom)?.()
+      blockHandleCleanups.delete(dom)
+    }
   }
 }
 
-function createDecorations(
-  view: EditorView,
+function createBlockHandleGutter(
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
-  starts: readonly number[],
-  replacedBlockEnds: ReadonlyMap<number, number>,
 ) {
-  return Decoration.set(
-    starts.map((from) =>
-      Decoration.widget({
-        widget: new BlockDragHandle(from, history, view, composingViews),
-        side: -1,
-      }).range(
-        from > 0 && replacedBlockEnds.has(from)
-          ? from - 1
-          : (replacedBlockEnds.get(from) ?? from),
+  return gutter({
+    class: 'cm-block-move-gutter',
+    markers: (view) => {
+      const replacedBlockEnds = getBlockWidgetReplaceEnds(view.state)
+      const starts = blockStarts(
+        view.state,
+        view.viewport.from,
+        view.viewport.to,
+      )
+      const markers = starts
+        .filter((from) => !replacedBlockEnds.has(from))
+        .map((from) =>
+          new BlockDragHandle(from, history, view, composingViews).range(from),
+        )
+      return RangeSet.of(markers, true)
+    },
+    widgetMarker: (view, _widget, block) => {
+      const replaced = getBlockWidgetReplaceEnds(view.state)
+      return replaced.has(block.from)
+        ? new BlockDragHandle(block.from, history, view, composingViews)
+        : null
+    },
+    lineMarkerChange: (update) =>
+      !composingViews.has(update.view) ||
+      update.transactions.some((transaction) =>
+        transaction.effects.some((effect) => effect.is(refreshBlockHandles)),
       ),
-    ),
-  )
-}
-
-function equalBlockWidgetReplaceEnds(
-  first: ReadonlyMap<number, number>,
-  second: ReadonlyMap<number, number>,
-): boolean {
-  return (
-    first.size === second.size &&
-    [...first].every(([from, to]) => second.get(from) === to)
-  )
+  })
 }
 
 function createDragPlugin(
@@ -105,9 +109,6 @@ function createDragPlugin(
 ) {
   const plugin = ViewPlugin.fromClass(
     class {
-      decorations: DecorationSet
-      private starts: number[]
-      private replacedBlockEnds: ReadonlyMap<number, number>
       private readonly cleanupDropTarget: () => void
       private readonly preventCompositionShortcut = (event: KeyboardEvent) => {
         // Capture these before CodeMirror skips keymaps during composition.
@@ -121,19 +122,6 @@ function createDragPlugin(
       }
 
       constructor(readonly view: EditorView) {
-        this.starts = blockStarts(
-          view.state,
-          view.viewport.from,
-          view.viewport.to,
-        )
-        this.replacedBlockEnds = getBlockWidgetReplaceEnds(view.state)
-        this.decorations = createDecorations(
-          view,
-          history,
-          composingViews,
-          this.starts,
-          this.replacedBlockEnds,
-        )
         view.contentDOM.addEventListener(
           'keydown',
           this.preventCompositionShortcut,
@@ -175,47 +163,6 @@ function createDragPlugin(
         })
       }
 
-      update(update: ViewUpdate) {
-        if (composingViews.has(this.view)) {
-          if (update.docChanged)
-            this.decorations = this.decorations.map(update.changes)
-          return
-        }
-        const refreshHandles = update.transactions.some((transaction) =>
-          transaction.effects.some((effect) => effect.is(refreshBlockHandles)),
-        )
-        const refreshExclusions = update.transactions.some((transaction) =>
-          transaction.effects.some((effect) =>
-            effect.is(refreshBlockWidgetExclusions),
-          ),
-        )
-        const startsChanged =
-          update.docChanged || update.viewportChanged || refreshHandles
-        if (!startsChanged && !update.selectionSet && !refreshExclusions) return
-        if (startsChanged) {
-          this.starts = blockStarts(
-            this.view.state,
-            this.view.viewport.from,
-            this.view.viewport.to,
-          )
-        }
-        const replacedBlockEnds = getBlockWidgetReplaceEnds(this.view.state)
-        if (
-          !startsChanged &&
-          equalBlockWidgetReplaceEnds(this.replacedBlockEnds, replacedBlockEnds)
-        ) {
-          return
-        }
-        this.replacedBlockEnds = replacedBlockEnds
-        this.decorations = createDecorations(
-          this.view,
-          history,
-          composingViews,
-          this.starts,
-          this.replacedBlockEnds,
-        )
-      }
-
       startComposition() {
         composingViews.add(this.view)
       }
@@ -238,7 +185,6 @@ function createDragPlugin(
         this.cleanupDropTarget()
       }
     },
-    { decorations: (plugin) => plugin.decorations },
   )
   return [
     plugin,
@@ -292,27 +238,25 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
         },
       ]),
     ),
+    createBlockHandleGutter(history, composingViews),
     createDragPlugin(history, composingViews),
     EditorView.theme({
-      // Other extensions read this to line their block widgets up with the text after the handle column.
       '.cm-content': {
-        '--cm-line-inset': '1.5rem',
+        '--cm-line-inset': '0px',
       },
-      '.cm-content .cm-line': {
-        paddingInlineStart: 'var(--cm-line-inset)',
+      '.cm-block-move-gutter': {
+        flex: '0 0 1.5rem',
+        width: '1.5rem',
       },
-      '.cm-block-drag-handle': {
-        top: '50%',
-        transform: 'translateY(-50%)',
+      '.cm-block-move-gutter .cm-gutterElement': {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '0',
       },
     }),
     EditorView.baseTheme({
-      '.cm-line': {
-        position: 'relative',
-      },
       '.cm-block-drag-handle': {
-        position: 'absolute',
-        left: '0',
         display: 'flex',
         width: '1.5rem',
         height: '1.5rem',

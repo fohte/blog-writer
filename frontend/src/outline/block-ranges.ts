@@ -106,7 +106,9 @@ export function bodyDropInput(
   from: number,
 ): MoveBlockInput | undefined {
   const markdown = view.state.doc.toString()
-  const range = findMoveBlockRange(markdown, position)
+  const blockPosition =
+    position === markdown.length && position > 0 ? position - 1 : position
+  const range = findMoveBlockRange(markdown, blockPosition)
   if (!range) return undefined
   const lastBlock = topLevelBlocks(markdown)
     .filter(({ from }) => range.from <= from && from < range.to)

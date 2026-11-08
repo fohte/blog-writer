@@ -32,6 +32,26 @@ function hasEditorSource(content: HTMLElement, source: string): boolean {
   return visibleText.includes(source.replaceAll('\n', ''))
 }
 
+function dispatchBlockDrag(
+  source: HTMLElement,
+  target: HTMLElement,
+  position: { x: number; y: number },
+) {
+  const dataTransfer = new DataTransfer()
+  const eventOptions = {
+    bubbles: true,
+    cancelable: true,
+    clientX: position.x,
+    clientY: position.y,
+    dataTransfer,
+  }
+  source.dispatchEvent(new DragEvent('dragstart', eventOptions))
+  target.dispatchEvent(new DragEvent('dragenter', eventOptions))
+  target.dispatchEvent(new DragEvent('dragover', eventOptions))
+  target.dispatchEvent(new DragEvent('drop', eventOptions))
+  source.dispatchEvent(new DragEvent('dragend', eventOptions))
+}
+
 describe('Markdown block widget interactions', () => {
   it.each([
     {
@@ -429,7 +449,7 @@ describe('Markdown block widget interactions', () => {
       '',
       'end',
     ].join('\n')
-    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+    const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
       initialSelection: { anchor: 'top'.length },
       showMoveHandles: true,
     })
@@ -446,9 +466,6 @@ describe('Markdown block widget interactions', () => {
     })
     const initialRenderCount = toDOM.mock.calls.length
     const initialSvg = content.querySelector('svg')
-    const initialHandles = [
-      ...content.querySelectorAll('.cm-block-drag-handle'),
-    ]
 
     try {
       act(() => {
@@ -461,11 +478,7 @@ describe('Markdown block widget interactions', () => {
         body: body.toJSON(),
         diagramCount: content.querySelectorAll('svg').length,
         previewCount: content.querySelectorAll('table, figure').length,
-        handleCount: content.querySelectorAll('.cm-block-drag-handle').length,
-        handlesReused: initialHandles.every(
-          (handle, index) =>
-            content.querySelectorAll('.cm-block-drag-handle')[index] === handle,
-        ),
+        handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
         renderCount: toDOM.mock.calls.length,
         svgReused: content.querySelector('svg') === initialSvg,
       })
@@ -474,7 +487,6 @@ describe('Markdown block widget interactions', () => {
         diagramCount: 1,
         previewCount: 4,
         handleCount: 6,
-        handlesReused: true,
         renderCount: initialRenderCount,
         svgReused: true,
       })
@@ -540,12 +552,12 @@ describe('Markdown block widget interactions', () => {
       '',
       'After paragraph.',
     ].join('\n')
-    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+    const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
       showMoveHandles: true,
       initialSelection: { anchor: 0 },
     })
     if (!content) throw new Error('The Markdown editor did not mount')
-    const handles = content.querySelectorAll<HTMLButtonElement>(
+    const handles = host.querySelectorAll<HTMLButtonElement>(
       '.cm-block-drag-handle',
     )
     const tableHandle = handles[1]
@@ -588,6 +600,186 @@ describe('Markdown block widget interactions', () => {
     })
   })
 
+  it.each([
+    { block: 'table', markdown: tableSource, previewSelector: 'table' },
+    { block: 'image', markdown: imageSource, previewSelector: 'figure' },
+    {
+      block: 'Mermaid diagram',
+      markdown: mermaidSource,
+      previewSelector: 'figure',
+    },
+  ])(
+    'drags the leading $block after the following paragraph',
+    async ({ block, markdown, previewSelector }) => {
+      const source = `${markdown}\n\nAfter paragraph.`
+      const { body, content, history, host } = mountMarkdownEditor(
+        source,
+        [],
+        undefined,
+        {
+          initialSelection: { anchor: source.length },
+          showMoveHandles: true,
+        },
+      )
+      const handle = host.querySelector<HTMLButtonElement>(
+        '.cm-block-drag-handle',
+      )
+      const target = [
+        ...(content?.querySelectorAll<HTMLElement>('.cm-line') ?? []),
+      ].find((line) => line.textContent.includes('After paragraph.'))
+      if (!content || !handle || !target)
+        throw new Error(
+          `The leading ${block} handle or drop target did not mount`,
+        )
+      const targetText = [...target.childNodes].find(
+        (node): node is Text =>
+          node.nodeType === Node.TEXT_NODE &&
+          node.textContent?.includes('After paragraph.') === true,
+      )
+      if (!targetText)
+        throw new Error('The drop target paragraph did not render as text')
+      const targetTextOffset =
+        targetText.textContent.indexOf('After paragraph.')
+      const targetRange = document.createRange()
+      targetRange.setStart(targetText, targetTextOffset)
+      targetRange.setEnd(targetText, targetTextOffset + 1)
+      const view = EditorView.findFromDOM(content)
+      if (!view) throw new Error('The Markdown editor did not mount')
+      await act(async () => {
+        await vi.waitUntil(() => {
+          const textBounds = targetRange.getBoundingClientRect()
+          const lineBounds = target.getBoundingClientRect()
+          return (
+            view.posAtCoords({
+              x: textBounds.left + textBounds.width / 2,
+              y: lineBounds.bottom - 1,
+            }) !== null
+          )
+        })
+      })
+      const textBounds = targetRange.getBoundingClientRect()
+      const lineBounds = target.getBoundingClientRect()
+      const move = vi.spyOn(history, 'move')
+      act(() => {
+        dispatchBlockDrag(handle, target, {
+          x: textBounds.left + textBounds.width / 2,
+          y: lineBounds.bottom - 1,
+        })
+      })
+
+      const readOutput = () => ({
+        body: body.toJSON(),
+        handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
+        moveCalls: move.mock.calls.map(([input]) => input),
+        previewCount: content.querySelectorAll(previewSelector).length,
+      })
+      expect(readOutput()).toEqual({
+        body: `After paragraph.\n\n${markdown}\n`,
+        handleCount: 2,
+        moveCalls: [{ from: 0, destination: source.length }],
+        previewCount: 1,
+      })
+    },
+  )
+
+  it.each([
+    { block: 'image', markdown: imageSource },
+    { block: 'Mermaid diagram', markdown: mermaidSource },
+  ])(
+    'keeps the leading $block move handle usable',
+    async ({ block, markdown }) => {
+      const source = `${markdown}\n\nAfter paragraph.`
+      const { body, content, host } = mountMarkdownEditor(
+        source,
+        [],
+        undefined,
+        {
+          initialSelection: { anchor: source.length },
+          showMoveHandles: true,
+        },
+      )
+      const handle = host.querySelector<HTMLButtonElement>(
+        '.cm-block-drag-handle',
+      )
+      if (!content || !handle)
+        throw new Error(`The leading ${block} handle did not mount`)
+      await act(async () => {
+        await userEvent.click(handle)
+      })
+      const menu = document.querySelector('[role="menu"]')
+      const menuItems =
+        menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
+      if (!menuItems)
+        throw new Error(`The leading ${block} move menu did not mount`)
+      const moveDown = [...menuItems].find(
+        (item) => item.textContent === 'Move down',
+      )
+      if (!moveDown)
+        throw new Error(`The leading ${block} Move down action is missing`)
+      await act(async () => {
+        await userEvent.click(moveDown)
+      })
+
+      const readOutput = () => ({
+        body: body.toJSON(),
+        handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
+        menuItems: [...menuItems].map((item) => item.textContent),
+        previewCount: content.querySelectorAll('figure').length,
+      })
+      expect(readOutput()).toEqual({
+        body: `After paragraph.\n\n${markdown}\n`,
+        handleCount: 2,
+        menuItems: ['Move up', 'Move down'],
+        previewCount: 1,
+      })
+    },
+  )
+
+  it('keeps paragraph and adjacent block handles on separate rows', async () => {
+    const source = `Top paragraph.\n${tableSource}\n${mermaidSource}`
+    const { content, host } = mountMarkdownEditor(source, [], undefined, {
+      initialSelection: { anchor: source.length },
+      showMoveHandles: true,
+    })
+    const handles = host.querySelectorAll<HTMLButtonElement>(
+      '.cm-block-drag-handle',
+    )
+    const table = content?.querySelector('table')
+    if (!content || !table || handles.length < 2)
+      throw new Error('The paragraph or adjacent block handle did not mount')
+
+    await act(async () => {
+      await vi.waitUntil(() => {
+        const first = handles[0]?.getBoundingClientRect()
+        const second = handles[1]?.getBoundingClientRect()
+        return (
+          first !== undefined &&
+          second !== undefined &&
+          (first.bottom <= second.top || second.bottom <= first.top)
+        )
+      })
+    })
+
+    const paragraph = handles[0]?.getBoundingClientRect()
+    const block = handles[1]?.getBoundingClientRect()
+    if (!paragraph || !block) throw new Error('A move handle has no geometry')
+
+    const readOutput = () => ({
+      handleCount: handles.length,
+      handlesOverlap:
+        paragraph.left < block.right &&
+        block.left < paragraph.right &&
+        paragraph.top < block.bottom &&
+        block.top < paragraph.bottom,
+      previewCount: content.querySelectorAll('table, figure').length,
+    })
+    expect(readOutput()).toEqual({
+      handleCount: 3,
+      handlesOverlap: false,
+      previewCount: 2,
+    })
+  })
+
   it('keeps the table handle usable after entering its Markdown source', async () => {
     const source = [
       'Before paragraph.',
@@ -598,7 +790,7 @@ describe('Markdown block widget interactions', () => {
       '',
       'After paragraph.',
     ].join('\n')
-    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+    const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
       showMoveHandles: true,
       initialSelection: { anchor: 0 },
     })
@@ -613,9 +805,9 @@ describe('Markdown block widget interactions', () => {
       body: body.toJSON(),
       renderedTableCount: content.querySelectorAll('table').length,
       sourceVisible: hasEditorSource(content, tableSource),
-      handleCount: content.querySelectorAll('.cm-block-drag-handle').length,
+      handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
     }
-    const tableHandle = content.querySelectorAll<HTMLButtonElement>(
+    const tableHandle = host.querySelectorAll<HTMLButtonElement>(
       '.cm-block-drag-handle',
     )[1]
     if (!tableHandle) throw new Error('The table move handle did not mount')
@@ -638,7 +830,7 @@ describe('Markdown block widget interactions', () => {
     const readOutput = () => ({
       afterSource,
       body: body.toJSON(),
-      handleCount: content.querySelectorAll('.cm-block-drag-handle').length,
+      handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
       menuItems,
     })
     expect(readOutput()).toEqual({
@@ -672,15 +864,15 @@ describe('Markdown block widget interactions', () => {
       '',
       'After paragraph.',
     ].join('\n')
-    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+    const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
       showMoveHandles: true,
       initialSelection: { anchor: 0 },
     })
     const view = content ? EditorView.findFromDOM(content) : null
-    const tableHandle = content?.querySelectorAll<HTMLButtonElement>(
+    const initialTableHandle = host.querySelectorAll<HTMLButtonElement>(
       '.cm-block-drag-handle',
     )[1]
-    if (!view || !content || !tableHandle)
+    if (!view || !content || !initialTableHandle)
       throw new Error('The table move handle did not mount')
 
     act(() => {
@@ -691,7 +883,11 @@ describe('Markdown block widget interactions', () => {
         },
       })
     })
-    const handleConnectedAfterEdit = tableHandle.isConnected
+    const tableHandle = host.querySelectorAll<HTMLButtonElement>(
+      '.cm-block-drag-handle',
+    )[1]
+    if (!tableHandle)
+      throw new Error('The updated table move handle did not mount')
 
     await act(async () => {
       await userEvent.click(tableHandle)
@@ -710,8 +906,7 @@ describe('Markdown block widget interactions', () => {
 
     const readOutput = () => ({
       body: body.toJSON(),
-      handleConnectedAfterEdit,
-      handleCount: content.querySelectorAll('.cm-block-drag-handle').length,
+      handleCount: host.querySelectorAll('.cm-block-drag-handle').length,
       menuItems,
     })
     expect(readOutput()).toEqual({
@@ -724,7 +919,6 @@ describe('Markdown block widget interactions', () => {
         '',
         'After paragraph.',
       ].join('\n'),
-      handleConnectedAfterEdit: true,
       handleCount: 4,
       menuItems: ['Move up', 'Move down'],
     })

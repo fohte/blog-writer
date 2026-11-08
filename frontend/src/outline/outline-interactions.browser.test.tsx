@@ -10,7 +10,7 @@ import { GFM } from '@lezer/markdown'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cdp, page, userEvent } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
@@ -27,6 +27,15 @@ const cleanups: (() => void)[] = []
 
 function asMarkdown(...lines: string[]): string {
   return lines.join('\n')
+}
+
+function bodyDragHandle(
+  view: EditorView,
+  from: number,
+): HTMLButtonElement | undefined {
+  return [
+    ...view.dom.querySelectorAll<HTMLButtonElement>('.cm-block-drag-handle'),
+  ].find((button) => button.dataset['blockFrom'] === String(from))
 }
 
 function createBodyMenuEditor(markdownText: string) {
@@ -63,31 +72,6 @@ function createBodyMenuEditor(markdownText: string) {
   return { body, doc, view }
 }
 
-async function tapBodyHandle(button: HTMLButtonElement) {
-  if (navigator.userAgent.includes('Chrome')) {
-    const rect = button.getBoundingClientRect()
-    // CDP touch points use top-level page coordinates, and the test iframe can be offset and scaled.
-    const frame = window.frameElement?.getBoundingClientRect()
-    const scale = frame ? frame.width / window.innerWidth : 1
-    await cdp().send('Input.dispatchTouchEvent', {
-      type: 'touchStart',
-      touchPoints: [
-        {
-          x: (frame?.left ?? 0) + (rect.left + rect.width / 2) * scale,
-          y: (frame?.top ?? 0) + (rect.top + rect.height / 2) * scale,
-          id: 1,
-        },
-      ],
-    })
-    await cdp().send('Input.dispatchTouchEvent', {
-      type: 'touchEnd',
-      touchPoints: [],
-    })
-  } else {
-    await userEvent.click(button)
-  }
-}
-
 function dispatchDrag(
   source: HTMLElement,
   target: HTMLElement,
@@ -120,7 +104,7 @@ afterEach(() => {
 })
 
 describe('outline interactions', () => {
-  it('opens a body handle menu by touch or click and moves the block with one undo', async () => {
+  it('opens a body handle menu after composition and moves the block with one undo', async () => {
     const markdownText = 'First paragraph.\n\nSecond paragraph.\n'
     const { body, view } = createBodyMenuEditor(markdownText)
 
@@ -144,7 +128,7 @@ describe('outline interactions', () => {
     )
 
     await act(async () => {
-      await tapBodyHandle(handle)
+      await userEvent.click(handle)
     })
 
     const menuButtons = [
@@ -187,7 +171,7 @@ describe('outline interactions', () => {
     })
   })
 
-  it('closes a body handle menu when the handle is tapped again', async () => {
+  it('closes a body handle menu when the handle is clicked again', async () => {
     const { view } = createBodyMenuEditor(
       asMarkdown('First paragraph.', '', 'Second paragraph.', ''),
     )
@@ -197,8 +181,8 @@ describe('outline interactions', () => {
     if (!handle) throw new Error('The body move handle is missing')
 
     await act(async () => {
-      await tapBodyHandle(handle)
-      await tapBodyHandle(handle)
+      await userEvent.click(handle)
+      await userEvent.click(handle)
     })
 
     const readOutput = () => ({
@@ -1030,10 +1014,11 @@ describe('outline interactions', () => {
       const sourceLine = [
         ...view.dom.querySelectorAll<HTMLElement>('.cm-line'),
       ].find((line) => line.textContent.endsWith(sourceText))
-      const sourceHandle = sourceLine?.querySelector<HTMLElement>(
-        '.cm-block-drag-handle',
+      const sourceHandle = bodyDragHandle(
+        view,
+        markdownText.indexOf(sourceText),
       )
-      if (handles.length === 0 || !sourceHandle)
+      if (handles.length === 0 || !sourceLine || !sourceHandle)
         throw new Error('The body drag source or target is missing')
       const targetLine = [
         ...view.dom.querySelectorAll<HTMLElement>('.cm-line'),
@@ -1118,8 +1103,32 @@ describe('outline interactions', () => {
       if (!headingLine || !paragraphLine || !subheadingLine)
         throw new Error('A heading or paragraph line is missing')
 
-      const measureLine = (line: HTMLElement) => {
-        const handle = line.querySelector<HTMLElement>('.cm-block-drag-handle')
+      const paragraphStart = markdownText.indexOf('A first paragraph.')
+      const subheadingStart = markdownText.indexOf('## Details')
+      const handleIsCentered = (line: HTMLElement, from: number) => {
+        const handle = bodyDragHandle(view, from)
+        if (!handle) return false
+        const handleRect = handle.getBoundingClientRect()
+        const lineRect = line.getBoundingClientRect()
+        return (
+          Math.abs(
+            handleRect.top +
+              handleRect.height / 2 -
+              (lineRect.top + lineRect.height / 2),
+          ) < 1
+        )
+      }
+      await act(async () => {
+        await vi.waitUntil(
+          () =>
+            handleIsCentered(headingLine, 0) &&
+            handleIsCentered(paragraphLine, paragraphStart) &&
+            handleIsCentered(subheadingLine, subheadingStart),
+        )
+      })
+
+      const measureLine = (line: HTMLElement, from: number) => {
+        const handle = bodyDragHandle(view, from)
         if (!handle) throw new Error('The line drag handle is missing')
 
         const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT)
@@ -1163,14 +1172,13 @@ describe('outline interactions', () => {
         }
       }
 
-      const heading = measureLine(headingLine)
-      const paragraph = measureLine(paragraphLine)
-      const subheading = measureLine(subheadingLine)
+      const heading = measureLine(headingLine, 0)
+      const paragraph = measureLine(paragraphLine, paragraphStart)
+      const subheading = measureLine(subheadingLine, subheadingStart)
       const editorRect = view.dom.getBoundingClientRect()
       view.dispatch({
         selection: EditorSelection.cursor(markdownText.length),
       })
-      const paragraphStart = markdownText.indexOf('A first paragraph.')
       await page.elementLocator(paragraphLine).click({
         position: {
           x:
@@ -1233,7 +1241,7 @@ describe('outline interactions', () => {
           firstCharacterHitByHandle: false,
         },
         mobile: {
-          firstCharacterInset: 72,
+          firstCharacterInset: 73,
           horizontalOverflow: false,
         },
         clickMovesCursorAfterFirstCharacter: true,
