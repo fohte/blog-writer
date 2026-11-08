@@ -1,6 +1,21 @@
 import { Button } from '@fohte/ui/button'
 import { Kbd } from '@fohte/ui/kbd'
 
+import { altLabel } from '#lib/key-labels'
+
+interface SuggestionNavigation {
+  current: number
+  total: number
+  onNext: () => void
+  onPrevious: () => void
+}
+
+function joinDetails(...parts: (string | undefined)[]): string {
+  return parts
+    .filter((part) => part !== undefined && part.length > 0)
+    .join(' · ')
+}
+
 export interface SuggestionActionBarProps {
   /** `seam` is for a transition that rewrites the sentences on both sides of a seam. */
   variant?: 'band' | 'seam'
@@ -10,6 +25,8 @@ export interface SuggestionActionBarProps {
   target?: string | undefined
   note?: string | undefined
   showsMarkupAsText?: boolean | undefined
+  /** Left out when this is the only suggestion, since there is nowhere to move. */
+  navigation?: SuggestionNavigation | undefined
   onAccept: () => void
   onReject: () => void
 }
@@ -21,32 +38,55 @@ export function SuggestionActionBar({
   target,
   note,
   showsMarkupAsText = false,
+  navigation,
   onAccept,
   onReject,
 }: SuggestionActionBarProps) {
   if (presentation === 'sheet') {
     // A seam always rewrites the sentences around it, so like the inline seam it needs no summary.
-    const summary =
-      variant === 'seam'
-        ? []
-        : [label, target].filter(
-            (part): part is string => part !== undefined && part.length > 0,
-          )
+    const summary = variant === 'seam' ? '' : joinDetails(label, target)
     return (
       <div
         aria-label="提案の操作"
         className="fixed inset-x-0 bottom-0 z-20 flex flex-col gap-2.5 border-t border-border-strong bg-card px-3.5 pt-3 pb-7 font-sans"
         role="group"
       >
-        {summary.length > 0 ? (
-          <span className="truncate font-mono text-xs text-muted-foreground-strong">
-            {label !== undefined && label.length > 0 ? (
-              <span aria-hidden="true" className="text-primary">
-                &gt;{' '}
-              </span>
-            ) : null}
-            {summary.join(' · ')}
-          </span>
+        {summary.length > 0 || navigation !== undefined ? (
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground-strong">
+              {variant !== 'seam' && label !== undefined && label.length > 0 ? (
+                <span aria-hidden="true" className="text-primary">
+                  &gt;{' '}
+                </span>
+              ) : null}
+              {summary}
+            </span>
+            {navigation === undefined ? null : (
+              <>
+                <Button
+                  aria-label="前の提案"
+                  className="w-11"
+                  onClick={navigation.onPrevious}
+                  type="button"
+                  variant="outline"
+                >
+                  ‹
+                </Button>
+                <span className="font-mono text-xs text-muted-foreground-strong">
+                  {navigation.current}/{navigation.total}
+                </span>
+                <Button
+                  aria-label="次の提案"
+                  className="w-11"
+                  onClick={navigation.onNext}
+                  type="button"
+                  variant="outline"
+                >
+                  ›
+                </Button>
+              </>
+            )}
+          </div>
         ) : null}
         {note !== undefined && note.length > 0 ? (
           <span className="suggestion-diff-note truncate text-xs text-muted-foreground">
@@ -109,6 +149,13 @@ export function SuggestionActionBar({
     )
   }
 
+  const details = joinDetails(
+    target,
+    navigation === undefined
+      ? undefined
+      : `${String(navigation.current)} / ${String(navigation.total)}`,
+  )
+
   return (
     <div
       aria-label="提案の操作"
@@ -123,7 +170,7 @@ export function SuggestionActionBar({
           {label}
         </span>
       ) : null}
-      {target !== undefined ? <span>{target}</span> : null}
+      {details.length > 0 ? <span>{details}</span> : null}
       {note !== undefined && note.length > 0 ? (
         <span className="suggestion-diff-note">{note}</span>
       ) : null}
@@ -131,6 +178,11 @@ export function SuggestionActionBar({
         <span>文中の HTML やリンクは採用まで文字のまま</span>
       ) : null}
       <span className="flex-1" />
+      {navigation === undefined ? null : (
+        <span>
+          <Kbd>{altLabel}]</Kbd> 次の提案
+        </span>
+      )}
       <Button
         className="font-sans"
         onClick={onReject}

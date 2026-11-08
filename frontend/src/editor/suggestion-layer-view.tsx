@@ -2,7 +2,7 @@ import { type EditorState, Facet, type Range } from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
-  EditorView,
+  type EditorView,
   WidgetType,
 } from '@codemirror/view'
 import { type ReactNode, useEffect, useState } from 'react'
@@ -11,6 +11,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { SuggestionActionBar } from '#components/suggestion-action-bar'
 import { SuggestionDiff } from '#components/suggestion-diff'
 import { SuggestionGeneratingBar } from '#components/suggestion-generating-bar'
+import {
+  type SuggestionDirection,
+  suggestionStops,
+} from '#editor/suggestion-layer-navigation'
 import type {
   InFlightSuggestion,
   SuggestionLayerState,
@@ -35,70 +39,9 @@ interface SuggestionControllerActions {
   cancelInFlight(): boolean
   readonly inFlightCancellable: boolean
   focus(id: string): void
+  moveFocus(direction: SuggestionDirection): void
   reject(id: string): void
 }
-
-export const suggestionLayerTheme = EditorView.baseTheme({
-  '.cm-suggestion-widget': {
-    whiteSpace: 'normal',
-  },
-  '.cm-suggestion-in-flight-target': {
-    textDecoration: 'underline dotted var(--muted-foreground)',
-    textUnderlineOffset: '5px',
-  },
-  '.cm-suggestion-target': {
-    textDecoration: 'underline dotted var(--tint-green-foreground)',
-    textUnderlineOffset: '5px',
-  },
-  '.cm-content > .cm-suggestion-widget, .cm-content > .cm-suggestion-actions, .cm-content > .cm-suggestion-seam':
-    {
-      marginInlineStart: 'var(--cm-line-inset, 0px)',
-    },
-  '.cm-suggestion-focused-line, .cm-suggestion-block': {
-    outline: '1px solid var(--border)',
-    outlineOffset: '8px',
-  },
-  '.cm-suggestion-marker-line': {
-    position: 'relative',
-  },
-  // Sits left of the whole line box so it stays clear of anything in the line's start padding, such as a block drag handle.
-  '.cm-suggestion-marker': {
-    position: 'absolute',
-    right: 'calc(100% + 0.25rem)',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    border: '1px solid var(--tint-green-foreground)',
-    background: 'transparent',
-    color: 'var(--tint-green-foreground)',
-    cursor: 'pointer',
-    fontFamily: 'var(--font-mono)',
-    fontSize: '11px',
-    lineHeight: '18px',
-    padding: '0 4px',
-    whiteSpace: 'nowrap',
-  },
-  '.cm-suggestion-seam': {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    padding: '4px 0',
-  },
-  '.cm-suggestion-seam::before, .cm-suggestion-seam::after': {
-    content: '""',
-    flex: '1',
-    borderTop: '1px dashed var(--border)',
-  },
-  '.cm-suggestion-seam-button': {
-    border: '1px dashed var(--tint-green-foreground)',
-    background: 'transparent',
-    color: 'var(--tint-green-foreground)',
-    cursor: 'pointer',
-    fontFamily: 'var(--font-mono)',
-    fontSize: '12px',
-    lineHeight: '1.6',
-    padding: '2px 10px',
-  },
-})
 
 const targetMark = Decoration.mark({ class: 'cm-suggestion-target' })
 const focusedLine = Decoration.line({ class: 'cm-suggestion-focused-line' })
@@ -142,6 +85,7 @@ export function createSuggestionDecorations<Metadata = unknown>(
           controller,
           display,
           editorState.facet(suggestionActionsPresentation),
+          editorState.facet(suggestionStops),
         ),
       )
     } else if (display === 'seam') {
@@ -197,6 +141,7 @@ function focusedDecorations(
   controller: SuggestionControllerActions,
   display: SuggestionDisplay,
   presentation: SuggestionActionsPresentation,
+  stops: readonly SuggestionPosition[],
 ): Range<Decoration>[] {
   const { from, to } = suggestion
   const block = isFullLineRange(doc, from, to)
@@ -225,6 +170,8 @@ function focusedDecorations(
         target,
         display,
         presentation,
+        stops.indexOf(suggestion) + 1,
+        stops.length,
         controller,
       ),
     }).range(actionsBeforeLine ? to : endLine.to),
@@ -356,6 +303,8 @@ class SuggestionActionsWidget extends ReactWidget {
     readonly target: string,
     readonly display: SuggestionDisplay,
     readonly presentation: SuggestionActionsPresentation,
+    readonly current: number,
+    readonly total: number,
     private readonly controller: SuggestionControllerActions,
   ) {
     super()
@@ -370,7 +319,9 @@ class SuggestionActionsWidget extends ReactWidget {
       other.suggestion.replacement === this.suggestion.replacement &&
       other.target === this.target &&
       other.display === this.display &&
-      other.presentation === this.presentation
+      other.presentation === this.presentation &&
+      other.current === this.current &&
+      other.total === this.total
     )
   }
 
@@ -385,6 +336,20 @@ class SuggestionActionsWidget extends ReactWidget {
     return (
       <SuggestionActionBar
         label={label}
+        navigation={
+          this.total > 1
+            ? {
+                current: this.current,
+                total: this.total,
+                onNext: () => {
+                  this.controller.moveFocus('next')
+                },
+                onPrevious: () => {
+                  this.controller.moveFocus('previous')
+                },
+              }
+            : undefined
+        }
         note={note}
         onAccept={() => {
           this.controller.accept(id)

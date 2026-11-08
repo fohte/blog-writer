@@ -51,6 +51,22 @@ export const Narrow: Story = {
   },
 }
 
+const navigation = {
+  current: 1,
+  total: 2,
+  onNext: () => undefined,
+  onPrevious: () => undefined,
+}
+
+export const WithNavigation: Story = {
+  name: 'the band shows which of the suggestions this is and the key that moves to the next one.',
+  args: {
+    label: 'Add one example',
+    target: '段落を置き換え',
+    navigation,
+  },
+}
+
 export const Seam: Story = {
   name: 'a transition suggestion offers to accept the sentences on both sides of the seam.',
   args: {
@@ -72,6 +88,27 @@ export const Sheet: Story = {
     presentation: 'sheet',
     label: 'Add one example',
     target: '段落を置き換え',
+  },
+  decorators: phoneScreen,
+}
+
+export const SheetWithNavigation: Story = {
+  name: 'on a phone, the bottom sheet puts previous and next buttons around which of the suggestions this is.',
+  args: {
+    presentation: 'sheet',
+    label: 'Add one example',
+    target: '段落を置き換え',
+    navigation,
+  },
+  decorators: phoneScreen,
+}
+
+export const SeamSheetWithNavigation: Story = {
+  name: 'on a phone, the bottom sheet for a transition still offers previous and next buttons without a summary.',
+  args: {
+    presentation: 'sheet',
+    variant: 'seam',
+    navigation,
   },
   decorators: phoneScreen,
 }

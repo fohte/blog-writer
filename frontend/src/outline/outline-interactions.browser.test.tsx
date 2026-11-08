@@ -617,6 +617,7 @@ describe('outline interactions', () => {
     })
 
     const readProposalOutput = () => ({
+      heading: outlineHost.querySelector('h2')?.textContent ?? null,
       proposalText:
         outlineHost.querySelector('[aria-label="Proposed section"]')
           ?.textContent ?? null,
@@ -624,6 +625,7 @@ describe('outline interactions', () => {
       rejectedIds,
     })
     expect(readProposalOutput()).toEqual({
+      heading: '構成修正案 1',
       proposalText: '+##Proposed section✓✕',
       acceptedIds: ['suggested-heading'],
       rejectedIds: ['suggested-heading'],

@@ -25,6 +25,7 @@ import {
   type SuggestionLayerOptions,
   type TextSuggestion,
 } from '#editor/suggestion-layer'
+import { altLabel } from '#lib/key-labels'
 import { saveLlmSettings } from '#lib/llm-settings'
 import { createMoveHistory } from '#outline/index'
 
@@ -1739,6 +1740,159 @@ describe('suggestion layer', () => {
       cursor: expectedTransitionFrom,
       focusedProposalCount: 1,
       focusedAddedText: ['transition'],
+    })
+  })
+
+  describe('moving between suggestions', () => {
+    const openingFrom = 0
+    const selectedFrom = initialText.indexOf('selected')
+    const closingFrom = initialText.indexOf('closing')
+
+    function lineSuggestion(id: string, from: number, text: string) {
+      return { id, from, to: from + text.length, replacement: 'revised' }
+    }
+
+    function createEditorWithTwoSuggestions(extensions: Extension[] = []) {
+      const editor = createEditor(initialText, undefined, extensions)
+      editor.layer
+        .setSuggestions([
+          lineSuggestion('first', selectedFrom, 'selected sentence'),
+          lineSuggestion('second', closingFrom, 'closing sentence'),
+        ])
+        .match(
+          () => undefined,
+          () => {
+            throw new Error('Could not set suggestions')
+          },
+        )
+      return editor
+    }
+
+    function moveCursor(view: EditorView, anchor: number): void {
+      act(() => {
+        view.dispatch({ selection: { anchor } })
+      })
+    }
+
+    function readBar(host: HTMLElement): string | null {
+      return (
+        host.querySelector('[aria-label="提案の操作"]')?.textContent ?? null
+      )
+    }
+
+    it.each([
+      { layout: 'most keyboards', key: ']' },
+      { layout: 'macOS, which reports the typed character', key: '‘' },
+    ])('moves on Alt-] with $layout', ({ key }) => {
+      const { host, view } = createEditorWithTwoSuggestions()
+      moveCursor(view, openingFrom)
+
+      const press = () => {
+        act(() => {
+          view.contentDOM.dispatchEvent(
+            new KeyboardEvent('keydown', { altKey: true, bubbles: true, key }),
+          )
+        })
+        return { cursor: view.state.selection.main.head, bar: readBar(host) }
+      }
+      const readOutput = () => ({
+        toFirst: press(),
+        toSecond: press(),
+        wrapped: press(),
+      })
+
+      const hint = `${altLabel}] 次の提案却下 Esc採用 Tab`
+      expect(readOutput()).toEqual({
+        toFirst: {
+          cursor: selectedFrom,
+          bar: `段落を置き換え · 1 / 2${hint}`,
+        },
+        toSecond: {
+          cursor: closingFrom,
+          bar: `段落を置き換え · 2 / 2${hint}`,
+        },
+        wrapped: {
+          cursor: selectedFrom,
+          bar: `段落を置き換え · 1 / 2${hint}`,
+        },
+      })
+    })
+
+    it('leaves Option+] for typing when there is no suggestion', () => {
+      const { view } = createEditor()
+      const event = new KeyboardEvent('keydown', {
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+        key: '‘',
+      })
+
+      act(() => {
+        view.contentDOM.dispatchEvent(event)
+      })
+
+      expect(event.defaultPrevented).toBe(false)
+    })
+
+    it('counts the suggestions of every layer and follows a change in another layer', () => {
+      const otherLayer = createSuggestionLayer()
+      const { host, setSuggestion, view } = createEditor(
+        initialText,
+        undefined,
+        [otherLayer.extension],
+      )
+      setSuggestion(lineSuggestion('own', selectedFrom, 'selected sentence'))
+      const setOtherLayer = (
+        suggestions: Parameters<typeof otherLayer.setSuggestions>[0],
+      ) => {
+        act(() => {
+          otherLayer.setSuggestions(suggestions).match(
+            () => undefined,
+            () => {
+              throw new Error('Could not set the other layer suggestions')
+            },
+          )
+        })
+      }
+      setOtherLayer([lineSuggestion('other', openingFrom, 'opening sentence')])
+      moveCursor(view, selectedFrom)
+      const withOtherLayer = readBar(host)
+
+      setOtherLayer([])
+
+      const readOutput = () => ({ withOtherLayer, alone: readBar(host) })
+      expect(readOutput()).toEqual({
+        withOtherLayer: `段落を置き換え · 2 / 2${altLabel}] 次の提案却下 Esc採用 Tab`,
+        alone: '段落を置き換え却下 Esc採用 Tab',
+      })
+    })
+
+    it('moves both ways from the buttons in the bottom sheet on a phone', async () => {
+      const { host, view } = createEditorWithTwoSuggestions([
+        suggestionActionsPresentation.of('sheet'),
+      ])
+      moveCursor(view, selectedFrom)
+
+      const click = async (name: string) => {
+        const button = host.querySelector(`button[aria-label="${name}"]`)
+        if (!button) throw new Error(`Missing the ${name} button`)
+        await userEvent.click(button)
+        return { cursor: view.state.selection.main.head, bar: readBar(host) }
+      }
+      const output = {
+        next: await click('次の提案'),
+        previous: await click('前の提案'),
+        wrapped: await click('前の提案'),
+        editorFocused: view.hasFocus,
+      }
+
+      const readOutput = () => output
+      expect(readOutput()).toEqual({
+        next: { cursor: closingFrom, bar: '段落を置き換え‹2/2›却下採用' },
+        previous: { cursor: selectedFrom, bar: '段落を置き換え‹1/2›却下採用' },
+        wrapped: { cursor: closingFrom, bar: '段落を置き換え‹2/2›却下採用' },
+        editorFocused: true,
+      })
     })
   })
 
