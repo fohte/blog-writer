@@ -22,6 +22,8 @@ import type {
   TextSuggestion,
 } from '#editor/suggestion-layer-range'
 
+export { suggestionLayerTheme } from '#editor/suggestion-layer-theme'
+
 /** `seam` collapses each unfocused suggestion into a divider after the line where it starts. */
 export type SuggestionDisplay = 'marker' | 'seam'
 

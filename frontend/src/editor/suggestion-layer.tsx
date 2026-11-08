@@ -37,12 +37,12 @@ import {
   registerSuggestionLayer,
   suggestionLayerSnapshots,
 } from '#editor/suggestion-layer-registry'
-import { suggestionLayerTheme } from '#editor/suggestion-layer-theme'
 import { SuggestionRangeTracker } from '#editor/suggestion-layer-tracking'
 import {
   createSuggestionDecorations,
   suggestionActionsPresentation,
   type SuggestionDisplay,
+  suggestionLayerTheme,
 } from '#editor/suggestion-layer-view'
 
 export type {
