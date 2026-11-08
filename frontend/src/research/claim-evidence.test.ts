@@ -53,6 +53,7 @@ describe('claim evidence import', () => {
                 source_id: 'source-test',
                 title: 'Research report',
                 final_url: 'https://example.invalid/report',
+                published_at: '2025-03-04',
               }),
               { headers: { 'content-type': 'application/json' } },
             ),
@@ -91,6 +92,7 @@ describe('claim evidence import', () => {
         result: {
           title: 'Research report',
           url: 'https://example.invalid/report',
+          publishedAt: '2025-03-04',
           verdict: 'supported',
           quote: 'The value increased.',
         },

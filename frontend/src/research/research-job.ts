@@ -82,6 +82,9 @@ function isResearchJobResult(value: unknown): value is ResearchJobResult {
       (source['title'] === undefined ||
         source['title'] === null ||
         typeof source['title'] === 'string') &&
+      (source['published_at'] === undefined ||
+        source['published_at'] === null ||
+        typeof source['published_at'] === 'string') &&
       (source['body'] === undefined ||
         source['body'] === null ||
         typeof source['body'] === 'string') &&

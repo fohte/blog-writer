@@ -15,7 +15,11 @@ import type {
   SourceStatus,
 } from '#article/types'
 
-export type AddSourceInput = Omit<Source, 'status' | 'summary'> & {
+export type AddSourceInput = Omit<
+  Source,
+  'publishedAt' | 'status' | 'summary'
+> & {
+  publishedAt?: string | null
   status?: SourceStatus
   summary?: string
 }
@@ -56,6 +60,7 @@ function readSource(id: string, source: SourceData): Source {
     url: asNullableString(value('url')),
     fileName: asNullableString(value('fileName')),
     checkedAt: asNullableString(value('checkedAt')),
+    publishedAt: asNullableString(value('publishedAt')),
     status:
       status === 'unavailable' || status === 'analysisFailed'
         ? status
@@ -117,6 +122,7 @@ export function addSource(
   source.set('url', input.url)
   source.set('fileName', input.fileName)
   source.set('checkedAt', input.checkedAt)
+  source.set('publishedAt', input.publishedAt ?? null)
   source.set('status', input.status ?? 'ready')
   source.set('summary', input.summary ?? '')
   sources.set(input.id, source)

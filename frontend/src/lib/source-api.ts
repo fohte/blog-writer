@@ -49,6 +49,10 @@ const isSourceBody = (value: unknown): value is SourceBody =>
   isStringRecord(value, ['source_id', 'article_id', 'body'])
 
 const isFetchResponse = (value: unknown): value is FetchSourceBodyResponse =>
+  isRecord(value) &&
+  (value['published_at'] === undefined ||
+    value['published_at'] === null ||
+    typeof value['published_at'] === 'string') &&
   isStringRecord(value, ['source_id', 'title', 'final_url'])
 
 const isImportFileResponse = (value: unknown): value is ImportFileResponse =>

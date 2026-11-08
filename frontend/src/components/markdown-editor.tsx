@@ -281,7 +281,6 @@ export const MarkdownEditor = forwardRef<
               quote={activeEvidence.evidence.quote}
               verdict={activeEvidence.evidence.verdict}
               checkedAt={activeEvidence.evidence.checkedAt}
-              publishedAt={null}
               edited={activeEvidence.evidence.edited}
               onRemove={() => {
                 if (!text.doc) return

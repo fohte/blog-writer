@@ -17,6 +17,7 @@ type ClaimEvidenceSourceInput =
 export type ImportedClaimEvidence = {
   title: string
   url: string
+  publishedAt: string | null
   verdict: EvidenceVerdict
   quote: string
 }
@@ -168,6 +169,7 @@ export function importClaimEvidence(
               return okAsync({
                 title: response.title,
                 url: response.final_url,
+                publishedAt: response.published_at ?? null,
                 verdict: result.verdict,
                 quote: result.quote?.text ?? '',
               })

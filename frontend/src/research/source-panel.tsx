@@ -2,7 +2,7 @@ import { errAsync } from 'neverthrow'
 import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 
-import type { Finding, Source } from '#article/index'
+import type { AddSourceInput, Finding, Source } from '#article/index'
 import {
   addSource,
   deleteSource,
@@ -158,7 +158,7 @@ export function SourcePanel({
     setError(undefined)
     setPending((current) => [...current, { id, label }])
     const persistSource = (
-      fields: Omit<Source, 'id'>,
+      fields: Omit<AddSourceInput, 'id'>,
       existingFields?: Partial<Omit<Source, 'id'>>,
     ) => {
       const saved = existingSource

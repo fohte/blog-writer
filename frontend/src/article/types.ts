@@ -37,6 +37,8 @@ export type Source = {
   url: string | null
   fileName: string | null
   checkedAt: string | null
+  /** Calendar date (`YYYY-MM-DD`) the page says it was published. */
+  publishedAt: string | null
   status: SourceStatus
   summary: string
 }

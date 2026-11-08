@@ -39,6 +39,7 @@ type SourceMetadata = {
   title: string
   url: string | null
   fileName: string | null
+  publishedAt?: string | null
 }
 
 type ImportedSource = SourceMetadata & {
@@ -149,6 +150,7 @@ export function importSource(
             title: response.title,
             url: response.final_url,
             fileName: null,
+            publishedAt: response.published_at ?? null,
           },
           stored.body,
         ),

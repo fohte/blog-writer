@@ -11,6 +11,7 @@ const source: Source = {
   url: 'https://example.invalid/report',
   fileName: null,
   checkedAt: '2026-02-01T00:00:00.000Z',
+  publishedAt: '2025-10-01',
   status: 'ready',
   summary: 'The report describes a measured change over time.',
 }
@@ -19,7 +20,6 @@ const common = {
   source,
   quote: 'The measured value increased during the study period.',
   checkedAt: '2026-02-01T00:00:00.000Z',
-  publishedAt: '2025-10-01',
 } satisfies Omit<ComponentProps<typeof ClaimEvidenceCard>, 'verdict' | 'edited'>
 
 const meta = {
@@ -47,7 +47,6 @@ export const InsufficientWithoutSource: Story = {
     source: null,
     quote: '',
     verdict: 'insufficient',
-    publishedAt: null,
   },
 }
 
@@ -75,8 +74,7 @@ export const SummaryUnavailable: Story = {
   name: 'the card shows an unknown publish date and no summary.',
   args: {
     ...common,
-    source: { ...source, summary: '' },
+    source: { ...source, summary: '', publishedAt: null },
     verdict: 'supported',
-    publishedAt: null,
   },
 }
