@@ -31,4 +31,23 @@ After.`
       { name: 'Paragraph', source: 'After.' },
     ])
   })
+
+  it('leaves an unmatched ImageGrid opener outside a later valid grid', () => {
+    const unclosed = '<ImageGrid>'
+    const paragraph = 'Paragraph between grids.'
+    const grid = `<ImageGrid>
+![Sample](https://assets.example.test/sample.png)
+</ImageGrid>`
+    const markdown = `${unclosed}\n\n${paragraph}\n\n${grid}`
+    const actual = topLevelBlocks(markdown).map((block) => ({
+      name: block.name,
+      source: markdown.slice(block.from, block.contentTo),
+    }))
+
+    expect(actual).toEqual([
+      { name: 'MdxComponentTag', source: unclosed },
+      { name: 'Paragraph', source: paragraph },
+      { name: 'MdxImageGrid', source: grid },
+    ])
+  })
 })

@@ -4,7 +4,6 @@ import { syntaxHighlighting } from '@codemirror/language'
 import { languages } from '@codemirror/language-data'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { GFM } from '@lezer/markdown'
 import {
   forwardRef,
   useCallback,
@@ -37,11 +36,11 @@ import {
   markdownBlockWidgets,
 } from '#editor/markdown-block-widgets'
 import { markdownDecorations } from '#editor/markdown-decorations'
-import { mdxMarkdownExtension } from '#editor/mdx-markdown-extension'
 import { replaceBody } from '#editor/replace-body'
 import type { SuggestionDecision } from '#editor/suggestion-layer'
 import { editorTheme, markdownHighlightStyle } from '#editor/theme'
 import { createOgpFetcherCache, type OgpFetcher } from '#lib/ogp-api'
+import { markdownExtensions } from '#markdown/parser'
 import type { MoveHistory } from '#outline/move-history'
 import {
   decideClaimEvidenceSuggestion,
@@ -190,7 +189,7 @@ export const MarkdownEditor = forwardRef<
           : {}),
         extensions: [
           markdown({
-            extensions: [GFM, mdxMarkdownExtension],
+            extensions: markdownExtensions,
             codeLanguages: languages,
           }),
           syntaxHighlighting(markdownHighlightStyle),

@@ -1,9 +1,8 @@
-import { GFM, parser } from '@lezer/markdown'
-
 import { InvalidBlockMoveError } from '#article/errors'
 import { deriveHeadingTree, flattenHeadingTree } from '#article/headings'
 import type { Heading } from '#article/types'
-import { mdxMarkdownExtension } from '#editor/mdx-markdown-extension'
+import { pairImageGridTags } from '#markdown/image-grid-pairs'
+import { markdownParser } from '#markdown/parser'
 
 export type MarkdownBlockRange = {
   from: number
@@ -12,58 +11,48 @@ export type MarkdownBlockRange = {
   name: string
 }
 
-const markdownParser = parser.configure([GFM, mdxMarkdownExtension])
-
-function isImageGridOpening(markdown: string, block: MarkdownBlockRange) {
-  return (
-    block.name === 'MdxComponentTag' &&
-    /^<ImageGrid[ \t]*>$/u.test(markdown.slice(block.from, block.contentTo))
-  )
-}
-
-function isImageGridClosing(markdown: string, block: MarkdownBlockRange) {
-  return (
-    block.name === 'MdxComponentTag' &&
-    /^<\/ImageGrid[ \t]*>$/u.test(markdown.slice(block.from, block.contentTo))
-  )
-}
-
 function groupImageGrids(
   markdown: string,
   blocks: MarkdownBlockRange[],
 ): MarkdownBlockRange[] {
+  const tags = blocks
+    .filter((block) => block.name === 'MdxComponentTag')
+    .map((block) => ({
+      from: block.from,
+      to: block.contentTo,
+      source: markdown.slice(block.from, block.contentTo),
+    }))
+  const gridsByOpening = new Map(
+    pairImageGridTags(tags).map((pair) => [pair.opening.from, pair]),
+  )
+  const blockIndices = new Map(
+    blocks.map((block, index) => [block.from, index]),
+  )
   const grouped: MarkdownBlockRange[] = []
   for (let index = 0; index < blocks.length;) {
-    const opening = blocks[index]
-    if (!opening || !isImageGridOpening(markdown, opening)) {
-      if (opening) grouped.push(opening)
+    const block = blocks[index]
+    if (!block) {
       index += 1
       continue
     }
-
-    let closingIndex = index + 1
-    while (closingIndex < blocks.length) {
-      const candidate = blocks[closingIndex]
-      if (
-        !candidate ||
-        isImageGridOpening(markdown, candidate) ||
-        isImageGridClosing(markdown, candidate)
-      ) {
-        break
-      }
-      closingIndex += 1
+    const grid = gridsByOpening.get(block.from)
+    if (!grid) {
+      grouped.push(block)
+      index += 1
+      continue
     }
-
-    const closing = blocks[closingIndex]
-    if (!closing || !isImageGridClosing(markdown, closing)) {
-      grouped.push(opening)
+    const closingIndex = blockIndices.get(grid.closing.from)
+    const closing =
+      closingIndex === undefined ? undefined : blocks[closingIndex]
+    if (closingIndex === undefined || !closing) {
+      grouped.push(block)
       index += 1
       continue
     }
 
     grouped.push({
-      from: opening.from,
-      contentTo: closing.contentTo,
+      from: grid.range.from,
+      contentTo: grid.closing.to,
       to: closing.to,
       name: 'MdxImageGrid',
     })

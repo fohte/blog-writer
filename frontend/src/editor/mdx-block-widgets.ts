@@ -17,6 +17,7 @@ import {
   selectionTouches,
 } from '#editor/markdown-block-widget-utils'
 import type { OgpFetcher } from '#lib/ogp-api'
+import { pairImageGridTags } from '#markdown/image-grid-pairs'
 
 type BlockRange = Readonly<{ from: number; to: number }>
 
@@ -140,28 +141,23 @@ function collectImageGrids(
   tags: readonly MarkdownSyntaxNode[],
   images: readonly MarkdownSyntaxNode[],
 ): ImageGrid[] {
-  const openings: MarkdownSyntaxNode[] = []
-  const grids: ImageGrid[] = []
-  for (const node of tags) {
-    const tag = componentTag(state, node)
-    if (tag?.name !== 'ImageGrid' || !isTopLevelTag(state, node)) continue
-    if (tag.closing) {
-      const opening = openings.pop()
-      if (!opening) continue
-      const range = { from: opening.from, to: node.to }
-      grids.push({
-        closing: node,
-        images: images.filter(
-          (image) => image.from > opening.to && image.to < node.from,
-        ),
-        opening,
-        range,
-      })
-    } else if (!tag.selfClosing && tag.attributes.size === 0) {
-      openings.push(node)
-    }
-  }
-  return grids
+  const tagSources = tags
+    .filter((node) => isTopLevelTag(state, node))
+    .map((node) => ({
+      from: node.from,
+      to: node.to,
+      source: state.doc.sliceString(node.from, node.to),
+      node,
+    }))
+
+  return pairImageGridTags(tagSources).map(({ opening, closing, range }) => ({
+    closing: closing.node,
+    images: images.filter(
+      (image) => image.from > opening.node.to && image.to < closing.node.from,
+    ),
+    opening: opening.node,
+    range,
+  }))
 }
 
 function isImageOnlyGridContent(
@@ -273,7 +269,6 @@ export function buildMdxBlockWidgetDecorations(
     let widget: ReturnType<typeof createBlockWidget> | undefined
     const source = state.doc.sliceString(range.from, range.to)
     if (tag.name === 'CardLink') {
-      if (!hasOnlyAttribute(tag, 'href')) continue
       const href = safeCardUrl(tag.attributes.get('href'))
       if (href === null) continue
       widget = createBlockWidget(

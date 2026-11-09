@@ -63,6 +63,36 @@ describe('Markdown MDX component previews', () => {
     })
   })
 
+  it('previews a CardLink with an additional title attribute', async () => {
+    const source =
+      'before\n<CardLink title="Guide" href="https://docs.example.test/guide" />'
+    const fetchOgp = vi.fn(() => okAsync(metadata))
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      fetchOgp,
+    })
+    const card = await vi.waitUntil(() => {
+      const preview = content?.querySelector<HTMLAnchorElement>(
+        '.cm-markdown-block-widget a',
+      )
+      return preview?.querySelector('p')?.textContent === metadata.title
+        ? preview
+        : undefined
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      href: card.getAttribute('href'),
+      title: card.querySelector('p')?.textContent,
+      fetchCalls: fetchOgp.mock.calls,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      href: 'https://docs.example.test/guide',
+      title: metadata.title,
+      fetchCalls: [['https://docs.example.test/guide']],
+    })
+  })
+
   it('reuses an OGP request when an edit before the card rebuilds its widget', async () => {
     const fetchOgp = vi.fn(() => okAsync(metadata))
     const source = `before\n${cardSource}`
