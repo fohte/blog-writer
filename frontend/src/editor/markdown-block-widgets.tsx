@@ -173,6 +173,7 @@ function buildBlockWidgetDecorations(
       if (
         table &&
         !selectionTouches(state, range.from, range.to) &&
+        !isBlockWidgetExcluded(range, mdxWidgets.imageGridRanges) &&
         !isBlockWidgetExcluded(range, exclusions)
       ) {
         const source = state.doc.sliceString(range.from, range.to)
@@ -255,7 +256,11 @@ function buildBlockWidgetDecorations(
           .trimEnd()
         const range = { from: cursor.from, to: cursor.to }
         const excluded = isBlockWidgetExcluded(range, exclusions)
-        if (excluded) continue
+        if (
+          excluded ||
+          isBlockWidgetExcluded(range, mdxWidgets.imageGridRanges)
+        )
+          continue
         const sourceVisible = selectionTouches(state, range.from, range.to)
         const diagramId = 'markdown-mermaid-' + String(nextMermaidWidgetId++)
         const widget = createBlockWidget(

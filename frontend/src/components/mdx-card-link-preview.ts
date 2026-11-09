@@ -38,6 +38,7 @@ export function createMdxCardLinkPreview({
     const image = document.createElement('img')
     image.className = 'h-full max-h-[200px] object-cover'
     image.alt = ''
+    image.draggable = false
     image.referrerPolicy = 'no-referrer'
     image.src = ogp.image
     image.addEventListener(

@@ -17,7 +17,7 @@ import {
   selectionTouches,
 } from '#editor/markdown-block-widget-utils'
 import type { OgpFetcher } from '#lib/ogp-api'
-import { pairImageGridTags } from '#markdown/image-grid-pairs'
+import { analyzeImageGrids } from '#markdown/image-grid-pairs'
 
 type BlockRange = Readonly<{ from: number; to: number }>
 
@@ -33,6 +33,7 @@ type ImageGrid = Readonly<{
   images: MarkdownSyntaxNode[]
   opening: MarkdownSyntaxNode
   range: BlockRange
+  renderable: boolean
 }>
 
 type MdxSyntaxNodes = Readonly<{
@@ -141,62 +142,23 @@ function collectImageGrids(
   tags: readonly MarkdownSyntaxNode[],
   images: readonly MarkdownSyntaxNode[],
 ): ImageGrid[] {
-  const tagSources = tags
-    .filter((node) => isTopLevelTag(state, node))
-    .map((node) => ({
-      from: node.from,
-      to: node.to,
-      source: state.doc.sliceString(node.from, node.to),
-      node,
-    }))
-
-  return pairImageGridTags(tagSources).map(({ opening, closing, range }) => ({
-    closing: closing.node,
-    images: images.filter(
-      (image) => image.from > opening.node.to && image.to < closing.node.from,
-    ),
-    opening: opening.node,
-    range,
+  const markdown = state.doc.toString()
+  const tagSources = tags.map((node) => ({
+    from: node.from,
+    to: node.to,
+    source: markdown.slice(node.from, node.to),
+    node,
   }))
-}
 
-function isImageOnlyGridContent(
-  state: EditorState,
-  grid: ImageGrid,
-  opening: MarkdownSyntaxNode,
-  closing: MarkdownSyntaxNode,
-): boolean {
-  const imageNodes = new Set(grid.images)
-  if (imageNodes.size === 0) return false
-
-  let lineNumber = state.doc.lineAt(opening.to).number + 1
-  const closingLine = state.doc.lineAt(closing.from).number
-  const seenImages = new Set<MarkdownSyntaxNode>()
-  while (lineNumber < closingLine) {
-    const line = state.doc.line(lineNumber)
-    const lineText = line.text.trim()
-    if (lineText.length === 0) {
-      lineNumber += 1
-      continue
-    }
-
-    const lineImages = grid.images.filter(
-      (image) => image.from >= line.from && image.to <= line.to,
-    )
-    const image = lineImages[0]
-    if (
-      lineImages.length !== 1 ||
-      !image ||
-      !imageNodes.has(image) ||
-      imageData(state, image) === null ||
-      lineText !== state.doc.sliceString(image.from, image.to).trim()
-    )
-      return false
-    seenImages.add(image)
-    lineNumber += 1
-  }
-
-  return seenImages.size === imageNodes.size
+  return analyzeImageGrids(markdown, tagSources, images).map(
+    ({ opening, closing, images: gridImages, range, renderable }) => ({
+      closing: closing.node,
+      images: [...gridImages],
+      opening: opening.node,
+      range,
+      renderable,
+    }),
+  )
 }
 
 export function buildMdxBlockWidgetDecorations(
@@ -221,7 +183,7 @@ export function buildMdxBlockWidgetDecorations(
     if (
       selectionTouches(state, range.from, range.to) ||
       isBlockWidgetExcluded(range, imageExclusions) ||
-      !isImageOnlyGridContent(state, grid, grid.opening, grid.closing)
+      !grid.renderable
     )
       continue
 

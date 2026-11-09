@@ -178,6 +178,44 @@ describe('Markdown block widget handles', () => {
     })
   })
 
+  it('shows a move handle for a CardLink directly after a paragraph', async () => {
+    const href = 'https://docs.example.test/guide'
+    const cardSource = `<CardLink href="${href}" />`
+    const source = `A paragraph.\n${cardSource}\n\nAfter paragraph.`
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      initialSelection: { anchor: source.indexOf('After paragraph.') + 1 },
+      showMoveHandles: true,
+    })
+    if (!content) throw new Error('The Markdown editor did not mount')
+    await act(async () => {
+      await vi.waitUntil(() => {
+        const widgets = [
+          ...content.querySelectorAll<HTMLElement>('.cm-markdown-block-widget'),
+        ]
+        return widgets.some(
+          (widget) => widget.querySelector('a')?.getAttribute('href') === href,
+        )
+      })
+    })
+    const cardWidget = [
+      ...content.querySelectorAll<HTMLElement>('.cm-markdown-block-widget'),
+    ].find((widget) => widget.querySelector('a')?.getAttribute('href') === href)
+    if (!cardWidget) throw new Error('The CardLink preview did not mount')
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      cardHref: cardWidget.querySelector('a')?.getAttribute('href'),
+      cardHandleCount: cardWidget.querySelectorAll(
+        '.cm-markdown-block-widget-handle .cm-block-drag-handle',
+      ).length,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      cardHref: href,
+      cardHandleCount: 1,
+    })
+  })
+
   it.each([1, 2, 3])(
     'shows one move handle for an image with %i leading spaces',
     async (indent) => {

@@ -46,6 +46,7 @@ describe('Markdown MDX component previews', () => {
         domain: card.querySelector('p:nth-child(2)')?.textContent,
         href: card.getAttribute('href'),
         image: card.querySelector('img')?.getAttribute('referrerpolicy'),
+        imageDraggable: card.querySelector('img')?.getAttribute('draggable'),
         title: card.querySelector('p:first-child')?.textContent,
       },
       fetchCalls: fetchOgp.mock.calls,
@@ -57,6 +58,7 @@ describe('Markdown MDX component previews', () => {
         domain: 'docs.example.test',
         href: 'https://docs.example.test/guide',
         image: 'no-referrer',
+        imageDraggable: 'false',
         title: metadata.title,
       },
       fetchCalls: [['https://docs.example.test/guide']],
@@ -538,21 +540,25 @@ describe('Markdown MDX component previews', () => {
     const source = 'Use <Kbd>Ctrl</Kbd> now'
     const { body, content } = mountMarkdownEditor(source)
     const view = content ? EditorView.findFromDOM(content) : null
-    view?.dispatch({
-      selection: {
-        anchor: source.indexOf('<Kbd>'),
-        head: source.indexOf('</Kbd>') + '</Kbd>'.length,
-      },
+    if (!view || !content) throw new Error('The Markdown editor did not mount')
+    const selection = { anchor: 0, head: source.length }
+    view.dispatch({
+      selection,
     })
 
     const readOutput = () => ({
       body: body.toJSON(),
-      keyCount: content?.querySelectorAll('kbd').length,
-      text: content?.textContent,
+      keyCount: content.querySelectorAll('kbd').length,
+      selection: {
+        anchor: view.state.selection.main.anchor,
+        head: view.state.selection.main.head,
+      },
+      text: content.textContent,
     })
     expect(readOutput()).toEqual({
       body: source,
       keyCount: 0,
+      selection,
       text: source,
     })
   })
@@ -561,27 +567,40 @@ describe('Markdown MDX component previews', () => {
     const source = 'Type <Kbd>Enter</Kbd> to continue'
     const { body, content } = mountMarkdownEditor(source)
     const view = content ? EditorView.findFromDOM(content) : null
+    const key = content?.querySelector<HTMLElement>('kbd')
+    if (!view || !content || !key)
+      throw new Error('The Kbd preview did not mount')
     const toDOM = vi.spyOn(DomWidget.prototype, 'toDOM')
     const initialRenderCount = toDOM.mock.calls.length
+    const japaneseInput = 'にほんご '
+    const selectionPosition = japaneseInput.length + source.indexOf('Enter') + 1
 
-    content?.dispatchEvent(
+    content.dispatchEvent(
       new CompositionEvent('compositionstart', { bubbles: true }),
     )
-    view?.dispatch({ changes: { from: 0, insert: 'にほんご ' } })
+    view.dispatch({ changes: { from: 0, insert: japaneseInput } })
+    view.dispatch({ selection: { anchor: selectionPosition } })
 
     const readOutput = () => ({
       body: body.toJSON(),
-      keyText: content?.querySelector('kbd')?.textContent,
+      keyIsSame: content.querySelector('kbd') === key,
+      keyText: content.querySelector('kbd')?.textContent,
+      selection: {
+        anchor: view.state.selection.main.anchor,
+        head: view.state.selection.main.head,
+      },
       renderCountDelta: toDOM.mock.calls.length - initialRenderCount,
     })
     const output = readOutput()
-    content?.dispatchEvent(
+    content.dispatchEvent(
       new CompositionEvent('compositionend', { bubbles: true }),
     )
     toDOM.mockRestore()
     expect(output).toEqual({
-      body: `にほんご ${source}`,
+      body: `${japaneseInput}${source}`,
+      keyIsSame: true,
       keyText: 'Enter',
+      selection: { anchor: selectionPosition, head: selectionPosition },
       renderCountDelta: 0,
     })
   })

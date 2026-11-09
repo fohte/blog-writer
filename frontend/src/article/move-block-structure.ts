@@ -1,7 +1,8 @@
 import { InvalidBlockMoveError } from '#article/errors'
 import { deriveHeadingTree, flattenHeadingTree } from '#article/headings'
 import type { Heading } from '#article/types'
-import { pairImageGridTags } from '#markdown/image-grid-pairs'
+import type { MarkdownImageSyntaxNode } from '#markdown/image-data'
+import { analyzeImageGrids } from '#markdown/image-grid-pairs'
 import { markdownParser } from '#markdown/parser'
 
 export type MarkdownBlockRange = {
@@ -14,16 +15,13 @@ export type MarkdownBlockRange = {
 function groupImageGrids(
   markdown: string,
   blocks: MarkdownBlockRange[],
+  tags: Array<{ from: number; to: number; source: string }>,
+  images: MarkdownImageSyntaxNode[],
 ): MarkdownBlockRange[] {
-  const tags = blocks
-    .filter((block) => block.name === 'MdxComponentTag')
-    .map((block) => ({
-      from: block.from,
-      to: block.contentTo,
-      source: markdown.slice(block.from, block.contentTo),
-    }))
   const gridsByOpening = new Map(
-    pairImageGridTags(tags).map((pair) => [pair.opening.from, pair]),
+    analyzeImageGrids(markdown, tags, images)
+      .filter((grid) => grid.renderable)
+      .map((grid) => [grid.opening.from, grid]),
   )
   const blockIndices = new Map(
     blocks.map((block, index) => [block.from, index]),
@@ -63,7 +61,8 @@ function groupImageGrids(
 
 export function topLevelBlocks(markdown: string): MarkdownBlockRange[] {
   const blocks: MarkdownBlockRange[] = []
-  const cursor = markdownParser.parse(markdown).cursor()
+  const tree = markdownParser.parse(markdown)
+  const cursor = tree.cursor()
   if (!cursor.firstChild()) return blocks
 
   do {
@@ -77,7 +76,23 @@ export function topLevelBlocks(markdown: string): MarkdownBlockRange[] {
     })
   } while (cursor.nextSibling())
 
-  return groupImageGrids(markdown, blocks)
+  const tags: Array<{ from: number; to: number; source: string }> = []
+  const images: MarkdownImageSyntaxNode[] = []
+  const syntaxCursor = tree.cursor()
+  while (syntaxCursor.next()) {
+    if (syntaxCursor.name === 'MdxComponentTag') {
+      tags.push({
+        from: syntaxCursor.from,
+        to: syntaxCursor.to,
+        source: markdown.slice(syntaxCursor.from, syntaxCursor.to),
+      })
+    }
+    if (syntaxCursor.name === 'Image') {
+      images.push(syntaxCursor.node)
+    }
+  }
+
+  return groupImageGrids(markdown, blocks, tags, images)
 }
 
 export function collectHeadings(markdown: string): Heading[] {
