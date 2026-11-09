@@ -41,7 +41,7 @@ BACKEND_ALLOWED_HOSTS=writer.example,dev.example:4567
 BACKEND_ALLOWED_ORIGINS=https://writer.example,http://dev.example:4567
 ```
 
-When the allowlists are unset, the backend allows `localhost`, `127.0.0.1`, and `[::1]` on the listening port. Requests without an `Origin` header are accepted after the Host check when `Sec-Fetch-Site` is absent, `same-origin`, or `none`. An empty allowlist value allows nothing; rejected requests receive `403 Forbidden`.
+When the allowlists are unset, the backend allows `localhost`, `127.0.0.1`, and `[::1]` on the listening port. Requests without an `Origin` header are accepted after the Host check when `Sec-Fetch-Site` is absent, `same-origin`, or `none`, or when they are `GET` or `HEAD` page navigations (`Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: document`) outside `/api`. An empty allowlist value allows nothing; rejected requests receive `403 Forbidden`.
 
 ## Run the container image
 
