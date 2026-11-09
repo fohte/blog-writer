@@ -137,6 +137,7 @@ impl ExportService {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
+            .user_agent("blog-writer")
             .build()
             .map_err(|_| ExportError::HttpClient)?;
 
@@ -909,6 +910,42 @@ mod tests {
             .expect(1)
             .mount(&fixture.github)
             .await;
+    }
+
+    #[tokio::test]
+    async fn github_requests_send_a_user_agent() {
+        let fixture = fixture().await;
+        mock_token_exchange(&fixture).await;
+        mock_pulls(&fixture, json!([])).await;
+
+        let result = fixture
+            .service
+            .get_article_file(&destination(), ARTICLE_ID, SLUG)
+            .await;
+        let user_agents = fixture
+            .github
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|request| {
+                request
+                    .headers
+                    .get("user-agent")
+                    .map(|value| value.to_str().unwrap().to_owned())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            (result, user_agents),
+            (
+                Ok(None),
+                vec![
+                    Some("blog-writer".to_owned()),
+                    Some("blog-writer".to_owned())
+                ]
+            )
+        );
     }
 
     #[tokio::test]
