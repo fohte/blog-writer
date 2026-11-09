@@ -11,17 +11,20 @@ const response = {
   title: 'A useful guide',
 }
 
+function summarizeOgpResult(result: ReturnType<typeof fetchOgp>) {
+  return result.match(
+    (value) => ({ result: 'ok', value }),
+    (error) => ({ result: 'error', message: error.message }),
+  )
+}
+
 describe('fetchOgp', () => {
   it('posts the URL and returns the OGP response', async () => {
     const fetcher = vi.fn<typeof fetch>(() =>
       Promise.resolve(Response.json(response)),
     )
-    const result = await fetchOgp(
-      fetcher,
-      'https://docs.example.test/guide',
-    ).match(
-      (value) => ({ result: 'ok', value }),
-      (error) => ({ result: 'error', message: error.message }),
+    const result = await summarizeOgpResult(
+      fetchOgp(fetcher, 'https://docs.example.test/guide'),
     )
 
     const readOutput = () => ({ result, requests: fetcher.mock.calls })
@@ -44,12 +47,8 @@ describe('fetchOgp', () => {
     const fetcher = vi.fn<typeof fetch>(() =>
       Promise.resolve(Response.json({ error: 'unavailable' }, { status: 502 })),
     )
-    const result = await fetchOgp(
-      fetcher,
-      'https://docs.example.test/guide',
-    ).match(
-      (value) => ({ result: 'ok', value }),
-      (error) => ({ result: 'error', message: error.message }),
+    const result = await summarizeOgpResult(
+      fetchOgp(fetcher, 'https://docs.example.test/guide'),
     )
 
     expect(result).toEqual({
@@ -69,12 +68,8 @@ describe('fetchOgp', () => {
         }),
       ),
     )
-    const result = await fetchOgp(
-      fetcher,
-      'https://docs.example.test/guide',
-    ).match(
-      (value) => ({ result: 'ok', value }),
-      (error) => ({ result: 'error', message: error.message }),
+    const result = await summarizeOgpResult(
+      fetchOgp(fetcher, 'https://docs.example.test/guide'),
     )
 
     expect(result).toEqual({
@@ -83,49 +78,57 @@ describe('fetchOgp', () => {
     })
   })
 
-  it('retries failed URLs and caches successful results per URL', async () => {
+  it('retries a URL after its request fails', async () => {
     const firstUrl = 'https://docs.example.test/first'
-    const secondUrl = 'https://docs.example.test/second'
-    const secondResponse = { ...response, title: 'Another guide' }
     let firstRequest = true
     const fetcher = vi.fn((url: string) => {
       if (url === firstUrl && firstRequest) {
         firstRequest = false
         return errAsync(new Error('temporary failure'))
       }
-      return okAsync(url === firstUrl ? response : secondResponse)
+      return okAsync(response)
     })
     const cachedFetcher = createOgpFetcherCache(() => fetcher)
-    const firstAttempt = await cachedFetcher(firstUrl).match(
-      (value) => ({ result: 'ok', value }),
-      (error) => ({ result: 'error', message: error.message }),
-    )
-    const retried = await cachedFetcher(firstUrl).match(
-      (value) => ({ result: 'ok', value }),
-      (error) => ({ result: 'error', message: error.message }),
-    )
-    const otherUrl = await cachedFetcher(secondUrl).match(
-      (value) => ({ result: 'ok', value }),
-      (error) => ({ result: 'error', message: error.message }),
-    )
-    const cachedSuccess = await cachedFetcher(firstUrl).match(
-      (value) => ({ result: 'ok', value }),
-      (error) => ({ result: 'error', message: error.message }),
-    )
+    const firstAttempt = await summarizeOgpResult(cachedFetcher(firstUrl))
+    const retried = await summarizeOgpResult(cachedFetcher(firstUrl))
 
     const readOutput = () => ({
       firstAttempt,
       retried,
-      otherUrl,
-      cachedSuccess,
       requests: fetcher.mock.calls,
     })
     expect(readOutput()).toEqual({
       firstAttempt: { result: 'error', message: 'temporary failure' },
       retried: { result: 'ok', value: response },
-      otherUrl: { result: 'ok', value: secondResponse },
-      cachedSuccess: { result: 'ok', value: response },
-      requests: [[firstUrl], [firstUrl], [secondUrl]],
+      requests: [[firstUrl], [firstUrl]],
+    })
+  })
+
+  it('caches successful results independently by URL', async () => {
+    const firstUrl = 'https://docs.example.test/first'
+    const secondUrl = 'https://docs.example.test/second'
+    const secondResponse = { ...response, title: 'Another guide' }
+    const fetcher = vi.fn((url: string) =>
+      okAsync(url === firstUrl ? response : secondResponse),
+    )
+    const cachedFetcher = createOgpFetcherCache(() => fetcher)
+    const firstUrlResult = await summarizeOgpResult(cachedFetcher(firstUrl))
+    const secondUrlResult = await summarizeOgpResult(cachedFetcher(secondUrl))
+    const cachedFirstUrlResult = await summarizeOgpResult(
+      cachedFetcher(firstUrl),
+    )
+
+    const readOutput = () => ({
+      firstUrlResult,
+      secondUrlResult,
+      cachedFirstUrlResult,
+      requests: fetcher.mock.calls,
+    })
+    expect(readOutput()).toEqual({
+      firstUrlResult: { result: 'ok', value: response },
+      secondUrlResult: { result: 'ok', value: secondResponse },
+      cachedFirstUrlResult: { result: 'ok', value: response },
+      requests: [[firstUrl], [secondUrl]],
     })
   })
 })
