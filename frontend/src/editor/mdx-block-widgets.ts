@@ -17,7 +17,7 @@ import {
   selectionTouches,
 } from '#editor/markdown-block-widget-utils'
 import type { OgpFetcher } from '#lib/ogp-api'
-import { analyzeImageGrids } from '#markdown/image-grid-pairs'
+import { analyzeImageGrids, pairImageGrids } from '#markdown/image-grid-pairs'
 
 type BlockRange = Readonly<{ from: number; to: number }>
 
@@ -118,7 +118,12 @@ export function mdxImageGridImageExclusions(
 ): BlockWidgetExclusionRange[] {
   const ranges: BlockWidgetExclusionRange[] = []
   const { images, tags } = collectMdxSyntaxNodes(state)
-  for (const grid of collectImageGrids(state, tags, images)) {
+  const markdown = state.doc.toString()
+  for (const grid of pairImageGrids(
+    markdown,
+    imageGridTagSources(markdown, tags),
+    images,
+  )) {
     ranges.push(
       ...grid.images.map((image) => ({ from: image.from, to: image.to })),
     )
@@ -137,18 +142,25 @@ function collectMdxSyntaxNodes(state: EditorState): MdxSyntaxNodes {
   return { images, tags }
 }
 
+function imageGridTagSources(
+  markdown: string,
+  tags: readonly MarkdownSyntaxNode[],
+) {
+  return tags.map((node) => ({
+    from: node.from,
+    to: node.to,
+    source: markdown.slice(node.from, node.to),
+    node,
+  }))
+}
+
 function collectImageGrids(
   state: EditorState,
   tags: readonly MarkdownSyntaxNode[],
   images: readonly MarkdownSyntaxNode[],
 ): ImageGrid[] {
   const markdown = state.doc.toString()
-  const tagSources = tags.map((node) => ({
-    from: node.from,
-    to: node.to,
-    source: markdown.slice(node.from, node.to),
-    node,
-  }))
+  const tagSources = imageGridTagSources(markdown, tags)
 
   return analyzeImageGrids(markdown, tagSources, images).map(
     ({ opening, closing, images: gridImages, range, renderable }) => ({

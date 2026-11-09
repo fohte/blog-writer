@@ -9,7 +9,7 @@ type ImageGridTagSource = Readonly<{
   source: string
 }>
 
-type ImageGrid<
+type ImageGridPair<
   TTag extends ImageGridTagSource,
   TImage extends MarkdownImageSyntaxNode,
 > = Readonly<{
@@ -17,8 +17,12 @@ type ImageGrid<
   closing: TTag
   images: readonly TImage[]
   range: Readonly<{ from: number; to: number }>
-  renderable: boolean
 }>
+
+type AnalyzedImageGrid<
+  TTag extends ImageGridTagSource,
+  TImage extends MarkdownImageSyntaxNode,
+> = ImageGridPair<TTag, TImage> & Readonly<{ renderable: boolean }>
 
 function lineStartAt(markdown: string, position: number): number {
   return markdown.lastIndexOf('\n', position - 1) + 1
@@ -48,7 +52,7 @@ function hasImageOnlyContent(
   if (openingLineBreak === -1 || openingLineBreak >= closing.from) return false
 
   const closingLineStart = lineStartAt(markdown, closing.from)
-  const seenImages = new Set<MarkdownImageSyntaxNode>()
+  let nextImageIndex = 0
   let lineFrom = openingLineBreak + 1
   while (lineFrom < closingLineStart) {
     const nextLineBreak = markdown.indexOf('\n', lineFrom)
@@ -58,24 +62,66 @@ function hasImageOnlyContent(
         : nextLineBreak
     const lineText = markdown.slice(lineFrom, lineTo)
     if (lineText.trim().length > 0) {
-      const lineImages = images.filter(
-        (image) => image.from >= lineFrom && image.to <= lineTo,
-      )
-      const image = lineImages[0]
+      const image = images[nextImageIndex]
+      const nextImage = images[nextImageIndex + 1]
       if (
-        lineImages.length !== 1 ||
         !image ||
+        image.from < lineFrom ||
+        image.to > lineTo ||
+        (nextImage !== undefined && nextImage.from < lineTo) ||
         lineText.trim() !== markdown.slice(image.from, image.to).trim()
       ) {
         return false
       }
-      seenImages.add(image)
+      nextImageIndex += 1
     }
     if (lineTo === closingLineStart) break
     lineFrom = lineTo + 1
   }
 
-  return seenImages.size === images.length
+  return nextImageIndex === images.length
+}
+
+export function pairImageGrids<
+  TTag extends ImageGridTagSource,
+  TImage extends MarkdownImageSyntaxNode,
+>(
+  markdown: string,
+  tags: readonly TTag[],
+  images: readonly TImage[],
+): ImageGridPair<TTag, TImage>[] {
+  const openings: Array<{ tag: TTag; images: TImage[] }> = []
+  const grids: ImageGridPair<TTag, TImage>[] = []
+  let imageIndex = 0
+
+  for (const tag of tags) {
+    while (imageIndex < images.length) {
+      const image = images[imageIndex]
+      if (!image || image.from >= tag.from) break
+      for (const opening of openings) {
+        if (image.from > opening.tag.to) opening.images.push(image)
+      }
+      imageIndex += 1
+    }
+    if (!isTopLevelTag(markdown, tag)) continue
+    const source = withoutTrailingWhitespace(tag.source)
+    if (/^<ImageGrid[ \t]*>$/u.test(source)) {
+      openings.push({ tag, images: [] })
+      continue
+    }
+    if (!/^<\/ImageGrid[ \t]*>$/u.test(source)) continue
+
+    const opening = openings.pop()
+    if (!opening) continue
+    grids.push({
+      opening: opening.tag,
+      closing: tag,
+      images: opening.images.filter((image) => image.to < tag.from),
+      range: { from: opening.tag.from, to: tag.to },
+    })
+  }
+
+  return grids
 }
 
 export function analyzeImageGrids<
@@ -85,32 +131,14 @@ export function analyzeImageGrids<
   markdown: string,
   tags: readonly TTag[],
   images: readonly TImage[],
-): ImageGrid<TTag, TImage>[] {
-  const openings: TTag[] = []
-  const grids: ImageGrid<TTag, TImage>[] = []
-
-  for (const tag of tags) {
-    if (!isTopLevelTag(markdown, tag)) continue
-    const source = withoutTrailingWhitespace(tag.source)
-    if (/^<ImageGrid[ \t]*>$/u.test(source)) {
-      openings.push(tag)
-      continue
-    }
-    if (!/^<\/ImageGrid[ \t]*>$/u.test(source)) continue
-
-    const opening = openings.pop()
-    if (!opening) continue
-    const gridImages = images.filter(
-      (image) => image.from > opening.to && image.to < tag.from,
-    )
-    grids.push({
-      opening,
-      closing: tag,
-      images: gridImages,
-      range: { from: opening.from, to: tag.to },
-      renderable: hasImageOnlyContent(markdown, opening, tag, gridImages),
-    })
-  }
-
-  return grids
+): AnalyzedImageGrid<TTag, TImage>[] {
+  return pairImageGrids(markdown, tags, images).map((grid) => ({
+    ...grid,
+    renderable: hasImageOnlyContent(
+      markdown,
+      grid.opening,
+      grid.closing,
+      grid.images,
+    ),
+  }))
 }
