@@ -1,6 +1,6 @@
 use axum::{
     extract::{Request, State},
-    http::{HeaderMap, StatusCode, header::HOST},
+    http::{HeaderMap, Method, StatusCode, header::HOST},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -27,15 +27,15 @@ impl HostOriginPolicy {
         }
     }
 
-    fn allows(&self, headers: &HeaderMap, uri: &axum::http::Uri) -> bool {
-        let Some(host) = request_host(headers, uri) else {
+    fn allows(&self, request: &Request) -> bool {
+        let Some(host) = request_host(request.headers(), request.uri()) else {
             return false;
         };
         if !self.allowed_hosts.iter().any(|allowed| allowed == &host) {
             return false;
         }
 
-        origin_allowed(headers, &self.allowed_origins)
+        origin_allowed(request, &self.allowed_origins)
     }
 
     pub(crate) fn allowed_origins(&self) -> &[String] {
@@ -62,16 +62,37 @@ fn request_host(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
     Some(host.to_ascii_lowercase())
 }
 
-fn origin_allowed(headers: &HeaderMap, allowed_origins: &[String]) -> bool {
+fn origin_allowed(request: &Request, allowed_origins: &[String]) -> bool {
+    let headers = request.headers();
     let origin = match single_header_value(headers, axum::http::header::ORIGIN.as_str()) {
         SingleHeaderValue::Present(origin) => origin,
-        SingleHeaderValue::Missing => return fetch_site_allows_originless_request(headers),
+        SingleHeaderValue::Missing => {
+            return is_page_navigation(request) || fetch_site_allows_originless_request(headers);
+        }
         SingleHeaderValue::Invalid => return false,
     };
 
     allowed_origins
         .iter()
         .any(|allowed| allowed == &origin.to_ascii_lowercase())
+}
+
+// Login redirects and links from other sites open the app with a cross-site Sec-Fetch-Site.
+fn is_page_navigation(request: &Request) -> bool {
+    let path = request.uri().path();
+    let headers = request.headers();
+
+    matches!(*request.method(), Method::GET | Method::HEAD)
+        && path != "/api"
+        && !path.starts_with("/api/")
+        && matches!(
+            single_header_value(headers, "sec-fetch-mode"),
+            SingleHeaderValue::Present("navigate")
+        )
+        && matches!(
+            single_header_value(headers, "sec-fetch-dest"),
+            SingleHeaderValue::Present("document")
+        )
 }
 
 fn fetch_site_allows_originless_request(headers: &HeaderMap) -> bool {
@@ -109,7 +130,7 @@ pub async fn enforce_host_origin(
     request: Request,
     next: Next,
 ) -> Response {
-    if policy.allows(request.headers(), request.uri()) {
+    if policy.allows(&request) {
         next.run(request).await
     } else {
         tracing::warn!(
@@ -147,6 +168,7 @@ mod tests {
         Router::new()
             .route("/api/health", get(health))
             .route("/api/sync/{doc_id}", get(health))
+            .fallback(get(health))
             .layer(middleware::from_fn_with_state(policy, enforce_host_origin))
     }
 
@@ -188,6 +210,83 @@ mod tests {
         assert_eq!(
             response(test_router, request.body(Body::empty()).unwrap()).await,
             (status, expected)
+        );
+    }
+
+    const OK: &str = r#"{"status":"ok"}"#;
+    const FORBIDDEN: &str = r#"{"error":"Forbidden"}"#;
+    const CROSS_SITE_NAVIGATION: &[(&str, &str)] = &[
+        ("host", "localhost:3000"),
+        ("sec-fetch-site", "cross-site"),
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+    ];
+    const WEBSOCKET_WITH_NAVIGATION_METADATA: &[(&str, &str)] = &[
+        ("host", "localhost:3000"),
+        ("sec-fetch-site", "cross-site"),
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("connection", "upgrade"),
+        ("upgrade", "websocket"),
+        ("sec-websocket-version", "13"),
+    ];
+    const WEBSOCKET_HANDSHAKE: &[(&str, &str)] = &[
+        ("host", "localhost:3000"),
+        ("sec-fetch-site", "cross-site"),
+        ("sec-fetch-mode", "websocket"),
+        ("sec-fetch-dest", "empty"),
+        ("connection", "upgrade"),
+        ("upgrade", "websocket"),
+        ("sec-websocket-version", "13"),
+    ];
+
+    #[rstest]
+    #[test_attr(tokio::test)]
+    #[case::cross_site_page("GET", "/", CROSS_SITE_NAVIGATION, 200, OK)]
+    #[case::cross_site_deep_link("GET", "/articles/one", CROSS_SITE_NAVIGATION, 200, OK)]
+    #[case::path_sharing_the_api_prefix("GET", "/apiary", CROSS_SITE_NAVIGATION, 200, OK)]
+    #[case::head("HEAD", "/", CROSS_SITE_NAVIGATION, 200, "")]
+    #[case::same_site_page("GET", "/", &[("host", "localhost:3000"), ("sec-fetch-site", "same-site"), ("sec-fetch-mode", "navigate"), ("sec-fetch-dest", "document")], 200, OK)]
+    #[case::api_root("GET", "/api", CROSS_SITE_NAVIGATION, 403, FORBIDDEN)]
+    #[case::api_route("GET", "/api/health", CROSS_SITE_NAVIGATION, 403, FORBIDDEN)]
+    #[case::websocket_route_with_navigation_metadata(
+        "GET",
+        "/api/sync/document",
+        WEBSOCKET_WITH_NAVIGATION_METADATA,
+        403,
+        FORBIDDEN
+    )]
+    #[case::browser_websocket_handshake("GET", "/", WEBSOCKET_HANDSHAKE, 403, FORBIDDEN)]
+    #[case::post("POST", "/", CROSS_SITE_NAVIGATION, 403, FORBIDDEN)]
+    #[case::iframe("GET", "/", &[("host", "localhost:3000"), ("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "navigate"), ("sec-fetch-dest", "iframe")], 403, FORBIDDEN)]
+    #[case::subresource("GET", "/", &[("host", "localhost:3000"), ("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "no-cors"), ("sec-fetch-dest", "document")], 403, FORBIDDEN)]
+    #[case::untrusted_origin("GET", "/", &[("host", "localhost:3000"), ("origin", "https://attacker.example"), ("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "navigate"), ("sec-fetch-dest", "document")], 403, FORBIDDEN)]
+    #[case::untrusted_host("GET", "/", &[("host", "attacker.example"), ("sec-fetch-site", "cross-site"), ("sec-fetch-mode", "navigate"), ("sec-fetch-dest", "document")], 403, FORBIDDEN)]
+    async fn allows_only_page_navigations_from_other_sites(
+        test_router: Router,
+        #[case] method: &'static str,
+        #[case] path: &'static str,
+        #[case] headers: &'static [(&'static str, &'static str)],
+        #[case] status: u16,
+        #[case] body: &'static str,
+    ) {
+        let mut request = Request::builder().method(method).uri(path);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+
+        let response = test_router
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let actual_status = response.status().as_u16();
+        let actual_body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            (actual_status, std::str::from_utf8(&actual_body).unwrap()),
+            (status, body)
         );
     }
 
