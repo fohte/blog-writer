@@ -209,8 +209,9 @@ const tableContent = [
 ].join('\n')
 const tablePreviewContent = `${tableContent}\n\nA paragraph after the table.`
 const imageDataUrl =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='180'%3E%3Crect width='320' height='180' fill='%23dbeafe'/%3E%3C/svg%3E"
+  "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='180'%3E%3Crect%20width='320'%20height='180'%20fill='%23dbeafe'/%3E%3C/svg%3E"
 const imageContent = `![Sample image](${imageDataUrl})`
+const imagePreviewContent = `${imageContent}\n\nA paragraph after the image.`
 const mermaidContent = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
 const mermaidPreviewContent = `${mermaidContent}\n\nA paragraph after the diagram.`
 const blockPreviewMoveContent = [
@@ -243,14 +244,17 @@ export const CursorInTable: Story = {
 
 export const ImagePreview: Story = {
   name: 'the editor draws an image while keeping its original Markdown unchanged.',
-  args: { content: imageContent, initialSelection: { anchor: 0 } },
+  args: {
+    content: imagePreviewContent,
+    initialSelection: { anchor: imageContent.length + 2 },
+  },
 }
 
 export const CursorInImage: Story = {
   name: 'the editor shows the image source and preview while the cursor is inside it.',
   args: {
     content: imageContent,
-    initialSelection: { anchor: imageContent.indexOf('sample') + 2 },
+    initialSelection: { anchor: imageContent.indexOf('Sample') + 2 },
   },
 }
 

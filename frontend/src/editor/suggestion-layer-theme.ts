@@ -12,6 +12,10 @@ export const suggestionLayerTheme = EditorView.baseTheme({
     textDecoration: 'underline dotted var(--tint-green-foreground)',
     textUnderlineOffset: '5px',
   },
+  '.cm-content > .cm-suggestion-widget, .cm-content > .cm-suggestion-actions, .cm-content > .cm-suggestion-seam':
+    {
+      marginInlineStart: 'var(--cm-line-inset, 0px)',
+    },
   '.cm-suggestion-focused-line, .cm-suggestion-block': {
     outline: '1px solid var(--border)',
     outlineOffset: '8px',

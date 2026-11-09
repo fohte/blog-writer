@@ -15,6 +15,18 @@ function loadMermaid(): Promise<Mermaid> {
     mermaid.initialize({
       startOnLoad: false,
       suppressErrorRendering: true,
+      theme: 'base',
+      themeVariables: {
+        background: 'var(--background)',
+        edgeLabelBackground: 'var(--background)',
+        lineColor: 'var(--primary)',
+        mainBkg: 'var(--muted)',
+        nodeBorder: 'var(--border-strong)',
+        primaryBorderColor: 'var(--border-strong)',
+        primaryColor: 'var(--muted)',
+        primaryTextColor: 'var(--foreground)',
+        textColor: 'var(--foreground)',
+      },
     })
     return mermaid
   })
