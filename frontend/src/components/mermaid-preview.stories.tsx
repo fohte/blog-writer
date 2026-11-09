@@ -39,6 +39,11 @@ type Story = StoryObj<typeof meta>
 
 const id = 'storybook-mermaid-preview'
 const source = 'graph LR\n  Draft --> Preview'
+const sequenceSource = [
+  'sequenceDiagram',
+  '  Client->>Server: Submit article',
+  '  Server-->>Client: Save confirmation',
+].join('\n')
 
 export const Diagram: Story = {
   name: 'the preview draws a Mermaid flow diagram from its source.',
@@ -48,6 +53,11 @@ export const Diagram: Story = {
 export const EditingDiagram: Story = {
   name: 'the preview keeps the Mermaid source visible above its diagram.',
   args: { id, source, showSource: true },
+}
+
+export const SequenceDiagram: Story = {
+  name: 'the preview draws readable labels and arrows in a sequence diagram.',
+  args: { id: 'storybook-mermaid-sequence-preview', source: sequenceSource },
 }
 
 export const SyntaxError: Story = {
