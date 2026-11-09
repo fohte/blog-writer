@@ -2,6 +2,7 @@ import { syntaxTree } from '@codemirror/language'
 import {
   type EditorState,
   type Extension,
+  Facet,
   Prec,
   StateEffect,
   StateField,
@@ -21,15 +22,27 @@ import {
 import { createMermaidPreviewElement } from '#components/mermaid-preview'
 import { createBlockWidget } from '#editor/block-widget'
 import {
+  blockWidgetExclusionProviders,
   type BlockWidgetExclusionRange,
   collectBlockWidgetExclusions,
   equalBlockWidgetExclusionRanges,
   isBlockWidgetExcluded,
   refreshBlockWidgetExclusions,
 } from '#editor/markdown-block-widget-exclusions'
+import {
+  buildMdxBlockWidgetDecorations,
+  mdxImageGridImageExclusions,
+} from '#editor/mdx-block-widgets'
+import type { OgpFetcher } from '#lib/ogp-api'
 
 const compositionChanged = StateEffect.define<boolean>()
 const refreshBlockWidgets = StateEffect.define()
+export const blockWidgetOgpFetcher = Facet.define<
+  OgpFetcher | undefined,
+  OgpFetcher | undefined
+>({
+  combine: (fetchers) => fetchers[fetchers.length - 1],
+})
 
 type BlockWidgetState = {
   composing: boolean
@@ -182,6 +195,19 @@ function buildBlockWidgetDecorations(
 ): BuiltBlockWidgets {
   const decorations = []
   const ranges: BlockSourceRange[] = []
+  const mdxWidgets = buildMdxBlockWidgetDecorations(
+    state,
+    exclusions,
+    state.facet(blockWidgetOgpFetcher),
+  )
+  mdxWidgets.decorations.between(
+    0,
+    state.doc.length,
+    (from, to, decoration) => {
+      decorations.push(decoration.range(from, to))
+    },
+  )
+  ranges.push(...mdxWidgets.ranges)
   const cursor = syntaxTree(state).cursor()
 
   while (cursor.next()) {
@@ -211,7 +237,12 @@ function buildBlockWidgetDecorations(
 
     if (cursor.name === 'Image') {
       const image = imageData(state, cursor.node)
-      if (image) {
+      const insideImageGrid = image
+        ? mdxWidgets.imageGridRanges.some(
+            (grid) => image.from > grid.from && image.to < grid.to,
+          )
+        : false
+      if (image && !insideImageGrid) {
         const range = { from: image.from, to: image.lineTo }
         const excluded = isBlockWidgetExcluded(range, exclusions)
         if (excluded) continue
@@ -390,6 +421,7 @@ const blockWidgetStateField = StateField.define<BlockWidgetState>({
 
 export const markdownBlockWidgets: Extension = [
   blockWidgetStateField,
+  blockWidgetExclusionProviders.of(mdxImageGridImageExclusions),
   Prec.highest(
     keymap.of([
       { key: 'ArrowDown', run: enterAdjacentBlock('down') },

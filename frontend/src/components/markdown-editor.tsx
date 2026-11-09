@@ -5,6 +5,7 @@ import { languages } from '@codemirror/language-data'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
+import { errAsync } from 'neverthrow'
 import {
   forwardRef,
   useCallback,
@@ -32,11 +33,16 @@ import {
   type ArticleImageUploader,
   imageUploadExtension,
 } from '#editor/image-upload'
-import { markdownBlockWidgets } from '#editor/markdown-block-widgets'
+import {
+  blockWidgetOgpFetcher,
+  markdownBlockWidgets,
+} from '#editor/markdown-block-widgets'
 import { markdownDecorations } from '#editor/markdown-decorations'
+import { mdxMarkdownExtension } from '#editor/mdx-markdown-extension'
 import { replaceBody } from '#editor/replace-body'
 import type { SuggestionDecision } from '#editor/suggestion-layer'
 import { editorTheme, markdownHighlightStyle } from '#editor/theme'
+import type { OgpFetcher } from '#lib/ogp-api'
 import type { MoveHistory } from '#outline/move-history'
 import {
   decideClaimEvidenceSuggestion,
@@ -57,6 +63,7 @@ export interface MarkdownEditorProps {
   articleId?: string
   onEvidenceError?: (message: string) => void
   uploadArticleImage?: ArticleImageUploader
+  fetchOgp?: OgpFetcher | undefined
   history: MoveHistory
   onViewChange?: (view: EditorView | null) => void
 }
@@ -84,6 +91,7 @@ export const MarkdownEditor = forwardRef<
     articleId,
     onEvidenceError,
     uploadArticleImage,
+    fetchOgp,
     history,
     onViewChange,
   },
@@ -102,6 +110,8 @@ export const MarkdownEditor = forwardRef<
   onEvidenceErrorRef.current = onEvidenceError
   const uploadArticleImageRef = useRef(uploadArticleImage)
   uploadArticleImageRef.current = uploadArticleImage
+  const fetchOgpRef = useRef(fetchOgp)
+  fetchOgpRef.current = fetchOgp
   const onViewChangeRef = useRef(onViewChange)
   const openEvidence = useCallback((id: string) => {
     setActiveEvidenceId((current) => (current === id ? undefined : id))
@@ -174,10 +184,18 @@ export const MarkdownEditor = forwardRef<
           ? { selection: initialSelectionAtMount }
           : {}),
         extensions: [
-          markdown({ extensions: GFM, codeLanguages: languages }),
+          markdown({
+            extensions: [GFM, mdxMarkdownExtension],
+            codeLanguages: languages,
+          }),
           syntaxHighlighting(markdownHighlightStyle),
           markdownDecorations,
           markdownBlockWidgets,
+          blockWidgetOgpFetcher.of(
+            (url) =>
+              fetchOgpRef.current?.(url) ??
+              errAsync(new Error('OGP fetcher is not configured')),
+          ),
           imageUploadExtension(
             () => uploadArticleImageRef.current,
             setImageUploadError,

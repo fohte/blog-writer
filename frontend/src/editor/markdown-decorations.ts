@@ -13,6 +13,7 @@ import {
   isBlockWidgetExcluded,
   refreshBlockWidgetExclusions,
 } from '#editor/markdown-block-widget-exclusions'
+import { createMdxKbdWidget } from '#editor/mdx-kbd-widget'
 
 const refreshDecorations = StateEffect.define()
 
@@ -172,6 +173,22 @@ function buildDecorations(state: EditorState): DecorationSet {
           cursor.to,
         ),
       )
+    }
+
+    if (cursor.name === 'MdxKbd') {
+      const content = cursor.node.firstChild
+      if (
+        content?.name === 'MdxKbdContent' &&
+        !selectionTouches(state, cursor.from, cursor.to)
+      ) {
+        decorations.push(
+          Decoration.replace({
+            widget: createMdxKbdWidget(
+              state.doc.sliceString(content.from, content.to),
+            ),
+          }).range(cursor.from, cursor.to),
+        )
+      }
     }
 
     if (cursor.name === 'CodeText') {

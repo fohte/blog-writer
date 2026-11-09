@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import type * as Y from 'yjs'
 
 import type { ArticleExportSection } from '#components/article-export-screen'
+import type { OgpFetcher } from '#lib/ogp-api'
 import type { SyncState } from '#lib/sync-client'
 import type { MoveHistory } from '#outline/index'
 import type { OutlineWriting } from '#outline/use-outline-keyboard'
@@ -51,6 +52,7 @@ export interface ArticleEditorViewProps {
   /** Keeps extension instances stable by calling the factory once per article document. */
   editorExtensions?:
     ((context: { doc: Y.Doc; history: MoveHistory }) => Extension[]) | undefined
+  fetchOgp?: OgpFetcher | undefined
   bodyAccessory?: ((context: ArticleEditorContext) => ReactNode) | undefined
   /** Opens the body request from the mobile toolbar; the toolbar hides the request button without it. */
   onRequest?: ((context: ArticleEditorContext) => void) | undefined

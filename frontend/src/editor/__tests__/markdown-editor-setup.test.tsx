@@ -7,6 +7,7 @@ import * as Y from 'yjs'
 import { getBody } from '#article/body'
 import type { ArticleImageUploader } from '#editor/image-upload'
 import { MarkdownEditor, type MarkdownEditorHandle } from '#editor/index'
+import type { OgpFetcher } from '#lib/ogp-api'
 import {
   createMoveHistory,
   createOutlineEditorExtension,
@@ -29,6 +30,7 @@ type MarkdownEditorMountOptions = {
   initialSelection?: { anchor: number; head?: number }
   onEvidenceError?: (message: string) => void
   uploadArticleImage?: ArticleImageUploader
+  fetchOgp?: OgpFetcher
   showMoveHandles?: boolean
   prepareDoc?: (doc: Y.Doc) => void
   parent?: HTMLElement
@@ -89,6 +91,9 @@ export function mountMarkdownEditor(
         {...(options.uploadArticleImage !== undefined
           ? { uploadArticleImage: options.uploadArticleImage }
           : {})}
+        {...(options.fetchOgp !== undefined
+          ? { fetchOgp: options.fetchOgp }
+          : {})}
         history={history}
         ref={editor}
         text={body}
@@ -131,6 +136,9 @@ export function mountMarkdownEditor(
               : {})}
             {...(options.uploadArticleImage !== undefined
               ? { uploadArticleImage: options.uploadArticleImage }
+              : {})}
+            {...(options.fetchOgp !== undefined
+              ? { fetchOgp: options.fetchOgp }
               : {})}
             history={history}
             ref={editor}

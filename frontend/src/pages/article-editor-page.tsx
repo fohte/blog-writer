@@ -5,6 +5,7 @@ import {
   type ArticleEditorIntegrationProps,
   ArticleEditorView,
 } from '#components/article-editor-view'
+import { fetchOgp } from '#lib/ogp-api'
 import type { Article, SyncClientApi, SyncState } from '#lib/sync-client'
 
 type ArticleEditorPageProps = {
@@ -63,6 +64,7 @@ export function ArticleEditorPage({
       onRequest={onRequest}
       doc={doc}
       editorExtensions={editorExtensions}
+      fetchOgp={(url) => fetchOgp(fetch, url)}
       articleNotice={articleNotice}
       exportScreen={exportScreen}
       onBack={onBack}
