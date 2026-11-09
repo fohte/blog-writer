@@ -41,8 +41,9 @@ const id = 'storybook-mermaid-preview'
 const source = 'graph LR\n  Draft --> Preview'
 const sequenceSource = [
   'sequenceDiagram',
-  '  Client->>Server: Submit article',
-  '  Server-->>Client: Save confirmation',
+  '  Client->>+Server: Submit article',
+  '  Note over Client,Server: Processing request',
+  '  Server-->>-Client: Save confirmation',
 ].join('\n')
 
 export const Diagram: Story = {

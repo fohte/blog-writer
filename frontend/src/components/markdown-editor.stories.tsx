@@ -211,7 +211,6 @@ const tablePreviewContent = `${tableContent}\n\nA paragraph after the table.`
 const blockPreviewTableContent = [
   '| Feature | Offline |',
   '| :--- | ---: |',
-  '| Preview | Yes |',
 ].join('\n')
 const imageDataUrl =
   "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='180'%3E%3Crect%20width='320'%20height='180'%20fill='%23dbeafe'/%3E%3C/svg%3E"
