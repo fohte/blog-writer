@@ -207,10 +207,12 @@ const tableContent = [
   '| Tables | Yes |',
   '| Diagrams | Yes |',
 ].join('\n')
+const tablePreviewContent = `${tableContent}\n\nA paragraph after the table.`
 const imageDataUrl =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='180'%3E%3Crect width='320' height='180' fill='%23dbeafe'/%3E%3C/svg%3E"
 const imageContent = `![Sample image](${imageDataUrl})`
 const mermaidContent = '```mermaid\ngraph LR\n  Draft --> Preview\n```'
+const mermaidPreviewContent = `${mermaidContent}\n\nA paragraph after the diagram.`
 const blockPreviewMoveContent = [
   'A paragraph before the rendered blocks.',
   '',
@@ -225,7 +227,10 @@ const blockPreviewMoveContent = [
 
 export const TablePreview: Story = {
   name: 'the editor draws a GFM table while the cursor is outside it.',
-  args: { content: tableContent, initialSelection: { anchor: 0 } },
+  args: {
+    content: tablePreviewContent,
+    initialSelection: { anchor: tableContent.length + 2 },
+  },
 }
 
 export const CursorInTable: Story = {
@@ -251,7 +256,10 @@ export const CursorInImage: Story = {
 
 export const MermaidPreview: Story = {
   name: 'the editor draws a Mermaid diagram while the cursor is outside its source.',
-  args: { content: mermaidContent, initialSelection: { anchor: 0 } },
+  args: {
+    content: mermaidPreviewContent,
+    initialSelection: { anchor: mermaidContent.length + 2 },
+  },
 }
 
 export const CursorInMermaid: Story = {
