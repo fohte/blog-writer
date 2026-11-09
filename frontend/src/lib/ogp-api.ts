@@ -7,11 +7,25 @@ export type OgpResponse = components['schemas']['OgpResponse']
 
 export type OgpFetcher = (url: string) => ResultAsync<OgpResponse, Error>
 
+type OgpOutcome =
+  { kind: 'success'; value: OgpResponse } | { kind: 'failure'; error: Error }
+
+type CachedOgpRequest = { outcome: Promise<OgpOutcome> }
+
+function resultFromOgpOutcome(outcome: Promise<OgpOutcome>) {
+  return ResultAsync.fromPromise(
+    outcome,
+    (cause) => new Error('OGP request result could not be shared.', { cause }),
+  ).andThen((result) =>
+    result.kind === 'success' ? okAsync(result.value) : errAsync(result.error),
+  )
+}
+
 export function createOgpFetcherCache(
   readFetcher: () => OgpFetcher | undefined,
 ): OgpFetcher {
   let activeFetcher = readFetcher()
-  let requests = new Map<string, ReturnType<OgpFetcher>>()
+  let requests = new Map<string, CachedOgpRequest>()
 
   return (url) => {
     const fetcher = readFetcher()
@@ -21,11 +35,20 @@ export function createOgpFetcherCache(
     }
 
     const cached = requests.get(url)
-    if (cached) return cached
-    const request =
-      fetcher?.(url) ?? errAsync(new Error('OGP fetcher is not configured'))
-    if (fetcher) requests.set(url, request)
-    return request
+    if (cached) return resultFromOgpOutcome(cached.outcome)
+    if (!fetcher) return errAsync(new Error('OGP fetcher is not configured'))
+    const entry = {
+      outcome: fetcher(url).match(
+        (value) => ({ kind: 'success', value }) as const,
+        (error) => ({ kind: 'failure', error }) as const,
+      ),
+    }
+    requests.set(url, entry)
+    void entry.outcome.then((result) => {
+      if (result.kind === 'failure' && requests.get(url) === entry)
+        requests.delete(url)
+    })
+    return resultFromOgpOutcome(entry.outcome)
   }
 }
 

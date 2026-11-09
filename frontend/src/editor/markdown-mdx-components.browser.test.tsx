@@ -90,6 +90,64 @@ describe('Markdown MDX component previews', () => {
     })
   })
 
+  it('keeps metadata separate for cards with different URLs', async () => {
+    const firstUrl = 'https://docs.example.test/first'
+    const secondUrl = 'https://docs.example.test/second'
+    const secondMetadata = {
+      ...metadata,
+      description: 'A different description.',
+      final_url: secondUrl,
+      image: null,
+      title: 'Another guide',
+    }
+    const fetchOgp = vi.fn((url: string) =>
+      okAsync(url === firstUrl ? metadata : secondMetadata),
+    )
+    const source = [
+      'before',
+      `<CardLink href="${firstUrl}" />`,
+      `<CardLink href="${secondUrl}" />`,
+    ].join('\n')
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      fetchOgp,
+    })
+    await vi.waitUntil(() => {
+      const cards = [
+        ...(content?.querySelectorAll<HTMLAnchorElement>(
+          '.cm-markdown-block-widget a',
+        ) ?? []),
+      ]
+      return cards.length === 2 &&
+        cards[0]?.querySelector('p:first-child')?.textContent ===
+          metadata.title &&
+        cards[1]?.querySelector('p:first-child')?.textContent ===
+          secondMetadata.title
+        ? true
+        : undefined
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      cards: [
+        ...(content?.querySelectorAll<HTMLAnchorElement>(
+          '.cm-markdown-block-widget a',
+        ) ?? []),
+      ].map((card) => ({
+        href: card.getAttribute('href'),
+        title: card.querySelector('p:first-child')?.textContent,
+      })),
+      fetchCalls: fetchOgp.mock.calls,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      cards: [
+        { href: firstUrl, title: metadata.title },
+        { href: secondUrl, title: secondMetadata.title },
+      ],
+      fetchCalls: [[firstUrl], [secondUrl]],
+    })
+  })
+
   it.each([
     {
       name: 'a rejected OGP request',
@@ -269,9 +327,10 @@ describe('Markdown MDX component previews', () => {
       fetchOgp,
     })
     const view = content ? EditorView.findFromDOM(content) : null
-    await vi.waitUntil(() =>
-      fetchOgp.mock.calls.length === 1 ? true : undefined,
-    )
+    await vi.waitUntil(() => {
+      const title = content?.querySelector('a p')?.textContent
+      return title === metadata.title ? title : undefined
+    })
     const previewBefore = content?.querySelector('.cm-markdown-block-widget')
     content?.dispatchEvent(
       new CompositionEvent('compositionstart', { bubbles: true }),
