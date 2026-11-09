@@ -110,11 +110,16 @@ x
     const markdown = `  <ImageGrid>
 ${image}
   </ImageGrid>`
-    const actual = topLevelBlocks(markdown)
-      .filter((block) => block.name === 'MdxImageGrid')
-      .map((block) => markdown.slice(block.from, block.contentTo))
+    const actual = topLevelBlocks(markdown).map((block) => ({
+      name: block.name,
+      source: markdown.slice(block.from, block.contentTo),
+    }))
 
-    expect(actual).toEqual([])
+    expect(actual).toEqual([
+      { name: 'MdxComponentTag', source: '<ImageGrid>' },
+      { name: 'Paragraph', source: image },
+      { name: 'MdxComponentTag', source: '</ImageGrid>' },
+    ])
   })
 
   it('pairs top-level ImageGrid tags with trailing horizontal whitespace', () => {
@@ -132,10 +137,15 @@ ${image}
     const markdown = `<ImageGrid>
 ${image}
 </ImageGrid>`
-    const actual = topLevelBlocks(markdown)
-      .filter((block) => block.name === 'MdxImageGrid')
-      .map((block) => markdown.slice(block.from, block.contentTo))
+    const actual = topLevelBlocks(markdown).map((block) => ({
+      name: block.name,
+      source: markdown.slice(block.from, block.contentTo),
+    }))
 
-    expect(actual).toEqual([])
+    expect(actual).toEqual([
+      { name: 'MdxComponentTag', source: '<ImageGrid>' },
+      { name: 'Paragraph', source: image },
+      { name: 'MdxComponentTag', source: '</ImageGrid>' },
+    ])
   })
 })
