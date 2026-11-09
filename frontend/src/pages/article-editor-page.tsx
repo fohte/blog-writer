@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import * as Y from 'yjs'
 
 import {
@@ -42,6 +42,7 @@ export function ArticleEditorPage({
 }: ArticleEditorPageProps) {
   const [doc, setDoc] = useState<Y.Doc>()
   const [error, setError] = useState<string>()
+  const getOgp = useCallback((url: string) => fetchOgp(fetch, url), [])
 
   useEffect(() => {
     setDoc(undefined)
@@ -64,7 +65,7 @@ export function ArticleEditorPage({
       onRequest={onRequest}
       doc={doc}
       editorExtensions={editorExtensions}
-      fetchOgp={(url) => fetchOgp(fetch, url)}
+      fetchOgp={getOgp}
       articleNotice={articleNotice}
       exportScreen={exportScreen}
       onBack={onBack}

@@ -8,15 +8,12 @@ import { createMdxImageGridPreview } from '#components/mdx-image-grid-preview'
 import { createMdxSpeakerDeckPreview } from '#components/mdx-speaker-deck-preview'
 import { createBlockWidget } from '#editor/block-widget'
 import type { BlockWidgetExclusionRange } from '#editor/markdown-block-widget-exclusions'
+import {
+  imageData,
+  type MarkdownSyntaxNode,
+  selectionTouches,
+} from '#editor/markdown-block-widget-utils'
 import type { OgpFetcher } from '#lib/ogp-api'
-
-type NodeLike = {
-  firstChild: NodeLike | null
-  nextSibling: NodeLike | null
-  from: number
-  name: string
-  to: number
-}
 
 type BlockRange = Readonly<{ from: number; to: number }>
 
@@ -26,14 +23,7 @@ interface MdxBlockWidgets {
   ranges: BlockRange[]
 }
 
-function childNodes(node: NodeLike): NodeLike[] {
-  const children: NodeLike[] = []
-  for (let child = node.firstChild; child; child = child.nextSibling)
-    children.push(child)
-  return children
-}
-
-function componentTag(state: EditorState, node: NodeLike) {
+function componentTag(state: EditorState, node: MarkdownSyntaxNode) {
   const source = state.doc.sliceString(node.from, node.to).trim()
   const match = /^<(\/)?([A-Z][A-Za-z0-9]*)\b([\s\S]*?)\/?>(?:\s*)$/u.exec(
     source,
@@ -53,39 +43,6 @@ function attribute(value: string, name: string): string | undefined {
     'u',
   ).exec(value)
   return match?.[1] ?? match?.[2]
-}
-
-function imageData(state: EditorState, node: NodeLike) {
-  const children = childNodes(node)
-  const marks = children.filter((child) => child.name === 'LinkMark')
-  const url = children.find((child) => child.name === 'URL')
-  const openingMark = marks[0]
-  const altEndMark = marks[1]
-  if (!openingMark || !altEndMark || marks.length < 4 || !url) return null
-
-  const line = state.doc.lineAt(node.from)
-  const source = state.doc.sliceString(line.from, line.to)
-  if (source.trim() !== state.doc.sliceString(node.from, node.to)) return null
-
-  return {
-    alt: state.doc.sliceString(openingMark.to, altEndMark.from),
-    from: line.from,
-    lineTo: line.to,
-    nodeFrom: node.from,
-    source,
-    src: state.doc.sliceString(url.from, url.to),
-    to: line.to,
-  }
-}
-
-function selectionTouches(
-  state: EditorState,
-  from: number,
-  to: number,
-): boolean {
-  return state.selection.ranges.some(({ empty, from: start, to: end }) =>
-    empty ? start >= from && start <= to : start < to && end > from,
-  )
 }
 
 function isExcluded(
@@ -109,8 +66,8 @@ function safeCardUrl(value: string | undefined): string | null {
 export function mdxImageGridImageExclusions(
   state: EditorState,
 ): BlockWidgetExclusionRange[] {
-  const tags: NodeLike[] = []
-  const images: NodeLike[] = []
+  const tags: MarkdownSyntaxNode[] = []
+  const images: MarkdownSyntaxNode[] = []
   const cursor = syntaxTree(state).cursor()
   while (cursor.next()) {
     if (cursor.name === 'MdxComponentTag') tags.push(cursor.node)
@@ -142,8 +99,8 @@ export function buildMdxBlockWidgetDecorations(
   exclusions: readonly BlockWidgetExclusionRange[],
   fetchOgp: OgpFetcher | undefined,
 ): MdxBlockWidgets {
-  const tags: NodeLike[] = []
-  const images: NodeLike[] = []
+  const tags: MarkdownSyntaxNode[] = []
+  const images: MarkdownSyntaxNode[] = []
   const decorations = []
   const ranges: BlockRange[] = []
   const imageGridRanges: BlockRange[] = []
@@ -153,7 +110,7 @@ export function buildMdxBlockWidgetDecorations(
     if (cursor.name === 'Image') images.push(cursor.node)
   }
 
-  const grids: Array<{ images: NodeLike[]; range: BlockRange }> = []
+  const grids: Array<{ images: MarkdownSyntaxNode[]; range: BlockRange }> = []
   for (let index = 0; index < tags.length; index += 1) {
     const opening = tags[index]
     if (!opening) continue

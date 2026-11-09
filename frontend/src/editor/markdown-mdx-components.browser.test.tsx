@@ -62,6 +62,34 @@ describe('Markdown MDX component previews', () => {
     })
   })
 
+  it('reuses an OGP request when an edit before the card rebuilds its widget', async () => {
+    const fetchOgp = vi.fn(() => okAsync(metadata))
+    const source = `before\n${cardSource}`
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      fetchOgp,
+    })
+    const view = content ? EditorView.findFromDOM(content) : null
+    await vi.waitUntil(() =>
+      fetchOgp.mock.calls.length === 1 ? true : undefined,
+    )
+    view?.dispatch({ changes: { from: 0, insert: 'updated ' } })
+    await vi.waitUntil(() => {
+      const title = content?.querySelector('a p')?.textContent
+      return title === metadata.title ? title : undefined
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      calls: fetchOgp.mock.calls,
+      title: content?.querySelector('a p')?.textContent,
+    })
+    expect(readOutput()).toEqual({
+      body: `updated ${source}`,
+      calls: [['https://docs.example.test/guide']],
+      title: metadata.title,
+    })
+  })
+
   it.each([
     {
       name: 'a rejected OGP request',
@@ -150,19 +178,26 @@ describe('Markdown MDX component previews', () => {
     const source = `Before\n<ImageGrid>\n  ${first}\n${second}\n</ImageGrid>`
     const { body, content } = mountMarkdownEditor(source)
     const view = content ? EditorView.findFromDOM(content) : null
-    const imageSources = [
-      ...(content?.querySelectorAll<HTMLImageElement>('img') ?? []),
-    ].map((image) => image.getAttribute('src'))
-    const imageReferrerPolicies = [
-      ...(content?.querySelectorAll<HTMLImageElement>('img') ?? []),
-    ].map((image) => image.getAttribute('referrerpolicy'))
+    const grid = content?.querySelector<HTMLElement>(
+      '.cm-markdown-block-widget .grid',
+    )
+    const gridPreview = {
+      blockWidgets: content?.querySelectorAll('.cm-markdown-block-widget')
+        .length,
+      className: grid?.className,
+      images: [...(grid?.querySelectorAll<HTMLImageElement>('img') ?? [])].map(
+        (image) => ({
+          referrerPolicy: image.getAttribute('referrerpolicy'),
+          src: image.getAttribute('src'),
+        }),
+      ),
+    }
     view?.dispatch({ selection: { anchor: source.indexOf('<ImageGrid>') + 1 } })
 
     const readOutput = () => ({
       body: body.toJSON(),
       editingLines: editorLines(content),
-      imageReferrerPolicies,
-      imageSources,
+      gridPreview,
     })
     expect(readOutput()).toEqual({
       body: source,
@@ -173,11 +208,21 @@ describe('Markdown MDX component previews', () => {
         second,
         '</ImageGrid>',
       ],
-      imageReferrerPolicies: ['no-referrer', 'no-referrer'],
-      imageSources: [
-        'https://assets.example.test/first.png?w=100&h=80',
-        'https://assets.example.test/second.png?w=120&h=80',
-      ],
+      gridPreview: {
+        blockWidgets: 1,
+        className:
+          'mt-4 grid grid-cols-1 items-center gap-4 sm:auto-cols-fr sm:grid-flow-col [&>figure]:mt-0',
+        images: [
+          {
+            referrerPolicy: 'no-referrer',
+            src: 'https://assets.example.test/first.png?w=100&h=80',
+          },
+          {
+            referrerPolicy: 'no-referrer',
+            src: 'https://assets.example.test/second.png?w=120&h=80',
+          },
+        ],
+      },
     })
   })
 

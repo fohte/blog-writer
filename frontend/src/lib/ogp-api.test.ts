@@ -56,4 +56,29 @@ describe('fetchOgp', () => {
       message: 'OGP request failed: 502',
     })
   })
+
+  it('returns an error when a successful response has an invalid shape', async () => {
+    const fetcher = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        Response.json({
+          available: true,
+          description: null,
+          image: null,
+          title: null,
+        }),
+      ),
+    )
+    const result = await fetchOgp(
+      fetcher,
+      'https://docs.example.test/guide',
+    ).match(
+      (value) => ({ result: 'ok', value }),
+      (error) => ({ result: 'error', message: error.message }),
+    )
+
+    expect(result).toEqual({
+      result: 'error',
+      message: 'OGP 応答の形式が正しくありません。',
+    })
+  })
 })

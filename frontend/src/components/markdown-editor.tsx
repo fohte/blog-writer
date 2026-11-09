@@ -5,7 +5,6 @@ import { languages } from '@codemirror/language-data'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { GFM } from '@lezer/markdown'
-import { errAsync } from 'neverthrow'
 import {
   forwardRef,
   useCallback,
@@ -42,7 +41,7 @@ import { mdxMarkdownExtension } from '#editor/mdx-markdown-extension'
 import { replaceBody } from '#editor/replace-body'
 import type { SuggestionDecision } from '#editor/suggestion-layer'
 import { editorTheme, markdownHighlightStyle } from '#editor/theme'
-import type { OgpFetcher } from '#lib/ogp-api'
+import { createOgpFetcherCache, type OgpFetcher } from '#lib/ogp-api'
 import type { MoveHistory } from '#outline/move-history'
 import {
   decideClaimEvidenceSuggestion,
@@ -112,6 +111,12 @@ export const MarkdownEditor = forwardRef<
   uploadArticleImageRef.current = uploadArticleImage
   const fetchOgpRef = useRef(fetchOgp)
   fetchOgpRef.current = fetchOgp
+  const cachedOgpFetcherRef = useRef<OgpFetcher | null>(null)
+  if (cachedOgpFetcherRef.current === null) {
+    cachedOgpFetcherRef.current = createOgpFetcherCache(
+      () => fetchOgpRef.current,
+    )
+  }
   const onViewChangeRef = useRef(onViewChange)
   const openEvidence = useCallback((id: string) => {
     setActiveEvidenceId((current) => (current === id ? undefined : id))
@@ -191,11 +196,7 @@ export const MarkdownEditor = forwardRef<
           syntaxHighlighting(markdownHighlightStyle),
           markdownDecorations,
           markdownBlockWidgets,
-          blockWidgetOgpFetcher.of(
-            (url) =>
-              fetchOgpRef.current?.(url) ??
-              errAsync(new Error('OGP fetcher is not configured')),
-          ),
+          blockWidgetOgpFetcher.of(cachedOgpFetcherRef.current ?? undefined),
           imageUploadExtension(
             () => uploadArticleImageRef.current,
             setImageUploadError,

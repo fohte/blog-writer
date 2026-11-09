@@ -108,7 +108,19 @@ const chromiumDriver: ImeDriver = {
     await nextFrame()
     const duringComposition = readOutput(body, content)
 
+    const compositionEnd = content
+      ? new Promise<void>((resolve) => {
+          content.addEventListener(
+            'compositionend',
+            () => {
+              resolve()
+            },
+            { once: true },
+          )
+        })
+      : Promise.resolve()
     await cdp().send('Input.insertText', { text })
+    await compositionEnd
     await nextFrame()
     const committed = readOutput(body, content)
     return { composingImmediately, duringComposition, committed }

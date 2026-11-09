@@ -30,6 +30,12 @@ import {
   refreshBlockWidgetExclusions,
 } from '#editor/markdown-block-widget-exclusions'
 import {
+  childNodes,
+  imageData,
+  type MarkdownSyntaxNode,
+  selectionTouches,
+} from '#editor/markdown-block-widget-utils'
+import {
   buildMdxBlockWidgetDecorations,
   mdxImageGridImageExclusions,
 } from '#editor/mdx-block-widgets'
@@ -52,19 +58,6 @@ type BlockWidgetState = {
 }
 
 type BlockSourceRange = { from: number; to: number }
-
-function selectionTouches(
-  state: EditorState,
-  from: number,
-  to: number,
-): boolean {
-  return state.selection.ranges.some(
-    ({ empty, from: selectionFrom, to: selectionTo }) =>
-      empty
-        ? selectionFrom >= from && selectionFrom <= to
-        : selectionFrom < to && selectionTo > from,
-  )
-}
 
 function mapRanges(
   ranges: readonly BlockSourceRange[],
@@ -110,22 +103,7 @@ function enterAdjacentBlock(direction: 'up' | 'down') {
   }
 }
 
-function childNodes(node: { firstChild: NodeLike | null }): NodeLike[] {
-  const children: NodeLike[] = []
-  for (let child = node.firstChild; child; child = child.nextSibling)
-    children.push(child)
-  return children
-}
-
-type NodeLike = {
-  firstChild: NodeLike | null
-  nextSibling: NodeLike | null
-  from: number
-  name: string
-  to: number
-}
-
-function markdownTable(state: EditorState, node: NodeLike) {
+function markdownTable(state: EditorState, node: MarkdownSyntaxNode) {
   const children = childNodes(node)
   const headerNode = children.find((child) => child.name === 'TableHeader')
   const delimiterNode = children.find(
@@ -133,7 +111,7 @@ function markdownTable(state: EditorState, node: NodeLike) {
   )
   if (!headerNode || !delimiterNode) return null
 
-  const cellsIn = (row: NodeLike) =>
+  const cellsIn = (row: MarkdownSyntaxNode) =>
     childNodes(row)
       .filter((child) => child.name === 'TableCell')
       .map((cell) => state.doc.sliceString(cell.from, cell.to).trim())
@@ -158,28 +136,6 @@ function markdownTable(state: EditorState, node: NodeLike) {
     .map(cellsIn)
 
   return { header, alignment, rows }
-}
-
-function imageData(state: EditorState, node: NodeLike) {
-  const marks = childNodes(node).filter((child) => child.name === 'LinkMark')
-  const url = childNodes(node).find((child) => child.name === 'URL')
-  const openingMark = marks[0]
-  const altEndMark = marks[1]
-  if (!openingMark || !altEndMark || marks.length < 4 || !url) return null
-
-  const line = state.doc.lineAt(node.from)
-  const source = state.doc.sliceString(line.from, line.to)
-  if (source.trim() !== state.doc.sliceString(node.from, node.to)) return null
-
-  return {
-    alt: state.doc.sliceString(openingMark.to, altEndMark.from),
-    from: line.from,
-    lineTo: line.to,
-    nodeFrom: node.from,
-    source,
-    src: state.doc.sliceString(url.from, url.to),
-    to: line.to,
-  }
 }
 
 let nextMermaidWidgetId = 0
