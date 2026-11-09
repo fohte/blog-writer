@@ -5,18 +5,35 @@ import { BLOCK_EXTERNAL_REQUESTS_ARGS } from '@fohte/storybook-addon/vitest-plug
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin'
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig, mergeConfig } from 'vitest/config'
+import type { BrowserCommand } from 'vitest/node'
 
 import viteConfig from './vite.config'
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
+const tapBodyElement: BrowserCommand<[selector: string]> = async (
+  context,
+  selector,
+) => {
+  if (context.provider.name === 'playwright') {
+    await context.iframe.locator(selector).first().tap()
+  }
+}
+const getWidgetDropFixturePaths: BrowserCommand = () => ({
+  image: path.join(dirname, 'src/editor/__tests__/fixtures/drop-image.svg'),
+  text: path.join(dirname, 'src/editor/__tests__/fixtures/drop-text.txt'),
+})
 
 export default mergeConfig(
   viteConfig,
   defineConfig({
     test: {
+      browser: {
+        commands: { getWidgetDropFixturePaths, tapBodyElement },
+      },
       exclude: [
         'src/article/move-conflicts.test-support.test.ts',
         'src/outline/move-history.test-support.test.ts',
+        'src/outline/body-menu-editor.test-support.test.tsx',
         'src/editor/__tests__/markdown-editor-setup.test.tsx',
         'src/test-support/browser.test-support.test.ts',
       ],
@@ -31,6 +48,7 @@ export default mergeConfig(
               '**/*.browser.test.tsx',
               'src/article/move-conflicts.test-support.test.ts',
               'src/outline/move-history.test-support.test.ts',
+              'src/outline/body-menu-editor.test-support.test.tsx',
               'src/editor/__tests__/markdown-editor-setup.test.tsx',
               'src/test-support/browser.test-support.test.ts',
             ],
@@ -41,7 +59,11 @@ export default mergeConfig(
           test: {
             name: 'browser-unit',
             include: ['src/**/*.browser.test.tsx'],
-            exclude: ['src/**/*.ime.browser.test.tsx'],
+            exclude: [
+              'src/**/*.ime.browser.test.tsx',
+              'src/outline/outline-touch-interactions.browser.test.tsx',
+              'src/editor/markdown-block-widget-cdp-drop.browser.test.tsx',
+            ],
             browser: {
               enabled: true,
               provider: playwright({
@@ -57,10 +79,65 @@ export default mergeConfig(
           test: {
             name: 'browser-unit-webkit',
             include: ['src/**/*.browser.test.tsx'],
-            exclude: ['src/**/*.ime.browser.test.tsx'],
+            exclude: [
+              'src/**/*.ime.browser.test.tsx',
+              'src/outline/outline-touch-interactions.browser.test.tsx',
+              'src/editor/markdown-block-widget-cdp-drop.browser.test.tsx',
+            ],
             browser: {
               enabled: true,
               provider: playwright(),
+              headless: true,
+              instances: [{ browser: 'webkit' }],
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-cdp-chromium',
+            include: [
+              'src/editor/markdown-block-widget-cdp-drop.browser.test.tsx',
+            ],
+            browser: {
+              enabled: true,
+              api: { allowWrite: true, allowExec: true },
+              provider: playwright({
+                launchOptions: { args: [...BLOCK_EXTERNAL_REQUESTS_ARGS] },
+              }),
+              headless: true,
+              instances: [{ browser: 'chromium' }],
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-touch-chromium',
+            include: [
+              'src/outline/outline-touch-interactions.browser.test.tsx',
+            ],
+            browser: {
+              enabled: true,
+              provider: playwright({
+                launchOptions: { args: [...BLOCK_EXTERNAL_REQUESTS_ARGS] },
+                contextOptions: { hasTouch: true },
+              }),
+              headless: true,
+              instances: [{ browser: 'chromium' }],
+            },
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'browser-touch-webkit',
+            include: [
+              'src/outline/outline-touch-interactions.browser.test.tsx',
+            ],
+            browser: {
+              enabled: true,
+              provider: playwright({ contextOptions: { hasTouch: true } }),
               headless: true,
               instances: [{ browser: 'webkit' }],
             },

@@ -1,5 +1,5 @@
 import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/adapter/element-adapter'
-import { type Extension, Prec, StateEffect } from '@codemirror/state'
+import { type Extension, Prec, StateEffect, type Text } from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -10,16 +10,46 @@ import {
   WidgetType,
 } from '@codemirror/view'
 
-import { mountBlockMoveMenu } from '#outline/block-move-menu'
+import {
+  type BlockWidgetDecorator,
+  blockWidgetDecorators,
+} from '#editor/block-widget'
+import { refreshBlockWidgetExclusions } from '#editor/markdown-block-widget-exclusions'
+import { getBlockWidgetReplaceEnds } from '#editor/markdown-block-widgets'
+import { mountBlockMoveHandle } from '#outline/block-move-handle'
 import { adjacentMove, blockStarts, bodyDropInput } from '#outline/block-ranges'
 import type { MoveHistory } from '#outline/move-history'
 
 const refreshBlockHandles = StateEffect.define()
 const blockHandleCleanups = new WeakMap<HTMLElement, () => void>()
+const blockStartsByView = new WeakMap<
+  EditorView,
+  { doc: Text; from: number; to: number; starts: readonly number[] }
+>()
+
+function getVisibleBlockStarts(view: EditorView): readonly number[] {
+  const { from, to } = view.viewport
+  const cached = blockStartsByView.get(view)
+  if (
+    cached?.doc === view.state.doc &&
+    cached.from === from &&
+    cached.to === to
+  ) {
+    return cached.starts
+  }
+
+  const starts = blockStarts(view.state, from, to)
+  blockStartsByView.set(view, {
+    doc: view.state.doc,
+    from,
+    to,
+    starts,
+  })
+  return starts
+}
 
 class BlockDragHandle extends WidgetType {
   constructor(
-    private readonly from: number,
     private readonly history: MoveHistory,
     private readonly view: EditorView,
     private readonly composingViews: WeakSet<EditorView>,
@@ -29,7 +59,6 @@ class BlockDragHandle extends WidgetType {
 
   override eq(other: BlockDragHandle): boolean {
     return (
-      this.from === other.from &&
       this.history === other.history &&
       this.view === other.view &&
       this.composingViews === other.composingViews
@@ -38,23 +67,14 @@ class BlockDragHandle extends WidgetType {
 
   override toDOM(): HTMLElement {
     const wrapper = document.createElement('span')
-    const button = document.createElement('button')
-    const menuHost = document.createElement('span')
-    button.type = 'button'
-    button.className = 'cm-block-drag-handle'
-    button.setAttribute('aria-label', 'Move block')
-    button.setAttribute('aria-haspopup', 'menu')
-    button.setAttribute('aria-expanded', 'false')
-    button.textContent = '⠿'
-    wrapper.append(button, menuHost)
+    wrapper.className = 'cm-block-drag-handle-wrapper'
     blockHandleCleanups.set(
       wrapper,
-      mountBlockMoveMenu({
-        button,
+      mountBlockMoveHandle({
         composingViews: this.composingViews,
-        from: this.from,
+        host: wrapper,
         history: this.history,
-        host: menuHost,
+        positionDOM: wrapper,
         view: this.view,
       }),
     )
@@ -67,28 +87,120 @@ class BlockDragHandle extends WidgetType {
   }
 }
 
-function createDecorations(
+function createBlockHandleDecorations(
   view: EditorView,
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
-) {
-  return Decoration.set(
-    blockStarts(view.state, view.viewport.from, view.viewport.to).map((from) =>
+): DecorationSet {
+  const replacedBlocks = getBlockWidgetReplaceEnds(view.state)
+  const decorations = getVisibleBlockStarts(view)
+    .filter((from) => !replacedBlocks.has(from))
+    .map((from) =>
       Decoration.widget({
-        widget: new BlockDragHandle(from, history, view, composingViews),
+        widget: new BlockDragHandle(history, view, composingViews),
         side: -1,
       }).range(from),
-    ),
+    )
+  return Decoration.set(decorations, true)
+}
+
+function attachWidgetHandle(
+  element: HTMLElement,
+  view: EditorView,
+  sourceFrom: number,
+  history: MoveHistory,
+  composingViews: WeakSet<EditorView>,
+): (() => void) | undefined {
+  if (!getVisibleBlockStarts(view).includes(sourceFrom)) return undefined
+
+  const host = document.createElement('span')
+  host.className = 'cm-markdown-block-widget-handle'
+  element.prepend(host)
+  const cleanup = mountBlockMoveHandle({
+    composingViews,
+    host,
+    history,
+    positionDOM: element,
+    sourceFrom,
+    view,
+  })
+  return () => {
+    cleanup()
+    host.remove()
+  }
+}
+
+function createBlockHandleExtension(
+  history: MoveHistory,
+  composingViews: WeakSet<EditorView>,
+): Extension {
+  const plugin = ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet
+
+      constructor(readonly view: EditorView) {
+        this.decorations = createBlockHandleDecorations(
+          view,
+          history,
+          composingViews,
+        )
+      }
+
+      update(update: ViewUpdate): void {
+        if (composingViews.has(this.view)) {
+          if (update.docChanged)
+            this.decorations = this.decorations.map(update.changes)
+          return
+        }
+        const refresh = update.transactions.some((transaction) =>
+          transaction.effects.some(
+            (effect) =>
+              effect.is(refreshBlockHandles) ||
+              effect.is(refreshBlockWidgetExclusions),
+          ),
+        )
+        if (
+          !update.docChanged &&
+          !update.viewportChanged &&
+          !update.selectionSet &&
+          !refresh
+        ) {
+          return
+        }
+        this.decorations = createBlockHandleDecorations(
+          this.view,
+          history,
+          composingViews,
+        )
+      }
+    },
+    { decorations: (extension) => extension.decorations },
   )
+  return [
+    plugin,
+    EditorView.domEventHandlers({
+      compositionstart: (_event, view) => {
+        composingViews.add(view)
+        return false
+      },
+      compositionend: (_event, view) => {
+        composingViews.delete(view)
+        requestAnimationFrame(() => {
+          if (view.dom.isConnected)
+            view.dispatch({ effects: refreshBlockHandles.of(null) })
+        })
+        return false
+      },
+    }),
+  ]
 }
 
 function createDragPlugin(
   history: MoveHistory,
   composingViews: WeakSet<EditorView>,
 ) {
-  const plugin = ViewPlugin.fromClass(
+  return ViewPlugin.fromClass(
     class {
-      decorations: DecorationSet
       private readonly cleanupDropTarget: () => void
       private readonly preventCompositionShortcut = (event: KeyboardEvent) => {
         // Capture these before CodeMirror skips keymaps during composition.
@@ -102,7 +214,6 @@ function createDragPlugin(
       }
 
       constructor(readonly view: EditorView) {
-        this.decorations = createDecorations(view, history, composingViews)
         view.contentDOM.addEventListener(
           'keydown',
           this.preventCompositionShortcut,
@@ -144,39 +255,7 @@ function createDragPlugin(
         })
       }
 
-      update(update: ViewUpdate) {
-        if (composingViews.has(this.view)) {
-          if (update.docChanged)
-            this.decorations = this.decorations.map(update.changes)
-          return
-        }
-        if (
-          !update.docChanged &&
-          !update.viewportChanged &&
-          !update.transactions.some((transaction) =>
-            transaction.effects.some((effect) =>
-              effect.is(refreshBlockHandles),
-            ),
-          )
-        )
-          return
-        this.decorations = createDecorations(this.view, history, composingViews)
-      }
-
-      startComposition() {
-        composingViews.add(this.view)
-      }
-
-      endComposition() {
-        composingViews.delete(this.view)
-        requestAnimationFrame(() => {
-          if (this.view.dom.isConnected) {
-            this.view.dispatch({ effects: refreshBlockHandles.of(null) })
-          }
-        })
-      }
-
-      destroy() {
+      destroy(): void {
         this.view.contentDOM.removeEventListener(
           'keydown',
           this.preventCompositionShortcut,
@@ -185,21 +264,7 @@ function createDragPlugin(
         this.cleanupDropTarget()
       }
     },
-    { decorations: (plugin) => plugin.decorations },
   )
-  return [
-    plugin,
-    EditorView.domEventHandlers({
-      compositionstart: (_event, view) => {
-        view.plugin(plugin)?.startComposition()
-        return false
-      },
-      compositionend: (_event, view) => {
-        view.plugin(plugin)?.endComposition()
-        return false
-      },
-    }),
-  ]
 }
 
 function moveAdjacent(
@@ -226,6 +291,12 @@ function moveAdjacent(
 
 export function createOutlineEditorExtension(history: MoveHistory): Extension {
   const composingViews = new WeakSet<EditorView>()
+  const blockWidgetHandleDecorator: BlockWidgetDecorator = {
+    decorate: (element, view, sourceFrom) =>
+      attachWidgetHandle(element, view, sourceFrom, history, composingViews),
+    identity: (state, sourceFrom) =>
+      blockStarts(state).includes(sourceFrom) ? 'owned' : 'nested',
+  }
   return [
     Prec.highest(
       keymap.of([
@@ -239,6 +310,8 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
         },
       ]),
     ),
+    blockWidgetDecorators.of(blockWidgetHandleDecorator),
+    createBlockHandleExtension(history, composingViews),
     createDragPlugin(history, composingViews),
     EditorView.theme({
       // Other extensions read this to line their block widgets up with the text after the handle column.
@@ -277,6 +350,20 @@ export function createOutlineEditorExtension(history: MoveHistory): Extension {
       },
       '.cm-block-drag-handle:hover': {
         background: 'var(--accent)',
+      },
+      '.cm-markdown-block-widget': {
+        position: 'relative',
+        display: 'flow-root',
+        paddingInlineStart: 'var(--cm-line-inset)',
+      },
+      '.cm-markdown-block-widget-handle': {
+        position: 'absolute',
+        left: '0',
+        top: '0.25rem',
+      },
+      '.cm-markdown-block-widget-handle .cm-block-drag-handle': {
+        position: 'static',
+        transform: 'none',
       },
     }),
   ]

@@ -5,8 +5,13 @@ import { afterEach, beforeEach, vi } from 'vitest'
 import * as Y from 'yjs'
 
 import { getBody } from '#article/body'
+import type { ArticleImageUploader } from '#editor/image-upload'
 import { MarkdownEditor, type MarkdownEditorHandle } from '#editor/index'
-import { createMoveHistory, type MoveHistory } from '#outline/index'
+import {
+  createMoveHistory,
+  createOutlineEditorExtension,
+  type MoveHistory,
+} from '#outline/index'
 
 interface MountedMarkdownEditor {
   body: Y.Text
@@ -21,8 +26,12 @@ interface MountedMarkdownEditor {
 type MarkdownEditorMountOptions = {
   articleId?: string
   className?: string
+  initialSelection?: { anchor: number; head?: number }
   onEvidenceError?: (message: string) => void
+  uploadArticleImage?: ArticleImageUploader
+  showMoveHandles?: boolean
   prepareDoc?: (doc: Y.Doc) => void
+  parent?: HTMLElement
 }
 
 const cleanups: (() => void)[] = []
@@ -44,15 +53,22 @@ export function mountMarkdownEditor(
   options: MarkdownEditorMountOptions = {},
 ): MountedMarkdownEditor {
   const host = document.createElement('div')
-  document.body.append(host)
+  const parent = options.parent ?? document.body
+  parent.append(host)
   const root: Root = createRoot(host)
   const doc = new Y.Doc()
   const body = getBody(doc)
   body.insert(0, value)
   options.prepareDoc?.(doc)
-  const mountedExtensions = [...extensions, ...(extensionFactory?.(doc) ?? [])]
   const editor = createRef<MarkdownEditorHandle>()
   const history = createMoveHistory(doc)
+  const mountedExtensions = [
+    ...extensions,
+    ...(extensionFactory?.(doc) ?? []),
+    ...(options.showMoveHandles === true
+      ? [createOutlineEditorExtension(history)]
+      : []),
+  ]
 
   act(() => {
     root.render(
@@ -64,8 +80,14 @@ export function mountMarkdownEditor(
         {...(options.className !== undefined
           ? { className: options.className }
           : {})}
+        {...(options.initialSelection !== undefined
+          ? { initialSelection: options.initialSelection }
+          : {})}
         {...(options.onEvidenceError !== undefined
           ? { onEvidenceError: options.onEvidenceError }
+          : {})}
+        {...(options.uploadArticleImage !== undefined
+          ? { uploadArticleImage: options.uploadArticleImage }
           : {})}
         history={history}
         ref={editor}
@@ -101,8 +123,14 @@ export function mountMarkdownEditor(
             {...(options.className !== undefined
               ? { className: options.className }
               : {})}
+            {...(options.initialSelection !== undefined
+              ? { initialSelection: options.initialSelection }
+              : {})}
             {...(options.onEvidenceError !== undefined
               ? { onEvidenceError: options.onEvidenceError }
+              : {})}
+            {...(options.uploadArticleImage !== undefined
+              ? { uploadArticleImage: options.uploadArticleImage }
               : {})}
             history={history}
             ref={editor}

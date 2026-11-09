@@ -27,7 +27,7 @@ import {
 } from '#editor/suggestion-layer'
 import { altLabel } from '#lib/key-labels'
 import { saveLlmSettings } from '#lib/llm-settings'
-import { createMoveHistory } from '#outline/index'
+import { createMoveHistory, createOutlineEditorExtension } from '#outline/index'
 
 const initialText = 'opening sentence\nselected sentence\nclosing sentence'
 const cleanups: (() => void)[] = []
@@ -35,6 +35,7 @@ const cleanups: (() => void)[] = []
 interface CreateEditorOptions<Metadata = unknown> {
   layerOptions?: SuggestionLayerOptions<Metadata>
   selection?: number
+  showMoveHandles?: boolean
 }
 
 function createEditor<Metadata = unknown>(
@@ -73,6 +74,9 @@ function createEditor<Metadata = unknown>(
           yCollab(body, null, { undoManager: false }),
           layer.extension,
           ...additionalExtensions,
+          ...(options.showMoveHandles === true
+            ? [createOutlineEditorExtension(history)]
+            : []),
         ],
       }),
     })
@@ -445,6 +449,31 @@ describe('suggestion layer', () => {
       },
       bar: '> Shorten it作成中 ··· 3s中止 Esc',
     })
+  })
+
+  it('returns the current evidence suggestions from the editor state', () => {
+    const from = initialText.indexOf('selected')
+    const { layer, setSuggestion } = createEditor<{
+      evidenceIds: string[]
+    }>()
+    setSuggestion({
+      id: 'evidence-suggestion',
+      from,
+      to: from + 'selected sentence'.length,
+      replacement: 'revised sentence',
+      metadata: { evidenceIds: ['evidence-a'] },
+    })
+
+    const readOutput = () => layer.getSuggestions()
+    expect(readOutput()).toEqual([
+      {
+        id: 'evidence-suggestion',
+        from,
+        to: from + 'selected sentence'.length,
+        replacement: 'revised sentence',
+        metadata: { evidenceIds: ['evidence-a'] },
+      },
+    ])
   })
 
   it('cancels the in-flight work from the cancel button', async () => {
@@ -2051,7 +2080,9 @@ describe('suggestion layer', () => {
 
   it('prioritizes list indentation before moving to the next suggestion', () => {
     const content = '- list item\n\nlast line'
-    const { body, layer, view } = createEditor(content)
+    const { body, layer, view } = createEditor(content, undefined, [], {
+      showMoveHandles: true,
+    })
     const suggestions = layer.setSuggestions([
       {
         id: 'suggestion-a',
@@ -2071,7 +2102,9 @@ describe('suggestion layer', () => {
 
   it('accepts a focused suggestion in a list before indenting on Tab', () => {
     const content = '- selected sentence\nnext line'
-    const { body, layer, view } = createEditor(content)
+    const { body, layer, view } = createEditor(content, undefined, [], {
+      showMoveHandles: true,
+    })
     const from = content.indexOf('selected')
     const result = layer.setSuggestions([
       {

@@ -9,6 +9,24 @@ import {
 } from '#article/index'
 import type { Heading } from '#article/types'
 
+type MarkdownBlocks = ReturnType<typeof topLevelBlocks>
+type BlockStartCache = { blocks: MarkdownBlocks; starts: readonly number[] }
+
+const blockStartsByDoc = new WeakMap<EditorState['doc'], BlockStartCache>()
+
+function blockStartsForDoc(state: EditorState): BlockStartCache {
+  const cached = blockStartsByDoc.get(state.doc)
+  if (cached) return cached
+
+  const blocks = topLevelBlocks(state.doc.toString())
+  const result = {
+    blocks,
+    starts: blocks.map(({ from }) => from),
+  }
+  blockStartsByDoc.set(state.doc, result)
+  return result
+}
+
 function siblingsAt(
   headings: Heading[],
   from: number,
@@ -106,7 +124,9 @@ export function bodyDropInput(
   from: number,
 ): MoveBlockInput | undefined {
   const markdown = view.state.doc.toString()
-  const range = findMoveBlockRange(markdown, position)
+  const blockPosition =
+    position === markdown.length && position > 0 ? position - 1 : position
+  const range = findMoveBlockRange(markdown, blockPosition)
   if (!range) return undefined
   const lastBlock = topLevelBlocks(markdown)
     .filter(({ from }) => range.from <= from && from < range.to)
@@ -127,8 +147,11 @@ export function blockStarts(
   state: EditorState,
   from = 0,
   to = state.doc.length,
-): number[] {
-  return topLevelBlocks(state.doc.toString())
+): readonly number[] {
+  const cached = blockStartsForDoc(state)
+  if (from === 0 && to === state.doc.length) return cached.starts
+
+  return cached.blocks
     .filter((block) => block.from <= to && block.to >= from)
     .map(({ from: blockFrom }) => blockFrom)
 }
