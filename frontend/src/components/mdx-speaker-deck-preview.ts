@@ -12,7 +12,7 @@ export function createMdxSpeakerDeckPreview({
 
   const frame = document.createElement('iframe')
   frame.className =
-    'm-0 aspect-video h-auto w-full rounded-md border-0 bg-black/10 p-0 shadow-[0_5px_40px_rgb(0_0_0/0.2)]'
+    'm-0 aspect-video h-auto w-full rounded-[6px] border-0 bg-black/10 p-0 shadow-[0_5px_40px_rgb(0_0_0/0.2)]'
   frame.title = 'SpeakerDeck'
   frame.allowFullscreen = true
   frame.dataset['ratio'] = '1.7777777777777777'

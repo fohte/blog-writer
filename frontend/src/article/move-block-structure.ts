@@ -3,6 +3,7 @@ import { GFM, parser } from '@lezer/markdown'
 import { InvalidBlockMoveError } from '#article/errors'
 import { deriveHeadingTree, flattenHeadingTree } from '#article/headings'
 import type { Heading } from '#article/types'
+import { mdxMarkdownExtension } from '#editor/mdx-markdown-extension'
 
 export type MarkdownBlockRange = {
   from: number
@@ -11,7 +12,65 @@ export type MarkdownBlockRange = {
   name: string
 }
 
-const markdownParser = parser.configure(GFM)
+const markdownParser = parser.configure([GFM, mdxMarkdownExtension])
+
+function isImageGridOpening(markdown: string, block: MarkdownBlockRange) {
+  return (
+    block.name === 'MdxComponentTag' &&
+    /^<ImageGrid[ \t]*>$/u.test(markdown.slice(block.from, block.contentTo))
+  )
+}
+
+function isImageGridClosing(markdown: string, block: MarkdownBlockRange) {
+  return (
+    block.name === 'MdxComponentTag' &&
+    /^<\/ImageGrid[ \t]*>$/u.test(markdown.slice(block.from, block.contentTo))
+  )
+}
+
+function groupImageGrids(
+  markdown: string,
+  blocks: MarkdownBlockRange[],
+): MarkdownBlockRange[] {
+  const grouped: MarkdownBlockRange[] = []
+  for (let index = 0; index < blocks.length;) {
+    const opening = blocks[index]
+    if (!opening || !isImageGridOpening(markdown, opening)) {
+      if (opening) grouped.push(opening)
+      index += 1
+      continue
+    }
+
+    let closingIndex = index + 1
+    while (closingIndex < blocks.length) {
+      const candidate = blocks[closingIndex]
+      if (
+        !candidate ||
+        isImageGridOpening(markdown, candidate) ||
+        isImageGridClosing(markdown, candidate)
+      ) {
+        break
+      }
+      closingIndex += 1
+    }
+
+    const closing = blocks[closingIndex]
+    if (!closing || !isImageGridClosing(markdown, closing)) {
+      grouped.push(opening)
+      index += 1
+      continue
+    }
+
+    grouped.push({
+      from: opening.from,
+      contentTo: closing.contentTo,
+      to: closing.to,
+      name: 'MdxImageGrid',
+    })
+    index = closingIndex + 1
+  }
+  return grouped
+}
 
 export function topLevelBlocks(markdown: string): MarkdownBlockRange[] {
   const blocks: MarkdownBlockRange[] = []
@@ -29,7 +88,7 @@ export function topLevelBlocks(markdown: string): MarkdownBlockRange[] {
     })
   } while (cursor.nextSibling())
 
-  return blocks
+  return groupImageGrids(markdown, blocks)
 }
 
 export function collectHeadings(markdown: string): Heading[] {

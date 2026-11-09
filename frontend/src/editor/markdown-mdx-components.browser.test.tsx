@@ -3,6 +3,7 @@ import { errAsync, okAsync } from 'neverthrow'
 import { describe, expect, it, vi } from 'vitest'
 
 import { mountMarkdownEditor } from '#editor/__tests__/markdown-editor-setup.test'
+import { DomWidget } from '#editor/dom-widget'
 
 const cardSource = '<CardLink href="https://docs.example.test/guide" />'
 const metadata = {
@@ -198,6 +199,70 @@ describe('Markdown MDX component previews', () => {
   })
 
   it.each([
+    { name: 'Command', modifier: { metaKey: true } },
+    { name: 'Control', modifier: { ctrlKey: true } },
+  ])(
+    'opens a CardLink with $name-click without entering source',
+    ({ modifier }) => {
+      const source = `before\n${cardSource}`
+      const { body, content } = mountMarkdownEditor(source)
+      const link = content?.querySelector<HTMLAnchorElement>(
+        '[data-mdx-card-link]',
+      )
+      if (!link) throw new Error('The CardLink preview did not mount')
+      const event = new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        ...modifier,
+      })
+      const dispatchResult = link.dispatchEvent(event)
+
+      const readOutput = () => ({
+        body: body.toJSON(),
+        defaultPrevented: event.defaultPrevented,
+        dispatchResult,
+        draggable: link.getAttribute('draggable'),
+        widgetCount: content?.querySelectorAll('.cm-markdown-block-widget')
+          .length,
+      })
+      expect(readOutput()).toEqual({
+        body: source,
+        defaultPrevented: false,
+        dispatchResult: true,
+        draggable: 'false',
+        widgetCount: 1,
+      })
+    },
+  )
+
+  it('enters CardLink source on an unmodified click', () => {
+    const source = `before\n${cardSource}`
+    const { body, content } = mountMarkdownEditor(source)
+    const link = content?.querySelector<HTMLAnchorElement>(
+      '[data-mdx-card-link]',
+    )
+    if (!link) throw new Error('The CardLink preview did not mount')
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    const dispatchResult = link.dispatchEvent(event)
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      defaultPrevented: event.defaultPrevented,
+      dispatchResult,
+      lines: editorLines(content),
+      widgetCount: content?.querySelectorAll('.cm-markdown-block-widget')
+        .length,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      defaultPrevented: true,
+      dispatchResult: false,
+      lines: ['before', cardSource],
+      widgetCount: 0,
+    })
+  })
+
+  it.each([
     {
       name: 'an alphanumeric id',
       source: 'before\n<SpeakerDeck id="deck123" />',
@@ -284,6 +349,107 @@ describe('Markdown MDX component previews', () => {
     })
   })
 
+  it.each([
+    { name: 'non-image content', content: 'plain content' },
+    {
+      name: 'multiple images on one line',
+      content:
+        '![First](https://assets.example.test/first.png) ![Second](https://assets.example.test/second.png)',
+    },
+  ])('keeps an ImageGrid with $name as source', ({ content: gridContent }) => {
+    const source = `<ImageGrid>\n${gridContent}\n</ImageGrid>`
+    const { body, content } = mountMarkdownEditor(source)
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      gridCount: content?.querySelectorAll('.grid').length,
+      imageCount: content?.querySelectorAll('img').length,
+      widgetCount: content?.querySelectorAll('.cm-markdown-block-widget')
+        .length,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      gridCount: 0,
+      imageCount: 0,
+      widgetCount: 0,
+    })
+  })
+
+  it('does not pair an unclosed ImageGrid with a later grid close', () => {
+    const image = '![Sample](https://assets.example.test/sample.png)'
+    const source = [
+      '<ImageGrid>',
+      '## Preserved heading',
+      'Preserved paragraph.',
+      '<ImageGrid>',
+      image,
+      '</ImageGrid>',
+      '<ImageGrid />',
+    ].join('\n')
+    const { body, content } = mountMarkdownEditor(source)
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      gridCount: content?.querySelectorAll('.grid').length,
+      imageCount: content?.querySelectorAll('img').length,
+      lines: editorLines(content),
+      widgetCount: content?.querySelectorAll('.cm-markdown-block-widget')
+        .length,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      gridCount: 1,
+      imageCount: 1,
+      lines: [
+        '<ImageGrid>',
+        '## Preserved heading',
+        'Preserved paragraph.',
+        '<ImageGrid />',
+      ],
+      widgetCount: 1,
+    })
+  })
+
+  it.each([
+    { name: 'an indented line', prefix: '  ' },
+    { name: 'a list item', prefix: '- ' },
+    { name: 'a blockquote line', prefix: '> ' },
+  ])('does not render a component from $name', ({ prefix }) => {
+    const source = `${prefix}<CardLink href="https://docs.example.test/guide" />`
+    const { body, content } = mountMarkdownEditor(source)
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      lines: editorLines(content),
+      widgetCount: content?.querySelectorAll('.cm-markdown-block-widget')
+        .length,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      lines: [source],
+      widgetCount: 0,
+    })
+  })
+
+  it('does not extract a SpeakerDeck id from another attribute value', () => {
+    const source = '<SpeakerDeck title=" id=\'abc\'" id="bad-id" />'
+    const { body, content } = mountMarkdownEditor(source)
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      iframeCount: content?.querySelectorAll('iframe').length,
+      lines: editorLines(content),
+      widgetCount: content?.querySelectorAll('.cm-markdown-block-widget')
+        .length,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      iframeCount: 0,
+      lines: [source],
+      widgetCount: 0,
+    })
+  })
+
   it('leaves lowercase HTML and unknown component tags as editable text', () => {
     const source = '<UnknownWidget />\n<div>plain text</div>'
     const { body, content } = mountMarkdownEditor(source)
@@ -317,6 +483,76 @@ describe('Markdown MDX component previews', () => {
       keyText: 'Ctrl',
       keys: 1,
       sourceVisible: 'Use <Kbd>Ctrl</Kbd> + K',
+    })
+  })
+
+  it('matches Kbd tags only within one line', () => {
+    const source = 'A <Kbd>\nB <Kbd>k</Kbd> tail'
+    const { body, content } = mountMarkdownEditor(source)
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      keyText: content?.querySelector('kbd')?.textContent,
+      keyCount: content?.querySelectorAll('kbd').length,
+      text: content?.textContent,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      keyText: 'k',
+      keyCount: 1,
+      text: 'A <Kbd>B k tail',
+    })
+  })
+
+  it('shows Kbd source when a selection crosses its range', () => {
+    const source = 'Use <Kbd>Ctrl</Kbd> now'
+    const { body, content } = mountMarkdownEditor(source)
+    const view = content ? EditorView.findFromDOM(content) : null
+    view?.dispatch({
+      selection: {
+        anchor: source.indexOf('<Kbd>'),
+        head: source.indexOf('</Kbd>') + '</Kbd>'.length,
+      },
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      keyCount: content?.querySelectorAll('kbd').length,
+      text: content?.textContent,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      keyCount: 0,
+      text: source,
+    })
+  })
+
+  it('keeps the Kbd widget during Japanese composition', () => {
+    const source = 'Type <Kbd>Enter</Kbd> to continue'
+    const { body, content } = mountMarkdownEditor(source)
+    const view = content ? EditorView.findFromDOM(content) : null
+    const toDOM = vi.spyOn(DomWidget.prototype, 'toDOM')
+    const initialRenderCount = toDOM.mock.calls.length
+
+    content?.dispatchEvent(
+      new CompositionEvent('compositionstart', { bubbles: true }),
+    )
+    view?.dispatch({ changes: { from: 0, insert: 'にほんご ' } })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      keyText: content?.querySelector('kbd')?.textContent,
+      renderCountDelta: toDOM.mock.calls.length - initialRenderCount,
+    })
+    const output = readOutput()
+    content?.dispatchEvent(
+      new CompositionEvent('compositionend', { bubbles: true }),
+    )
+    toDOM.mockRestore()
+    expect(output).toEqual({
+      body: `にほんご ${source}`,
+      keyText: 'Enter',
+      renderCountDelta: 0,
     })
   })
 

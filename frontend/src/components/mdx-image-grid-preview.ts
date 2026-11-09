@@ -1,4 +1,4 @@
-export interface MdxImageGridPreviewProps {
+interface MdxImageGridPreviewProps {
   images: HTMLElement[]
 }
 

@@ -31,7 +31,7 @@ const kbdInlineParser: InlineParser = {
     if (next !== 60) return -1
 
     const source = context.slice(position, context.end)
-    const match = /^<Kbd>([\s\S]*?)<\/Kbd>/u.exec(source)
+    const match = /^<Kbd>([^\r\n]*?)<\/Kbd>/u.exec(source)
     if (!match) return -1
 
     const contentFrom = position + '<Kbd>'.length

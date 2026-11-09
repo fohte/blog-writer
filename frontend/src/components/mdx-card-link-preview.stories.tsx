@@ -48,3 +48,17 @@ export const WithoutMetadata: Story = {
   name: 'the card falls back to its URL and domain when metadata is unavailable.',
   args: { href: 'https://docs.example.test/unknown' },
 }
+
+export const WithoutImage: Story = {
+  name: 'the card shows metadata without an image.',
+  args: {
+    href: 'https://docs.example.test/text-only',
+    ogp: {
+      available: true,
+      description: 'A useful guide without a preview image.',
+      final_url: 'https://docs.example.test/text-only',
+      image: null,
+      title: 'A text-only guide',
+    },
+  },
+}

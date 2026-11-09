@@ -25,6 +25,8 @@ export function createMdxCardLinkPreview({
   const card = document.createElement('a')
   card.className =
     'my-4 flex items-center justify-center gap-6 overflow-hidden border border-border px-4 py-4 no-underline transition-colors hover:border-muted-foreground'
+  card.dataset['mdxCardLink'] = ''
+  card.draggable = false
   card.href = href
   card.target = '_blank'
   card.rel = 'noopener noreferrer'

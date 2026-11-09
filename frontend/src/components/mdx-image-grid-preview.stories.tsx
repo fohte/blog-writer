@@ -1,27 +1,15 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useLayoutEffect, useRef } from 'react'
 
+import { createMarkdownImagePreview } from '#components/markdown-image-preview'
 import { createMdxImageGridPreview } from '#components/mdx-image-grid-preview'
 
-type StoryArgs = { captions: string[] }
+type StoryArgs = { imageCount: number }
 
-function createStoryImage(caption: string): HTMLElement {
-  const figure = document.createElement('figure')
-  figure.className = 'mt-4'
-  const image = document.createElement('img')
-  image.className = 'max-h-64 w-full rounded-md object-contain'
-  image.alt = caption
-  image.src =
-    'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="240" height="160"%3E%3Crect width="240" height="160" fill="%23dbeafe"/%3E%3C/svg%3E'
-  figure.append(image)
-  const label = document.createElement('figcaption')
-  label.className = 'mt-2 text-center text-sm text-muted-foreground'
-  label.textContent = caption
-  figure.append(label)
-  return figure
-}
+const imageSource =
+  'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="240" height="160"%3E%3Crect width="240" height="160" fill="%23dbeafe"/%3E%3C/svg%3E'
 
-function ImageGridStory({ captions }: StoryArgs) {
+function ImageGridStory({ imageCount }: StoryArgs) {
   const host = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
@@ -29,13 +17,21 @@ function ImageGridStory({ captions }: StoryArgs) {
     if (!element) return
     element.replaceChildren(
       createMdxImageGridPreview({
-        images: captions.map(createStoryImage),
+        images: Array.from({ length: imageCount }, (_, index) => {
+          const alt = `Image ${String(index + 1)}`
+          const source = `![${alt}](${imageSource})`
+          return createMarkdownImagePreview({
+            alt,
+            source,
+            src: imageSource,
+          })
+        }),
       }),
     )
     return () => {
       element.replaceChildren()
     }
-  }, [captions])
+  }, [imageCount])
 
   return <div ref={host} />
 }
@@ -50,5 +46,5 @@ type Story = StoryObj<typeof meta>
 
 export const TwoImages: Story = {
   name: 'two images share a row at wider viewport widths.',
-  args: { captions: ['First image', 'Second image'] },
+  args: { imageCount: 2 },
 }
