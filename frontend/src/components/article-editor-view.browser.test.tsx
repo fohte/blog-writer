@@ -339,6 +339,46 @@ describe('article editor screen', () => {
     })
   })
 
+  it('stores a pasted image and writes its source into the article body', async () => {
+    const article: Article = {
+      id: 'article-image',
+      title: 'A useful article',
+      createdAt: Date.UTC(2026, 0, 15),
+    }
+    const articleDoc = new Y.Doc()
+    doc = articleDoc
+    setBody(articleDoc, 'Intro')
+    renderWorkspace(article, articleDoc)
+    await act(async () => {
+      await userEvent.click(page.getByRole('button', { name: article.title }))
+    })
+    const src = '/api/images/sample.webp?w=4&h=2'
+    const fetcher = vi.fn<typeof fetch>(() =>
+      Promise.resolve(Response.json({ src })),
+    )
+    vi.stubGlobal('fetch', fetcher)
+
+    const transfer = new DataTransfer()
+    transfer.items.add(
+      new File(['image bytes'], 'sample.png', { type: 'image/png' }),
+    )
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', { value: transfer })
+    await act(async () => {
+      host?.querySelector('.cm-content')?.dispatchEvent(paste)
+      await vi.waitUntil(() => getBody(articleDoc).toJSON() !== 'Intro')
+    })
+
+    const readOutcome = () => ({
+      body: getBody(articleDoc).toJSON(),
+      requests: fetcher.mock.calls.map(([url]) => url),
+    })
+    expect(readOutcome()).toEqual({
+      body: `![](${src})Intro`,
+      requests: ['/api/images'],
+    })
+  })
+
   it('keeps one focused editor and its selection through tab and viewport changes', async () => {
     const article: Article = {
       id: 'article-d',

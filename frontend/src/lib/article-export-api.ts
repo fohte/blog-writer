@@ -104,7 +104,7 @@ function parseResponse<T>(
   })
 }
 
-function request<T>(
+export function request<T>(
   fetcher: typeof fetch,
   url: string,
   init: RequestInit,

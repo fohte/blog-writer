@@ -34,6 +34,7 @@ import { useMobileViewport } from '#hooks/use-mobile-viewport'
 import { useOutlineMode } from '#hooks/use-outline-mode'
 import { useVisualViewportArea } from '#hooks/use-visual-viewport-area'
 import { useWriteMemo } from '#hooks/use-write-memo'
+import { uploadArticleImage } from '#lib/article-image-api'
 import { MemoPanel } from '#memos/memo-panel'
 import { ArticleOutline, createOutlineEditorExtension } from '#outline/index'
 
@@ -236,6 +237,7 @@ export function ArticleEditorView({
               onViewChange={handleViewChange}
               ref={editorRef}
               text={body}
+              uploadArticleImage={uploadArticleImage}
             />
             {context ? bodyAccessory?.(context) : null}
           </div>
