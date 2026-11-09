@@ -8,11 +8,11 @@ function isImageUploadResponse(
   return isRecord(value) && typeof value['src'] === 'string'
 }
 
-export function uploadArticleImage(file: File) {
+export function uploadArticleImage(file: File, fetcher: typeof fetch = fetch) {
   const body = new FormData()
   body.append('file', file)
   return request(
-    fetch,
+    fetcher,
     '/api/images',
     { method: 'POST', body },
     isImageUploadResponse,
