@@ -1,8 +1,5 @@
-import { GFM, parser } from '@lezer/markdown'
-
 import type { Heading } from '#article/types'
-
-const markdownParser = parser.configure(GFM)
+import { markdownParser } from '#markdown/parser'
 
 type FlatHeading = Omit<Heading, 'children'>
 

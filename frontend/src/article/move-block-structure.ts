@@ -1,8 +1,9 @@
-import { GFM, parser } from '@lezer/markdown'
-
 import { InvalidBlockMoveError } from '#article/errors'
 import { deriveHeadingTree, flattenHeadingTree } from '#article/headings'
 import type { Heading } from '#article/types'
+import type { MarkdownImageSyntaxNode } from '#markdown/image-data'
+import { analyzeImageGrids } from '#markdown/image-grid-pairs'
+import { markdownParser } from '#markdown/parser'
 
 export type MarkdownBlockRange = {
   from: number
@@ -11,11 +12,57 @@ export type MarkdownBlockRange = {
   name: string
 }
 
-const markdownParser = parser.configure(GFM)
+function groupImageGrids(
+  markdown: string,
+  blocks: MarkdownBlockRange[],
+  tags: Array<{ from: number; to: number; source: string }>,
+  images: MarkdownImageSyntaxNode[],
+): MarkdownBlockRange[] {
+  const gridsByOpening = new Map(
+    analyzeImageGrids(markdown, tags, images)
+      .filter((grid) => grid.renderable)
+      .map((grid) => [grid.opening.from, grid]),
+  )
+  const blockIndices = new Map(
+    blocks.map((block, index) => [block.from, index]),
+  )
+  const grouped: MarkdownBlockRange[] = []
+  for (let index = 0; index < blocks.length;) {
+    const block = blocks[index]
+    if (!block) {
+      index += 1
+      continue
+    }
+    const grid = gridsByOpening.get(block.from)
+    if (!grid) {
+      grouped.push(block)
+      index += 1
+      continue
+    }
+    const closingIndex = blockIndices.get(grid.closing.from)
+    const closing =
+      closingIndex === undefined ? undefined : blocks[closingIndex]
+    if (closingIndex === undefined || !closing) {
+      grouped.push(block)
+      index += 1
+      continue
+    }
+
+    grouped.push({
+      from: grid.range.from,
+      contentTo: grid.closing.to,
+      to: closing.to,
+      name: 'MdxImageGrid',
+    })
+    index = closingIndex + 1
+  }
+  return grouped
+}
 
 export function topLevelBlocks(markdown: string): MarkdownBlockRange[] {
   const blocks: MarkdownBlockRange[] = []
-  const cursor = markdownParser.parse(markdown).cursor()
+  const tree = markdownParser.parse(markdown)
+  const cursor = tree.cursor()
   if (!cursor.firstChild()) return blocks
 
   do {
@@ -29,7 +76,23 @@ export function topLevelBlocks(markdown: string): MarkdownBlockRange[] {
     })
   } while (cursor.nextSibling())
 
-  return blocks
+  const tags: Array<{ from: number; to: number; source: string }> = []
+  const images: MarkdownImageSyntaxNode[] = []
+  const syntaxCursor = tree.cursor()
+  while (syntaxCursor.next()) {
+    if (syntaxCursor.name === 'MdxComponentTag') {
+      tags.push({
+        from: syntaxCursor.from,
+        to: syntaxCursor.to,
+        source: markdown.slice(syntaxCursor.from, syntaxCursor.to),
+      })
+    }
+    if (syntaxCursor.name === 'Image') {
+      images.push(syntaxCursor.node)
+    }
+  }
+
+  return groupImageGrids(markdown, blocks, tags, images)
 }
 
 export function collectHeadings(markdown: string): Heading[] {

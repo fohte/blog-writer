@@ -71,6 +71,7 @@ export function ArticleEditorView({
   initialPanel = 'body',
   initialOutlineMode = false,
   editorExtensions,
+  fetchOgp,
   bodyAccessory,
   onRequest,
   outlineRenderer,
@@ -233,6 +234,7 @@ export function ArticleEditorView({
               // The negative margin offsets the editor's wide start padding, which holds the suggestion markers in the page margin.
               className="min-h-96 -ms-7"
               extensions={extensions}
+              fetchOgp={fetchOgp}
               history={history}
               onViewChange={handleViewChange}
               ref={editorRef}

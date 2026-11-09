@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import * as Y from 'yjs'
 
 import {
   type ArticleEditorIntegrationProps,
   ArticleEditorView,
 } from '#components/article-editor-view'
+import { fetchOgp } from '#lib/ogp-api'
 import type { Article, SyncClientApi, SyncState } from '#lib/sync-client'
 
 type ArticleEditorPageProps = {
@@ -41,6 +42,7 @@ export function ArticleEditorPage({
 }: ArticleEditorPageProps) {
   const [doc, setDoc] = useState<Y.Doc>()
   const [error, setError] = useState<string>()
+  const getOgp = useCallback((url: string) => fetchOgp(fetch, url), [])
 
   useEffect(() => {
     setDoc(undefined)
@@ -63,6 +65,7 @@ export function ArticleEditorPage({
       onRequest={onRequest}
       doc={doc}
       editorExtensions={editorExtensions}
+      fetchOgp={getOgp}
       articleNotice={articleNotice}
       exportScreen={exportScreen}
       onBack={onBack}

@@ -115,6 +115,107 @@ describe('Markdown block widget handles', () => {
     },
   )
 
+  it('shows one move handle for each CardLink and the whole ImageGrid', async () => {
+    const firstUrl = 'https://docs.example.test/first'
+    const secondUrl = 'https://docs.example.test/second'
+    const firstImage =
+      '![First](data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20width=%271%27%20height=%271%27%3E%3C/svg%3E)'
+    const secondImage =
+      '![Second](data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20width=%271%27%20height=%271%27%3E%3C/svg%3E)'
+    const source = [
+      'Before paragraph.',
+      '',
+      `<CardLink href="${firstUrl}" />`,
+      `<CardLink href="${secondUrl}" />`,
+      '<ImageGrid>',
+      `  ${firstImage}`,
+      secondImage,
+      '</ImageGrid>',
+      '',
+      'After paragraph.',
+    ].join('\n')
+    const { body, content, host } = mountMarkdownEditor(source, [], undefined, {
+      initialSelection: { anchor: source.indexOf('After paragraph.') + 1 },
+      showMoveHandles: true,
+    })
+    const view = content ? EditorView.findFromDOM(content) : null
+    if (!content || !view) throw new Error('The Markdown editor did not mount')
+    await act(async () => {
+      await vi.waitUntil(
+        () =>
+          content.querySelectorAll('.cm-markdown-block-widget').length === 3,
+      )
+    })
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      blockCount: blockStarts(view.state).length,
+      handleOwners: [
+        ...host.querySelectorAll<HTMLButtonElement>('.cm-block-drag-handle'),
+      ].map((handle) =>
+        handle.closest('.cm-markdown-block-widget') ? 'widget' : 'inline',
+      ),
+      widgetHandles: [
+        ...content.querySelectorAll<HTMLElement>('.cm-markdown-block-widget'),
+      ].map(
+        (widget) =>
+          widget.querySelectorAll(
+            '.cm-markdown-block-widget-handle .cm-block-drag-handle',
+          ).length,
+      ),
+      widgetLinks: [
+        ...content.querySelectorAll<HTMLElement>('.cm-markdown-block-widget'),
+      ].map(
+        (widget) => widget.querySelector('a')?.getAttribute('href') ?? null,
+      ),
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      blockCount: 5,
+      handleOwners: ['inline', 'widget', 'widget', 'widget', 'inline'],
+      widgetHandles: [1, 1, 1],
+      widgetLinks: [firstUrl, secondUrl, null],
+    })
+  })
+
+  it('shows a move handle for a CardLink directly after a paragraph', async () => {
+    const href = 'https://docs.example.test/guide'
+    const cardSource = `<CardLink href="${href}" />`
+    const source = `A paragraph.\n${cardSource}\n\nAfter paragraph.`
+    const { body, content } = mountMarkdownEditor(source, [], undefined, {
+      initialSelection: { anchor: source.indexOf('After paragraph.') + 1 },
+      showMoveHandles: true,
+    })
+    if (!content) throw new Error('The Markdown editor did not mount')
+    await act(async () => {
+      await vi.waitUntil(() => {
+        const widgets = [
+          ...content.querySelectorAll<HTMLElement>('.cm-markdown-block-widget'),
+        ]
+        return widgets.some(
+          (widget) => widget.querySelector('a')?.getAttribute('href') === href,
+        )
+      })
+    })
+    const cardWidget = [
+      ...content.querySelectorAll<HTMLElement>('.cm-markdown-block-widget'),
+    ].find((widget) => widget.querySelector('a')?.getAttribute('href') === href)
+    if (!cardWidget) throw new Error('The CardLink preview did not mount')
+
+    const readOutput = () => ({
+      body: body.toJSON(),
+      cardHref: cardWidget.querySelector('a')?.getAttribute('href'),
+      cardHandleCount: cardWidget.querySelectorAll(
+        '.cm-markdown-block-widget-handle .cm-block-drag-handle',
+      ).length,
+    })
+    expect(readOutput()).toEqual({
+      body: source,
+      cardHref: href,
+      cardHandleCount: 1,
+    })
+  })
+
   it.each([1, 2, 3])(
     'shows one move handle for an image with %i leading spaces',
     async (indent) => {

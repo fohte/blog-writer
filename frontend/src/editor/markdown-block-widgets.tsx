@@ -2,6 +2,7 @@ import { syntaxTree } from '@codemirror/language'
 import {
   type EditorState,
   type Extension,
+  Facet,
   Prec,
   StateEffect,
   StateField,
@@ -21,15 +22,33 @@ import {
 import { createMermaidPreviewElement } from '#components/mermaid-preview'
 import { createBlockWidget } from '#editor/block-widget'
 import {
+  blockWidgetExclusionProviders,
   type BlockWidgetExclusionRange,
   collectBlockWidgetExclusions,
   equalBlockWidgetExclusionRanges,
   isBlockWidgetExcluded,
   refreshBlockWidgetExclusions,
 } from '#editor/markdown-block-widget-exclusions'
+import {
+  childNodes,
+  imageData,
+  type MarkdownSyntaxNode,
+  selectionTouches,
+} from '#editor/markdown-block-widget-utils'
+import {
+  buildMdxBlockWidgetDecorations,
+  mdxImageGridImageExclusions,
+} from '#editor/mdx-block-widgets'
+import type { OgpFetcher } from '#lib/ogp-api'
 
 const compositionChanged = StateEffect.define<boolean>()
 const refreshBlockWidgets = StateEffect.define()
+export const blockWidgetOgpFetcher = Facet.define<
+  OgpFetcher | undefined,
+  OgpFetcher | undefined
+>({
+  combine: (fetchers) => fetchers[fetchers.length - 1],
+})
 
 type BlockWidgetState = {
   composing: boolean
@@ -39,19 +58,6 @@ type BlockWidgetState = {
 }
 
 type BlockSourceRange = { from: number; to: number }
-
-function selectionTouches(
-  state: EditorState,
-  from: number,
-  to: number,
-): boolean {
-  return state.selection.ranges.some(
-    ({ empty, from: selectionFrom, to: selectionTo }) =>
-      empty
-        ? selectionFrom >= from && selectionFrom <= to
-        : selectionFrom < to && selectionTo > from,
-  )
-}
 
 function mapRanges(
   ranges: readonly BlockSourceRange[],
@@ -97,22 +103,7 @@ function enterAdjacentBlock(direction: 'up' | 'down') {
   }
 }
 
-function childNodes(node: { firstChild: NodeLike | null }): NodeLike[] {
-  const children: NodeLike[] = []
-  for (let child = node.firstChild; child; child = child.nextSibling)
-    children.push(child)
-  return children
-}
-
-type NodeLike = {
-  firstChild: NodeLike | null
-  nextSibling: NodeLike | null
-  from: number
-  name: string
-  to: number
-}
-
-function markdownTable(state: EditorState, node: NodeLike) {
+function markdownTable(state: EditorState, node: MarkdownSyntaxNode) {
   const children = childNodes(node)
   const headerNode = children.find((child) => child.name === 'TableHeader')
   const delimiterNode = children.find(
@@ -120,7 +111,7 @@ function markdownTable(state: EditorState, node: NodeLike) {
   )
   if (!headerNode || !delimiterNode) return null
 
-  const cellsIn = (row: NodeLike) =>
+  const cellsIn = (row: MarkdownSyntaxNode) =>
     childNodes(row)
       .filter((child) => child.name === 'TableCell')
       .map((cell) => state.doc.sliceString(cell.from, cell.to).trim())
@@ -147,28 +138,6 @@ function markdownTable(state: EditorState, node: NodeLike) {
   return { header, alignment, rows }
 }
 
-function imageData(state: EditorState, node: NodeLike) {
-  const marks = childNodes(node).filter((child) => child.name === 'LinkMark')
-  const url = childNodes(node).find((child) => child.name === 'URL')
-  const openingMark = marks[0]
-  const altEndMark = marks[1]
-  if (!openingMark || !altEndMark || marks.length < 4 || !url) return null
-
-  const line = state.doc.lineAt(node.from)
-  const source = state.doc.sliceString(line.from, line.to)
-  if (source.trim() !== state.doc.sliceString(node.from, node.to)) return null
-
-  return {
-    alt: state.doc.sliceString(openingMark.to, altEndMark.from),
-    from: line.from,
-    lineTo: line.to,
-    nodeFrom: node.from,
-    source,
-    src: state.doc.sliceString(url.from, url.to),
-    to: line.to,
-  }
-}
-
 let nextMermaidWidgetId = 0
 
 type BuiltBlockWidgets = {
@@ -182,6 +151,19 @@ function buildBlockWidgetDecorations(
 ): BuiltBlockWidgets {
   const decorations = []
   const ranges: BlockSourceRange[] = []
+  const mdxWidgets = buildMdxBlockWidgetDecorations(
+    state,
+    exclusions,
+    state.facet(blockWidgetOgpFetcher),
+  )
+  mdxWidgets.decorations.between(
+    0,
+    state.doc.length,
+    (from, to, decoration) => {
+      decorations.push(decoration.range(from, to))
+    },
+  )
+  ranges.push(...mdxWidgets.ranges)
   const cursor = syntaxTree(state).cursor()
 
   while (cursor.next()) {
@@ -191,6 +173,7 @@ function buildBlockWidgetDecorations(
       if (
         table &&
         !selectionTouches(state, range.from, range.to) &&
+        !isBlockWidgetExcluded(range, mdxWidgets.imageGridRanges) &&
         !isBlockWidgetExcluded(range, exclusions)
       ) {
         const source = state.doc.sliceString(range.from, range.to)
@@ -211,7 +194,12 @@ function buildBlockWidgetDecorations(
 
     if (cursor.name === 'Image') {
       const image = imageData(state, cursor.node)
-      if (image) {
+      const insideImageGrid = image
+        ? mdxWidgets.imageGridRanges.some(
+            (grid) => image.from > grid.from && image.to < grid.to,
+          )
+        : false
+      if (image && !insideImageGrid) {
         const range = { from: image.from, to: image.lineTo }
         const excluded = isBlockWidgetExcluded(range, exclusions)
         if (excluded) continue
@@ -268,7 +256,11 @@ function buildBlockWidgetDecorations(
           .trimEnd()
         const range = { from: cursor.from, to: cursor.to }
         const excluded = isBlockWidgetExcluded(range, exclusions)
-        if (excluded) continue
+        if (
+          excluded ||
+          isBlockWidgetExcluded(range, mdxWidgets.imageGridRanges)
+        )
+          continue
         const sourceVisible = selectionTouches(state, range.from, range.to)
         const diagramId = 'markdown-mermaid-' + String(nextMermaidWidgetId++)
         const widget = createBlockWidget(
@@ -390,6 +382,7 @@ const blockWidgetStateField = StateField.define<BlockWidgetState>({
 
 export const markdownBlockWidgets: Extension = [
   blockWidgetStateField,
+  blockWidgetExclusionProviders.of(mdxImageGridImageExclusions),
   Prec.highest(
     keymap.of([
       { key: 'ArrowDown', run: enterAdjacentBlock('down') },

@@ -83,11 +83,14 @@ export function createBlockWidget(
         event.stopPropagation()
       }
       const enterSource = (event: MouseEvent) => {
-        const target = event.target
-        if (
-          target instanceof Element &&
-          target.closest('a, .cm-markdown-block-widget-handle')
-        ) {
+        const target = event.target instanceof Element ? event.target : null
+        if (target?.closest('.cm-markdown-block-widget-handle')) {
+          event.stopPropagation()
+          return
+        }
+        const cardLink = target?.closest('[data-mdx-card-link]')
+        if (cardLink && (event.metaKey || event.ctrlKey)) return
+        if (target?.closest('a') && !cardLink) {
           event.stopPropagation()
           return
         }

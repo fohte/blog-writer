@@ -108,7 +108,19 @@ const chromiumDriver: ImeDriver = {
     await nextFrame()
     const duringComposition = readOutput(body, content)
 
+    const compositionEnd = content
+      ? new Promise<void>((resolve) => {
+          content.addEventListener(
+            'compositionend',
+            () => {
+              resolve()
+            },
+            { once: true },
+          )
+        })
+      : Promise.resolve()
     await cdp().send('Input.insertText', { text })
+    await compositionEnd
     await nextFrame()
     const committed = readOutput(body, content)
     return { composingImmediately, duringComposition, committed }
@@ -448,6 +460,55 @@ describe('MarkdownEditor IME', () => {
       finalSourceLineCount: 0,
     })
   })
+
+  it.each([
+    { side: 'before', target: 'before' },
+    { side: 'after', target: 'after' },
+  ])(
+    'preserves Japanese input $side of an MDX component widget',
+    async ({ target }) => {
+      const component = '<CardLink href="https://docs.example.test/guide" />'
+      const initial = `before\n${component}\nafter`
+      const position =
+        target === 'before' ? 'before'.length : initial.indexOf('after')
+      const { body, content } = mountMarkdownEditor(initial, [], undefined, {
+        initialSelection: { anchor: position },
+      })
+      const initialPreviewCount =
+        content?.querySelectorAll('.cm-markdown-block-widget').length ?? 0
+      const initialSourceLineCount = [
+        ...(content?.querySelectorAll<HTMLElement>('.cm-line') ?? []),
+      ].filter((line) => line.textContent === component).length
+      content?.focus()
+      const composition = await compose(body, content, '日本語')
+
+      const readOutput = () => ({
+        during: composition.duringComposition.body,
+        committed: composition.committed.body,
+        initialPreviewCount,
+        initialSourceLineCount,
+        finalPreviewCount:
+          content?.querySelectorAll('.cm-markdown-block-widget').length ?? 0,
+        finalSourceLineCount: [
+          ...(content?.querySelectorAll<HTMLElement>('.cm-line') ?? []),
+        ].filter((line) => line.textContent === component).length,
+      })
+      expect(readOutput()).toEqual({
+        during:
+          target === 'before'
+            ? `before日本語\n${component}\nafter`
+            : `before\n${component}\n日本語after`,
+        committed:
+          target === 'before'
+            ? `before日本語\n${component}\nafter`
+            : `before\n${component}\n日本語after`,
+        initialPreviewCount: 1,
+        initialSourceLineCount: 0,
+        finalPreviewCount: 1,
+        finalSourceLineCount: 0,
+      })
+    },
+  )
 
   it.each([
     { name: 'table start', boundary: 'start' },
