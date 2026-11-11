@@ -25,3 +25,5 @@ minimumReleaseAgeExclude:
   - storybook@10.6.2
   # Renovate security update: @storybook/addon-vitest@10.6.2
   - '@storybook/addon-vitest@10.6.2'
+  # Renovate security update: mermaid@11.16.1
+  - mermaid@11.16.1
