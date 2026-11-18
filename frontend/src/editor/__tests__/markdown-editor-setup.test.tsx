@@ -107,14 +107,6 @@ export function mountMarkdownEditor(
     )
   })
 
-  const view = mountedView.current
-  if (view === null) {
-    throw new Error('MarkdownEditor did not provide an EditorView')
-  }
-  act(() => {
-    forceParsing(view, view.state.doc.length, Infinity)
-  })
-
   cleanups.push(() => {
     act(() => {
       root.unmount()
@@ -122,6 +114,14 @@ export function mountMarkdownEditor(
     history.destroy()
     doc.destroy()
     host.remove()
+  })
+
+  const view = mountedView.current
+  if (view === null) {
+    throw new Error('MarkdownEditor did not provide an EditorView')
+  }
+  act(() => {
+    forceParsing(view, view.state.doc.length, Infinity)
   })
 
   return {
