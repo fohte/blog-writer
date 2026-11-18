@@ -94,6 +94,7 @@ jobs:
         uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         with:
           files: |
+            backend/migration/**
             backend/migrations/**
             **/.tbls.yml
             scripts/db-*
@@ -268,33 +269,21 @@ jobs:
       - name: Install Playwright browsers
         if: steps.needs-playwright.outputs.needed == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: ${{ matrix.package }}
-<<<<<<< before updating
-        run: pnpm exec playwright install --with-deps chromium webkit
-||||||| last update
-        run: pnpm exec playwright install --with-deps chromium
-=======
-        run: pnpm exec playwright install chromium
->>>>>>> after updating
+        run: pnpm exec playwright install chromium webkit
 
       - name: Install Playwright system dependencies
         if: steps.needs-playwright.outputs.needed == 'true'
         working-directory: ${{ matrix.package }}
         # A throttled apt mirror keeps sending bytes, so apt's own timeouts never
         # fire. Each attempt reconnects and keeps the packages already downloaded.
-<<<<<<< before updating
-        run: pnpm exec playwright install-deps chromium webkit
-||||||| last update
-        run: pnpm exec playwright install-deps chromium
-=======
         run: |
           for attempt in 1 2 3; do
-            timeout --kill-after=30s 3m pnpm exec playwright install-deps chromium && exit 0
+            timeout --kill-after=30s 3m pnpm exec playwright install-deps chromium webkit && exit 0
             echo "::warning::playwright install-deps attempt $attempt failed with status $?"
             # `timeout` cannot signal the root-owned apt-get, which would keep the apt locks.
             sudo pkill -x apt-get || true
           done
           exit 1
->>>>>>> after updating
 
       - name: Run tests
         working-directory: ${{ matrix.package }}
