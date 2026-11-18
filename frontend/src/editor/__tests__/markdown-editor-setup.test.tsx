@@ -34,6 +34,7 @@ type MarkdownEditorMountOptions = {
   uploadArticleImage?: ArticleImageUploader
   fetchOgp?: OgpFetcher
   showMoveHandles?: boolean
+  forceParseOnMount?: boolean
   prepareDoc?: (doc: Y.Doc) => void
   parent?: HTMLElement
 }
@@ -120,9 +121,12 @@ export function mountMarkdownEditor(
   if (view === null) {
     throw new Error('MarkdownEditor did not provide an EditorView')
   }
-  act(() => {
-    forceParsing(view, view.state.doc.length, Infinity)
-  })
+  if (options.forceParseOnMount !== false) {
+    // Tests read the initial DOM synchronously, so finish parsing before returning.
+    act(() => {
+      forceParsing(view, view.state.doc.length, Infinity)
+    })
+  }
 
   return {
     body,

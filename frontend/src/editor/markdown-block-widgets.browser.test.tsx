@@ -98,6 +98,7 @@ describe('Markdown block previews', () => {
     ].join('\n')
     const originalNow = Date.now()
     let nowCalls = 0
+    // 15 ms increments make the 20 ms budget stop immediately after the table.
     const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => {
       return originalNow + ++nowCalls * 15
     })
