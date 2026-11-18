@@ -10,6 +10,6 @@ jobs:
       contents: read
       pull-requests: write
       statuses: write
-    uses: fohte/storybook-vrt-workflows/.github/workflows/vrt-approval.yml@e421864a67798d72cb0c12e48d5020ea0a8eee10 # v0.2.2
+    uses: fohte/storybook-vrt-workflows/.github/workflows/vrt-approval.yml@1752f73f6fe39a5f83ca7208a95b32e600e3813c # v0.2.3
     with:
       r2-bucket: blog-writer-vrt

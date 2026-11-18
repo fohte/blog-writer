@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - master
   pull_request:
 
 permissions:
@@ -11,6 +12,7 @@ permissions:
 
 jobs:
   detect-changes-frontend:
+    if: "!contains(github.event.head_commit.added, '.github/workflows/bootstrap.yml')"
     runs-on: ubuntu-slim
     timeout-minutes: 30
     outputs:
@@ -72,7 +74,7 @@ jobs:
       # entry -- vrt-capture's upload-artifact step names the artifact
       # `vrt-screenshots-<project>-<shard>`, and a workflow run can't upload
       # two artifacts with the same name.
-      - uses: fohte/storybook-vrt-workflows/vrt-capture@e421864a67798d72cb0c12e48d5020ea0a8eee10 # v0.2.2
+      - uses: fohte/storybook-vrt-workflows/vrt-capture@1752f73f6fe39a5f83ca7208a95b32e600e3813c # v0.2.3
         with:
           project: storybook-screenshot-frontend
           shard: 1
@@ -90,11 +92,11 @@ jobs:
       pull-requests: write
       statuses: write
     # Overlapping runs for the same ref would otherwise race to publish to
-    # the same R2 key at once -- most importantly two main pushes racing to
+    # the same R2 key at once -- most importantly two default branch pushes racing to
     # update the single `baseline/actual/` key, where each run's diff was
     # computed against a baseline the other run is concurrently mutating.
     concurrency:
-      group: vrt-report-frontend-${{ (github.ref == 'refs/heads/main') && 'push' || 'pr' }}-${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+      group: vrt-report-frontend-${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'push' || 'pr' }}-${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -129,7 +131,7 @@ jobs:
       # reports overwrite each other in this bucket. Keep vrt: true on a
       # single subpackage until fohte/storybook-vrt-workflows adds a key
       # prefix input.
-      - uses: fohte/storybook-vrt-workflows/vrt-report@e421864a67798d72cb0c12e48d5020ea0a8eee10 # v0.2.2
+      - uses: fohte/storybook-vrt-workflows/vrt-report@1752f73f6fe39a5f83ca7208a95b32e600e3813c # v0.2.3
         with:
           package-dir: frontend
           screenshots-dir: __screenshots__/desktop
