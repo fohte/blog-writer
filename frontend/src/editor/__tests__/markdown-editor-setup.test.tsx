@@ -1,4 +1,6 @@
+import { forceParsing } from '@codemirror/language'
 import type { Extension } from '@codemirror/state'
+import type { EditorView } from '@codemirror/view'
 import { act, createRef, type RefObject } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, vi } from 'vitest'
@@ -64,6 +66,7 @@ export function mountMarkdownEditor(
   options.prepareDoc?.(doc)
   const editor = createRef<MarkdownEditorHandle>()
   const history = createMoveHistory(doc)
+  const mountedView: { current: EditorView | null } = { current: null }
   const mountedExtensions = [
     ...extensions,
     ...(extensionFactory?.(doc) ?? []),
@@ -95,10 +98,21 @@ export function mountMarkdownEditor(
           ? { fetchOgp: options.fetchOgp }
           : {})}
         history={history}
+        onViewChange={(view) => {
+          mountedView.current = view
+        }}
         ref={editor}
         text={body}
       />,
     )
+  })
+
+  const view = mountedView.current
+  if (view === null) {
+    throw new Error('MarkdownEditor did not provide an EditorView')
+  }
+  act(() => {
+    forceParsing(view, view.state.doc.length, Infinity)
   })
 
   cleanups.push(() => {

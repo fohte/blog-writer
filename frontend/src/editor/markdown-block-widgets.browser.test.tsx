@@ -96,7 +96,19 @@ describe('Markdown block previews', () => {
       '',
       'After',
     ].join('\n')
-    const { body, content } = mountMarkdownEditor(source)
+    const originalNow = Date.now()
+    let nowCalls = 0
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => {
+      return originalNow + ++nowCalls * 15
+    })
+    const mounted = (() => {
+      try {
+        return mountMarkdownEditor(source)
+      } finally {
+        dateNow.mockRestore()
+      }
+    })()
+    const { body, content } = mounted
 
     const readOutput = () => {
       const lines = [
