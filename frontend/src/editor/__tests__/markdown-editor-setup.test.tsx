@@ -1,4 +1,6 @@
+import { forceParsing } from '@codemirror/language'
 import type { Extension } from '@codemirror/state'
+import type { EditorView } from '@codemirror/view'
 import { act, createRef, type RefObject } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, vi } from 'vitest'
@@ -32,6 +34,7 @@ type MarkdownEditorMountOptions = {
   uploadArticleImage?: ArticleImageUploader
   fetchOgp?: OgpFetcher
   showMoveHandles?: boolean
+  forceParseOnMount?: boolean
   prepareDoc?: (doc: Y.Doc) => void
   parent?: HTMLElement
 }
@@ -64,6 +67,7 @@ export function mountMarkdownEditor(
   options.prepareDoc?.(doc)
   const editor = createRef<MarkdownEditorHandle>()
   const history = createMoveHistory(doc)
+  const mountedView: { current: EditorView | null } = { current: null }
   const mountedExtensions = [
     ...extensions,
     ...(extensionFactory?.(doc) ?? []),
@@ -95,6 +99,9 @@ export function mountMarkdownEditor(
           ? { fetchOgp: options.fetchOgp }
           : {})}
         history={history}
+        onViewChange={(view) => {
+          mountedView.current = view
+        }}
         ref={editor}
         text={body}
       />,
@@ -109,6 +116,17 @@ export function mountMarkdownEditor(
     doc.destroy()
     host.remove()
   })
+
+  const view = mountedView.current
+  if (view === null) {
+    throw new Error('MarkdownEditor did not provide an EditorView')
+  }
+  if (options.forceParseOnMount !== false) {
+    // Tests read the initial DOM synchronously, so finish parsing before returning.
+    act(() => {
+      forceParsing(view, view.state.doc.length, Infinity)
+    })
+  }
 
   return {
     body,

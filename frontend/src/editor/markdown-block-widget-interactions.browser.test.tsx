@@ -1,3 +1,4 @@
+import { syntaxTreeAvailable } from '@codemirror/language'
 import { EditorView } from '@codemirror/view'
 import { act } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -416,9 +417,11 @@ describe('Markdown block widget interactions', () => {
     const source = `${prefix}${tableSource}`
     const { body, content } = mountMarkdownEditor(source, [], undefined, {
       initialSelection: { anchor: 0 },
+      forceParseOnMount: false,
     })
     const view = content ? EditorView.findFromDOM(content) : null
     if (!view || !content) throw new Error('The Markdown editor did not mount')
+    const initialSyntaxTreeAvailable = syntaxTreeAvailable(view.state)
     const initialTableCount = content.querySelectorAll('table').length
     view.dispatch({
       effects: EditorView.scrollIntoView(source.length, { y: 'end' }),
@@ -433,6 +436,7 @@ describe('Markdown block widget interactions', () => {
     const readOutput = () => ({
       bodyLength: body.length,
       cursor: view.state.selection.main.head,
+      initialSyntaxTreeAvailable,
       initialTableCount,
       renderedTableCount: content.querySelectorAll('table').length,
       tailCell: content.querySelector('tbody tr td')?.textContent ?? null,
@@ -440,6 +444,7 @@ describe('Markdown block widget interactions', () => {
     expect(readOutput()).toEqual({
       bodyLength: source.length,
       cursor: 0,
+      initialSyntaxTreeAvailable: false,
       initialTableCount: 0,
       renderedTableCount: 1,
       tailCell: 'Tables',
