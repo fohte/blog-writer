@@ -62,7 +62,7 @@ export const Image: Story = {
 }
 
 export const LoadFailure: Story = {
-  name: 'the preview wraps a long image URL when loading the image fails.',
+  name: 'the preview shows the original Markdown of a long image URL when loading the image fails.',
   args: {
     alt: '',
     source:
