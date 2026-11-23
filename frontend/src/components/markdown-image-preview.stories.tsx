@@ -38,7 +38,7 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-const imageUrl = 'https://assets.example.test/images/landscape.svg?w=320&h=180'
+const imageUrl = '/images/landscape.svg?w=320&h=180'
 const source = `![A landscape](${imageUrl})`
 const imageSvg =
   '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#dbeafe"/></svg>'
@@ -52,7 +52,7 @@ export const Image: Story = {
   },
   parameters: {
     msw: [
-      http.get('https://assets.example.test/images/landscape.svg', () =>
+      http.get('/images/landscape.svg', () =>
         HttpResponse.text(imageSvg, {
           headers: { 'Content-Type': 'image/svg+xml' },
         }),
