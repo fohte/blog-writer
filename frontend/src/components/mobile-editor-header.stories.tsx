@@ -8,7 +8,7 @@ const meta = {
   component: MobileEditorHeader,
   decorators: [
     (Story) => (
-      <div className="w-97.5">
+      <div className="w-full max-w-97.5">
         <Story />
       </div>
     ),

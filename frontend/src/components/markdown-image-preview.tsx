@@ -14,7 +14,7 @@ export function createMarkdownImagePreview({
   const fallback = () => {
     const code = document.createElement('code')
     code.className =
-      'block whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm'
+      'block break-words whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm'
     code.textContent = source
     return code
   }

@@ -28,7 +28,7 @@ export const MobileArticle: Story = {
   args: { mobile: true },
   decorators: [
     (Story) => (
-      <div className="w-97.5">
+      <div className="w-full max-w-97.5">
         <Story />
       </div>
     ),
@@ -43,7 +43,7 @@ export const MobilePanel: Story = {
   },
   decorators: [
     (Story) => (
-      <div className="w-97.5">
+      <div className="w-full max-w-97.5">
         <Story />
       </div>
     ),
