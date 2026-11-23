@@ -62,11 +62,12 @@ export const Image: Story = {
 }
 
 export const LoadFailure: Story = {
-  name: 'the preview shows the original Markdown when an image URL with dimensions fails to load.',
+  name: 'the preview wraps a long image URL when loading the image fails.',
   args: {
     alt: '',
-    source: '![](https://assets.example.test/images/missing.webp?w=640&h=360)',
-    src: 'https://assets.example.test/images/missing.webp?w=640&h=360',
+    source:
+      '![](https://assets.example.test/images/missing.webp?w=640&h=360&cache_key=long-placeholder-value-that-cannot-fit-on-a-phone)',
+    src: 'https://assets.example.test/images/missing.webp?w=640&h=360&cache_key=long-placeholder-value-that-cannot-fit-on-a-phone',
     failed: true,
   },
 }
