@@ -38,6 +38,14 @@ jobs:
     if: needs.detect-changes-frontend.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Project names must match vitest.screenshot.config.ts for --project selection.
+        # They also make vrt-screenshots-<project>-<shard> artifact names unique per run.
+        project:
+          - storybook-screenshot-frontend
+          - storybook-screenshot-frontend-mobile
     permissions:
       contents: read
     steps:
@@ -69,19 +77,17 @@ jobs:
 
       - run: pnpm install --filter "frontend..." --frozen-lockfile
 
-      # project must match the `name` passed to createStorybookProject() in
-      # vitest.screenshot.config.ts, and stay unique across every vrt_pkgs
-      # entry -- vrt-capture's upload-artifact step names the artifact
-      # `vrt-screenshots-<project>-<shard>`, and a workflow run can't upload
-      # two artifacts with the same name.
+      - name: Create screenshots directory for empty viewport projects
+        run: mkdir -p "frontend/__screenshots__"
+
       - uses: fohte/storybook-vrt-workflows/vrt-capture@1752f73f6fe39a5f83ca7208a95b32e600e3813c # v0.2.3
         with:
-          project: storybook-screenshot-frontend
+          project: ${{ matrix.project }}
           shard: 1
           shards: 1
           capture-script: storybook:screenshot
           package-dir: frontend
-          screenshots-dir: __screenshots__/desktop
+          screenshots-dir: __screenshots__
 
   report-frontend:
     needs: capture-frontend
@@ -134,7 +140,7 @@ jobs:
       - uses: fohte/storybook-vrt-workflows/vrt-report@1752f73f6fe39a5f83ca7208a95b32e600e3813c # v0.2.3
         with:
           package-dir: frontend
-          screenshots-dir: __screenshots__/desktop
+          screenshots-dir: __screenshots__
           r2-bucket: blog-writer-vrt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
