@@ -8,4 +8,5 @@ fi
 vitest run --config vitest.screenshot.config.ts "$@"
 VRT_VIEWPORT=tablet vitest run \
   --config vitest.screenshot.config.ts \
+  --project=storybook-screenshot-frontend \
   --testNamePattern='the tablet layout places a long outline above the article body'
