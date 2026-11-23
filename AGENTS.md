@@ -89,6 +89,8 @@ When you need to check how a component looks in a given state, write or update i
 
 The `vrt` CI check renders Storybook stories to screenshots and compares them against the `main` baseline with reg-suit. A failure ("Visual differences detected") means the pixel diff exceeded reg-suit's `matchingThreshold`, not that something is broken — open the custom VRT report linked from the PR and compare the actual/expected/diff images to judge whether the change is intentional.
 
+The `vrt` check captures each story at desktop (1280x800) and mobile (375x667) widths. Add the `mobile-only` tag to a story that should not be captured at desktop width, or `desktop-only` to one that should not be captured at mobile width.
+
 ### Never add the `vrt-approved` label yourself
 
 The `vrt-approval` workflow treats the `vrt-approved` label as confirmation that a human reviewed the diff images and approved them. Only a human can make that visual judgment, so after inspecting the diff, ask the user to review it and add the label themselves — do not add it yourself even if the diff looks correct.

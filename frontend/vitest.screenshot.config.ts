@@ -4,37 +4,64 @@ import { fileURLToPath } from 'node:url'
 import { createStorybookProject } from '@fohte/storybook-addon/vitest-plugin'
 import { defineConfig, mergeConfig } from 'vitest/config'
 
-import { SCREENSHOT_VIEWPORT } from './.storybook/screenshot-viewport'
+import {
+  DESKTOP_VIEWPORT,
+  MOBILE_VIEWPORT,
+} from './.storybook/screenshot-viewport'
 import viteConfig from './vite.config'
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
-const screenshotViewport =
+const desktopViewport =
   process.env['VRT_VIEWPORT'] === 'tablet'
     ? { width: 900, height: 800 }
-    : SCREENSHOT_VIEWPORT
-const storybookProject = createStorybookProject({
-  name: 'storybook-screenshot-frontend',
-  rootDir: dirname,
-  viewport: screenshotViewport,
-  screenshotsSubdir: 'desktop',
-  setupFiles: ['./.storybook/vitest.setup.screenshot.ts'],
-})
+    : DESKTOP_VIEWPORT
 
-// A separate config file rather than a project entry in vitest.config.ts:
-// the `storybook` project (check runs) and this one both point at
-// .storybook/, and driving that configDir from two projects in the same
-// process causes Storybook's dev-server cache to collide.
-export default mergeConfig(
-  viteConfig,
-  defineConfig({
-    ...storybookProject,
+const createScreenshotProject = (
+  options: Parameters<typeof createStorybookProject>[0],
+) => {
+  const project = createStorybookProject(options)
+
+  return {
+    ...project,
     test: {
-      ...storybookProject.test,
+      ...project.test,
       browser: {
-        ...storybookProject.test.browser,
+        ...project.test.browser,
         // Storybook capture uses CDP, which requires both browser API permissions.
         api: { allowWrite: true, allowExec: true },
       },
+    },
+  }
+}
+
+export default mergeConfig(
+  viteConfig,
+  defineConfig({
+    test: {
+      projects: [
+        {
+          extends: true,
+          ...createScreenshotProject({
+            name: 'storybook-screenshot-frontend',
+            rootDir: dirname,
+            viewport: desktopViewport,
+            screenshotsSubdir: 'desktop',
+            setupFiles: ['./.storybook/vitest.setup.screenshot.ts'],
+            excludeTags: ['mobile-only'],
+          }),
+        },
+        {
+          extends: true,
+          ...createScreenshotProject({
+            name: 'storybook-screenshot-frontend-mobile',
+            rootDir: dirname,
+            viewport: MOBILE_VIEWPORT,
+            screenshotsSubdir: 'mobile',
+            setupFiles: ['./.storybook/vitest.setup.screenshot.ts'],
+            excludeTags: ['desktop-only'],
+          }),
+        },
+      ],
     },
   }),
 )

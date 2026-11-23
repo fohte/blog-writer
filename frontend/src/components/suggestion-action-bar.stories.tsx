@@ -76,7 +76,7 @@ export const Seam: Story = {
 
 const phoneScreen: NonNullable<Story['decorators']> = [
   (Story) => (
-    <div className="relative h-96 w-97.5 transform-gpu">
+    <div className="relative h-96 w-full max-w-97.5 transform-gpu">
       <Story />
     </div>
   ),

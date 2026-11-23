@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Check if current commit is auto-format by bot
         id: check-auto-format
@@ -89,10 +89,22 @@ jobs:
       - name: Fetch cargo dependencies (backend)
         run: cd "backend" && cargo fetch
 
+      # Without a base, changed-files compares a new branch against HEAD^ only,
+      # so changes from its earlier commits go undetected.
+      - name: Find where this branch left the default branch
+        id: branch-base
+        if: github.ref_name != github.event.repository.default_branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          sha=$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
       - name: Check for database documentation changes
         id: db-doc-changes
         uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         with:
+          base_sha: ${{ steps.branch-base.outputs.sha }}
           files: |
             backend/migration/**
             backend/migrations/**
@@ -148,12 +160,24 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+
+      # Without a base, changed-files compares a new branch against HEAD^ only,
+      # so changes from its earlier commits go undetected.
+      - name: Find where this branch left the default branch
+        id: branch-base
+        if: github.ref_name != github.event.repository.default_branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          sha=$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Detect changed files
         uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         id: changed
         with:
+          base_sha: ${{ steps.branch-base.outputs.sha }}
           json: true
           # Emit valid JSON; the default escapes quotes and breaks jq parsing.
           escape_json: false
@@ -299,18 +323,31 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+
+      # Without a base, changed-files compares a new branch against HEAD^ only,
+      # so changes from its earlier commits go undetected.
+      - name: Find where this branch left the default branch
+        id: branch-base
+        if: github.ref_name != github.event.repository.default_branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          sha=$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Check for backend changes
         uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         id: changes-backend
         with:
+          base_sha: ${{ steps.branch-base.outputs.sha }}
           files: backend/**
 
       - name: Check for workflow changes
         uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         id: changes-workflow
         with:
+          base_sha: ${{ steps.branch-base.outputs.sha }}
           files: .github/workflows/test.yml
 
   unit-test-backend:

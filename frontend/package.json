@@ -23,7 +23,7 @@
     "storybook": "storybook dev -p 6006",
     "storybook:build": "storybook build",
     "storybook:screenshot": "bash ./scripts/storybook-screenshot.sh",
-    "storybook:screenshot:desktop": "vitest run --config vitest.screenshot.config.ts"
+    "storybook:screenshot:desktop": "vitest run --config vitest.screenshot.config.ts --project=storybook-screenshot-frontend"
   },
   "dependencies": {
     "@atlaskit/pragmatic-drag-and-drop": "4.0.0",

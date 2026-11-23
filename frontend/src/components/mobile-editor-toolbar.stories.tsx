@@ -7,7 +7,7 @@ const meta = {
   component: MobileEditorToolbar,
   decorators: [
     (Story) => (
-      <div className="flex h-80 w-97.5 flex-col justify-end">
+      <div className="flex h-80 w-full max-w-97.5 flex-col justify-end">
         <Story />
       </div>
     ),
